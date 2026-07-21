@@ -1,0 +1,108 @@
+services:
+  # 5. Interfaz Gráfica de Chat (Streamlit)
+  agent-ui:
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    container_name: machining_ui
+    command: streamlit run /app/app/ui.py --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - 8501:8501
+    environment:
+      - API_URL=http://agent-service:8000/api/v1/agent/dialogue
+    depends_on:
+      - agent-service
+    networks:
+      - machining-network
+  # 1. Servicio del Agente de IA (Core)
+  agent-service:
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    container_name: machining_agent
+    ports:
+      - 8000:8000
+    environment:
+      - ENVIRONMENT=development
+      - LLM_PROVIDER=openai # O ollama, vllm, azure, etc.
+      - LLM_API_KEY=${LLM_API_KEY}
+      - VECTOR_DB_URL=http://vector-db:6333
+      - DB_URL=postgresql://user:pass@timescaledb:5432/machining_db
+      - REDIS_URL=redis://redis-cache:6379
+      - OLLAMA_BASE_URL=http://ollama-llm:11434
+      - MODEL_NAME=llama3.2:3b
+      - EMBEDDING_MODEL_NAME=nomic-embed-text
+    volumes:
+      - ./agent-service:/app
+      - ./data:/app/data
+      - ./audio:/app/audio
+    depends_on:
+      - vector-db
+      - timescaledb
+      - redis-cache
+      - ollama-llm
+    networks:
+      - machining-network
+
+  # 3. Servidor de Modelos Locales (Ollama)
+  ollama-llm:
+    image: ollama/ollama:latest
+    container_name: machining_ollama
+    ports:
+      - 11435:11434
+    volumes:
+      # Este volumen guarda los modelos descargados localmente:
+      - ./ollama_storage:/root/.ollama
+    # Si cuentas con GPU Nvidia, descomenta estas líneas para aceleración hardware:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - machining-network
+
+  # 2. Base de Datos Vectorial (Para RAG)
+  vector-db:
+    image: qdrant/qdrant:latest # Opción robusta y ligera (o chromadb / pgvector)
+    container_name: machining_vector_db
+    ports:
+      - 6333:6333
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - machining-network
+
+  # 3. Base de Datos de Producción y Sensores (TimescaleDB / PostgreSQL)
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: machining_db
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=machining_db
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - machining-network
+
+  # 4. Cache y Gestión de Estado/Colas
+  redis-cache:
+    image: redis:alpine
+    container_name: machining_redis
+    ports:
+      - 6379:6379
+    networks:
+      - machining-network
+
+networks:
+  machining-network:
+    driver: bridge
+
+volumes:
+  qdrant_data:
+  postgres_data:

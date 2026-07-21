@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+pydantic
+httpx
+qdrant-client
+langchain
+langchain-community
+langchain-ollama
+python-dotenv
+gTTS
+# Dependencias para procesar Audio y Señales
+librosa
+numpy
+scipy
+redis
+streamlit
+requests
