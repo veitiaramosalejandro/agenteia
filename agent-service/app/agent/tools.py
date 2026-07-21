@@ -11,7 +11,12 @@ from app.rag.retriever import get_rag_context
 
 @tool
 def get_cnc_telemetry() -> dict:
-    """Obtiene la telemetría actual del CNC: velocidad del husillo, feed rate, potencia y alarmas activas."""
+    """Consulta la telemetría en tiempo real de la máquina CNC (RPM, temperatura, estado del motor, alarmas).
+
+    USAR SOLO CUANDO: El usuario pida explícitamente ver el estado, parámetros,
+    rendimiento o telemetría actual de la máquina CNC. NO usar si el usuario
+    está haciendo preguntas generales o teóricas.
+    """
     return {
         "status": "OPERATIONAL",
         "spindle_speed_rpm": 3200,
