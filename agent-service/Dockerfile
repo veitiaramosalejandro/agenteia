@@ -1,24 +1,25 @@
 FROM python:3.11-slim
 
-WORKDIR /app
-
-# Instalar dependencias del sistema requeridas para librosa, scipy y audio
+# 1. Instalar dependencias del sistema y el driver ODBC de Microsoft
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg \
+    unixodbc \
+    unixodbc-dev \
     build-essential \
-    ffmpeg \
-    libsndfile1 \
-    libsndfile1-dev \
-    llvm \
-    libffi-dev \
+    && curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && curl https://packages.microsoft.com/config/debian/12/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y msodbcsql17 \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Actualizar pip, setuptools y wheel para evitar fallos de compilación de wheels
+WORKDIR /app
+
+# Copiar dependencias e instalar
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ./app ./app
-
-EXPOSE 8000
+COPY . .
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

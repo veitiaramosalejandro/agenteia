@@ -15,3 +15,5 @@ scipy
 redis
 streamlit
 requests
+pyodbc
+pymssql
