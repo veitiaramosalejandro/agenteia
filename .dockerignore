@@ -1,0 +1,4 @@
+ollama_storage/
+agent-service/**/__pycache__/**
+agent-service/audio/
+agent-service/data/
