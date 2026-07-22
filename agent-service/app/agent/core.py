@@ -38,21 +38,25 @@ class MachiningAgent:
             session_id = "default_session"
 
         history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
-        rag_context = get_rag_context(user_text)
 
-        # Incrementamos el historial a los últimos 10 mensajes para no perder el contexto de preguntas anteriores
+        # Detectar si es solo un saludo simple para no meter ruido de RAG
+        clean_text = user_text.strip().lower()
+        if clean_text in ["hola", "hola!", "buenos dias", "buenas tardes", "ola", "hello"]:
+            rag_context = "Sin contexto adicional requerido para saludos."
+        else:
+            rag_context = get_rag_context(user_text)
+
         messages = [
             SystemMessage(
                 content=f"{SYSTEM_PROMPT}\n\n[CONTEXTO RAG / BASE CONOCIMIENTO]:\n{rag_context}"
             )
         ]
-        messages.extend(history.messages[-10:])
+        messages.extend(history.messages[-8:])
         messages.append(HumanMessage(content=user_text))
 
-        # 1. Invocación inicial
+        # Invocación al LLM con herramientas integradas
         response = self.llm_with_tools.invoke(messages)
 
-        # 2. Si el modelo solicita ejecutar una herramienta
         if hasattr(response, "tool_calls") and response.tool_calls:
             messages.append(response)
 
@@ -61,13 +65,10 @@ class MachiningAgent:
                 tool_args = tool_call["args"]
 
                 if tool_name in self.tools_map:
-                    # Ejecutar herramienta con manejo seguro de errores si SQL Server no está disponible
                     try:
-                        tool_output = self.tools_map[tool_name].invoke(
-                            tool_args
-                        )
+                        tool_output = self.tools_map[tool_name].invoke(tool_args)
                     except Exception as err:
-                        tool_output = f"Error al ejecutar la herramienta {tool_name}: {str(err)}"
+                        tool_output = f"Error en herramienta {tool_name}: {str(err)}"
 
                     messages.append(
                         ToolMessage(
@@ -76,19 +77,15 @@ class MachiningAgent:
                         )
                     )
 
-            # Segunda invocación para respuesta final en lenguaje natural
             final_response = self.llm_with_tools.invoke(messages)
             response_text = final_response.content
         else:
             response_text = response.content
 
-        # Si por alguna razón la respuesta quedó vacía o falló la generación
         if not response_text or response_text.strip() == "":
-            response_text = (
-                "Entendido. ¿Deseas que revise la telemetría o algún otro dato?"
-            )
+            response_text = "¿En qué te puedo colaborar?"
 
-        # Guardar interacción en Redis
+        # Persistencia del diálogo
         history.add_user_message(user_text)
         history.add_ai_message(response_text)
 
