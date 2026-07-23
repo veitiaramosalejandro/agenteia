@@ -6,10 +6,11 @@ services:
       dockerfile: Dockerfile
     container_name: machining_ui
     command: streamlit run /app/app/ui.py --server.port=8501 --server.address=0.0.0.0
+    restart: always
     ports:
       - 8501:8501
     environment:
-      - API_URL=http://agent-service:8000/api/v1/agent/dialogue
+      - API_URL=http://agent-service:8000/api/v1/agent
     depends_on:
       - agent-service
     networks:
@@ -20,6 +21,7 @@ services:
       context: ./agent-service
       dockerfile: Dockerfile
     container_name: machining_agent
+    restart: always
     ports:
       - 8000:8000
     environment:
@@ -30,7 +32,8 @@ services:
       - DB_URL=postgresql://user:pass@timescaledb:5432/machining_db
       - REDIS_URL=redis://redis-cache:6379
       - OLLAMA_BASE_URL=http://ollama-llm:11434
-      - MODEL_NAME=llama3.2:3b
+      #- MODEL_NAME=llama3.2:3b
+      - MODEL_NAME=qwen2.5
       - EMBEDDING_MODEL_NAME=nomic-embed-text
     volumes:
       - ./agent-service:/app
@@ -48,6 +51,7 @@ services:
   ollama-llm:
     image: ollama/ollama:latest
     container_name: machining_ollama
+    restart: always
     ports:
       - 11435:11434
     volumes:
@@ -68,6 +72,7 @@ services:
   vector-db:
     image: qdrant/qdrant:latest # Opción robusta y ligera (o chromadb / pgvector)
     container_name: machining_vector_db
+    restart: always
     ports:
       - 6333:6333
     volumes:
@@ -79,6 +84,7 @@ services:
   timescaledb:
     image: timescale/timescaledb:latest-pg15
     container_name: machining_db
+    restart: always
     environment:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=pass
@@ -94,6 +100,7 @@ services:
   redis-cache:
     image: redis:alpine
     container_name: machining_redis
+    restart: always
     ports:
       - 6379:6379
     networks:

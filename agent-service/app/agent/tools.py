@@ -20,33 +20,100 @@ from app.rag.retriever import get_rag_context
 # ---------------------------------------------------------------------------
 @tool
 def query_sql_server(query: str) -> str:
-    """Ejecuta una consulta SELECT en la base de datos SQL Server de la planta.
-    
-    USAR SOLO CUANDO: El usuario pida explícitamente consultar registros históricos,
-    tablas de producción, canales o datos persistidos en la base de datos.
+    """Ejecuta una consulta SELECT en la base de datos SQL Server de la planta (ISIFrameIsicom).
+
+    USAR SOLO CUANDO: Se requiera consultar historial de clientes/cuentas (dbo.Account),
+    actividades/mantenimientos (dbo.Activity), equipos/activos (dbo.Asset) o
+    parámetros almacenados en la base de datos.
+
+    Parámetros:
+        query (str): Consulta SQL SELECT a ejecutar.
     """
-    server = os.getenv("SQL_SERVER_HOST", "sql-server")
+    server = os.getenv("SQL_SERVER_HOST", "172.16.10.149")
     user = os.getenv("SQL_SERVER_USER", "sa")
-    password = os.getenv("SQL_SERVER_PASSWORD", "YourPassword123!")
-    database = os.getenv("SQL_SERVER_DB", "CNC_Factory")
+    password = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
+    database = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")
 
     clean_query = query.strip()
-    if not clean_query.upper().startswith("SELECT"):
-        return "Error: Solo se permiten consultas de lectura (SELECT)."
+    if not clean_query.upper().startswith("SELECT") and not clean_query.upper().startswith("WITH"):
+        return "Error de seguridad: Solo se permiten consultas de lectura (SELECT / WITH)."
+
+    forbidden_keywords = ["DELETE", "INSERT", "UPDATE", "DROP", "ALTER", "TRUNCATE", "EXEC", "EXECUTE"]
+    if any(kw in clean_query.upper() for kw in forbidden_keywords):
+        return "Error de seguridad: La consulta contiene comandos no permitidos para operaciones de lectura."
 
     try:
         conn = pymssql.connect(
-            server=server, user=user, password=password, database=database
+            server=server,
+            user=user,
+            password=password,
+            database=database,
+            timeout=5,
         )
         cursor = conn.cursor(as_dict=True)
         cursor.execute(clean_query)
         rows = cursor.fetchall()
         conn.close()
 
-        return str(rows[:20]) if rows else "La consulta no devolvió resultados."
+        if not rows:
+            return "La consulta se ejecutó correctamente pero no devolvió resultados."
+
+        return str(rows[:15])
+
+    except pymssql.Error as db_err:
+        return f"Error SQL Server: {str(db_err)}. Ajusta los campos/tablas y vuelve a intentar."
+    except Exception as e:
+        return f"Error al conectar o consultar SQL Server: {str(e)}"
+
+
+@tool
+def get_db_schema(table_name: Optional[str] = None) -> str:
+    """Consulta los metadatos de la base de datos SQL Server.
+    
+    USAR CUANDO: El usuario pregunte qué tablas existen, qué columnas tiene una tabla específica,
+    o para explorar la estructura de la base de datos antes de hacer un SELECT.
+    
+    Parámetros:
+        table_name (str, opcional): Si se proporciona, devuelve las columnas y tipos de datos
+                                   de esa tabla. Si es None, devuelve la lista de todas las tablas.
+    """
+    server = os.getenv("SQL_SERVER_HOST", "172.16.10.149")
+    user = os.getenv("SQL_SERVER_USER", "sa")
+    password = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
+    database = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")
+
+    try:
+        conn = pymssql.connect(server=server, user=user, password=password, database=database, timeout=5)
+        cursor = conn.cursor(as_dict=True)
+
+        if table_name:
+            # Obtener columnas y tipos de datos de una tabla específica
+            query = """
+                SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = %s
+            """
+            cursor.execute(query, (table_name,))
+            rows = cursor.fetchall()
+            conn.close()
+            if not rows:
+                return f"No se encontró la tabla '{table_name}'."
+            return f"Columnas de {table_name}: " + str(rows)
+        else:
+            # Obtener todas las tablas disponibles en la BD
+            query = """
+                SELECT TABLE_NAME 
+                FROM INFORMATION_SCHEMA.TABLES 
+                WHERE TABLE_TYPE = 'BASE TABLE'
+            """
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            conn.close()
+            tables = [r['TABLE_NAME'] for r in rows]
+            return f"Tablas disponibles en la base de datos ({len(tables)} en total): " + ", ".join(tables)
 
     except Exception as e:
-        return f"Error ejecutando la consulta en SQL Server: {str(e)}"
+        return f"Error al consultar el esquema: {str(e)}"
 
 
 # ---------------------------------------------------------------------------
@@ -58,15 +125,7 @@ def fetch_external_api(
     method: str = "GET",
     payload: Optional[Union[dict, str]] = None,
 ) -> str:
-    """Realiza una petición HTTP/GraphQL a una API externa para obtener o aprender de sus datos.
-    
-    USAR SOLO CUANDO: El usuario proporcione o solicite explícitamente consultar una URL/API externa.
-    
-    Parámetros:
-        endpoint_url (str): La URL completa del endpoint de la API.
-        method (str): El método HTTP ("GET" o "POST"). Por defecto "GET".
-        payload (dict o str): Datos JSON para enviar en caso de peticiones POST.
-    """
+    """Realiza una petición HTTP/GraphQL a una API externa."""
     try:
         parsed_payload = None
         if payload:
@@ -89,22 +148,17 @@ def fetch_external_api(
             return str(response.json())
             
     except httpx.HTTPStatusError as exc:
-        return f"Error HTTP {exc.response.status_code} al consultar la API: {exc.response.text}"
+        return f"Error HTTP {exc.response.status_code}: {exc.response.text}"
     except Exception as e:
         return f"Error de conexión con la API: {str(e)}"
 
 
 # ---------------------------------------------------------------------------
-# 3. TOOL: Telemetría CNC
+# 3. TOOLS: Telemetría y Diagnóstico CNC
 # ---------------------------------------------------------------------------
 @tool
 def get_cnc_telemetry() -> dict:
-    """Consulta la telemetría en tiempo real de la máquina CNC (RPM, temperatura, estado del motor, alarmas).
-
-    USAR SOLO CUANDO: El usuario pida explícitamente ver el estado, parámetros,
-    rendimiento o telemetría actual de la máquina CNC. NO usar si el usuario
-    está haciendo preguntas generales o teóricas.
-    """
+    """Consulta la telemetría en tiempo real de la máquina CNC (RPM, temperatura, motor, alarmas)."""
     return {
         "status": "OPERATIONAL",
         "spindle_speed_rpm": 3200,
@@ -117,12 +171,12 @@ def get_cnc_telemetry() -> dict:
 @tool
 def recommend_cnc_action(action: str, parameter: str, value: str) -> str:
     """Envía una recomendación de acción correctiva para la máquina CNC."""
-    return f"Acción '{action}' con parámetro '{parameter}={value}' registrada y enviada al panel web del operario."
+    return f"Acción '{action}' con parámetro '{parameter}={value}' registrada."
 
 
 @tool
 def analyze_pcm_audio_diagnostic(file_path: str) -> str:
-    """Procesa y diagnostica un archivo de audio .pcm proveniente de los sensores de la máquina CNC HARTFORD."""
+    """Procesa y diagnostica un archivo de audio .pcm de la máquina CNC HARTFORD."""
     try:
         features = extract_audio_features(file_path)
         rag_matches = get_rag_context(features["text_summary"])
@@ -138,9 +192,7 @@ def analyze_pcm_audio_diagnostic(file_path: str) -> str:
 
 @tool
 def learn_new_fact(fact_description: str, category: str = "general") -> str:
-    """Guarda un nuevo dato, observación o instrucción del operario en la base de conocimientos vectorial (Qdrant).
-    Funciona para textos en Español, Portugués e Inglés.
-    """
+    """Guarda un nuevo dato u observación en la base de conocimientos vectorial (Qdrant)."""
     try:
         client = QdrantClient(url=settings.VECTOR_DB_URL)
         embeddings = OllamaEmbeddings(
@@ -160,9 +212,7 @@ def learn_new_fact(fact_description: str, category: str = "general") -> str:
             },
         )
 
-        client.upsert(
-            collection_name=settings.VECTOR_COLLECTION_NAME, points=[point]
-        )
-        return f"Aprendizaje registrado / Learning registered / Aprendizado registrado: '{fact_description}'"
+        client.upsert(collection_name=settings.VECTOR_COLLECTION_NAME, points=[point])
+        return f"Aprendizaje registrado correctamente: '{fact_description}'"
     except Exception as e:
         return f"Error al registrar el aprendizaje: {str(e)}"
