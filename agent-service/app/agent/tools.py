@@ -38,7 +38,7 @@ def query_sql_server(query: str) -> str:
     - Siempre usa filtros WHERE para evitar consultas masivas
     - Si el usuario no especifica filtros, pregunta antes de ejecutar
     """
-    server = os.getenv("SQL_SERVER_HOST", "172.16.10.149")
+    server = os.getenv("SQL_SERVER_HOST", "192.168.1.76")
     user = os.getenv("SQL_SERVER_USER", "sa")
     password = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
     database = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")
@@ -93,7 +93,7 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
     - NO la uses para obtener datos reales de negocio (usa query_sql_server)
     - NO la uses si el usuario ya sabe qué tabla consultar
     """
-    server = os.getenv("SQL_SERVER_HOST", "172.16.10.149")
+    server = os.getenv("SQL_SERVER_HOST", "192.168.1.76")
     user = os.getenv("SQL_SERVER_USER", "sa")
     password = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
     database = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")

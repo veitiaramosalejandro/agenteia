@@ -1,0 +1,50 @@
+INFORMACIÓN DE CLIENTES - BASE DE DATOS
+
+La empresa tiene los siguientes clientes principales:
+
+1. Industrias Metálicas SA
+   - Ubicación: Bogotá, Colombia
+   - Tipo: Fabricación de piezas metálicas
+   - Volumen mensual: 5000 unidades
+   - Máquina asignada: CNC HARTFORD 1000
+   - Contacto: Carlos Rodríguez
+   - Teléfono: 310-555-1234
+
+2. Autopartes del Caribe
+   - Ubicación: Barranquilla, Colombia
+   - Tipo: Autopartes
+   - Volumen mensual: 3000 unidades
+   - Máquina asignada: CNC HARTFORD 2000
+   - Contacto: María Fernández
+   - Teléfono: 315-555-5678
+
+3. Construcciones Industriales
+   - Ubicación: Medellín, Colombia
+   - Tipo: Estructuras metálicas
+   - Volumen mensual: 2000 unidades
+   - Máquina asignada: CNC HARTFORD 1500
+   - Contacto: Juan Pérez
+   - Teléfono: 320-555-9012
+
+4. MetalMecánica del Norte
+   - Ubicación: Cartagena, Colombia
+   - Tipo: Piezas industriales
+   - Volumen mensual: 1500 unidades
+   - Máquina asignada: CNC HARTFORD 800
+   - Contacto: Ana Martínez
+   - Teléfono: 312-555-3456
+
+5. Calidad Total SAS
+   - Ubicación: Cali, Colombia
+   - Tipo: Control de calidad
+   - Volumen mensual: 1000 unidades
+   - Máquina asignada: CNC HARTFORD 500
+   - Contacto: Pedro Gómez
+   - Teléfono: 316-555-7890
+
+PROCESO DE ATENCIÓN A CLIENTES:
+1. Recepción de pedidos
+2. Asignación de máquina
+3. Programación de producción
+4. Control de calidad
+5. Entrega y facturación

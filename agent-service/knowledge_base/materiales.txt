@@ -1,0 +1,38 @@
+MATERIALES Y ESPECIFICACIONES
+
+MATERIALES COMUNES PROCESADOS:
+
+1. Acero A36:
+   - Dureza: 180 HB
+   - Velocidad de corte recomendada: 100-150 m/min
+   - Avance: 0.1-0.3 mm/rev
+   - Profundidad de corte: 2-5 mm
+
+2. Acero AISI 1045:
+   - Dureza: 220 HB
+   - Velocidad de corte recomendada: 80-120 m/min
+   - Avance: 0.15-0.35 mm/rev
+   - Profundidad de corte: 1.5-4 mm
+
+3. Aluminio 6061:
+   - Dureza: 95 HB
+   - Velocidad de corte recomendada: 200-300 m/min
+   - Avance: 0.2-0.5 mm/rev
+   - Profundidad de corte: 3-6 mm
+
+4. Acero Inoxidable 304:
+   - Dureza: 200 HB
+   - Velocidad de corte recomendada: 60-80 m/min
+   - Avance: 0.1-0.2 mm/rev
+   - Profundidad de corte: 1-2 mm
+
+PARÁMETROS DE CORTE GENERALES:
+- RPM (Revoluciones por minuto) = (Velocidad de corte × 1000) / (π × Diámetro)
+- Avance (mm/min) = Avance por revolución × RPM
+- Potencia requerida (kW) = (Velocidad de corte × Avance × Profundidad) / Constante
+
+HERRAMIENTAS DE CORTE RECOMENDADAS:
+- Fresas de carburo: Para aceros y alta velocidad
+- Fresas de HSS: Para aluminio y materiales blandos
+- Insertos de cerámica: Para materiales duros y alta temperatura
+- Brocas de carburo: Para perforación de precisión
