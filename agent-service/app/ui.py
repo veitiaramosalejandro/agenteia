@@ -111,7 +111,7 @@ def limpiar_sesion():
     st.query_params["session_id"] = new_session
     st.session_state["session_id"] = new_session
     st.session_state["messages"] = [
-        {"role": "assistant", "content": f"👋 ¡Hola! Soy tu asistente de mecanizado. ¿En qué puedo ayudarte hoy?"}
+        {"role": "assistant", "content": f"👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"}
     ]
     st.session_state["messages_loaded"] = True
     st.rerun()
@@ -152,17 +152,17 @@ if "messages" not in st.session_state or not st.session_state.get("messages_load
                     st.session_state["messages"] = remote_messages
                 else:
                     st.session_state["messages"] = [
-                        {"role": "assistant", "content": "👋 ¡Hola! Soy tu asistente de mecanizado. ¿En qué puedo ayudarte hoy?"}
+                        {"role": "assistant", "content": "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"}
                     ]
             else:
                 st.session_state["messages"] = [
-                    {"role": "assistant", "content": "👋 ¡Hola! Soy tu asistente de mecanizado. ¿En qué puedo ayudarte hoy?"}
+                    {"role": "assistant", "content": "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"}
                 ]
             st.session_state["messages_loaded"] = True
         except Exception as e:
             st.warning(f"⚠️ No se pudo cargar el historial remoto: {str(e)}")
             st.session_state["messages"] = [
-                {"role": "assistant", "content": "👋 ¡Hola! Soy tu asistente de mecanizado. ¿En qué puedo ayudarte hoy?"}
+                {"role": "assistant", "content": "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"}
             ]
             st.session_state["messages_loaded"] = True
 
@@ -322,8 +322,8 @@ with st.sidebar:
 # ÁREA PRINCIPAL - CHAT
 # ============================================================
 
-st.markdown('<div class="main-header">⚙️ Machining Assistant AI</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Asistente experto para diagnóstico de maquinaria CNC HARTFORD con aprendizaje contextual</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">⚙️ Agente de IA SolidSET</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">SolidSET COMmunicator - Assistente de Aprendizagem Contextual</div>', unsafe_allow_html=True)
 
 # Mostrar mensajes
 for message in st.session_state["messages"]:
