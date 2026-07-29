@@ -1,4 +1,5 @@
 import hashlib
+import re
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -75,17 +76,37 @@ class MachiningAgent:
         text = (user_text or "").strip().lower()
         if not text:
             return False
-        has_last = any(k in text for k in ["ultimo mensaje", "último mensaje", "last message"])
+        has_last = any(
+            k in text
+            for k in [
+                "ultimo mensaje",
+                "último mensaje",
+                "ultimos mensajes",
+                "últimos mensajes",
+                "last message",
+                "last messages",
+            ]
+        ) or ("ultimo" in text or "último" in text or "ultimos" in text or "últimos" in text)
         has_chat_scope = any(k in text for k in ["chat", "canal", "contexto de la base de datos", "base de datos"])
         return has_last and has_chat_scope
+
+    def _extract_last_messages_limit(self, user_text: str) -> int:
+        """Extrae la cantidad solicitada de últimos mensajes; por defecto 1 y máximo 20."""
+        text = (user_text or "").lower()
+        match = re.search(r"\b(\d{1,2})\b", text)
+        if not match:
+            return 1
+        requested = int(match.group(1))
+        return max(1, min(requested, 20))
 
     def _resolve_last_chat_message_from_db(self, user_id: str, canal_id: Optional[str], user_text: str) -> Optional[str]:
         """Resuelve de forma directa el último mensaje de chat desde la BD del sistema."""
         try:
+            requested_limit = self._extract_last_messages_limit(user_text)
             contexto = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
                 user_id=user_id,
                 canal_id=canal_id,
-                limit=20,
+                limit=max(20, requested_limit),
             )
             if not contexto or "No hay historial" in contexto or "No hay mensajes" in contexto:
                 return None
@@ -94,9 +115,15 @@ class MachiningAgent:
             if not lines:
                 return None
 
-            target_line = lines[0]
+            selected = lines[:requested_limit]
+            if requested_limit == 1:
+                return f"Último mensaje encontrado en el contexto de la base de datos: {selected[0]}"
 
-            return f"Último mensaje encontrado en el contexto de la base de datos: {target_line}"
+            joined = "\n".join(f"{idx}. {line}" for idx, line in enumerate(selected, start=1))
+            return (
+                f"Últimos {len(selected)} mensajes encontrados en el contexto de la base de datos:\n"
+                f"{joined}"
+            )
         except Exception:
             return None
 

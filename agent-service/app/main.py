@@ -312,49 +312,57 @@ def handle_dialogue(req: ChatConversationRequest):
         dialogue_started = True
         app.state.active_dialogues = _get_active_dialogues()
         
-        # Ejecutar el agente con timeout para mantener tiempos de respuesta controlados.
-        response_holder = {}
-        error_holder = {}
-
-        def _run_agent_dialogue() -> None:
-            try:
-                response_holder["text"] = agent.analyze_event_with_dialogue(
-                    session_id=req.session_id,
-                    user_text=req.message,
-                    user_id=req.user_id,
-                    canal_id=req.canal_id,
-                )
-            except Exception as exc:
-                error_holder["error"] = exc
-
-        worker = threading.Thread(target=_run_agent_dialogue, daemon=True)
-        worker.start()
-
-        processing_timeout = max(5, settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS)
-        worker.join(timeout=processing_timeout)
-
-        if worker.is_alive():
-            print(
-                f"⚠️ Timeout de conversación en sesión {req.session_id} tras {processing_timeout}s. "
-                "Se devuelve respuesta controlada y se libera al terminar en segundo plano."
-            )
-            threading.Thread(
-                target=_release_dialogue_resources_when_done,
-                args=(worker,),
-                daemon=True,
-            ).start()
-            dialogue_started = False
-            slot_acquired = False
-            return ChatConversationResponse(
+        processing_timeout = settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS
+        if processing_timeout <= 0:
+            # Modo bloqueante: esperar respuesta real para que el cliente reciba el resultado final.
+            response_text = agent.analyze_event_with_dialogue(
                 session_id=req.session_id,
-                user_message=req.message,
-                agent_response="⏱️ La consulta está tomando más tiempo de lo esperado. Intenta de nuevo en unos segundos para mantener una respuesta ágil del sistema."
+                user_text=req.message,
+                user_id=req.user_id,
+                canal_id=req.canal_id,
             )
+        else:
+            # Ejecutar el agente con timeout para mantener tiempos de respuesta controlados.
+            response_holder = {}
+            error_holder = {}
 
-        if "error" in error_holder:
-            raise error_holder["error"]
+            def _run_agent_dialogue() -> None:
+                try:
+                    response_holder["text"] = agent.analyze_event_with_dialogue(
+                        session_id=req.session_id,
+                        user_text=req.message,
+                        user_id=req.user_id,
+                        canal_id=req.canal_id,
+                    )
+                except Exception as exc:
+                    error_holder["error"] = exc
 
-        response_text = response_holder.get("text", "")
+            worker = threading.Thread(target=_run_agent_dialogue, daemon=True)
+            worker.start()
+            worker.join(timeout=max(5, processing_timeout))
+
+            if worker.is_alive():
+                print(
+                    f"⚠️ Timeout de conversación en sesión {req.session_id} tras {processing_timeout}s. "
+                    "Se devuelve respuesta controlada y se libera al terminar en segundo plano."
+                )
+                threading.Thread(
+                    target=_release_dialogue_resources_when_done,
+                    args=(worker,),
+                    daemon=True,
+                ).start()
+                dialogue_started = False
+                slot_acquired = False
+                return ChatConversationResponse(
+                    session_id=req.session_id,
+                    user_message=req.message,
+                    agent_response="⏱️ La consulta está tomando más tiempo de lo esperado. Intenta de nuevo en unos segundos para mantener una respuesta ágil del sistema."
+                )
+
+            if "error" in error_holder:
+                raise error_holder["error"]
+
+            response_text = response_holder.get("text", "")
         
         # --- 3. CONSTRUIR RESPUESTA ---
         

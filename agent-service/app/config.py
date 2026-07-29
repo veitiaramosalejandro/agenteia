@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     DB_INGEST_CONNECT_RETRIES: int = int(os.getenv("DB_INGEST_CONNECT_RETRIES", "2"))
     DIALOGUE_MAX_CONCURRENT: int = int(os.getenv("DIALOGUE_MAX_CONCURRENT", "1"))
     DIALOGUE_ADMISSION_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_ADMISSION_TIMEOUT_SECONDS", "2"))
-    DIALOGUE_PROCESSING_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_PROCESSING_TIMEOUT_SECONDS", "20"))
+    DIALOGUE_PROCESSING_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_PROCESSING_TIMEOUT_SECONDS", "0"))
     
     # Audio
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_samples")
