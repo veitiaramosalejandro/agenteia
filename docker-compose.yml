@@ -35,6 +35,10 @@ services:
       #- MODEL_NAME=llama3.2:3b
       - MODEL_NAME=qwen2.5:7b
       - EMBEDDING_MODEL_NAME=nomic-embed-text
+      - SQL_SERVER_HOST=${SQL_SERVER_HOST}
+      - SQL_SERVER_USER=${SQL_SERVER_USER}
+      - SQL_SERVER_PASSWORD=${SQL_SERVER_PASSWORD}
+      - SQL_SERVER_DB=${SQL_SERVER_DB}
     volumes:
       - ./agent-service:/app
       - ./data:/app/data

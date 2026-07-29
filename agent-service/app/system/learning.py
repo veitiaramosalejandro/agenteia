@@ -1,11 +1,10 @@
 import uuid
-import os  # <--- AGREGAR ESTA LÍNEA
 import hashlib
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import pymssql
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct
+from qdrant_client.models import PointStruct, Distance, VectorParams
 from langchain_ollama import OllamaEmbeddings
 
 from app.config import settings
@@ -26,6 +25,21 @@ class SistemaAprendizaje:
         )
         self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL)
         self.collection = settings.VECTOR_COLLECTION_NAME
+        self._ensure_collection()
+
+    def _ensure_collection(self):
+        """Asegura que la colección de aprendizaje exista en Qdrant."""
+        try:
+            collections = self.qdrant.get_collections()
+            collection_names = [c.name for c in collections.collections]
+            if self.collection not in collection_names:
+                self.qdrant.create_collection(
+                    collection_name=self.collection,
+                    vectors_config=VectorParams(size=768, distance=Distance.COSINE)
+                )
+                print(f"✅ Colección de aprendizaje creada: {self.collection}")
+        except Exception as e:
+            print(f"⚠️ Error asegurando colección '{self.collection}': {e}")
 
     # ============================================================
     # 1. OBTENER CONTEXTO DEL USUARIO
@@ -38,10 +52,10 @@ class SistemaAprendizaje:
         # Conectar a SQL Server para obtener datos del usuario
         try:
             conn = pymssql.connect(
-                server=os.getenv("SQL_SERVER_HOST", "192.168.1.76"),
-                user=os.getenv("SQL_SERVER_USER", "sa"),
-                password=os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234"),
-                database=os.getenv("SQL_SERVER_DB", "ISIFrameIsicom"),
+                server=settings.SQL_SERVER_HOST,
+                user=settings.SQL_SERVER_USER,
+                password=settings.SQL_SERVER_PASSWORD,
+                database=settings.SQL_SERVER_DB,
                 timeout=5,
             )
             cursor = conn.cursor(as_dict=True)
@@ -162,7 +176,174 @@ class SistemaAprendizaje:
             )
             
         except Exception as e:
-            print(f"❌ Error obteniendo contexto del usuario: {e}")
+            print(f"⚠️ Esquema primario no disponible para contexto de usuario: {e}")
+            return self._obtener_contexto_usuario_fallback(user_id)
+
+    def _obtener_contexto_usuario_fallback(self, user_id: str) -> Optional[ContextoUsuario]:
+        """
+        Fallback para esquemas donde no existen las tablas dbo.Recursos* y dbo.Canales.
+
+        Mapeo rápido aplicado:
+        - RecursoHumano -> dbo.SysPerson (IDResource, accountname/firstname/lastname, email, departament, title)
+        - Canales usuario -> dbo.ActivitiesSysResources + dbo.Activity2Channel (IDChannel)
+        - Actividades recientes -> dbo.ActivitiesSysResources + dbo.Activity
+        - Recursos materiales -> dbo.Asset2SysResource + dbo.Asset2Channel (IDAsset)
+        """
+        try:
+            conn = pymssql.connect(
+                server=settings.SQL_SERVER_HOST,
+                user=settings.SQL_SERVER_USER,
+                password=settings.SQL_SERVER_PASSWORD,
+                database=settings.SQL_SERVER_DB,
+                timeout=5,
+            )
+            cursor = conn.cursor(as_dict=True)
+
+            cursor.execute(
+                """
+                SELECT TOP 1
+                    IDResource,
+                    accountname,
+                    firstname,
+                    lastname,
+                    email,
+                    departament,
+                    title
+                FROM dbo.SysPerson
+                WHERE IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                   OR organization_no = %s
+                   OR reference = %s
+                """,
+                (user_id, user_id, user_id),
+            )
+            usuario_data = cursor.fetchone()
+            if not usuario_data:
+                conn.close()
+                return None
+
+            nombre = (
+                usuario_data.get("accountname")
+                or f"{(usuario_data.get('firstname') or '').strip()} {(usuario_data.get('lastname') or '').strip()}".strip()
+                or str(usuario_data.get("IDResource") or user_id)
+            )
+            rol = (usuario_data.get("title") or "operario").strip() if usuario_data.get("title") else "operario"
+            especialidades = [rol] if rol else []
+
+            usuario = RecursoHumano(
+                id=str(usuario_data.get("IDResource") or user_id),
+                nombre=nombre,
+                email=(usuario_data.get("email") or ""),
+                rol=rol,
+                departamento=usuario_data.get("departament"),
+                especialidades=especialidades,
+                canales=[],
+            )
+
+            cursor.execute(
+                """
+                SELECT DISTINCT TOP 30 a2c.IDChannel
+                FROM dbo.ActivitiesSysResources asr
+                INNER JOIN dbo.Activity2Channel a2c ON a2c.IDActivity = asr.IDActivity
+                WHERE asr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                """,
+                (user_id,),
+            )
+            canales_rows = cursor.fetchall() or []
+
+            canales = []
+            for row in canales_rows:
+                canal_id = str(row.get("IDChannel")) if row.get("IDChannel") else None
+                if not canal_id:
+                    continue
+                canal = Canal(
+                    id=canal_id,
+                    nombre=f"Canal {canal_id[:8]}",
+                    descripcion="Canal inferido desde Activity2Channel",
+                    tipo="operativo",
+                    recursos_humanos=[],
+                    recursos_materiales=[],
+                )
+                canales.append(canal)
+                usuario.canales.append(canal_id)
+
+            cursor.execute(
+                """
+                SELECT TOP 20
+                    a.IDActivity,
+                    a2c.IDChannel,
+                    a.type,
+                    a.subject,
+                    a.description,
+                    a.startDate
+                FROM dbo.ActivitiesSysResources asr
+                INNER JOIN dbo.Activity a ON a.IDActivity = asr.IDActivity
+                LEFT JOIN dbo.Activity2Channel a2c ON a2c.IDActivity = a.IDActivity
+                WHERE asr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                ORDER BY a.startDate DESC
+                """,
+                (user_id,),
+            )
+            actividades_rows = cursor.fetchall() or []
+
+            actividades = []
+            for a in actividades_rows:
+                tipo = str(a.get("type")) if a.get("type") is not None else "actividad"
+                descripcion = f"{(a.get('subject') or '').strip()} {(a.get('description') or '').strip()}".strip()
+                timestamp = a.get("startDate") or datetime.now()
+                actividades.append(
+                    Actividad(
+                        id=str(a.get("IDActivity")),
+                        recurso_humano_id=str(usuario.id),
+                        canal_id=str(a.get("IDChannel")) if a.get("IDChannel") else "canal_general",
+                        tipo=tipo,
+                        descripcion=descripcion or "Sin descripción",
+                        timestamp=timestamp,
+                        metadatos={},
+                    )
+                )
+
+            cursor.execute(
+                """
+                SELECT DISTINCT TOP 30
+                    a2c.IDChannel,
+                    a2sr.IDAsset
+                FROM dbo.Asset2SysResource a2sr
+                LEFT JOIN dbo.Asset2Channel a2c ON a2c.IDAsset = a2sr.IDAsset
+                WHERE a2sr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                  AND (a2sr.Active = 1 OR a2sr.Active IS NULL)
+                """,
+                (user_id,),
+            )
+            materiales_rows = cursor.fetchall() or []
+            recursos_disponibles = []
+            for m in materiales_rows:
+                asset_id = m.get("IDAsset")
+                if asset_id is None:
+                    continue
+                canal_id = str(m.get("IDChannel")) if m.get("IDChannel") else "canal_general"
+                recursos_disponibles.append(
+                    RecursoMaterial(
+                        id=str(asset_id),
+                        nombre=f"Asset {asset_id}",
+                        tipo="asset",
+                        canal_id=canal_id,
+                        estado="disponible",
+                        especificaciones={},
+                    )
+                )
+
+            conn.close()
+
+            permisos = self._obtener_permisos_por_rol(usuario.rol)
+            return ContextoUsuario(
+                usuario=usuario,
+                canales_acceso=canales,
+                actividades_recientes=actividades,
+                recursos_disponibles=recursos_disponibles,
+                permisos=permisos,
+            )
+        except Exception as e:
+            print(f"❌ Error en fallback de contexto de usuario: {e}")
             return None
     
     def _obtener_permisos_por_rol(self, rol: str) -> List[str]:
@@ -263,27 +444,37 @@ class SistemaAprendizaje:
         try:
             # Obtener contexto del usuario que realizó la actividad
             contexto = self.obtener_contexto_usuario(actividad.recurso_humano_id)
-            if not contexto:
-                return False
+            usuario_nombre = actividad.recurso_humano_id
+            usuario_rol = "desconocido"
+            usuario_departamento = "No especificado"
+            usuario_especialidades = "No especificadas"
+            usuario_permisos = "consultar_informacion"
+
+            if contexto:
+                usuario_nombre = contexto.usuario.nombre
+                usuario_rol = contexto.usuario.rol
+                usuario_departamento = contexto.usuario.departamento or "No especificado"
+                usuario_especialidades = ", ".join(contexto.usuario.especialidades) if contexto.usuario.especialidades else "No especificadas"
+                usuario_permisos = ", ".join(contexto.permisos)
             
             # Construir el texto de aprendizaje
             texto_aprendizaje = f"""
-            Actividad realizada por {contexto.usuario.nombre} ({contexto.usuario.rol}) en el canal {actividad.canal_id}:
+            Actividad realizada por {usuario_nombre} ({usuario_rol}) en el canal {actividad.canal_id}:
             Tipo: {actividad.tipo}
             Descripción: {actividad.descripcion}
             Fecha: {actividad.timestamp}
             
             Contexto del usuario:
-            - Departamento: {contexto.usuario.departamento}
-            - Especialidades: {', '.join(contexto.usuario.especialidades)}
-            - Permisos: {', '.join(contexto.permisos)}
+            - Departamento: {usuario_departamento}
+            - Especialidades: {usuario_especialidades}
+            - Permisos: {usuario_permisos}
             """
             
             # Generar embedding
             vector = self.embeddings.embed_query(texto_aprendizaje)
             
             # ID basado en hash para evitar duplicados
-            point_id = f"actividad_{hashlib.md5(texto_aprendizaje.encode()).hexdigest()[:16]}"
+            point_id = str(uuid.UUID(hashlib.md5(texto_aprendizaje.encode()).hexdigest()))
             
             point = PointStruct(
                 id=point_id,
@@ -293,7 +484,7 @@ class SistemaAprendizaje:
                     "tipo": actividad.tipo,
                     "canal_id": actividad.canal_id,
                     "recurso_humano_id": actividad.recurso_humano_id,
-                    "rol_usuario": contexto.usuario.rol,
+                    "rol_usuario": usuario_rol,
                     "timestamp": actividad.timestamp.isoformat(),
                     "source": "actividad_aprendida"
                 }
@@ -326,7 +517,7 @@ class SistemaAprendizaje:
             
             vector = self.embeddings.embed_query(texto_canal)
             
-            point_id = f"canal_{hashlib.md5(canal.id.encode()).hexdigest()[:16]}"
+            point_id = str(uuid.UUID(hashlib.md5(canal.id.encode()).hexdigest()))
             
             point = PointStruct(
                 id=point_id,
@@ -358,13 +549,27 @@ class SistemaAprendizaje:
         Busca en Qdrant utilizando un filtro opcional.
         """
         try:
-            resultados = self.qdrant.search(
-                collection_name=self.collection,
-                query_vector=query_vector,
-                limit=limit,
-                query_filter=query_filter
-            )
-            return resultados or []
+            collections = [c.name for c in self.qdrant.get_collections().collections]
+            if self.collection not in collections:
+                return []
+
+            # Compatibilidad con versiones nuevas de qdrant-client.
+            try:
+                search_result = self.qdrant.query_points(
+                    collection_name=self.collection,
+                    query=query_vector,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
+                return search_result.points if hasattr(search_result, "points") else (search_result or [])
+            except AttributeError:
+                resultados = self.qdrant.search(
+                    collection_name=self.collection,
+                    query_vector=query_vector,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
+                return resultados or []
         except Exception as e:
             print(f"❌ Error en búsqueda de aprendizaje: {e}")
             return []
@@ -459,11 +664,7 @@ class SistemaAprendizaje:
             query = f"Actividad tipo {tipo_actividad} en canal {canal_id}"
             query_vector = self.embeddings.embed_query(query)
             
-            resultados = self.qdrant.search(
-                collection_name=self.collection,
-                query_vector=query_vector,
-                limit=10
-            )
+            resultados = self._search_aprendizaje(query_vector, None, 10)
             
             colaboradores = {}
             for hit in resultados:

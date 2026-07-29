@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 from langchain_ollama import OllamaEmbeddings
 import pymssql
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct
+from qdrant_client.models import PointStruct, Distance, VectorParams
 
 from app.config import settings
 from app.rag.audio_processor import extract_audio_features
@@ -38,10 +38,10 @@ def query_sql_server(query: str) -> str:
     - Siempre usa filtros WHERE para evitar consultas masivas
     - Si el usuario no especifica filtros, pregunta antes de ejecutar
     """
-    server = os.getenv("SQL_SERVER_HOST", "192.168.1.76")
-    user = os.getenv("SQL_SERVER_USER", "sa")
-    password = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
-    database = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")
+    server = settings.SQL_SERVER_HOST
+    user = settings.SQL_SERVER_USER
+    password = settings.SQL_SERVER_PASSWORD
+    database = settings.SQL_SERVER_DB
 
     clean_query = query.strip()
     if not clean_query.upper().startswith("SELECT") and not clean_query.upper().startswith("WITH"):
@@ -93,10 +93,10 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
     - NO la uses para obtener datos reales de negocio (usa query_sql_server)
     - NO la uses si el usuario ya sabe qué tabla consultar
     """
-    server = os.getenv("SQL_SERVER_HOST", "192.168.1.76")
-    user = os.getenv("SQL_SERVER_USER", "sa")
-    password = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
-    database = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")
+    server = settings.SQL_SERVER_HOST
+    user = settings.SQL_SERVER_USER
+    password = settings.SQL_SERVER_PASSWORD
+    database = settings.SQL_SERVER_DB
 
     try:
         conn = pymssql.connect(server=server, user=user, password=password, database=database, timeout=5)
@@ -295,11 +295,18 @@ def learn_new_fact(fact_description: str, category: str = "general") -> str:
             model=settings.EMBEDDING_MODEL_NAME,
         )
 
+        collections = [c.name for c in client.get_collections().collections]
+        if settings.VECTOR_COLLECTION_NAME not in collections:
+            client.create_collection(
+                collection_name=settings.VECTOR_COLLECTION_NAME,
+                vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+            )
+
         vector = embeddings.embed_query(fact_description)
 
         # 🚀 MEJORA: ID único basado en hash para evitar duplicados
         content_hash = hashlib.md5(fact_description.encode()).hexdigest()
-        point_id = f"fact_{content_hash}"
+        point_id = str(uuid.UUID(content_hash))
 
         point = PointStruct(
             id=point_id,

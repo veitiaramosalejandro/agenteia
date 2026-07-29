@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "machining_db")
     
     # SQL Server (para compatibilidad)
-    SQL_SERVER_HOST: str = os.getenv("SQL_SERVER_HOST", "localhost")
+    SQL_SERVER_HOST: str = os.getenv("SQL_SERVER_HOST", "172.16.10.167")
     SQL_SERVER_USER: str = os.getenv("SQL_SERVER_USER", "sa")
     SQL_SERVER_PASSWORD: str = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
     SQL_SERVER_DB: str = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")
