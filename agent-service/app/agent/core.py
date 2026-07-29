@@ -118,10 +118,19 @@ class MachiningAgent:
                     )
                     if aprendizaje and "No hay conocimiento" not in aprendizaje:
                         resultados.append(f"[Canal: {canal.nombre}]\n{aprendizaje}")
-                
+                 
                 if resultados:
-                    return "\n\n".join(resultados[:3])
-            
+                    unique_results = []
+                    seen_results = set()
+                    for item in resultados:
+                        normalized = item.strip()
+                        if normalized not in seen_results:
+                            seen_results.add(normalized)
+                            unique_results.append(item)
+                        if len(unique_results) >= 3:
+                            break
+                    return "\n\n".join(unique_results[:3])
+             
             # Si no hay contexto o canales, búsqueda general
             aprendizaje = self.sistema_aprendizaje.consultar_aprendizaje(
                 query=query,

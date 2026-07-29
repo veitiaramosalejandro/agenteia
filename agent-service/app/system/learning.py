@@ -353,35 +353,96 @@ class SistemaAprendizaje:
     # 4. CONSULTAR CONOCIMIENTO APRENDIDO (para el agente)
     # ============================================================
     
-    def consultar_aprendizaje(self, query: str, canal_id: Optional[str] = None, limit: int = 3) -> str:
+    def _search_aprendizaje(self, query_vector, query_filter: Optional[dict], limit: int):
         """
-        Consulta el conocimiento aprendido por el sistema.
-        Puede filtrar por canal para dar contexto específico.
+        Busca en Qdrant utilizando un filtro opcional.
         """
         try:
-            query_vector = self.embeddings.embed_query(query)
-            
-            # Si hay filtro por canal, agregarlo
-            filtro = None
-            if canal_id:
-                filtro = {"must": [{"key": "canal_id", "match": {"value": canal_id}}]}
-            
             resultados = self.qdrant.search(
                 collection_name=self.collection,
                 query_vector=query_vector,
                 limit=limit,
-                query_filter=filtro
+                query_filter=query_filter
             )
-            
-            if not resultados:
-                return "No hay conocimiento previo relacionado con esta consulta."
-            
-            texto_resultado = "📚 CONOCIMIENTO APRENDIDO RELACIONADO:\n\n"
-            for i, hit in enumerate(resultados, 1):
-                texto_resultado += f"{i}. {hit.payload.get('page_content', '')[:300]}...\n\n"
-            
-            return texto_resultado
-            
+            return resultados or []
+        except Exception as e:
+            print(f"❌ Error en búsqueda de aprendizaje: {e}")
+            return []
+
+    def _extract_hit_id(self, hit) -> Optional[str]:
+        if hasattr(hit, 'id') and getattr(hit, 'id') is not None:
+            return getattr(hit, 'id')
+        if isinstance(hit, dict):
+            return hit.get('id') or hit.get('payload', {}).get('id')
+        if hasattr(hit, 'payload') and hit.payload:
+            return hit.payload.get('id')
+        return None
+
+    def _format_aprendizaje_results(self, resultados) -> str:
+        if not resultados:
+            return "No hay conocimiento previo relacionado con esta consulta."
+
+        texto_resultado = "📚 CONOCIMIENTO APRENDIDO RELACIONADO:\n\n"
+        seen_ids = set()
+        count = 0
+        for hit in resultados:
+            hit_id = self._extract_hit_id(hit)
+            page_content = None
+            if hasattr(hit, 'payload') and hit.payload:
+                page_content = hit.payload.get('page_content', '')
+            elif isinstance(hit, dict):
+                page_content = hit.get('payload', {}).get('page_content', '')
+
+            if not page_content:
+                continue
+
+            unique_key = hit_id or page_content[:120]
+            if unique_key in seen_ids:
+                continue
+            seen_ids.add(unique_key)
+
+            count += 1
+            texto_resultado += f"{count}. {page_content[:300]}...\n\n"
+            if count >= 5:
+                break
+
+        return texto_resultado if count > 0 else "No hay conocimiento previo relacionado con esta consulta."
+
+    def consultar_aprendizaje(self, query: str, canal_id: Optional[str] = None, limit: int = 3) -> str:
+        """
+        Consulta el conocimiento aprendido por el sistema.
+        Puede filtrar por canal para dar contexto específico, pero siempre incluye resultados generales.
+        """
+        try:
+            query_vector = self.embeddings.embed_query(query)
+
+            resultados = []
+            canal_results = []
+            general_results = []
+
+            # Buscar por canal si se especifica
+            if canal_id:
+                canal_filter = {"must": [{"key": "canal_id", "match": {"value": canal_id}}]}
+                canal_results = self._search_aprendizaje(query_vector, canal_filter, limit)
+
+            # Buscar conocimiento general sin filtro de canal
+            general_results = self._search_aprendizaje(query_vector, None, limit)
+
+            if canal_results:
+                resultados.extend(canal_results)
+
+            # Añadir resultados generales adicionales que no estén duplicados
+            canal_ids = {self._extract_hit_id(hit) for hit in canal_results if hit and self._extract_hit_id(hit) is not None}
+            for hit in general_results:
+                hit_id = self._extract_hit_id(hit)
+                if hit_id is not None and hit_id in canal_ids:
+                    continue
+                resultados.append(hit)
+                if len(resultados) >= limit:
+                    break
+
+            return self._format_aprendizaje_results(resultados[:limit])
+
         except Exception as e:
             return f"Error consultando aprendizaje: {str(e)}"
     
