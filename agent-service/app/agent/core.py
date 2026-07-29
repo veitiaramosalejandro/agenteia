@@ -515,7 +515,7 @@ class MachiningAgent:
         Maneja saludos simples con contexto personalizado.
         """
         if not user_id:
-            return "👋 ¡Hola! Soy tu asistente de mecanizado. ¿En qué puedo ayudarte hoy?"
+            return "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"
         
         try:
             contexto_obj = self.sistema_aprendizaje.obtener_contexto_usuario(user_id)
@@ -536,10 +536,10 @@ class MachiningAgent:
 
 ¡Dime qué necesitas!"""
             else:
-                return "👋 ¡Hola! Soy tu asistente de mecanizado. ¿En qué puedo ayudarte hoy?"
+                return "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"
         except Exception as e:
             print(f"⚠️ Error en saludo personalizado: {e}")
-            return "👋 ¡Hola! Soy tu asistente de mecanizado. ¿En qué puedo ayudarte hoy?"
+            return "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"
 
     # ============================================================
     # 7. MÉTODO DE UTILIDAD PARA DEPURACIÓN
