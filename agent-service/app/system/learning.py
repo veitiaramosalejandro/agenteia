@@ -422,7 +422,7 @@ class SistemaAprendizaje:
                         c2r.RecordCode,
                         c2r.RecordShortName
                     FROM dbo.SysChat2SysResource c2rsc
-                    INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                    INNER JOIN dbo.SysChat c ON c.IDChat = c2rsc.IDChat
                     LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
                     LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
                     OUTER APPLY (
@@ -480,9 +480,9 @@ class SistemaAprendizaje:
                         c2r.RecordShortName,
                         c2w.IDWorkRoom
                     FROM dbo.SysChat2SysResource c2rsc
-                    INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                    INNER JOIN dbo.SysChat c ON c.IDChat = c2rsc.IDChat
                     LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
-                    INNER JOIN dbo.SysChat2Record c2r ON c2r.IDChat = c.IDChat2
+                          INNER JOIN dbo.SysChat2Record c2r ON c2r.IDChat = c.IDChat2
                     WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
                        OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
                     ORDER BY c2r.Stamp DESC
@@ -565,7 +565,7 @@ class SistemaAprendizaje:
                     COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) AS IDChannel,
                     wr.Name AS ChannelName
                 FROM dbo.SysChat2SysResource c2rsc
-                INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                INNER JOIN dbo.SysChat c ON c.IDChat = c2rsc.IDChat
                 LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
                 LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
                 WHERE (
