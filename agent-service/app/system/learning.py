@@ -700,14 +700,28 @@ class SistemaAprendizaje:
         Indexa el conocimiento en Qdrant para futuras consultas.
         """
         try:
-            # Obtener contexto del usuario que realizó la actividad
-            contexto = self.obtener_contexto_usuario(actividad.recurso_humano_id)
-            usuario_nombre = actividad.recurso_humano_id
-            usuario_rol = "desconocido"
-            usuario_departamento = "No especificado"
-            usuario_especialidades = "No especificadas"
-            usuario_permisos = "consultar_informacion"
+            metadatos = actividad.metadatos or {}
+            source_table = metadatos.get("source_table")
 
+            # Para ingestas del sistema no tiene sentido consultar el esquema de usuarios humano.
+            # Usamos los datos del propio evento para evitar ruido y fallos repetidos.
+            if actividad.recurso_humano_id == "sistema" or source_table in {"SysRole", "SysResources", "SysChat"}:
+                usuario_nombre = metadatos.get("display_name") or metadatos.get("role_code") or actividad.recurso_humano_id
+                usuario_rol = source_table or "sistema"
+                usuario_departamento = "No especificado"
+                usuario_especialidades = source_table or "No especificadas"
+                usuario_permisos = "consultar_informacion"
+                contexto = None
+            else:
+                # Obtener contexto del usuario que realizó la actividad
+                contexto = self.obtener_contexto_usuario(actividad.recurso_humano_id)
+                usuario_nombre = actividad.recurso_humano_id
+                usuario_rol = "desconocido"
+                usuario_departamento = "No especificado"
+                usuario_especialidades = "No especificadas"
+                usuario_permisos = "consultar_informacion"
+
+            
             if contexto:
                 usuario_nombre = contexto.usuario.nombre
                 usuario_rol = contexto.usuario.rol
