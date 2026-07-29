@@ -39,6 +39,7 @@ services:
       - SQL_SERVER_USER=${SQL_SERVER_USER}
       - SQL_SERVER_PASSWORD=${SQL_SERVER_PASSWORD}
       - SQL_SERVER_DB=${SQL_SERVER_DB}
+      - DB_STUDY_INTERVAL_SECONDS=3600
     volumes:
       - ./agent-service:/app
       - ./data:/app/data

@@ -45,6 +45,9 @@ async def _ciclo_aprendizaje_bd() -> None:
     print(f"🔄 Ciclo de aprendizaje BD activo cada {intervalo} segundos")
     consecutive_failures = 0
 
+    # Evita una ingesta inmediata al reiniciar: espera el primer ciclo programado.
+    await asyncio.sleep(intervalo)
+
     while True:
         try:
             resultado = await asyncio.to_thread(ingestar_sistema_completo)
