@@ -1,5 +1,6 @@
 import uuid
 import hashlib
+import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import pymssql
@@ -25,7 +26,28 @@ class SistemaAprendizaje:
         )
         self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL)
         self.collection = settings.VECTOR_COLLECTION_NAME
+        self.sql_retry_stats = {
+            "connect_retries": 0,
+            "query_retries": 0,
+            "connect_by_context": {},
+            "query_by_context": {},
+            "last_retry_at": None,
+        }
         self._ensure_collection()
+
+    def _increment_retry_metric(self, metric_key: str, context_key: str):
+        """Incrementa contadores de reintento SQL para observabilidad básica."""
+        self.sql_retry_stats[metric_key] = self.sql_retry_stats.get(metric_key, 0) + 1
+
+        by_context_key = "connect_by_context" if metric_key == "connect_retries" else "query_by_context"
+        by_context = self.sql_retry_stats.get(by_context_key, {})
+        by_context[context_key] = by_context.get(context_key, 0) + 1
+        self.sql_retry_stats[by_context_key] = by_context
+        self.sql_retry_stats["last_retry_at"] = datetime.now().isoformat()
+
+    def get_sql_retry_stats(self) -> Dict[str, Any]:
+        """Devuelve métricas acumuladas de reintentos SQL."""
+        return dict(self.sql_retry_stats)
 
     def _ensure_collection(self):
         """Asegura que la colección de aprendizaje exista en Qdrant."""
@@ -41,6 +63,67 @@ class SistemaAprendizaje:
         except Exception as e:
             print(f"⚠️ Error asegurando colección '{self.collection}': {e}")
 
+    def _connect_sql_with_retry(
+        self,
+        timeout: int = 10,
+        retries: int = 3,
+        base_delay_seconds: int = 1,
+        context: str = "sql",
+    ):
+        """Conexión robusta a SQL Server con reintentos para fallos transitorios."""
+        last_error = None
+        for attempt in range(1, retries + 1):
+            try:
+                return pymssql.connect(
+                    server=settings.SQL_SERVER_HOST,
+                    user=settings.SQL_SERVER_USER,
+                    password=settings.SQL_SERVER_PASSWORD,
+                    database=settings.SQL_SERVER_DB,
+                    timeout=timeout,
+                )
+            except Exception as e:
+                last_error = e
+                if attempt < retries:
+                    self._increment_retry_metric("connect_retries", context)
+                    delay = base_delay_seconds * attempt
+                    print(
+                        f"⚠️ Conexión SQL falló ({context}) intento {attempt}/{retries}: {e}. "
+                        f"Reintentando en {delay}s... "
+                        f"[metrics connect_retries={self.sql_retry_stats.get('connect_retries', 0)}]"
+                    )
+                    time.sleep(delay)
+
+        raise last_error
+
+    def _execute_with_retry(
+        self,
+        cursor,
+        query: str,
+        params: tuple = (),
+        retries: int = 2,
+        base_delay_seconds: int = 1,
+        context: str = "sql_query",
+    ):
+        """Ejecuta una consulta SQL con reintentos para queries propensas a timeout."""
+        last_error = None
+        for attempt in range(1, retries + 1):
+            try:
+                cursor.execute(query, params)
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < retries:
+                    self._increment_retry_metric("query_retries", context)
+                    delay = base_delay_seconds * attempt
+                    print(
+                        f"⚠️ Consulta SQL falló ({context}) intento {attempt}/{retries}: {e}. "
+                        f"Reintentando en {delay}s... "
+                        f"[metrics query_retries={self.sql_retry_stats.get('query_retries', 0)}]"
+                    )
+                    time.sleep(delay)
+
+        raise last_error
+
     # ============================================================
     # 1. OBTENER CONTEXTO DEL USUARIO
     # ============================================================
@@ -51,12 +134,11 @@ class SistemaAprendizaje:
         """
         # Conectar a SQL Server para obtener datos del usuario
         try:
-            conn = pymssql.connect(
-                server=settings.SQL_SERVER_HOST,
-                user=settings.SQL_SERVER_USER,
-                password=settings.SQL_SERVER_PASSWORD,
-                database=settings.SQL_SERVER_DB,
-                timeout=5,
+            conn = self._connect_sql_with_retry(
+                timeout=10,
+                retries=3,
+                base_delay_seconds=1,
+                context="contexto_usuario_primario",
             )
             cursor = conn.cursor(as_dict=True)
             
@@ -183,19 +265,19 @@ class SistemaAprendizaje:
         """
         Fallback para esquemas donde no existen las tablas dbo.Recursos* y dbo.Canales.
 
-        Mapeo rápido aplicado:
-        - RecursoHumano -> dbo.SysPerson (IDResource, accountname/firstname/lastname, email, departament, title)
-        - Canales usuario -> dbo.ActivitiesSysResources + dbo.Activity2Channel (IDChannel)
-        - Actividades recientes -> dbo.ActivitiesSysResources + dbo.Activity
-        - Recursos materiales -> dbo.Asset2SysResource + dbo.Asset2Channel (IDAsset)
+        Mapeo rápido aplicado (basado en tablas reales del sistema):
+        - RecursoHumano -> dbo.SysPerson
+        - Roles -> dbo._SysRole_SysResource + dbo.SysRole
+        - Canales del usuario -> dbo.SysWorkRoomResource + dbo.SysWorkRoom
+        - Actividad de chat -> dbo.SysChat + dbo.SysChat2SysWorkRoom + dbo.SysChat2SysResource
+        - Entidades relacionadas al chat -> dbo.SysChat2Record
         """
         try:
-            conn = pymssql.connect(
-                server=settings.SQL_SERVER_HOST,
-                user=settings.SQL_SERVER_USER,
-                password=settings.SQL_SERVER_PASSWORD,
-                database=settings.SQL_SERVER_DB,
-                timeout=5,
+            conn = self._connect_sql_with_retry(
+                timeout=10,
+                retries=3,
+                base_delay_seconds=1,
+                context="contexto_usuario_fallback",
             )
             cursor = conn.cursor(as_dict=True)
 
@@ -203,6 +285,7 @@ class SistemaAprendizaje:
                 """
                 SELECT TOP 1
                     IDResource,
+                    IDUser,
                     accountname,
                     firstname,
                     lastname,
@@ -226,11 +309,36 @@ class SistemaAprendizaje:
                 or f"{(usuario_data.get('firstname') or '').strip()} {(usuario_data.get('lastname') or '').strip()}".strip()
                 or str(usuario_data.get("IDResource") or user_id)
             )
-            rol = (usuario_data.get("title") or "operario").strip() if usuario_data.get("title") else "operario"
+
+            resource_guid = str(usuario_data.get("IDResource") or user_id)
+            user_guid = str(usuario_data.get("IDUser") or "")
+
+            # Resolver rol desde tablas del sistema, con fallback al título del contacto.
+            rol = None
+            try:
+                cursor.execute(
+                    """
+                    SELECT TOP 1 sr.Code
+                    FROM dbo._SysRole_SysResource srs
+                    INNER JOIN dbo.SysRole sr ON sr.IDActivityRole = srs.IDRole
+                    WHERE srs.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                    ORDER BY sr.ShareChat DESC, sr.ViewScheduler DESC, sr.Code
+                    """,
+                    (resource_guid,),
+                )
+                rol_row = cursor.fetchone()
+                if rol_row and rol_row.get("Code"):
+                    rol = str(rol_row.get("Code")).strip()
+            except Exception:
+                rol = None
+
+            if not rol:
+                rol = (usuario_data.get("title") or "operario").strip() if usuario_data.get("title") else "operario"
+
             especialidades = [rol] if rol else []
 
             usuario = RecursoHumano(
-                id=str(usuario_data.get("IDResource") or user_id),
+                id=resource_guid,
                 nombre=nombre,
                 email=(usuario_data.get("email") or ""),
                 rol=rol,
@@ -241,94 +349,155 @@ class SistemaAprendizaje:
 
             cursor.execute(
                 """
-                SELECT DISTINCT TOP 30 a2c.IDChannel
-                FROM dbo.ActivitiesSysResources asr
-                INNER JOIN dbo.Activity2Channel a2c ON a2c.IDActivity = asr.IDActivity
-                WHERE asr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                SELECT DISTINCT TOP 30
+                    wr.IDWorkRoom,
+                    wr.Name,
+                    wr.Description,
+                    wr.Kind
+                FROM dbo.SysWorkRoomResource wrr
+                INNER JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = wrr.IDWorkRoom
+                WHERE wrr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                   OR wrr.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                ORDER BY wr.Name
                 """,
-                (user_id,),
+                (resource_guid, user_guid),
             )
             canales_rows = cursor.fetchall() or []
 
             canales = []
             for row in canales_rows:
-                canal_id = str(row.get("IDChannel")) if row.get("IDChannel") else None
+                canal_id = str(row.get("IDWorkRoom")) if row.get("IDWorkRoom") else None
                 if not canal_id:
                     continue
+                canal_nombre = row.get("Name") or f"Canal {canal_id[:8]}"
+                canal_descripcion = row.get("Description") or "Canal de trabajo"
+
+                # Miembros por canal (IDResource o IDLogin si IDResource está nulo).
+                cursor.execute(
+                    """
+                    SELECT TOP 100
+                        COALESCE(CONVERT(varchar(36), IDResource), CONVERT(varchar(36), IDLogin)) AS ResourceRef
+                    FROM dbo.SysWorkRoomResource
+                    WHERE IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s)
+                    """,
+                    (canal_id,),
+                )
+                miembros_rows = cursor.fetchall() or []
+                miembros = [m.get("ResourceRef") for m in miembros_rows if m.get("ResourceRef")]
+
                 canal = Canal(
                     id=canal_id,
-                    nombre=f"Canal {canal_id[:8]}",
-                    descripcion="Canal inferido desde Activity2Channel",
-                    tipo="operativo",
-                    recursos_humanos=[],
+                    nombre=str(canal_nombre).strip(),
+                    descripcion=str(canal_descripcion).strip(),
+                    tipo=f"workroom_{row.get('Kind')}",
+                    recursos_humanos=miembros,
                     recursos_materiales=[],
                 )
                 canales.append(canal)
                 usuario.canales.append(canal_id)
 
-            cursor.execute(
-                """
-                SELECT TOP 20
-                    a.IDActivity,
-                    a2c.IDChannel,
-                    a.type,
-                    a.subject,
-                    a.description,
-                    a.startDate
-                FROM dbo.ActivitiesSysResources asr
-                INNER JOIN dbo.Activity a ON a.IDActivity = asr.IDActivity
-                LEFT JOIN dbo.Activity2Channel a2c ON a2c.IDActivity = a.IDActivity
-                WHERE asr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                ORDER BY a.startDate DESC
-                """,
-                (user_id,),
-            )
-            actividades_rows = cursor.fetchall() or []
+            try:
+                self._execute_with_retry(
+                    cursor=cursor,
+                    query="""
+                    SELECT TOP 20
+                        c.IDChat2,
+                        c.Stamp,
+                        c.RawMessage,
+                        COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) as IDChannel,
+                        wr.Name as ChannelName,
+                        wr.Description as ChannelDescription,
+                        c2r.RecordCode,
+                        c2r.RecordShortName
+                    FROM dbo.SysChat2SysResource c2rsc
+                    INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                    LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
+                    LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
+                    OUTER APPLY (
+                        SELECT TOP 1 r.RecordCode, r.RecordShortName
+                        FROM dbo.SysChat2Record r
+                        WHERE r.IDChat = c.IDChat2
+                        ORDER BY r.Stamp DESC
+                    ) c2r
+                    WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                       OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                    ORDER BY c.Stamp DESC
+                    """,
+                    params=(resource_guid, user_guid),
+                    retries=2,
+                    base_delay_seconds=1,
+                    context="fallback_chat_actividad",
+                )
+                actividades_rows = cursor.fetchall() or []
+            except Exception as e:
+                print(f"⚠️ Fallback chat-actividad no disponible: {e}")
+                actividades_rows = []
 
             actividades = []
             for a in actividades_rows:
-                tipo = str(a.get("type")) if a.get("type") is not None else "actividad"
-                descripcion = f"{(a.get('subject') or '').strip()} {(a.get('description') or '').strip()}".strip()
-                timestamp = a.get("startDate") or datetime.now()
+                canal_id = str(a.get("IDChannel")) if a.get("IDChannel") else "canal_general"
+                mensaje = (a.get("RawMessage") or "").strip()
+                record_code = (a.get("RecordCode") or "").strip()
+                record_short = (a.get("RecordShortName") or "").strip()
+                descripcion = mensaje
+                if record_code or record_short:
+                    descripcion = f"{descripcion} | Registro relacionado: {record_code} {record_short}".strip()
+                timestamp = a.get("Stamp") or datetime.now()
                 actividades.append(
                     Actividad(
-                        id=str(a.get("IDActivity")),
+                        id=str(a.get("IDChat2")),
                         recurso_humano_id=str(usuario.id),
-                        canal_id=str(a.get("IDChannel")) if a.get("IDChannel") else "canal_general",
-                        tipo=tipo,
+                        canal_id=canal_id,
+                        tipo="chat",
                         descripcion=descripcion or "Sin descripción",
                         timestamp=timestamp,
-                        metadatos={},
+                        metadatos={
+                            "channel_name": a.get("ChannelName"),
+                            "channel_description": a.get("ChannelDescription"),
+                            "record_code": record_code,
+                        },
                     )
                 )
 
-            cursor.execute(
-                """
-                SELECT DISTINCT TOP 30
-                    a2c.IDChannel,
-                    a2sr.IDAsset
-                FROM dbo.Asset2SysResource a2sr
-                LEFT JOIN dbo.Asset2Channel a2c ON a2c.IDAsset = a2sr.IDAsset
-                WHERE a2sr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                  AND (a2sr.Active = 1 OR a2sr.Active IS NULL)
-                """,
-                (user_id,),
-            )
-            materiales_rows = cursor.fetchall() or []
+            try:
+                self._execute_with_retry(
+                    cursor=cursor,
+                    query="""
+                    SELECT TOP 30
+                        c2r.RecordCode,
+                        c2r.RecordShortName,
+                        c2w.IDWorkRoom
+                    FROM dbo.SysChat2SysResource c2rsc
+                    INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                    LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
+                    INNER JOIN dbo.SysChat2Record c2r ON c2r.IDChat = c.IDChat2
+                    WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                       OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                    ORDER BY c2r.Stamp DESC
+                    """,
+                    params=(resource_guid, user_guid),
+                    retries=2,
+                    base_delay_seconds=1,
+                    context="fallback_chat_recursos",
+                )
+                materiales_rows = cursor.fetchall() or []
+            except Exception as e:
+                print(f"⚠️ Fallback recursos de chat no disponibles: {e}")
+                materiales_rows = []
             recursos_disponibles = []
             for m in materiales_rows:
-                asset_id = m.get("IDAsset")
-                if asset_id is None:
+                record_code = (m.get("RecordCode") or "").strip()
+                if not record_code:
                     continue
-                canal_id = str(m.get("IDChannel")) if m.get("IDChannel") else "canal_general"
+                canal_id = str(m.get("IDWorkRoom")) if m.get("IDWorkRoom") else "canal_general"
                 recursos_disponibles.append(
                     RecursoMaterial(
-                        id=str(asset_id),
-                        nombre=f"Asset {asset_id}",
-                        tipo="asset",
+                        id=record_code,
+                        nombre=(m.get("RecordShortName") or record_code),
+                        tipo="chat_record",
                         canal_id=canal_id,
                         estado="disponible",
-                        especificaciones={},
+                        especificaciones={"record_code": record_code},
                     )
                 )
 
