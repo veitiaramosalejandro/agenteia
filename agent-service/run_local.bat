@@ -45,12 +45,12 @@ REM Descargar modelos de Ollama si no existen
 echo.
 echo 📦 Verificando modelos de Ollama...
 
-curl -s http://localhost:11435/api/tags | findstr "qwen2.5" > nul
+curl -s http://localhost:11435/api/tags | findstr "qwen2.5:7b" > nul
 if %errorlevel% neq 0 (
-    echo ⬇️ Descargando modelo qwen2.5...
+    echo ⬇️ Descargando modelo qwen2.5:7b...
     docker exec machining_ollama ollama pull qwen2.5:7b
 ) else (
-    echo   ✅ qwen2.5: OK
+    echo   ✅ qwen2.5:7b: OK
 )
 
 curl -s http://localhost:11435/api/tags | findstr "nomic-embed-text" > nul

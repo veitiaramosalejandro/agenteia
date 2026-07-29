@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     
     # Ollama Local Configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11435")
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5")
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:7b")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     
     # Vector Database (Qdrant)
