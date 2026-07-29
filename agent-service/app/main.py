@@ -1,5 +1,6 @@
 import asyncio
 import os
+import threading
 from contextlib import suppress
 from datetime import datetime
 from typing import Optional
@@ -38,6 +39,26 @@ app.add_middleware(
 # Instancia del agente
 agent = MachiningAgent()
 
+_active_dialogues = 0
+_active_dialogues_lock = threading.Lock()
+
+
+def _start_dialogue() -> None:
+    global _active_dialogues
+    with _active_dialogues_lock:
+        _active_dialogues += 1
+
+
+def _finish_dialogue() -> None:
+    global _active_dialogues
+    with _active_dialogues_lock:
+        _active_dialogues = max(0, _active_dialogues - 1)
+
+
+def _get_active_dialogues() -> int:
+    with _active_dialogues_lock:
+        return _active_dialogues
+
 
 async def _ciclo_aprendizaje_bd() -> None:
     """Mantiene al agente actualizándose con datos recientes de la base de datos."""
@@ -50,13 +71,37 @@ async def _ciclo_aprendizaje_bd() -> None:
 
     while True:
         try:
-            resultado = await asyncio.to_thread(ingestar_sistema_completo)
+            chats_activos = _get_active_dialogues()
+            if chats_activos > 0:
+                wait_seconds = min(intervalo, max(5, settings.DB_STUDY_IDLE_CHECK_SECONDS))
+                print(
+                    f"⏸️ Ingesta BD diferida por {chats_activos} conversación(es) activa(s). "
+                    f"Revisando de nuevo en {wait_seconds}s"
+                )
+                await asyncio.sleep(wait_seconds)
+                continue
+
+            ingesta = asyncio.to_thread(ingestar_sistema_completo)
+            if settings.DB_STUDY_MAX_RUN_SECONDS > 0:
+                resultado = await asyncio.wait_for(ingesta, timeout=settings.DB_STUDY_MAX_RUN_SECONDS)
+            else:
+                resultado = await ingesta
+
             app.state.last_db_study_at = datetime.utcnow().isoformat()
             app.state.last_db_study_result = resultado
             app.state.last_db_study_error = None
             consecutive_failures = 0
             print(f"✅ Aprendizaje BD completado: {resultado}")
             wait_seconds = intervalo
+        except asyncio.TimeoutError:
+            app.state.last_db_study_error = (
+                f"Ingesta excedió el tiempo máximo de {settings.DB_STUDY_MAX_RUN_SECONDS}s"
+            )
+            consecutive_failures += 1
+            backoff_factor = min(2 ** min(consecutive_failures, 4), 16)
+            wait_seconds = intervalo * backoff_factor
+            print(f"⚠️ {app.state.last_db_study_error}")
+            print(f"⏳ Reintentando aprendizaje BD en {wait_seconds}s (fallos consecutivos: {consecutive_failures})")
         except Exception as exc:
             app.state.last_db_study_error = str(exc)
             consecutive_failures += 1
@@ -75,6 +120,7 @@ async def startup_db_learning() -> None:
         app.state.last_db_study_at = None
         app.state.last_db_study_result = None
         app.state.last_db_study_error = None
+        app.state.active_dialogues = 0
         app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())
 
 
@@ -191,6 +237,7 @@ def handle_dialogue(req: ChatConversationRequest):
     - Procesa la consulta con el agente
     - Genera audio si se solicita
     """
+    dialogue_started = False
     try:
         # --- 1. VALIDACIONES DE SEGURIDAD ---
         
@@ -239,6 +286,10 @@ def handle_dialogue(req: ChatConversationRequest):
         # Registrar inicio del procesamiento
         print(f"📨 Procesando consulta de usuario {req.user_id} (sesión: {req.session_id})")
         print(f"   Mensaje: {req.message[:100]}...")
+
+        _start_dialogue()
+        dialogue_started = True
+        app.state.active_dialogues = _get_active_dialogues()
         
         # Ejecutar el agente con el contexto del usuario
         response_text = agent.analyze_event_with_dialogue(
@@ -276,6 +327,10 @@ def handle_dialogue(req: ChatConversationRequest):
             user_message=req.message,
             agent_response=f"⚠️ Lo siento, ocurrió un error al procesar tu consulta. Por favor, intenta nuevamente o contacta al administrador del sistema. (Error: {str(e)[:100]})"
         )
+    finally:
+        if dialogue_started:
+            _finish_dialogue()
+            app.state.active_dialogues = _get_active_dialogues()
 
 
 @app.get("/api/v1/agent/audio-response")
@@ -355,6 +410,14 @@ def health_check():
             "ollama": settings.OLLAMA_BASE_URL,
             "qdrant": settings.VECTOR_DB_URL,
             "redis": settings.REDIS_URL
+        },
+        "runtime": {
+            "active_dialogues": _get_active_dialogues(),
+            "db_study_interval_seconds": settings.DB_STUDY_INTERVAL_SECONDS,
+            "db_study_idle_check_seconds": settings.DB_STUDY_IDLE_CHECK_SECONDS,
+            "db_study_max_run_seconds": settings.DB_STUDY_MAX_RUN_SECONDS,
+            "last_db_study_at": getattr(app.state, "last_db_study_at", None),
+            "last_db_study_error": getattr(app.state, "last_db_study_error", None)
         }
     }
 

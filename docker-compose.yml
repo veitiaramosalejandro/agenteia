@@ -40,6 +40,8 @@ services:
       - SQL_SERVER_PASSWORD=${SQL_SERVER_PASSWORD}
       - SQL_SERVER_DB=${SQL_SERVER_DB}
       - DB_STUDY_INTERVAL_SECONDS=3600
+      - DB_STUDY_IDLE_CHECK_SECONDS=10
+      - DB_STUDY_MAX_RUN_SECONDS=900
     volumes:
       - ./agent-service:/app
       - ./data:/app/data
