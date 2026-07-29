@@ -41,6 +41,7 @@ agent = MachiningAgent()
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
+_dialogue_slots = threading.BoundedSemaphore(value=max(1, settings.DIALOGUE_MAX_CONCURRENT))
 
 
 def _start_dialogue() -> None:
@@ -58,6 +59,16 @@ def _finish_dialogue() -> None:
 def _get_active_dialogues() -> int:
     with _active_dialogues_lock:
         return _active_dialogues
+
+
+def _release_dialogue_resources_when_done(worker: threading.Thread) -> None:
+    """Libera recursos de diálogo cuando un procesamiento tardío finalmente termina."""
+    try:
+        worker.join()
+    finally:
+        _finish_dialogue()
+        app.state.active_dialogues = _get_active_dialogues()
+        _dialogue_slots.release()
 
 
 async def _ciclo_aprendizaje_bd() -> None:
@@ -238,6 +249,7 @@ def handle_dialogue(req: ChatConversationRequest):
     - Genera audio si se solicita
     """
     dialogue_started = False
+    slot_acquired = False
     try:
         # --- 1. VALIDACIONES DE SEGURIDAD ---
         
@@ -282,6 +294,15 @@ def handle_dialogue(req: ChatConversationRequest):
             )
 
         # --- 2. PROCESAR CON EL AGENTE ---
+
+        # Control de admisión: evita que exceso de carga bloquee conversaciones.
+        slot_acquired = _dialogue_slots.acquire(timeout=max(0, settings.DIALOGUE_ADMISSION_TIMEOUT_SECONDS))
+        if not slot_acquired:
+            return ChatConversationResponse(
+                session_id=req.session_id,
+                user_message=req.message,
+                agent_response="⏳ El agente está atendiendo varias conversaciones en este momento. Intenta nuevamente en unos segundos."
+            )
         
         # Registrar inicio del procesamiento
         print(f"📨 Procesando consulta de usuario {req.user_id} (sesión: {req.session_id})")
@@ -291,13 +312,49 @@ def handle_dialogue(req: ChatConversationRequest):
         dialogue_started = True
         app.state.active_dialogues = _get_active_dialogues()
         
-        # Ejecutar el agente con el contexto del usuario
-        response_text = agent.analyze_event_with_dialogue(
-            session_id=req.session_id, 
-            user_text=req.message,
-            user_id=req.user_id,
-            canal_id=req.canal_id,
-        )
+        # Ejecutar el agente con timeout para mantener tiempos de respuesta controlados.
+        response_holder = {}
+        error_holder = {}
+
+        def _run_agent_dialogue() -> None:
+            try:
+                response_holder["text"] = agent.analyze_event_with_dialogue(
+                    session_id=req.session_id,
+                    user_text=req.message,
+                    user_id=req.user_id,
+                    canal_id=req.canal_id,
+                )
+            except Exception as exc:
+                error_holder["error"] = exc
+
+        worker = threading.Thread(target=_run_agent_dialogue, daemon=True)
+        worker.start()
+
+        processing_timeout = max(5, settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS)
+        worker.join(timeout=processing_timeout)
+
+        if worker.is_alive():
+            print(
+                f"⚠️ Timeout de conversación en sesión {req.session_id} tras {processing_timeout}s. "
+                "Se devuelve respuesta controlada y se libera al terminar en segundo plano."
+            )
+            threading.Thread(
+                target=_release_dialogue_resources_when_done,
+                args=(worker,),
+                daemon=True,
+            ).start()
+            dialogue_started = False
+            slot_acquired = False
+            return ChatConversationResponse(
+                session_id=req.session_id,
+                user_message=req.message,
+                agent_response="⏱️ La consulta está tomando más tiempo de lo esperado. Intenta de nuevo en unos segundos para mantener una respuesta ágil del sistema."
+            )
+
+        if "error" in error_holder:
+            raise error_holder["error"]
+
+        response_text = response_holder.get("text", "")
         
         # --- 3. CONSTRUIR RESPUESTA ---
         
@@ -331,6 +388,8 @@ def handle_dialogue(req: ChatConversationRequest):
         if dialogue_started:
             _finish_dialogue()
             app.state.active_dialogues = _get_active_dialogues()
+        if slot_acquired:
+            _dialogue_slots.release()
 
 
 @app.get("/api/v1/agent/audio-response")
@@ -413,6 +472,9 @@ def health_check():
         },
         "runtime": {
             "active_dialogues": _get_active_dialogues(),
+            "dialogue_max_concurrent": settings.DIALOGUE_MAX_CONCURRENT,
+            "dialogue_admission_timeout_seconds": settings.DIALOGUE_ADMISSION_TIMEOUT_SECONDS,
+            "dialogue_processing_timeout_seconds": settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS,
             "db_study_interval_seconds": settings.DB_STUDY_INTERVAL_SECONDS,
             "db_study_idle_check_seconds": settings.DB_STUDY_IDLE_CHECK_SECONDS,
             "db_study_max_run_seconds": settings.DB_STUDY_MAX_RUN_SECONDS,

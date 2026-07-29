@@ -35,12 +35,11 @@ def ingestar_sistema_completo():
     print("🔄 Ingestando estructura real del sistema...")
 
     try:
-        conn = pymssql.connect(
-            server=settings.SQL_SERVER_HOST,
-            user=settings.SQL_SERVER_USER,
-            password=settings.SQL_SERVER_PASSWORD,
-            database=settings.SQL_SERVER_DB,
-            timeout=10,
+        conn = sistema._connect_sql_with_retry(
+            timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+            retries=max(1, settings.DB_INGEST_CONNECT_RETRIES),
+            base_delay_seconds=1,
+            context="ingesta_sistema",
         )
         cursor = conn.cursor(as_dict=True)
 

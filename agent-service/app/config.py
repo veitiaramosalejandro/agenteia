@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     DB_STUDY_INTERVAL_SECONDS: int = int(os.getenv("DB_STUDY_INTERVAL_SECONDS", "3600"))
     DB_STUDY_IDLE_CHECK_SECONDS: int = int(os.getenv("DB_STUDY_IDLE_CHECK_SECONDS", "10"))
     DB_STUDY_MAX_RUN_SECONDS: int = int(os.getenv("DB_STUDY_MAX_RUN_SECONDS", "900"))
+    DB_INGEST_CONNECT_TIMEOUT_SECONDS: int = int(os.getenv("DB_INGEST_CONNECT_TIMEOUT_SECONDS", "5"))
+    DB_INGEST_CONNECT_RETRIES: int = int(os.getenv("DB_INGEST_CONNECT_RETRIES", "2"))
+    DIALOGUE_MAX_CONCURRENT: int = int(os.getenv("DIALOGUE_MAX_CONCURRENT", "1"))
+    DIALOGUE_ADMISSION_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_ADMISSION_TIMEOUT_SECONDS", "2"))
+    DIALOGUE_PROCESSING_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_PROCESSING_TIMEOUT_SECONDS", "20"))
     
     # Audio
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_samples")
