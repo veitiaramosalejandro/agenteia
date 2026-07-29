@@ -9,19 +9,19 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     
     # Ollama Local Configuration
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11435")
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11435")
     MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     
     # Vector Database (Qdrant)
-    VECTOR_DB_URL: str = os.getenv("VECTOR_DB_URL", "http://localhost:6333")
+    VECTOR_DB_URL: str = os.getenv("VECTOR_DB_URL", "http://vector-db:6333")
     VECTOR_COLLECTION_NAME: str = os.getenv("VECTOR_COLLECTION_NAME", "machining_docs")
 
     # Redis Cache / Memory
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")
     
     # PostgreSQL / TimescaleDB
-    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
+    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "timescaledb")
     POSTGRES_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "user")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "pass")

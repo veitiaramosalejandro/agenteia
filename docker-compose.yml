@@ -101,6 +101,9 @@ services:
     image: redis:alpine
     container_name: machining_redis
     restart: always
+    command: redis-server --appendonly yes --save 60 1 --requirepass ""
+    volumes:  # <-- AÑADIR ESTO
+      - redis_data:/data
     ports:
       - 6379:6379
     networks:
@@ -113,3 +116,4 @@ networks:
 volumes:
   qdrant_data:
   postgres_data:
+  redis_data:
