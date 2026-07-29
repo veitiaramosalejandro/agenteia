@@ -333,6 +333,23 @@ def get_user_context(user_id: str):
         )
 
 
+@app.get("/api/v1/agent/sql-retry-stats")
+def get_sql_retry_stats():
+    """
+    Devuelve métricas acumuladas de reintentos SQL del sistema de aprendizaje.
+    """
+    try:
+        return {
+            "status": "ok",
+            "sql_retry_stats": agent.sistema_aprendizaje.get_sql_retry_stats(),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo métricas SQL: {str(e)}"
+        )
+
+
 # ============================================================
 # PUNTO DE ENTRADA PARA EJECUCIÓN DIRECTA
 # ============================================================
