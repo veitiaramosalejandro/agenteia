@@ -33,6 +33,7 @@ class SistemaAprendizaje:
             "query_by_context": {},
             "last_retry_at": None,
         }
+        self._primary_schema_available = True
         self._ensure_collection()
 
     def _increment_retry_metric(self, metric_key: str, context_key: str):
@@ -144,6 +145,9 @@ class SistemaAprendizaje:
         """
         Obtiene todo el contexto de un usuario para personalizar respuestas.
         """
+        if not self._primary_schema_available:
+            return self._obtener_contexto_usuario_fallback(user_id)
+
         # Conectar a SQL Server para obtener datos del usuario
         try:
             conn = self._connect_sql_with_retry(
@@ -270,6 +274,9 @@ class SistemaAprendizaje:
             )
             
         except Exception as e:
+            # Si la tabla principal no existe en este entorno, evitamos repetir el mismo error en cada turno.
+            if "RecursosHumanos" in str(e):
+                self._primary_schema_available = False
             print(f"⚠️ Esquema primario no disponible para contexto de usuario: {e}")
             return self._obtener_contexto_usuario_fallback(user_id)
 
@@ -422,7 +429,7 @@ class SistemaAprendizaje:
                         c2r.RecordCode,
                         c2r.RecordShortName
                     FROM dbo.SysChat2SysResource c2rsc
-                    INNER JOIN dbo.SysChat c ON c.IDChat = c2rsc.IDChat
+                    INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
                     LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
                     LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
                     OUTER APPLY (
@@ -480,7 +487,7 @@ class SistemaAprendizaje:
                         c2r.RecordShortName,
                         c2w.IDWorkRoom
                     FROM dbo.SysChat2SysResource c2rsc
-                    INNER JOIN dbo.SysChat c ON c.IDChat = c2rsc.IDChat
+                      INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
                     LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
                           INNER JOIN dbo.SysChat2Record c2r ON c2r.IDChat = c.IDChat2
                     WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
@@ -565,7 +572,7 @@ class SistemaAprendizaje:
                     COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) AS IDChannel,
                     wr.Name AS ChannelName
                 FROM dbo.SysChat2SysResource c2rsc
-                INNER JOIN dbo.SysChat c ON c.IDChat = c2rsc.IDChat
+                INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
                 LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
                 LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
                 WHERE (
