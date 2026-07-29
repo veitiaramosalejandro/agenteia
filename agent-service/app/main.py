@@ -1,5 +1,8 @@
-from typing import Optional  # <--- AGREGAR ESTA LÍNEA
+import asyncio
 import os
+from contextlib import suppress
+from datetime import datetime
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -11,6 +14,7 @@ from app.config import settings
 
 from app.agent.core import MachiningAgent
 from app.agent.speech import text_to_speech
+from app.system.ingest import ingestar_sistema_completo
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
@@ -34,6 +38,46 @@ app.add_middleware(
 # Instancia del agente
 agent = MachiningAgent()
 
+
+async def _ciclo_aprendizaje_bd() -> None:
+    """Mantiene al agente actualizándose con datos recientes de la base de datos."""
+    intervalo = max(60, settings.DB_STUDY_INTERVAL_SECONDS)
+    print(f"🔄 Ciclo de aprendizaje BD activo cada {intervalo} segundos")
+
+    while True:
+        try:
+            resultado = await asyncio.to_thread(ingestar_sistema_completo)
+            app.state.last_db_study_at = datetime.utcnow().isoformat()
+            app.state.last_db_study_result = resultado
+            app.state.last_db_study_error = None
+            print(f"✅ Aprendizaje BD completado: {resultado}")
+        except Exception as exc:
+            app.state.last_db_study_error = str(exc)
+            print(f"⚠️ Error en aprendizaje continuo desde BD: {exc}")
+
+        await asyncio.sleep(intervalo)
+
+
+@app.on_event("startup")
+async def startup_db_learning() -> None:
+    """Lanza la tarea de aprendizaje continuo desde la base de datos."""
+    if getattr(app.state, "db_study_task", None) is None:
+        app.state.last_db_study_at = None
+        app.state.last_db_study_result = None
+        app.state.last_db_study_error = None
+        app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())
+
+
+@app.on_event("shutdown")
+async def shutdown_db_learning() -> None:
+    """Detiene la tarea de aprendizaje continuo al apagar el servicio."""
+    task = getattr(app.state, "db_study_task", None)
+    if task is not None:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        app.state.db_study_task = None
+
 # ============================================================
 # MODELOS DE DATOS
 # ============================================================
@@ -42,6 +86,7 @@ class ChatConversationRequest(BaseModel):
     session_id: str = Field(..., description="ID de la sesión de conversación")
     message: str = Field(..., description="Mensaje enviado por el usuario")
     user_id: str = Field(..., description="ID del usuario que está consultando (recurso humano)")
+    canal_id: Optional[str] = Field(None, description="ID del canal actual (opcional)")
     generate_audio: bool = Field(False, description="Si se debe generar audio de la respuesta")
 
 class ChatConversationResponse(BaseModel):
@@ -189,7 +234,8 @@ def handle_dialogue(req: ChatConversationRequest):
         response_text = agent.analyze_event_with_dialogue(
             session_id=req.session_id, 
             user_text=req.message,
-            user_id=req.user_id
+            user_id=req.user_id,
+            canal_id=req.canal_id,
         )
         
         # --- 3. CONSTRUIR RESPUESTA ---
@@ -347,6 +393,27 @@ def get_sql_retry_stats():
         raise HTTPException(
             status_code=500,
             detail=f"Error obteniendo métricas SQL: {str(e)}"
+        )
+
+
+@app.post("/api/v1/agent/sql-retry-stats/reset")
+def reset_sql_retry_stats():
+    """
+    Reinicia métricas de reintentos SQL del sistema de aprendizaje.
+    """
+    try:
+        previous = agent.sistema_aprendizaje.reset_sql_retry_stats()
+        current = agent.sistema_aprendizaje.get_sql_retry_stats()
+        return {
+            "status": "ok",
+            "message": "sql retry stats reset",
+            "previous": previous,
+            "current": current,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error reseteando métricas SQL: {str(e)}"
         )
 
 

@@ -49,6 +49,18 @@ class SistemaAprendizaje:
         """Devuelve métricas acumuladas de reintentos SQL."""
         return dict(self.sql_retry_stats)
 
+    def reset_sql_retry_stats(self) -> Dict[str, Any]:
+        """Reinicia métricas de reintentos SQL y devuelve el snapshot anterior."""
+        previous = dict(self.sql_retry_stats)
+        self.sql_retry_stats = {
+            "connect_retries": 0,
+            "query_retries": 0,
+            "connect_by_context": {},
+            "query_by_context": {},
+            "last_retry_at": None,
+        }
+        return previous
+
     def _ensure_collection(self):
         """Asegura que la colección de aprendizaje exista en Qdrant."""
         try:
@@ -526,6 +538,83 @@ class SistemaAprendizaje:
             "mantenimiento": ["ver_telemetria", "diagnosticar", "programar_mantenimiento"]
         }
         return permisos_base + permisos_rol.get(rol, [])
+
+    def obtener_contexto_chat_desde_bd(self, user_id: str, canal_id: Optional[str] = None, limit: int = 8) -> str:
+        """
+        Obtiene contexto reciente del chat directamente desde la base de datos.
+        Prioriza SysChat + SysChat2SysResource + SysChat2SysWorkRoom + SysWorkRoom.
+        """
+        if not user_id:
+            return ""
+
+        safe_limit = max(1, min(limit, 30))
+        try:
+            conn = self._connect_sql_with_retry(
+                timeout=10,
+                retries=3,
+                base_delay_seconds=1,
+                context="chat_context_bd",
+            )
+            cursor = conn.cursor(as_dict=True)
+
+            query = f"""
+                SELECT TOP {safe_limit}
+                    c.IDChat2,
+                    c.Stamp,
+                    c.RawMessage,
+                    COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) AS IDChannel,
+                    wr.Name AS ChannelName
+                FROM dbo.SysChat2SysResource c2rsc
+                INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
+                LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
+                WHERE (
+                    c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                    OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                )
+            """
+            params = [user_id, user_id]
+
+            if canal_id:
+                query += """
+                    AND COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) = TRY_CONVERT(uniqueidentifier, %s)
+                """
+                params.append(canal_id)
+
+            query += " ORDER BY c.Stamp DESC"
+
+            self._execute_with_retry(
+                cursor=cursor,
+                query=query,
+                params=tuple(params),
+                retries=2,
+                base_delay_seconds=1,
+                context="chat_context_bd_query",
+            )
+            rows = cursor.fetchall() or []
+            conn.close()
+
+            if not rows:
+                return "No hay historial de chat reciente en la base de datos para este usuario."
+
+            lines = []
+            for row in rows:
+                ts = row.get("Stamp")
+                ts_text = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else "sin_fecha"
+                channel_name = (row.get("ChannelName") or "Canal sin nombre").strip()
+                msg = (row.get("RawMessage") or "").strip()
+                if len(msg) > 180:
+                    msg = msg[:180] + "..."
+                if msg:
+                    lines.append(f"[{ts_text}] ({channel_name}) {msg}")
+
+            if not lines:
+                return "No hay mensajes de chat útiles para contexto en base de datos."
+
+            return "\n".join(lines)
+        except Exception as e:
+            print(f"⚠️ Error obteniendo contexto de chat desde BD: {e}")
+            return ""
     
     # ============================================================
     # 2. GENERAR CONTEXTO PARA EL AGENTE (en texto)
@@ -655,6 +744,11 @@ class SistemaAprendizaje:
                     "recurso_humano_id": actividad.recurso_humano_id,
                     "rol_usuario": usuario_rol,
                     "timestamp": actividad.timestamp.isoformat(),
+                    "session_id": (actividad.metadatos or {}).get("session_id"),
+                    "herramientas_usadas": (actividad.metadatos or {}).get("herramientas_usadas", []),
+                    "longitud_consulta": (actividad.metadatos or {}).get("longitud_consulta"),
+                    "longitud_respuesta": (actividad.metadatos or {}).get("longitud_respuesta"),
+                    "metadatos": actividad.metadatos or {},
                     "source": "actividad_aprendida"
                 }
             )

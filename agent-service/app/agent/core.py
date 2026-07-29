@@ -245,7 +245,8 @@ class MachiningAgent:
     
     def _registrar_interaccion(self, user_id: str, canal_id: Optional[str], 
                                user_text: str, response_text: str, 
-                               herramientas_usadas: List[str]):
+                               herramientas_usadas: List[str],
+                               session_id: str):
         """
         Registra la interacción para que el sistema aprenda de ella.
         """
@@ -272,23 +273,40 @@ class MachiningAgent:
             Respuesta generada: {response_text[:200]}
             """
             
-            # Registrar actividad
+            # Resolver canales objetivo: canal explícito o canales del usuario desde BD.
+            canales_objetivo = []
+            if canal_id:
+                canales_objetivo = [canal_id]
+            else:
+                try:
+                    contexto = self.sistema_aprendizaje.obtener_contexto_usuario(user_id)
+                    if contexto and contexto.canales_acceso:
+                        canales_objetivo = [c.id for c in contexto.canales_acceso if getattr(c, "id", None)]
+                except Exception:
+                    canales_objetivo = []
+
+            if not canales_objetivo:
+                canales_objetivo = ["canal_general"]
+
+            # Registrar actividad en cada canal asociado, para aprendizaje contextual por conversación.
             from app.system.schema import Actividad
-            actividad = Actividad(
-                id=f"interaccion_{datetime.now().timestamp()}",
-                recurso_humano_id=user_id,
-                canal_id=canal_id or "canal_general",
-                tipo=tipo_actividad,
-                descripcion=descripcion,
-                timestamp=datetime.now(),
-                metadatos={
-                    "herramientas_usadas": herramientas_usadas,
-                    "longitud_consulta": len(user_text),
-                    "longitud_respuesta": len(response_text)
-                }
-            )
-            
-            self.sistema_aprendizaje.aprender_actividad(actividad)
+            timestamp_now = datetime.now()
+            for idx, canal_target in enumerate(canales_objetivo):
+                actividad = Actividad(
+                    id=f"interaccion_{session_id}_{timestamp_now.timestamp()}_{idx}",
+                    recurso_humano_id=user_id,
+                    canal_id=canal_target,
+                    tipo=tipo_actividad,
+                    descripcion=descripcion,
+                    timestamp=timestamp_now,
+                    metadatos={
+                        "session_id": session_id,
+                        "herramientas_usadas": herramientas_usadas,
+                        "longitud_consulta": len(user_text),
+                        "longitud_respuesta": len(response_text)
+                    }
+                )
+                self.sistema_aprendizaje.aprender_actividad(actividad)
             
         except Exception as e:
             print(f"⚠️ Error registrando interacción: {e}")
@@ -336,7 +354,31 @@ class MachiningAgent:
         saludos = ["hola", "hola!", "buenos dias", "buenas tardes", "ola", "hello", "hi", "hey", "buenas"]
         
         if clean_text in saludos:
-            return self._handle_greeting(user_id)
+            response_text = self._handle_greeting(user_id)
+
+            # Persistir también saludos para mantener trazabilidad conversacional.
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(response_text)
+                except Exception as e:
+                    print(f"⚠️ Error guardando saludo en Redis: {e}")
+
+            # Aprender saludos por canal/sesión para contexto histórico.
+            if user_id and len(response_text) > 10:
+                try:
+                    self._registrar_interaccion(
+                        user_id=user_id,
+                        canal_id=canal_id,
+                        user_text=user_text,
+                        response_text=response_text,
+                        herramientas_usadas=[],
+                        session_id=session_id,
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error registrando saludo para aprendizaje: {e}")
+
+            return response_text
 
         # --- 4. OBTENER CONTEXTOS ---
         
@@ -347,8 +389,17 @@ class MachiningAgent:
         
         # 4.2 Contexto RAG (documentos técnicos)
         rag_context = get_rag_context(user_text)
+
+        # 4.3 Contexto conversacional desde BD (chat + canal)
+        chat_context_bd = ""
+        if user_id:
+            chat_context_bd = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
+                user_id=user_id,
+                canal_id=canal_id,
+                limit=8,
+            )
         
-        # 4.3 Aprendizaje relevante (actividades pasadas similares)
+        # 4.4 Aprendizaje relevante (actividades pasadas similares)
         aprendizaje_relevante = ""
         if user_id:
             aprendizaje_relevante = self._get_aprendizaje_relevante(user_text, user_id)
@@ -366,19 +417,26 @@ class MachiningAgent:
         
         system_msg = SystemMessage(content=system_prompt)
         
+        messages = [system_msg]
+
+        if chat_context_bd:
+            chat_msg = SystemMessage(
+                content=f"🗂️ CONTEXTO RECIENTE DESDE BASE DE DATOS (CHAT/CANAL):\n{chat_context_bd}"
+            )
+            messages.append(chat_msg)
+        
+        # Añadir aprendizaje relevante si existe
+        if aprendizaje_relevante and "No hay conocimiento" not in aprendizaje_relevante:
+            aprendizaje_msg = SystemMessage(
+                content=f"🧠 CONOCIMIENTO APRENDIDO DE ACTIVIDADES PREVIAS:\n{aprendizaje_relevante}"
+            )
+            messages.append(aprendizaje_msg)
+
         # Mensaje de contexto RAG
         rag_msg = HumanMessage(
             content=f"📚 DOCUMENTACIÓN TÉCNICA RELEVANTE:\n{rag_context if rag_context else 'No hay documentación específica para esta consulta.'}"
         )
-        
-        messages = [system_msg, rag_msg]
-        
-        # Añadir aprendizaje relevante si existe
-        if aprendizaje_relevante and "No hay conocimiento" not in aprendizaje_relevante:
-            aprendizaje_msg = HumanMessage(
-                content=f"🧠 CONOCIMIENTO APRENDIDO DE ACTIVIDADES PREVIAS:\n{aprendizaje_relevante}"
-            )
-            messages.append(aprendizaje_msg)
+        messages.append(rag_msg)
 
         # --- 6. CARGAR HISTORIAL CON RESUMEN ---
         if history:
@@ -508,7 +566,8 @@ class MachiningAgent:
                     canal_id=canal_id,
                     user_text=user_text,
                     response_text=response_text,
-                    herramientas_usadas=herramientas_usadas
+                    herramientas_usadas=herramientas_usadas,
+                    session_id=session_id,
                 )
             except Exception as e:
                 print(f"⚠️ Error registrando interacción: {e}")

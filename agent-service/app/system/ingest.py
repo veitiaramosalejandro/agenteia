@@ -6,6 +6,7 @@ Ejecutar una vez para que el agente aprenda toda la configuración inicial.
 import os
 import sys
 import pymssql
+from app.config import settings
 from app.system.learning import SistemaAprendizaje
 from app.system.schema import Canal, Actividad
 
@@ -18,10 +19,10 @@ def ingestar_sistema_completo():
     
     try:
         conn = pymssql.connect(
-            server=os.getenv("SQL_SERVER_HOST", "192.168.1.76"),
-            user=os.getenv("SQL_SERVER_USER", "sa"),
-            password=os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234"),
-            database=os.getenv("SQL_SERVER_DB", "ISIFrameIsicom"),
+            server=settings.SQL_SERVER_HOST,
+            user=settings.SQL_SERVER_USER,
+            password=settings.SQL_SERVER_PASSWORD,
+            database=settings.SQL_SERVER_DB,
             timeout=5,
         )
         cursor = conn.cursor(as_dict=True)
@@ -92,10 +93,17 @@ def ingestar_sistema_completo():
         print("\n✅ ¡Sistema completamente ingerido!")
         print(f"   - {len(canales)} canales")
         print(f"   - {contador} actividades")
+        return {
+            "canales": len(canales),
+            "actividades": contador,
+        }
         
     except Exception as e:
         print(f"❌ Error en la ingesta: {e}")
-        sys.exit(1)
+        raise
 
 if __name__ == "__main__":
-    ingestar_sistema_completo()
+    try:
+        ingestar_sistema_completo()
+    except Exception:
+        sys.exit(1)
