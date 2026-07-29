@@ -70,6 +70,36 @@ class MachiningAgent:
         self.user_context_cache = {}
         self.cache_ttl = 300  # 5 minutos
 
+    def _is_last_chat_message_intent(self, user_text: str) -> bool:
+        """Detecta solicitudes para obtener el último mensaje del chat desde BD."""
+        text = (user_text or "").strip().lower()
+        if not text:
+            return False
+        has_last = any(k in text for k in ["ultimo mensaje", "último mensaje", "last message"])
+        has_chat_scope = any(k in text for k in ["chat", "canal", "contexto de la base de datos", "base de datos"])
+        return has_last and has_chat_scope
+
+    def _resolve_last_chat_message_from_db(self, user_id: str, canal_id: Optional[str], user_text: str) -> Optional[str]:
+        """Resuelve de forma directa el último mensaje de chat desde la BD del sistema."""
+        try:
+            contexto = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
+                user_id=user_id,
+                canal_id=canal_id,
+                limit=20,
+            )
+            if not contexto or "No hay historial" in contexto or "No hay mensajes" in contexto:
+                return None
+
+            lines = [line.strip() for line in contexto.splitlines() if line.strip().startswith("[")]
+            if not lines:
+                return None
+
+            target_line = lines[0]
+
+            return f"Último mensaje encontrado en el contexto de la base de datos: {target_line}"
+        except Exception:
+            return None
+
     # ============================================================
     # 1. GESTIÓN DE CONTEXTO DE USUARIO
     # ============================================================
@@ -379,6 +409,31 @@ class MachiningAgent:
                     print(f"⚠️ Error registrando saludo para aprendizaje: {e}")
 
             return response_text
+
+        # --- 3.1 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
+        if user_id and self._is_last_chat_message_intent(user_text):
+            direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
+            if direct_response:
+                if history:
+                    try:
+                        history.add_user_message(user_text)
+                        history.add_ai_message(direct_response)
+                    except Exception as e:
+                        print(f"⚠️ Error guardando respuesta directa en Redis: {e}")
+
+                try:
+                    self._registrar_interaccion(
+                        user_id=user_id,
+                        canal_id=canal_id,
+                        user_text=user_text,
+                        response_text=direct_response,
+                        herramientas_usadas=[],
+                        session_id=session_id,
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error registrando interacción directa para aprendizaje: {e}")
+
+                return direct_response
 
         # --- 4. OBTENER CONTEXTOS ---
         

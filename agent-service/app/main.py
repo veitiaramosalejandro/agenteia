@@ -43,6 +43,7 @@ async def _ciclo_aprendizaje_bd() -> None:
     """Mantiene al agente actualizándose con datos recientes de la base de datos."""
     intervalo = max(60, settings.DB_STUDY_INTERVAL_SECONDS)
     print(f"🔄 Ciclo de aprendizaje BD activo cada {intervalo} segundos")
+    consecutive_failures = 0
 
     while True:
         try:
@@ -50,12 +51,18 @@ async def _ciclo_aprendizaje_bd() -> None:
             app.state.last_db_study_at = datetime.utcnow().isoformat()
             app.state.last_db_study_result = resultado
             app.state.last_db_study_error = None
+            consecutive_failures = 0
             print(f"✅ Aprendizaje BD completado: {resultado}")
+            wait_seconds = intervalo
         except Exception as exc:
             app.state.last_db_study_error = str(exc)
+            consecutive_failures += 1
+            backoff_factor = min(2 ** min(consecutive_failures, 4), 16)
+            wait_seconds = intervalo * backoff_factor
             print(f"⚠️ Error en aprendizaje continuo desde BD: {exc}")
+            print(f"⏳ Reintentando aprendizaje BD en {wait_seconds}s (fallos consecutivos: {consecutive_failures})")
 
-        await asyncio.sleep(intervalo)
+        await asyncio.sleep(wait_seconds)
 
 
 @app.on_event("startup")

@@ -1,20 +1,20 @@
 services:
   # 5. Interfaz Gráfica de Chat (Streamlit)
-  agent-ui:
-    build:
-      context: ./agent-service
-      dockerfile: Dockerfile
-    container_name: machining_ui
-    command: streamlit run /app/app/ui.py --server.port=8501 --server.address=0.0.0.0
-    restart: always
-    ports:
-      - 8501:8501
-    environment:
-      - API_URL=http://agent-service:8000/api/v1/agent
-    depends_on:
-      - agent-service
-    networks:
-      - machining-network
+  #agent-ui:
+  #  build:
+  #    context: ./agent-service
+  #    dockerfile: Dockerfile
+  #  container_name: machining_ui
+  #  command: streamlit run /app/app/ui.py --server.port=8501 --server.address=0.0.0.0
+  #  restart: always
+   # ports:
+   #   - 8501:8501
+   # environment:
+   #   - API_URL=http://agent-service:8000/api/v1/agent
+   # depends_on:
+   #   - agent-service
+   # networks:
+  #    - machining-network
   # 1. Servicio del Agente de IA (Core)
   agent-service:
     build:
