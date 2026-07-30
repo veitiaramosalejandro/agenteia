@@ -5,6 +5,10 @@ from dotenv import load_dotenv
 # Cargar variables de entorno desde .env
 load_dotenv()
 
+
+def _env_bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
 class Settings(BaseSettings):
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     
@@ -40,6 +44,25 @@ class Settings(BaseSettings):
     DIALOGUE_MAX_CONCURRENT: int = int(os.getenv("DIALOGUE_MAX_CONCURRENT", "1"))
     DIALOGUE_ADMISSION_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_ADMISSION_TIMEOUT_SECONDS", "2"))
     DIALOGUE_PROCESSING_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_PROCESSING_TIMEOUT_SECONDS", "0"))
+
+    # Notification API listener (SolidSET Communicator)
+    NOTIF_API_ENABLED: bool = _env_bool("NOTIF_API_ENABLED", "true")
+    NOTIF_API_BASE_URL: str = os.getenv("NOTIF_API_BASE_URL", "")
+    NOTIF_API_ACCESS_KEY: str = os.getenv("NOTIF_API_ACCESS_KEY", "")
+    NOTIF_API_POLL_SECONDS: int = int(os.getenv("NOTIF_API_POLL_SECONDS", "30"))
+    NOTIF_API_TIMEOUT_SECONDS: int = int(os.getenv("NOTIF_API_TIMEOUT_SECONDS", "15"))
+    NOTIF_API_VERIFY_TLS: bool = _env_bool("NOTIF_API_VERIFY_TLS", "false")
+
+    # SolidSET controllers integration (ChatController + RestApiController)
+    SOLIDSET_CHAT_BASE_URL: str = os.getenv("SOLIDSET_CHAT_BASE_URL", "")
+    SOLIDSET_RESTAPI_BASE_URL: str = os.getenv("SOLIDSET_RESTAPI_BASE_URL", "")
+    SOLIDSET_LOGIN_USERNAME: str = os.getenv("SOLIDSET_LOGIN_USERNAME", "")
+    SOLIDSET_LOGIN_PASSWORD: str = os.getenv("SOLIDSET_LOGIN_PASSWORD", "")
+    SOLIDSET_LOGIN_HASHPASS: str = os.getenv("SOLIDSET_LOGIN_HASHPASS", "")
+    SOLIDSET_LOGIN_RESOURCE_ID: str = os.getenv("SOLIDSET_LOGIN_RESOURCE_ID", "")
+    SOLIDSET_LISTEN_CHAT_MESSAGES: bool = _env_bool("SOLIDSET_LISTEN_CHAT_MESSAGES", "true")
+    SOLIDSET_CHAT_MAX_CHANNELS: int = int(os.getenv("SOLIDSET_CHAT_MAX_CHANNELS", "15"))
+    SOLIDSET_CHAT_PAGE_SIZE: int = int(os.getenv("SOLIDSET_CHAT_PAGE_SIZE", "20"))
     
     # Audio
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_samples")

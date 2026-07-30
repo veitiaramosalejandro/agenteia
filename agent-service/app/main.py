@@ -16,6 +16,7 @@ from app.config import settings
 from app.agent.core import MachiningAgent
 from app.agent.speech import text_to_speech
 from app.system.ingest import ingestar_sistema_completo
+from app.system.notification_listener import NotificationApiListener
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
@@ -38,6 +39,7 @@ app.add_middleware(
 
 # Instancia del agente
 agent = MachiningAgent()
+notification_listener = NotificationApiListener()
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
@@ -124,6 +126,42 @@ async def _ciclo_aprendizaje_bd() -> None:
         await asyncio.sleep(wait_seconds)
 
 
+async def _ciclo_notificaciones_api() -> None:
+    """Escucha en segundo plano la API de notificaciones para enriquecer contexto."""
+    intervalo = max(10, settings.NOTIF_API_POLL_SECONDS)
+    if not notification_listener.is_enabled():
+        print("ℹ️ Listener de notificaciones deshabilitado (define NOTIF_API_BASE_URL para activarlo).")
+        return
+
+    print(f"🔔 Listener Notification API activo cada {intervalo} segundos")
+
+    while True:
+        try:
+            # Evita competir con diálogos en alta carga.
+            chats_activos = _get_active_dialogues()
+            if chats_activos > 0:
+                await asyncio.sleep(min(intervalo, max(5, settings.DB_STUDY_IDLE_CHECK_SECONDS)))
+                continue
+
+            resultado = await notification_listener.pull_once()
+            app.state.last_notification_poll_at = resultado.get("timestamp")
+            app.state.last_notification_result = resultado
+            app.state.last_notification_error = None
+            learned = resultado.get("learned", 0)
+            skipped = resultado.get("skipped", 0)
+            errors = resultado.get("errors", 0)
+            if learned or errors:
+                print(
+                    f"🔔 Notification API sync -> learned={learned}, "
+                    f"skipped={skipped}, errors={errors}"
+                )
+        except Exception as exc:
+            app.state.last_notification_error = str(exc)
+            print(f"⚠️ Error en listener de notificaciones: {exc}")
+
+        await asyncio.sleep(intervalo)
+
+
 @app.on_event("startup")
 async def startup_db_learning() -> None:
     """Lanza la tarea de aprendizaje continuo desde la base de datos."""
@@ -131,8 +169,12 @@ async def startup_db_learning() -> None:
         app.state.last_db_study_at = None
         app.state.last_db_study_result = None
         app.state.last_db_study_error = None
+        app.state.last_notification_poll_at = None
+        app.state.last_notification_result = None
+        app.state.last_notification_error = None
         app.state.active_dialogues = 0
         app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())
+        app.state.notification_task = asyncio.create_task(_ciclo_notificaciones_api())
 
 
 @app.on_event("shutdown")
@@ -144,6 +186,13 @@ async def shutdown_db_learning() -> None:
         with suppress(asyncio.CancelledError):
             await task
         app.state.db_study_task = None
+
+    notification_task = getattr(app.state, "notification_task", None)
+    if notification_task is not None:
+        notification_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await notification_task
+        app.state.notification_task = None
 
 # ============================================================
 # MODELOS DE DATOS
@@ -483,6 +532,11 @@ def health_check():
             "dialogue_max_concurrent": settings.DIALOGUE_MAX_CONCURRENT,
             "dialogue_admission_timeout_seconds": settings.DIALOGUE_ADMISSION_TIMEOUT_SECONDS,
             "dialogue_processing_timeout_seconds": settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS,
+            "notification_listener_enabled": notification_listener.is_enabled(),
+            "notification_poll_seconds": settings.NOTIF_API_POLL_SECONDS,
+            "last_notification_poll_at": getattr(app.state, "last_notification_poll_at", None),
+            "last_notification_result": getattr(app.state, "last_notification_result", None),
+            "last_notification_error": getattr(app.state, "last_notification_error", None),
             "db_study_interval_seconds": settings.DB_STUDY_INTERVAL_SECONDS,
             "db_study_idle_check_seconds": settings.DB_STUDY_IDLE_CHECK_SECONDS,
             "db_study_max_run_seconds": settings.DB_STUDY_MAX_RUN_SECONDS,
