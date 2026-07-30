@@ -1,5 +1,7 @@
 import hashlib
 import re
+from urllib import error as urlerror
+from urllib.request import urlopen
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -71,6 +73,47 @@ class MachiningAgent:
         self.user_context_cache = {}
         self.cache_ttl = 300  # 5 minutos
 
+    def _is_llm_connection_error(self, exc: Exception) -> bool:
+        """Detecta fallos típicos de conexión al endpoint del LLM/Ollama."""
+        text = str(exc).lower()
+        connection_hints = [
+            "10061",
+            "connection refused",
+            "actively refused",
+            "failed to establish a new connection",
+            "max retries exceeded",
+            "nodename nor servname provided",
+            "no connection could be made",
+            "nenhuma ligação pôde ser feita",
+        ]
+        return any(hint in text for hint in connection_hints)
+
+    def _probe_ollama_tags(self, timeout_seconds: float = 2.0) -> str:
+        """Realiza una comprobación corta al endpoint /api/tags para diagnóstico."""
+        base = (settings.OLLAMA_BASE_URL or "").rstrip("/")
+        if not base:
+            return "OLLAMA_BASE_URL vacía"
+
+        target = f"{base}/api/tags"
+        try:
+            with urlopen(target, timeout=timeout_seconds) as response:
+                status_code = int(getattr(response, "status", 200))
+                return f"HTTP {status_code} en {target}"
+        except urlerror.HTTPError as e:
+            return f"HTTP {int(getattr(e, 'code', 0))} en {target}"
+        except Exception as e:
+            return f"sin respuesta en {target}: {e}"
+
+    def _build_llm_connection_error_message(self) -> str:
+        """Genera mensaje de error claro cuando el LLM no está alcanzable."""
+        probe = self._probe_ollama_tags()
+        return (
+            "⚠️ No pude conectar con el modelo LLM en este momento. "
+            f"URL configurada: {settings.OLLAMA_BASE_URL}. "
+            f"Diagnóstico rápido: {probe}. "
+            "Verifica que Ollama esté encendido y que la URL/puerto sean correctos."
+        )
+
     def _is_last_chat_message_intent(self, user_text: str) -> bool:
         """Detecta solicitudes para obtener el último mensaje del chat desde BD."""
         text = (user_text or "").strip().lower()
@@ -135,6 +178,7 @@ class MachiningAgent:
         try:
             requested_limit = self._extract_last_messages_limit(user_text)
             requested_offset = self._extract_last_messages_offset(user_text)
+            missing_canal_scope = not bool((canal_id or "").strip())
             target_user_id = user_id
             target_person = self._extract_target_person_name(user_text)
             if target_person:
@@ -142,47 +186,59 @@ class MachiningAgent:
                 if resolved_target_user:
                     target_user_id = resolved_target_user
 
-            contexto = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
-                user_id=target_user_id,
+            rows = self.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
+                user_id=user_id,
                 canal_id=canal_id,
                 limit=max(20, requested_limit + requested_offset),
+                offset=0,
+                sender_resource_id=target_user_id if target_person else None,
             )
-            if not contexto or "No hay historial" in contexto or "No hay mensajes" in contexto:
+            if not rows:
                 return None
 
-            lines = [line.strip() for line in contexto.splitlines() if line.strip().startswith("[")]
-            if not lines:
-                return None
-
-            selected = lines[requested_offset:requested_offset + requested_limit]
+            selected = rows[requested_offset:requested_offset + requested_limit]
             if not selected:
                 return "No encontré suficientes mensajes en el canal para esa posición solicitada."
 
+            formatted = []
+            for row in selected:
+                ts = row.get("timestamp")
+                ts_text = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else "sin_fecha"
+                channel_name = row.get("channel_name") or "Canal sin nombre"
+                sender_name = row.get("sender_display_name")
+                sender_text = f" [{sender_name}]" if sender_name else ""
+                msg_text = row.get("message") or ""
+                formatted.append(f"[{ts_text}] ({channel_name}){sender_text} {msg_text}")
+
+            scope_note = ""
+            if missing_canal_scope:
+                scope_note = "[Aviso: no se recibió canal_id; se usó el canal más reciente accesible para este usuario.] "
+
             if requested_limit == 1 and requested_offset == 0:
                 if target_person:
-                    return f"Último mensaje de {target_person} en el canal (base de datos): {selected[0]}"
-                return f"Último mensaje del canal en base de datos: {selected[0]}"
+                    return f"{scope_note}Último mensaje de {target_person} en el canal (base de datos): {formatted[0]}"
+                return f"{scope_note}Último mensaje del canal en base de datos: {formatted[0]}"
 
             if requested_limit == 1 and requested_offset == 1:
                 if target_person:
-                    return f"Mensaje anterior al último de {target_person} en el canal (base de datos): {selected[0]}"
-                return f"Mensaje anterior al último del canal en base de datos: {selected[0]}"
+                    return f"{scope_note}Mensaje anterior al último de {target_person} en el canal (base de datos): {formatted[0]}"
+                return f"{scope_note}Mensaje anterior al último del canal en base de datos: {formatted[0]}"
 
-            joined = "\n".join(f"{idx}. {line}" for idx, line in enumerate(selected, start=1))
+            joined = "\n".join(f"{idx}. {line}" for idx, line in enumerate(formatted, start=1))
             if requested_offset > 0:
                 return (
-                    f"Mensajes del canal desde la posición {requested_offset + 1} en base de datos:\n"
+                    f"{scope_note}Mensajes del canal desde la posición {requested_offset + 1} en base de datos:\n"
                     f"{joined}"
                 )
 
             if target_person:
                 return (
-                    f"Últimos {len(selected)} mensajes de {target_person} en el canal (base de datos):\n"
+                    f"{scope_note}Últimos {len(selected)} mensajes de {target_person} en el canal (base de datos):\n"
                     f"{joined}"
                 )
 
             return (
-                f"Últimos {len(selected)} mensajes del canal en base de datos:\n"
+                f"{scope_note}Últimos {len(selected)} mensajes del canal en base de datos:\n"
                 f"{joined}"
             )
         except Exception:
@@ -330,7 +386,13 @@ class MachiningAgent:
             
             return summary
         except Exception as e:
-            print(f"⚠️ Error generando resumen: {e}")
+            if self._is_llm_connection_error(e):
+                print(
+                    "⚠️ Error generando resumen: LLM no alcanzable "
+                    f"(OLLAMA_BASE_URL={settings.OLLAMA_BASE_URL}) | {e}"
+                )
+            else:
+                print(f"⚠️ Error generando resumen: {e}")
             return None
 
     # ============================================================
@@ -611,6 +673,8 @@ class MachiningAgent:
                 response = self.llm_with_tools.invoke(messages)
             except Exception as e:
                 print(f"❌ Error invocando LLM: {e}")
+                if self._is_llm_connection_error(e):
+                    return self._build_llm_connection_error_message()
                 return f"⚠️ Error procesando la consulta: {str(e)[:100]}"
             
             # Verificar si el modelo solicitó ejecutar herramientas

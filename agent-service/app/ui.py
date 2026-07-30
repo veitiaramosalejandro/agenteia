@@ -141,6 +141,9 @@ st.session_state["session_id"] = session_id
 if "user_id" not in st.session_state:
     st.session_state["user_id"] = "USR001"
 
+if "selected_canal_id" not in st.session_state:
+    st.session_state["selected_canal_id"] = ""
+
 # Cargar historial si no existe en sesión
 if "messages" not in st.session_state or not st.session_state.get("messages_loaded", False):
     with st.spinner("🔄 Recuperando historial de conversación..."):
@@ -247,6 +250,27 @@ with st.sidebar:
                     st.markdown(f"• {canal.get('nombre', 'N/A')} ({canal.get('tipo', 'N/A')})")
                 if len(canales) > 3:
                     st.caption(f"... y {len(canales) - 3} canales más")
+
+                canal_options = [("", "(Sin canal específico)")]
+                for canal in canales:
+                    canal_options.append((canal.get("id", ""), canal.get("nombre", "Canal")))
+
+                canal_labels = [f"{name} | {cid[:8]}" if cid else name for cid, name in canal_options]
+                default_index = 0
+                for idx, (cid, _) in enumerate(canal_options):
+                    if cid and cid == st.session_state.get("selected_canal_id"):
+                        default_index = idx
+                        break
+
+                selected_label = st.selectbox(
+                    "Canal activo para consultas",
+                    options=canal_labels,
+                    index=default_index,
+                    help="Si eliges un canal, las consultas de historial se filtran por ese canal.",
+                )
+
+                selected_idx = canal_labels.index(selected_label)
+                st.session_state["selected_canal_id"] = canal_options[selected_idx][0] or ""
             
             actividades = ctx_data.get("actividades_recientes", [])
             if actividades:
@@ -345,6 +369,7 @@ if user_input := st.chat_input("Escribe tu consulta o reporte de falla..."):
                     "session_id": st.session_state["session_id"],
                     "message": user_input,
                     "user_id": st.session_state["user_id"],
+                    "canal_id": st.session_state.get("selected_canal_id") or None,
                     "generate_audio": False
                 }
                 

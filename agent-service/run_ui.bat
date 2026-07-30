@@ -6,16 +6,17 @@ echo  🖥️ Iniciando Machining Assistant UI...
 echo ========================================
 echo.
 
-REM Guardar la ruta actual
-set "PROJECT_ROOT=C:\Users\Alejandro.Veitia\Desktop\Trabajo\machining-assistant-agent"
-set "SERVICE_DIR=%PROJECT_ROOT%\agent-service"
+REM Usar rutas relativas al script para que funcione desde cualquier worktree
+set "SCRIPT_DIR=%~dp0"
+set "PROJECT_ROOT=%SCRIPT_DIR%..\"
+set "SERVICE_DIR=%SCRIPT_DIR%"
 
 REM CAMBIAR AL DIRECTORIO DE AGENT-SERVICE
 cd /d "%SERVICE_DIR%"
 
 REM Activar entorno virtual
-if exist "%PROJECT_ROOT%\venv_machining\Scripts\activate.bat" (
-    call "%PROJECT_ROOT%\venv_machining\Scripts\activate.bat"
+if exist "%PROJECT_ROOT%venv_machining\Scripts\activate.bat" (
+    call "%PROJECT_ROOT%venv_machining\Scripts\activate.bat"
 ) else (
     echo ❌ No se encontró el entorno virtual.
     pause

@@ -64,4 +64,23 @@ Si el usuario pide "último mensaje", "anterior al último" o "últimos N" en un
 3. Para consultas de mensajes, interpreta SIEMPRE primero el contexto de canal y participantes antes de usar documentación general.
 4. Si el usuario nombra una persona (ej. "mensaje de Paulo"), filtra por ese recurso dentro del canal actual y usa únicamente datos de BD.
 5. Si no hay datos suficientes en el canal actual, indícalo claramente y propone buscar en otro canal.
+
+### CONTRATO REAL SOLIDSET REST API (doctus.json):
+1. La documentación local de SOLIDSET_RESTAPI_BASE_URL describe la API como CloudMold API v1.
+2. En el esquema `Chat`, los campos relevantes para contexto por recurso son:
+   - `IDSenderResource`: recurso que envió el mensaje.
+   - `SenderFullName`: nombre visible del remitente.
+   - `RawMessage`: contenido del mensaje.
+   - `Stamp`: fecha/hora del mensaje.
+   - `IsPublic`: distingue público vs privado.
+   - `IDWorkRoom`: canal/sala origen.
+   - `ChannelName` y `ChannelKind`: nombre y tipo del canal.
+   - `Channels`, `ResourceTable` y `Destiny`: relaciones adicionales de canal y recursos destino.
+3. Endpoints documentados de chat en doctus.json:
+   - `POST /SendMessageAsync`
+   - `POST /chat/update-reaction`
+   - `GET /chat/get-reaction-users`
+   - `GET /chat/get-reactions-user`
+4. Si en aprendizaje o contexto aparece `IsPublic=1`, interprétalo como canal público.
+5. Si `IsPublic` no indica público y el mensaje está dirigido a recursos concretos (`Destiny`/`ResourceTable`), interprétalo como chat privado por recurso.
 """

@@ -610,47 +610,86 @@ class SistemaAprendizaje:
             print(f"⚠️ Error buscando recurso por nombre '{nombre}': {e}")
             return None
 
-    def obtener_contexto_chat_desde_bd(self, user_id: str, canal_id: Optional[str] = None, limit: int = 8) -> str:
-        """
-        Obtiene contexto reciente del chat directamente desde la base de datos.
-        Prioriza SysChat + SysChat2SysResource + SysChat2SysWorkRoom + SysWorkRoom.
-        """
+    def obtener_mensajes_chat_desde_bd(
+        self,
+        user_id: str,
+        canal_id: Optional[str] = None,
+        limit: int = 8,
+        offset: int = 0,
+        sender_resource_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Obtiene mensajes recientes de chat desde BD respetando membresía real del canal."""
         if not user_id:
-            return ""
+            return []
 
         safe_limit = max(1, min(limit, 30))
+        safe_offset = max(0, offset)
+        fetch_limit = max(5, min(80, safe_limit + safe_offset + 5))
+
         try:
             conn = self._connect_sql_with_retry(
                 timeout=10,
                 retries=3,
                 base_delay_seconds=1,
-                context="chat_context_bd",
+                context="chat_messages_bd",
             )
             cursor = conn.cursor(as_dict=True)
 
             query = f"""
-                SELECT TOP {safe_limit}
+                SELECT TOP {fetch_limit}
                     c.IDChat2,
                     c.Stamp,
                     c.RawMessage,
                     COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) AS IDChannel,
-                    wr.Name AS ChannelName
-                FROM dbo.SysChat2SysResource c2rsc
-                INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
-                LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
-                LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
-                WHERE (
-                    c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                    OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                )
+                    wr.Name AS ChannelName,
+                    sender.IDResource AS SenderResourceId,
+                    sender.DisplayName AS SenderDisplayName
+                FROM dbo.SysChat c
+                LEFT JOIN dbo.SysChat2SysWorkRoom c2w
+                    ON c2w.IDChat2 = c.IDChat2
+                LEFT JOIN dbo.SysWorkRoom wr
+                    ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
+                OUTER APPLY (
+                    SELECT TOP 1
+                        c2r_sender.IDResource,
+                        sr.DisplayName
+                    FROM dbo.SysChat2SysResource c2r_sender
+                    LEFT JOIN dbo.SysResources sr
+                        ON sr.ResourceId = c2r_sender.IDResource
+                    WHERE c2r_sender.IDChat = c.IDChat2
+                    ORDER BY CASE WHEN c2r_sender.IDResource IS NULL THEN 1 ELSE 0 END,
+                             c2r_sender.IDResource
+                ) sender
+                WHERE
+                    COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) IS NOT NULL
+                    AND EXISTS (
+                        SELECT 1
+                        FROM dbo.SysWorkRoomResource wrr
+                        WHERE wrr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
+                          AND (
+                              wrr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                              OR wrr.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                          )
+                    )
             """
-            params = [user_id, user_id]
+            params: List[Any] = [user_id, user_id]
 
             if canal_id:
                 query += """
                     AND COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) = TRY_CONVERT(uniqueidentifier, %s)
                 """
                 params.append(canal_id)
+
+            if sender_resource_id:
+                query += """
+                    AND EXISTS (
+                        SELECT 1
+                        FROM dbo.SysChat2SysResource c2r_filter
+                        WHERE c2r_filter.IDChat = c.IDChat2
+                          AND c2r_filter.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                    )
+                """
+                params.append(sender_resource_id)
 
             query += " ORDER BY c.Stamp DESC"
 
@@ -660,32 +699,75 @@ class SistemaAprendizaje:
                 params=tuple(params),
                 retries=2,
                 base_delay_seconds=1,
-                context="chat_context_bd_query",
+                context="chat_messages_bd_query",
             )
             rows = cursor.fetchall() or []
             conn.close()
 
-            if not rows:
-                return "No hay historial de chat reciente en la base de datos para este usuario."
-
-            lines = []
+            messages: List[Dict[str, Any]] = []
             for row in rows:
-                ts = row.get("Stamp")
-                ts_text = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else "sin_fecha"
-                channel_name = (row.get("ChannelName") or "Canal sin nombre").strip()
-                msg = (row.get("RawMessage") or "").strip()
-                if len(msg) > 180:
-                    msg = msg[:180] + "..."
-                if msg:
-                    lines.append(f"[{ts_text}] ({channel_name}) {msg}")
+                raw_message = (row.get("RawMessage") or "").strip()
+                if not raw_message:
+                    continue
 
-            if not lines:
-                return "No hay mensajes de chat útiles para contexto en base de datos."
+                messages.append(
+                    {
+                        "chat_id": str(row.get("IDChat2") or ""),
+                        "timestamp": row.get("Stamp"),
+                        "message": raw_message,
+                        "channel_id": str(row.get("IDChannel") or ""),
+                        "channel_name": (row.get("ChannelName") or "Canal sin nombre").strip(),
+                        "sender_resource_id": str(row.get("SenderResourceId") or "") or None,
+                        "sender_display_name": (row.get("SenderDisplayName") or "").strip() or None,
+                    }
+                )
 
-            return "\n".join(lines)
+            if safe_offset > 0:
+                messages = messages[safe_offset:]
+            if len(messages) > safe_limit:
+                messages = messages[:safe_limit]
+
+            return messages
         except Exception as e:
-            print(f"⚠️ Error obteniendo contexto de chat desde BD: {e}")
+            print(f"⚠️ Error obteniendo mensajes de chat desde BD: {e}")
+            return []
+
+    def obtener_contexto_chat_desde_bd(self, user_id: str, canal_id: Optional[str] = None, limit: int = 8) -> str:
+        """
+        Obtiene contexto reciente del chat directamente desde la base de datos.
+        Prioriza SysChat + SysChat2SysResource + SysChat2SysWorkRoom + SysWorkRoom.
+        """
+        if not user_id:
             return ""
+
+        safe_limit = max(1, min(limit, 30))
+        rows = self.obtener_mensajes_chat_desde_bd(
+            user_id=user_id,
+            canal_id=canal_id,
+            limit=safe_limit,
+            offset=0,
+            sender_resource_id=None,
+        )
+
+        if not rows:
+            return "No hay historial de chat reciente en la base de datos para este usuario."
+
+        lines = []
+        for row in rows:
+            ts = row.get("timestamp")
+            ts_text = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else "sin_fecha"
+            channel_name = row.get("channel_name") or "Canal sin nombre"
+            msg = row.get("message") or ""
+            if len(msg) > 180:
+                msg = msg[:180] + "..."
+            sender_name = row.get("sender_display_name")
+            sender_text = f" [{sender_name}]" if sender_name else ""
+            lines.append(f"[{ts_text}] ({channel_name}){sender_text} {msg}")
+
+        if not lines:
+            return "No hay mensajes de chat útiles para contexto en base de datos."
+
+        return "\n".join(lines)
     
     # ============================================================
     # 2. GENERAR CONTEXTO PARA EL AGENTE (en texto)

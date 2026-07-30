@@ -195,22 +195,59 @@ class NotificationApiListener:
         channel_id = entry.get("channel_id")
         data = entry.get("data")
 
+        payload = data if isinstance(data, dict) else {}
+        payload_channel_id = _safe_str = None
+        if payload:
+            payload_channel_id = payload.get("IDWorkRoom") or payload.get("IDChannel") or payload.get("BookMarkedIDChannel")
+            if isinstance(payload_channel_id, str) and payload_channel_id.strip():
+                channel_id = channel_id or payload_channel_id.strip()
+
+        sender_resource = payload.get("IDSenderResource") if payload else None
+        sender_name = payload.get("SenderFullName") if payload else None
+        raw_message = payload.get("RawMessage") if payload else None
+        channel_name = payload.get("ChannelName") or payload.get("OriginChannelName") if payload else None
+        channel_kind = payload.get("ChannelKind") or payload.get("OriginChannelKind") if payload else None
+        is_public = payload.get("IsPublic") if payload else None
+        resource_table = payload.get("ResourceTable") if payload else None
+        destiny = payload.get("Destiny") if payload else None
+
+        if payload and any(key in payload for key in ["IDSenderResource", "RawMessage", "IDWorkRoom", "ChannelName"]):
+            source = "solidset_restapi_chat"
+
         short_data = json.dumps(data, ensure_ascii=False, default=str)
         if len(short_data) > 600:
             short_data = short_data[:600] + "..."
 
+        if source == "solidset_restapi_chat" and raw_message:
+            scope = "canal_publico" if str(is_public) in {"1", "True", "true"} else "chat_privado"
+            summary = (
+                f"Chat REST API ({scope})"
+                f" | Canal: {channel_name or channel_id or 'sin_canal'}"
+                f" | Remitente: {sender_name or sender_resource or 'desconocido'}"
+                f" | Mensaje: {str(raw_message)[:300]}"
+            )
+        else:
+            summary = f"{source} {endpoint}: {short_data}"
+
         actividad = Actividad(
             id=f"notif_{fingerprint[:28]}",
-            recurso_humano_id="sistema",
+            recurso_humano_id=str(sender_resource or "sistema"),
             canal_id=channel_id or "solidset_communicator_notifications",
             tipo=source,
-            descripcion=f"{source} {endpoint}: {short_data}",
+            descripcion=summary,
             timestamp=datetime.utcnow(),
             metadatos={
                 "source_table": "NotificationAPI",
                 "source": source,
                 "endpoint": endpoint,
                 "channel_id": channel_id,
+                "channel_name": channel_name,
+                "channel_kind": channel_kind,
+                "sender_resource": sender_resource,
+                "sender_name": sender_name,
+                "is_public": is_public,
+                "resource_table": resource_table,
+                "destiny": destiny,
                 "fingerprint": fingerprint,
                 "captured_at": datetime.utcnow().isoformat(),
                 "payload": data,

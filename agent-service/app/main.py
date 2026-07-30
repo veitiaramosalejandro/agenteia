@@ -1,11 +1,17 @@
 import asyncio
+import json
 import os
+import socket
+import ssl
 import threading
 from contextlib import suppress
 from collections import OrderedDict
 from datetime import datetime
 from time import perf_counter, time
 from typing import Optional
+from urllib import error as urlerror
+from urllib.parse import urlparse
+from urllib.request import Request as URLRequest, urlopen
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -59,12 +65,267 @@ _dialogue_metrics = {
 }
 
 
+def _extract_host_port_from_url(raw_url: str, default_port: int) -> tuple[Optional[str], int]:
+    parsed = urlparse(raw_url or "")
+    host = parsed.hostname
+    port = parsed.port or default_port
+    return host, int(port)
+
+
+def _extract_host_port(raw_host: str, default_port: int) -> tuple[Optional[str], int]:
+    host = (raw_host or "").strip()
+    if not host:
+        return None, int(default_port)
+    if ":" in host and not host.startswith("["):
+        left, right = host.rsplit(":", 1)
+        if right.isdigit():
+            return left.strip(), int(right)
+    return host, int(default_port)
+
+
+def _probe_tcp(host: Optional[str], port: int, timeout_seconds: float = 2.5) -> dict:
+    if not host:
+        return {"ok": False, "error": "host_vacio", "host": host, "port": port}
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return {"ok": True, "host": host, "port": port}
+    except Exception as exc:
+        return {"ok": False, "host": host, "port": port, "error": str(exc)}
+
+
+def _probe_http(base_url: str, path: str = "", timeout_seconds: float = 3.5, verify_tls: bool = True) -> dict:
+    base = (base_url or "").rstrip("/")
+    if not base:
+        return {"ok": False, "error": "url_vacia", "url": base}
+
+    target = f"{base}{path}" if path else base
+    try:
+        request = URLRequest(target)
+        if target.lower().startswith("https://") and not verify_tls:
+            context = ssl._create_unverified_context()
+            with urlopen(request, timeout=timeout_seconds, context=context) as response:
+                status_code = int(getattr(response, "status", 200))
+        else:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                status_code = int(getattr(response, "status", 200))
+
+        return {
+            "ok": 200 <= status_code < 500,
+            "status_code": status_code,
+            "url": target,
+        }
+    except urlerror.HTTPError as exc:
+        status_code = int(getattr(exc, "code", 0))
+        return {
+            "ok": 200 <= status_code < 500,
+            "status_code": status_code,
+            "url": target,
+            "error": str(exc),
+        }
+    except Exception as exc:
+        return {"ok": False, "url": target, "error": str(exc)}
+
+
+def _probe_http_json(base_url: str, path: str, timeout_seconds: float = 4.0, verify_tls: bool = True) -> dict:
+    base = (base_url or "").rstrip("/")
+    if not base:
+        return {"ok": False, "error": "url_vacia", "url": base}
+
+    target = f"{base}{path}" if path else base
+    try:
+        request = URLRequest(target)
+        if target.lower().startswith("https://") and not verify_tls:
+            context = ssl._create_unverified_context()
+            response = urlopen(request, timeout=timeout_seconds, context=context)
+        else:
+            response = urlopen(request, timeout=timeout_seconds)
+
+        with response as resp:
+            status_code = int(getattr(resp, "status", 200))
+            body = resp.read().decode("utf-8", errors="ignore")
+
+        data = json.loads(body)
+        result = {
+            "ok": 200 <= status_code < 500,
+            "status_code": status_code,
+            "url": target,
+            "json": {
+                "title": data.get("info", {}).get("title") if isinstance(data, dict) else None,
+                "version": data.get("info", {}).get("version") if isinstance(data, dict) else None,
+                "paths_count": len(data.get("paths", {})) if isinstance(data, dict) and isinstance(data.get("paths"), dict) else None,
+            },
+        }
+        return result
+    except Exception as exc:
+        return {"ok": False, "url": target, "error": str(exc)}
+
+
+def _run_startup_connectivity_checks() -> dict:
+    checks = {}
+
+    ollama_host, ollama_port = _extract_host_port_from_url(settings.OLLAMA_BASE_URL, 11434)
+    checks["ollama"] = {
+        "tcp": _probe_tcp(ollama_host, ollama_port),
+        "http": _probe_http(settings.OLLAMA_BASE_URL, "/api/tags"),
+    }
+
+    qdrant_host, qdrant_port = _extract_host_port_from_url(settings.VECTOR_DB_URL, 6333)
+    checks["qdrant"] = {
+        "tcp": _probe_tcp(qdrant_host, qdrant_port),
+        "http": _probe_http(settings.VECTOR_DB_URL, "/collections"),
+    }
+
+    redis_host, redis_port = _extract_host_port_from_url(settings.REDIS_URL, 6379)
+    checks["redis"] = {
+        "tcp": _probe_tcp(redis_host, redis_port),
+    }
+
+    notif_enabled = settings.NOTIF_API_ENABLED and bool((settings.NOTIF_API_BASE_URL or "").strip())
+    checks["notification_api"] = {
+        "enabled": notif_enabled,
+        "tcp": _probe_tcp(*_extract_host_port_from_url(settings.NOTIF_API_BASE_URL, 443)) if notif_enabled else {"ok": True, "skipped": True},
+        "http": _probe_http(
+            settings.NOTIF_API_BASE_URL,
+            "/api/Request",
+            verify_tls=settings.NOTIF_API_VERIFY_TLS,
+        ) if notif_enabled else {"ok": True, "skipped": True},
+    }
+
+    solidset_rest_enabled = bool((settings.SOLIDSET_RESTAPI_BASE_URL or "").strip())
+    checks["solidset_restapi"] = {
+        "configured": solidset_rest_enabled,
+        "tcp": _probe_tcp(*_extract_host_port_from_url(settings.SOLIDSET_RESTAPI_BASE_URL, 80)) if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
+        "root": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL) if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
+        "heartbeat": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL, "/RestApi/Heartbeat") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
+        "swagger": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL, "/swagger/index.html") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
+        "openapi": _probe_http_json(settings.SOLIDSET_RESTAPI_BASE_URL, "/openapi.json") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
+    }
+
+    sql_host, sql_port = _extract_host_port(settings.SQL_SERVER_HOST, 1433)
+    checks["sql_server"] = {
+        "tcp": _probe_tcp(sql_host, sql_port),
+        "database": settings.SQL_SERVER_DB,
+    }
+
+    db_url = os.getenv("DB_URL", "")
+    pg_host, pg_port = _extract_host_port_from_url(db_url, 5432)
+    checks["postgres_timescaledb"] = {
+        "configured": bool(db_url),
+        "tcp": _probe_tcp(pg_host, pg_port) if db_url else {"ok": False, "error": "DB_URL_no_configurada"},
+    }
+
+    all_ok = True
+    for service_data in checks.values():
+        for probe_name, probe_result in service_data.items():
+            if probe_name in {"enabled", "configured", "database"}:
+                continue
+            if isinstance(probe_result, dict) and not probe_result.get("ok", False):
+                all_ok = False
+
+    return {
+        "checked_at": datetime.utcnow().isoformat(),
+        "all_ok": all_ok,
+        "checks": checks,
+    }
+
+
+def _probe_to_text(probe: dict) -> str:
+    if probe.get("skipped"):
+        return "SKIPPED"
+    if probe.get("ok"):
+        if "status_code" in probe:
+            return f"OK (HTTP {probe.get('status_code')})"
+        host = probe.get("host")
+        port = probe.get("port")
+        if host and port:
+            return f"OK ({host}:{port})"
+        return "OK"
+    error_text = probe.get("error", "error_desconocido")
+    return f"FAIL ({error_text})"
+
+
+def _log_startup_connectivity(report: dict) -> None:
+    checks = report.get("checks", {})
+    checked_at = report.get("checked_at")
+    print("🔌 Comprobador de conectividad inicial")
+    if checked_at:
+        print(f"   - Timestamp UTC: {checked_at}")
+
+    ollama = checks.get("ollama", {})
+    print(f"   - Ollama URL: {settings.OLLAMA_BASE_URL}")
+    print(f"     • TCP: {_probe_to_text(ollama.get('tcp', {}))}")
+    print(f"     • HTTP /api/tags: {_probe_to_text(ollama.get('http', {}))}")
+
+    qdrant = checks.get("qdrant", {})
+    print(f"   - Qdrant URL: {settings.VECTOR_DB_URL}")
+    print(f"     • TCP: {_probe_to_text(qdrant.get('tcp', {}))}")
+    print(f"     • HTTP /collections: {_probe_to_text(qdrant.get('http', {}))}")
+
+    redis = checks.get("redis", {})
+    print(f"   - Redis URL: {settings.REDIS_URL}")
+    print(f"     • TCP: {_probe_to_text(redis.get('tcp', {}))}")
+
+    sql_server = checks.get("sql_server", {})
+    sql_tcp = sql_server.get("tcp", {})
+    print(f"   - SQL Server: {settings.SQL_SERVER_HOST} | DB: {settings.SQL_SERVER_DB}")
+    print(f"     • TCP: {_probe_to_text(sql_tcp)}")
+
+    postgres = checks.get("postgres_timescaledb", {})
+    db_url = os.getenv("DB_URL", "")
+    print(f"   - PostgreSQL/TimescaleDB URL: {db_url or 'DB_URL_no_configurada'}")
+    print(f"     • TCP: {_probe_to_text(postgres.get('tcp', {}))}")
+
+    notif = checks.get("notification_api", {})
+    notif_url = settings.NOTIF_API_BASE_URL or "NOTIF_API_BASE_URL_no_configurada"
+    print(f"   - Notification API URL: {notif_url}")
+    print(f"     • Enabled: {notif.get('enabled', False)}")
+    print(f"     • TCP: {_probe_to_text(notif.get('tcp', {}))}")
+    print(f"     • HTTP /api/Request: {_probe_to_text(notif.get('http', {}))}")
+
+    solidset_rest = checks.get("solidset_restapi", {})
+    solidset_rest_url = settings.SOLIDSET_RESTAPI_BASE_URL or "SOLIDSET_RESTAPI_BASE_URL_no_configurada"
+    print(f"   - SolidSET RestApi URL: {solidset_rest_url}")
+    print(f"     • Configured: {solidset_rest.get('configured', False)}")
+    print(f"     • TCP: {_probe_to_text(solidset_rest.get('tcp', {}))}")
+    print(f"     • HTTP /: {_probe_to_text(solidset_rest.get('root', {}))}")
+    print(f"     • HTTP /RestApi/Heartbeat: {_probe_to_text(solidset_rest.get('heartbeat', {}))}")
+    print(f"     • HTTP /swagger/index.html: {_probe_to_text(solidset_rest.get('swagger', {}))}")
+    openapi_probe = solidset_rest.get("openapi", {})
+    print(f"     • HTTP /openapi.json: {_probe_to_text(openapi_probe)}")
+    openapi_json = openapi_probe.get("json", {}) if isinstance(openapi_probe, dict) else {}
+    if openapi_json:
+        print(
+            "     • OpenAPI info: "
+            f"title={openapi_json.get('title') or 'n/a'}, "
+            f"version={openapi_json.get('version') or 'n/a'}, "
+            f"paths={openapi_json.get('paths_count') if openapi_json.get('paths_count') is not None else 'n/a'}"
+        )
+
+
 def _build_dialogue_cache_key(session_id: str, user_id: str, canal_id: Optional[str], message: str) -> str:
     normalized_message = " ".join((message or "").strip().lower().split())
     normalized_canal = (canal_id or "").strip().lower()
     normalized_user = (user_id or "").strip().lower()
     normalized_session = (session_id or "").strip().lower()
     return f"{normalized_session}|{normalized_user}|{normalized_canal}|{normalized_message}"
+
+
+def _resolve_effective_canal_id(canal_id: Optional[str], session_id: str) -> Optional[str]:
+    """Permite usar session_id como canal cuando integraciones no envian canal_id explícito."""
+    explicit = (canal_id or "").strip()
+    if explicit:
+        return explicit
+
+    session_candidate = (session_id or "").strip()
+    if not session_candidate:
+        return None
+
+    # Evita tomar como canal los session_id generados por UI local (session_xxxx).
+    if session_candidate.lower().startswith("session_"):
+        return None
+
+    return session_candidate
 
 
 def _get_cached_dialogue_response(cache_key: str) -> Optional[str]:
@@ -256,6 +517,12 @@ async def _ciclo_notificaciones_api() -> None:
 async def startup_db_learning() -> None:
     """Lanza la tarea de aprendizaje continuo desde la base de datos."""
     if getattr(app.state, "db_study_task", None) is None:
+        app.state.startup_connectivity = _run_startup_connectivity_checks()
+        _log_startup_connectivity(app.state.startup_connectivity)
+        if app.state.startup_connectivity.get("all_ok"):
+            print("✅ Comprobador de conectividad inicial: OK")
+        else:
+            print("⚠️ Comprobador de conectividad inicial: hay servicios no alcanzables")
         app.state.last_db_study_at = None
         app.state.last_db_study_result = None
         app.state.last_db_study_error = None
@@ -394,7 +661,8 @@ def handle_dialogue(req: ChatConversationRequest):
     dialogue_started = False
     slot_acquired = False
     request_started_at = perf_counter()
-    cache_key = _build_dialogue_cache_key(req.session_id, req.user_id, req.canal_id, req.message)
+    effective_canal_id = _resolve_effective_canal_id(req.canal_id, req.session_id)
+    cache_key = _build_dialogue_cache_key(req.session_id, req.user_id, effective_canal_id, req.message)
     try:
         # --- 1. VALIDACIONES DE SEGURIDAD ---
         
@@ -499,7 +767,7 @@ def handle_dialogue(req: ChatConversationRequest):
                     session_id=req.session_id,
                     user_text=req.message,
                     user_id=req.user_id,
-                    canal_id=req.canal_id,
+                    canal_id=effective_canal_id,
                 )
             except Exception as exc:
                 error_holder["error"] = exc
@@ -701,6 +969,7 @@ def health_check():
             "last_notification_poll_at": getattr(app.state, "last_notification_poll_at", None),
             "last_notification_result": getattr(app.state, "last_notification_result", None),
             "last_notification_error": getattr(app.state, "last_notification_error", None),
+            "startup_connectivity": getattr(app.state, "startup_connectivity", None),
             "db_study_interval_seconds": settings.DB_STUDY_INTERVAL_SECONDS,
             "db_study_idle_check_seconds": settings.DB_STUDY_IDLE_CHECK_SECONDS,
             "db_study_max_run_seconds": settings.DB_STUDY_MAX_RUN_SECONDS,
@@ -776,6 +1045,145 @@ def reset_sql_retry_stats():
             status_code=500,
             detail=f"Error reseteando métricas SQL: {str(e)}"
         )
+
+
+# ============================================================
+# ✅ NUEVO ENDPOINT: PROBAR CONECTIVIDAD CON SOLIDSET API
+# ============================================================
+
+@app.get("/api/v1/connectivity/solidset")
+def test_solidset_connectivity():
+    """
+    Prueba de conectividad con la API SolidSET.
+    Verifica que el endpoint Heartbeat esté accesible.
+    
+    Endpoints probados:
+    - /RestApi/Heartbeat (recomendado para verificar comunicación)
+    - /swagger/index.html (documentación)
+    - /openapi.json (documentación OpenAPI)
+    """
+    base_url = settings.SOLIDSET_RESTAPI_BASE_URL
+    
+    if not base_url:
+        return {
+            "status": "error",
+            "message": "SOLIDSET_RESTAPI_BASE_URL no configurada en el entorno",
+            "configured": False
+        }
+    
+    results = {
+        "status": "ok",
+        "base_url": base_url,
+        "timestamp": datetime.utcnow().isoformat(),
+        "tests": {}
+    }
+    
+    # Test 1: Heartbeat (END-POINT PRINCIPAL)
+    heartbeat_result = _probe_http(base_url, "/RestApi/Heartbeat")
+    results["tests"]["heartbeat"] = {
+        "endpoint": f"{base_url}/RestApi/Heartbeat",
+        "success": heartbeat_result.get("ok", False),
+        "status_code": heartbeat_result.get("status_code"),
+        "error": heartbeat_result.get("error")
+    }
+    
+    # Test 2: Swagger (para verificar que la API está servida)
+    swagger_result = _probe_http(base_url, "/swagger/index.html")
+    results["tests"]["swagger"] = {
+        "endpoint": f"{base_url}/swagger/index.html",
+        "success": swagger_result.get("ok", False),
+        "status_code": swagger_result.get("status_code"),
+        "error": swagger_result.get("error")
+    }
+    
+    # Test 3: OpenAPI (para verificar documentación)
+    openapi_result = _probe_http_json(base_url, "/openapi.json")
+    results["tests"]["openapi"] = {
+        "endpoint": f"{base_url}/openapi.json",
+        "success": openapi_result.get("ok", False),
+        "status_code": openapi_result.get("status_code"),
+        "info": openapi_result.get("json", {}),
+        "error": openapi_result.get("error")
+    }
+    
+    # Determinar estado general
+    heartbeat_ok = results["tests"]["heartbeat"]["success"]
+    swagger_ok = results["tests"]["swagger"]["success"]
+    openapi_ok = results["tests"]["openapi"]["success"]
+    
+    if heartbeat_ok:
+        results["overall_status"] = "healthy"
+        results["message"] = "✅ Comunicación exitosa con SolidSET API (Heartbeat OK)"
+    elif swagger_ok:
+        results["overall_status"] = "partial"
+        results["message"] = "⚠️ SolidSET API accesible, pero Heartbeat no responde correctamente"
+    elif openapi_ok:
+        results["overall_status"] = "partial"
+        results["message"] = "⚠️ SolidSET API OpenAPI accesible, pero servicios principales no responden"
+    else:
+        results["overall_status"] = "unreachable"
+        results["message"] = "❌ No se pudo establecer comunicación con SolidSET API"
+    
+    return results
+
+
+@app.get("/api/v1/connectivity/all")
+def test_all_connectivity():
+    """
+    Prueba de conectividad con todos los servicios externos configurados.
+    """
+    base_url = settings.SOLIDSET_RESTAPI_BASE_URL
+    
+    results = {
+        "status": "ok",
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {}
+    }
+    
+    # Test SolidSET
+    if base_url:
+        heartbeat_result = _probe_http(base_url, "/RestApi/Heartbeat")
+        results["services"]["solidset_restapi"] = {
+            "configured": True,
+            "base_url": base_url,
+            "heartbeat_ok": heartbeat_result.get("ok", False),
+            "status_code": heartbeat_result.get("status_code"),
+            "error": heartbeat_result.get("error")
+        }
+    else:
+        results["services"]["solidset_restapi"] = {
+            "configured": False,
+            "error": "SOLIDSET_RESTAPI_BASE_URL no configurada"
+        }
+    
+    # Test Ollama
+    ollama_result = _probe_http(settings.OLLAMA_BASE_URL, "/api/tags")
+    results["services"]["ollama"] = {
+        "url": settings.OLLAMA_BASE_URL,
+        "ok": ollama_result.get("ok", False),
+        "status_code": ollama_result.get("status_code"),
+        "error": ollama_result.get("error")
+    }
+    
+    # Test Qdrant
+    qdrant_result = _probe_http(settings.VECTOR_DB_URL, "/collections")
+    results["services"]["qdrant"] = {
+        "url": settings.VECTOR_DB_URL,
+        "ok": qdrant_result.get("ok", False),
+        "status_code": qdrant_result.get("status_code"),
+        "error": qdrant_result.get("error")
+    }
+    
+    # Test Redis (TCP)
+    redis_host, redis_port = _extract_host_port_from_url(settings.REDIS_URL, 6379)
+    redis_result = _probe_tcp(redis_host, redis_port)
+    results["services"]["redis"] = {
+        "url": settings.REDIS_URL,
+        "ok": redis_result.get("ok", False),
+        "error": redis_result.get("error")
+    }
+    
+    return results
 
 
 # ============================================================
