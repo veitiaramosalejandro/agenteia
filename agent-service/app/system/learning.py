@@ -33,8 +33,36 @@ class SistemaAprendizaje:
             "query_by_context": {},
             "last_retry_at": None,
         }
-        self._primary_schema_available = True
+        self._primary_schema_available = self._probe_primary_schema()
         self._ensure_collection()
+
+    def _probe_primary_schema(self) -> bool:
+        """Verifica si el esquema legacy (RecursosHumanos) existe en esta BD."""
+        try:
+            conn = self._connect_sql_with_retry(
+                timeout=5,
+                retries=1,
+                base_delay_seconds=1,
+                context="schema_probe",
+            )
+            cursor = conn.cursor(as_dict=True)
+            cursor.execute(
+                """
+                SELECT TOP 1 1 AS has_primary_schema
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'RecursosHumanos'
+                """
+            )
+            row = cursor.fetchone()
+            conn.close()
+            available = bool(row)
+            if not available:
+                print("ℹ️ Esquema legacy no detectado; se usará mapeo real Sys* para contexto de usuario.")
+            return available
+        except Exception as e:
+            # Si no se puede validar al arranque, mantenemos compatibilidad y dejamos fallback en tiempo de ejecución.
+            print(f"⚠️ No se pudo verificar esquema primario al arranque: {e}")
+            return True
 
     def _increment_retry_metric(self, metric_key: str, context_key: str):
         """Incrementa contadores de reintento SQL para observabilidad básica."""
@@ -545,6 +573,42 @@ class SistemaAprendizaje:
             "mantenimiento": ["ver_telemetria", "diagnosticar", "programar_mantenimiento"]
         }
         return permisos_base + permisos_rol.get(rol, [])
+
+    def obtener_recurso_id_por_nombre(self, nombre: str) -> Optional[str]:
+        """Busca el ID de recurso por nombre visible en SysResources."""
+        nombre = (nombre or "").strip()
+        if not nombre:
+            return None
+
+        try:
+            conn = self._connect_sql_with_retry(
+                timeout=10,
+                retries=2,
+                base_delay_seconds=1,
+                context="resource_by_name",
+            )
+            cursor = conn.cursor(as_dict=True)
+            self._execute_with_retry(
+                cursor=cursor,
+                query="""
+                    SELECT TOP 1 ResourceId, DisplayName
+                    FROM dbo.SysResources
+                    WHERE UPPER(DisplayName) LIKE UPPER(%s)
+                    ORDER BY CASE WHEN UPPER(DisplayName) = UPPER(%s) THEN 0 ELSE 1 END, DisplayName
+                """,
+                params=(f"%{nombre}%", nombre),
+                retries=2,
+                base_delay_seconds=1,
+                context="resource_by_name_query",
+            )
+            row = cursor.fetchone()
+            conn.close()
+            if not row:
+                return None
+            return str(row.get("ResourceId") or row.get("IDResource") or "").strip() or None
+        except Exception as e:
+            print(f"⚠️ Error buscando recurso por nombre '{nombre}': {e}")
+            return None
 
     def obtener_contexto_chat_desde_bd(self, user_id: str, canal_id: Optional[str] = None, limit: int = 8) -> str:
         """

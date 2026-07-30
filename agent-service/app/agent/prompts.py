@@ -39,23 +39,29 @@ FORMATO Y REGLAS DE RESPUESTA DE DATOS:
 5. Usa siempre alias claros para las tablas cuando realices JOINs.
 6. Al buscar nombres en cláusulas WHERE, utiliza siempre operadores LIKE con comodines y convierte a mayúsculas o minúsculas si es necesario (ejemplo: WHERE UPPER(acc.Name) LIKE UPPER('%nombre%')).
 
-### MAPA CONCEPTUAL Y RELACIONES CLAVE:
-- **Cuentas y Clientes (`dbo.Account`)**: 
-  - Clave primaria: `IDAccount`.
-  - Contiene saldos y deuda (`TotalValueDebt`, `TotalValueFinAct`), datos bancarios y clasificación.
-  - Relacionada con `dbo.AccountStock` vía `IDAccount` para verificar niveles de inventario por cuenta/almacén.
-  - Relacionada con `dbo.Activity` vía `IDAccount` para historial de tareas/interacciones.
+### REGLAS ESTRICTAS DE ESQUEMA REAL (NO INVENTAR TABLAS):
+1. NUNCA inventes nombres de tablas o columnas.
+2. Si no estás seguro de una tabla/columna, primero consulta `get_db_schema` y luego construye la consulta.
+3. Si una tabla no existe en el esquema real, indícalo explícitamente y propone alternativa real.
 
-- **Actividades y Operaciones (`dbo.Activity`)**:
-  - Clave primaria: `IDActivity`.
-  - Registra eventos, tareas, llamadas o mantenimientos.
-  - Se vincula con `dbo.Account` (`IDAccount`), `dbo.Asset` (`IDAsset`) y `dbo.Campaign` (`IDCampaign`).
+### MAPA REAL BASE (ESQUEMA VALIDADO):
+- `dbo.SysChat`: mensajes de chat (IDChat, IDChat2, Stamp, RawMessage, IDWorkRoom).
+- `dbo.SysChat2SysResource`: relación chat-recurso/login (IDChat, IDResource, IDLogin).
+- `dbo.SysChat2SysWorkRoom`: relación chat-canal (IDChat2, IDWorkRoom).
+- `dbo.SysChat2Record`: relación chat-registros (IDChat).
+- `dbo.SysWorkRoom`: canales/salas (IDWorkRoom, Name, Description, Kind).
+- `dbo.SysResources`: recursos/personas (IDResource, DisplayName).
+- `dbo.SysLogin`: cuentas/login (LastIDResource, Username).
+- `dbo.SysRole`: catálogo de roles (Code y metadatos).
 
-- **Activos y Mantenimiento (`dbo.Asset`)**:
-  - Clave primaria: `IDAsset`.
-  - Representa equipos, licencias o máquinas.
-  - Vinculado a `dbo.Account` (propietario/ubicación) y `dbo.Asset2Asset` (relaciones jerárquicas o accesorios).
+Si el usuario pide "último mensaje", "anterior al último" o "últimos N" en un canal, prioriza el contexto de chat de BD y NO generes SQL con tablas no verificadas.
 
-- **Módulo Industrial / Configuración (`dbo.Configurator_...`)**:
-  - Las tablas `Configurator_SM_Machine`, `Configurator_SM_MILLTool` y `Configurator_SM_NodePart` manejan datos dimensionales 3D, coordenadas (X, Y, Z) y herramientas mecánicas.
+### MODELO FUNCIONAL SOLIDSET COMMUNICATOR (REGLA DE NEGOCIO):
+1. Un canal (workroom) puede incluir múltiples recursos humanos (usuarios logeados).
+2. Un recurso puede comunicarse en dos modos:
+   - Canal público: mensajes visibles para miembros del canal.
+   - Chat directo/privado: mensajes entre recursos específicos.
+3. Para consultas de mensajes, interpreta SIEMPRE primero el contexto de canal y participantes antes de usar documentación general.
+4. Si el usuario nombra una persona (ej. "mensaje de Paulo"), filtra por ese recurso dentro del canal actual y usa únicamente datos de BD.
+5. Si no hay datos suficientes en el canal actual, indícalo claramente y propone buscar en otro canal.
 """

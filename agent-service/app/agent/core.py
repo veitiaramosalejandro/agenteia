@@ -99,14 +99,53 @@ class MachiningAgent:
         requested = int(match.group(1))
         return max(1, min(requested, 20))
 
+    def _extract_last_messages_offset(self, user_text: str) -> int:
+        """Detecta desplazamientos como 'anterior al último' o 'penúltimo'."""
+        text = (user_text or "").lower()
+        previous_patterns = [
+            r"anterior\s+al\s+ultim[oa]",
+            r"antes\s+del\s+ultim[oa]",
+            r"penultim[oa]",
+        ]
+        for pattern in previous_patterns:
+            if re.search(pattern, text):
+                return 1
+        return 0
+
+    def _extract_target_person_name(self, user_text: str) -> Optional[str]:
+        """Extrae nombre de persona en consultas tipo 'mensaje que haya escrito X en el canal'."""
+        text = (user_text or "").strip()
+        if not text:
+            return None
+
+        patterns = [
+            r"escrit[oa]\s+(.+?)\s+en\s+el\s+canal",
+            r"de\s+(.+?)\s+en\s+el\s+canal",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                candidate = (match.group(1) or "").strip(" .,:;!?\"'")
+                if candidate and len(candidate) >= 3:
+                    return candidate
+        return None
+
     def _resolve_last_chat_message_from_db(self, user_id: str, canal_id: Optional[str], user_text: str) -> Optional[str]:
-        """Resuelve de forma directa el último mensaje de chat desde la BD del sistema."""
+        """Resuelve de forma directa mensajes recientes del canal desde la BD del sistema."""
         try:
             requested_limit = self._extract_last_messages_limit(user_text)
+            requested_offset = self._extract_last_messages_offset(user_text)
+            target_user_id = user_id
+            target_person = self._extract_target_person_name(user_text)
+            if target_person:
+                resolved_target_user = self.sistema_aprendizaje.obtener_recurso_id_por_nombre(target_person)
+                if resolved_target_user:
+                    target_user_id = resolved_target_user
+
             contexto = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
-                user_id=user_id,
+                user_id=target_user_id,
                 canal_id=canal_id,
-                limit=max(20, requested_limit),
+                limit=max(20, requested_limit + requested_offset),
             )
             if not contexto or "No hay historial" in contexto or "No hay mensajes" in contexto:
                 return None
@@ -115,13 +154,35 @@ class MachiningAgent:
             if not lines:
                 return None
 
-            selected = lines[:requested_limit]
-            if requested_limit == 1:
-                return f"Último mensaje encontrado en el contexto de la base de datos: {selected[0]}"
+            selected = lines[requested_offset:requested_offset + requested_limit]
+            if not selected:
+                return "No encontré suficientes mensajes en el canal para esa posición solicitada."
+
+            if requested_limit == 1 and requested_offset == 0:
+                if target_person:
+                    return f"Último mensaje de {target_person} en el canal (base de datos): {selected[0]}"
+                return f"Último mensaje del canal en base de datos: {selected[0]}"
+
+            if requested_limit == 1 and requested_offset == 1:
+                if target_person:
+                    return f"Mensaje anterior al último de {target_person} en el canal (base de datos): {selected[0]}"
+                return f"Mensaje anterior al último del canal en base de datos: {selected[0]}"
 
             joined = "\n".join(f"{idx}. {line}" for idx, line in enumerate(selected, start=1))
+            if requested_offset > 0:
+                return (
+                    f"Mensajes del canal desde la posición {requested_offset + 1} en base de datos:\n"
+                    f"{joined}"
+                )
+
+            if target_person:
+                return (
+                    f"Últimos {len(selected)} mensajes de {target_person} en el canal (base de datos):\n"
+                    f"{joined}"
+                )
+
             return (
-                f"Últimos {len(selected)} mensajes encontrados en el contexto de la base de datos:\n"
+                f"Últimos {len(selected)} mensajes del canal en base de datos:\n"
                 f"{joined}"
             )
         except Exception:

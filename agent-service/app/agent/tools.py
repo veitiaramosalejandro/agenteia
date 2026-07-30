@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Optional, Union
 import uuid
 import hashlib
@@ -14,6 +15,48 @@ from qdrant_client.models import PointStruct, Distance, VectorParams
 from app.config import settings
 from app.rag.audio_processor import extract_audio_features
 from app.rag.retriever import get_rag_context
+
+
+def _extract_cte_names(query: str) -> set[str]:
+    cte_names = set()
+    for match in re.finditer(r"(?:WITH|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s+AS\s*\(", query, flags=re.IGNORECASE):
+        cte_names.add(match.group(1).lower())
+    return cte_names
+
+
+def _extract_table_references(query: str) -> set[str]:
+    refs = set()
+    cte_names = _extract_cte_names(query)
+    for match in re.finditer(r"\b(?:FROM|JOIN)\s+([A-Za-z0-9_\[\]\.]+)", query, flags=re.IGNORECASE):
+        token = match.group(1).strip()
+        if token.startswith("("):
+            continue
+        clean = token.replace("[", "").replace("]", "")
+        parts = [p for p in clean.split(".") if p]
+        if not parts:
+            continue
+        if len(parts) == 1:
+            schema = "dbo"
+            table = parts[0]
+        else:
+            schema = parts[-2]
+            table = parts[-1]
+        if table.lower() in cte_names:
+            continue
+        refs.add(f"{schema.lower()}.{table.lower()}")
+    return refs
+
+
+def _load_real_tables(cursor) -> set[str]:
+    cursor.execute(
+        """
+        SELECT TABLE_SCHEMA, TABLE_NAME
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_TYPE = 'BASE TABLE'
+        """
+    )
+    rows = cursor.fetchall() or []
+    return {f"{str(r['TABLE_SCHEMA']).lower()}.{str(r['TABLE_NAME']).lower()}" for r in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +103,21 @@ def query_sql_server(query: str) -> str:
             timeout=5,
         )
         cursor = conn.cursor(as_dict=True)
+
+        referenced_tables = _extract_table_references(clean_query)
+        real_tables = _load_real_tables(cursor)
+        unknown_tables = sorted(t for t in referenced_tables if t not in real_tables)
+        if unknown_tables:
+            conn.close()
+            unknown = ", ".join(unknown_tables)
+            sample = ", ".join(sorted(list(real_tables))[:12])
+            return (
+                "Error de esquema: la consulta usa tablas que no existen en esta base de datos: "
+                f"{unknown}. "
+                "Consulta primero el esquema real con get_db_schema antes de reintentar. "
+                f"Ejemplos de tablas reales: {sample}."
+            )
+
         cursor.execute(clean_query)
         rows = cursor.fetchall()
         conn.close()

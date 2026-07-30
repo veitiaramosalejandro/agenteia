@@ -109,6 +109,15 @@ def ingestar_sistema_completo():
             ORDER BY DisplayName
         """)
         resources = cursor.fetchall() or []
+        resource_name_by_id = {}
+        for row in resources:
+            rid = _safe_str(_first_value(row, "IDResource", "ID", "ResourceID", "ResourceId"))
+            if not rid:
+                continue
+            resource_name_by_id[rid.lower()] = _safe_str(
+                _first_value(row, "DisplayName", "Name", "FullName"),
+                f"Recurso {rid[:8]}",
+            )
 
         cursor.execute("""
             SELECT TOP 1000 *
@@ -119,13 +128,13 @@ def ingestar_sistema_completo():
 
         login_by_resource = {}
         for login in logins:
-            resource_ref = _first_value(login, "IDResource", "ResourceID", "IDSysResource")
+            resource_ref = _first_value(login, "IDResource", "ResourceID", "IDSysResource", "LastIDResource")
             if resource_ref:
                 login_by_resource[_safe_str(resource_ref)] = login
 
         recursos_ingestados = 0
         for row in resources:
-            resource_id = _safe_str(_first_value(row, "IDResource", "ID", "ResourceID"))
+            resource_id = _safe_str(_first_value(row, "IDResource", "ID", "ResourceID", "ResourceId"))
             if not resource_id:
                 continue
 
@@ -223,18 +232,42 @@ def ingestar_sistema_completo():
             recursos_ref = relaciones.get("resources", [])
             registros_ref = relaciones.get("records", [])
 
+            participant_ids = set()
+            for rel in recursos_ref:
+                rid = _safe_str(_first_value(rel, "IDResource", "ResourceID", "IDSysResource", "ResourceId", "LastIDResource"))
+                if rid:
+                    participant_ids.add(rid)
+
+            participant_names = []
+            for rid in sorted(participant_ids):
+                participant_names.append(resource_name_by_id.get(rid.lower(), rid))
+
+            participant_count = len(participant_names)
+            chat_scope = "canal_publico" if workroom_id and workroom_id != "canal_general" else "directo_privado"
+            if participant_count == 2 and chat_scope != "canal_publico":
+                chat_scope = "chat_privado"
+            elif participant_count > 2:
+                chat_scope = "canal_colaborativo"
+
             actividad = Actividad(
                 id=f"chat_{chat_id}",
                 recurso_humano_id=_safe_str(_first_value(row, "IDResource", "IDLogin"), "chat_user"),
                 canal_id=workroom_id,
                 tipo="chat",
-                descripcion=f"Chat: {raw_message} | Canal: {workroom_name} | {workroom_desc} | Recursos: {len(recursos_ref)} | Registros: {len(registros_ref)}",
+                descripcion=(
+                    f"Chat ({chat_scope}): {raw_message} | Canal: {workroom_name} | "
+                    f"Participantes: {', '.join(participant_names) if participant_names else 'sin_participantes'} | "
+                    f"Recursos enlazados: {len(recursos_ref)} | Registros: {len(registros_ref)}"
+                ),
                 timestamp=_first_value(row, "Stamp", default=datetime.now()),
                 metadatos={
                     "source_table": "SysChat",
                     "workroom_name": workroom_name,
                     "workroom_kind": workroom_kind,
                     "raw_message": raw_message,
+                    "chat_scope": chat_scope,
+                    "participants": participant_names,
+                    "participant_count": participant_count,
                     "resources_linked": len(recursos_ref),
                     "records_linked": len(registros_ref),
                 },
