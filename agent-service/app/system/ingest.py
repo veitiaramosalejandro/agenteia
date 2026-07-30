@@ -101,59 +101,53 @@ def ingestar_sistema_completo():
 
         print(f"  ✅ {len(roles)} roles ingeridos")
 
-        # 3. Usuarios / recursos humanos reales del sistema
-        print("📚 Ingestando recursos y logins (SysResources + SysLogin)...")
+        # 3. Usuarios asociados a recursos (consulta real compartida)
+        print("📚 Ingestando usuarios asociados a recursos (SysLogin + SysResources)...")
         cursor.execute("""
-            SELECT TOP 1000 *
-            FROM dbo.SysResources
-            ORDER BY DisplayName
+            SELECT TOP 3000
+                sl.FullName,
+                sr.DisplayName,
+                sr.ResourceName,
+                sr.ResourceId,
+                sr.ActiveIDLogin2Resource
+            FROM dbo.SysResources sr
+            INNER JOIN dbo.SysLogin sl
+                ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
+            ORDER BY sr.DisplayName ASC
         """)
-        resources = cursor.fetchall() or []
-        resource_name_by_id = {}
-        for row in resources:
-            rid = _safe_str(_first_value(row, "IDResource", "ID", "ResourceID", "ResourceId"))
-            if not rid:
-                continue
-            resource_name_by_id[rid.lower()] = _safe_str(
-                _first_value(row, "DisplayName", "Name", "FullName"),
-                f"Recurso {rid[:8]}",
-            )
+        resource_users = cursor.fetchall() or []
 
-        cursor.execute("""
-            SELECT TOP 1000 *
-            FROM dbo.SysLogin
-            ORDER BY Username
-        """)
-        logins = cursor.fetchall() or []
-
-        login_by_resource = {}
-        for login in logins:
-            resource_ref = _first_value(login, "IDResource", "ResourceID", "IDSysResource", "LastIDResource")
-            if resource_ref:
-                login_by_resource[_safe_str(resource_ref)] = login
-
-        recursos_ingestados = 0
-        for row in resources:
-            resource_id = _safe_str(_first_value(row, "IDResource", "ID", "ResourceID", "ResourceId"))
+        resource_profiles = {}
+        for row in resource_users:
+            resource_id = _safe_str(_first_value(row, "ResourceId", "IDResource", "ResourceID"))
             if not resource_id:
                 continue
+            resource_profiles[resource_id] = {
+                "display_name": _safe_str(_first_value(row, "DisplayName"), resource_id),
+                "resource_name": _safe_str(_first_value(row, "ResourceName")),
+                "full_name": _safe_str(_first_value(row, "FullName")),
+                "active_login_ref": _safe_str(_first_value(row, "ActiveIDLogin2Resource")),
+            }
 
-            display_name = _safe_str(_first_value(row, "DisplayName", "Name", "FullName"), f"Recurso {resource_id[:8]}")
-            login_row = login_by_resource.get(resource_id, {})
-            username = _safe_str(_first_value(login_row, "Username", "UserName", "LoginName"), "")
-
-            # Convertimos el recurso en una actividad de aprendizaje para que quede indexado por texto.
+        recursos_ingestados = 0
+        for resource_id, profile in resource_profiles.items():
             actividad = Actividad(
                 id=f"resource_{resource_id}",
                 recurso_humano_id=resource_id,
-                canal_id=_safe_str(_first_value(row, "IDWorkRoom", "WorkRoomID"), "sysresource"),
+                canal_id="sysresource",
                 tipo="recurso_sistema",
-                descripcion=f"Recurso: {display_name} | Username: {username or 'sin_login'} | Datos: {row}",
+                descripcion=(
+                    f"Recurso: {profile['display_name']} | "
+                    f"Nombre recurso: {profile['resource_name'] or 'sin_resource_name'} | "
+                    f"Usuario: {profile['full_name'] or 'sin_fullname'}"
+                ),
                 timestamp=datetime.now(),
                 metadatos={
                     "source_table": "SysResources",
-                    "display_name": display_name,
-                    "username": username,
+                    "display_name": profile["display_name"],
+                    "resource_name": profile["resource_name"],
+                    "full_name": profile["full_name"],
+                    "active_login_ref": profile["active_login_ref"],
                 },
             )
             sistema.aprender_actividad(actividad)
@@ -161,115 +155,136 @@ def ingestar_sistema_completo():
 
         print(f"  ✅ {recursos_ingestados} recursos ingeridos")
 
-        # 4. Chat real del sistema, unido a canales y recursos asociados.
-        print("📚 Ingestando chat histórico (SysChat)...")
+        # 4. Canales en los que cada recurso tiene permiso (consulta real compartida)
+        print("📚 Ingestando permisos de canal por recurso (SysWorkRoom + SysWorkRoomResource + SysResources)...")
         cursor.execute("""
-            SELECT TOP 1000
-                c.IDChat2,
-                c.Stamp,
-                c.RawMessage,
-                c.IDWorkRoom,
+            SELECT TOP 5000
+                wr.IDWorkRoom,
                 wr.Name AS WorkRoomName,
                 wr.Description AS WorkRoomDescription,
-                wr.Kind AS WorkRoomKind
-            FROM dbo.SysChat c
-            LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = c.IDWorkRoom
-            ORDER BY c.Stamp DESC
+                wr.Kind AS WorkRoomKind,
+                sr.ResourceId,
+                sr.DisplayName
+            FROM dbo.SysWorkRoom wr
+            INNER JOIN dbo.SysWorkRoomResource wrr
+                ON wrr.IDWorkRoom = wr.IDWorkRoom
+            INNER JOIN dbo.SysResources sr
+                ON sr.ResourceId = wrr.IDResource
+            ORDER BY sr.DisplayName, wr.Name
         """)
-        chats = cursor.fetchall() or []
+        channels_permissions = cursor.fetchall() or []
 
-        chat_relations = {}
-        if chats:
-            chat_ids = [row.get("IDChat2") for row in chats if row.get("IDChat2")]
-            if chat_ids:
-                placeholders = ",".join(["%s"] * len(chat_ids))
-
-                cursor.execute(
-                    f"""
-                    SELECT TOP 2000 *
-                    FROM dbo.SysChat2SysResource
-                    WHERE IDChat IN ({placeholders})
-                    """,
-                    tuple(chat_ids),
-                )
-                chat_resources = cursor.fetchall() or []
-
-                cursor.execute(
-                    f"""
-                    SELECT TOP 2000 *
-                    FROM dbo.SysChat2Record
-                    WHERE IDChat IN ({placeholders})
-                    """,
-                    tuple(chat_ids),
-                )
-                chat_records = cursor.fetchall() or []
-
-                for row in chat_resources:
-                    chat_id = _safe_str(_first_value(row, "IDChat", "IDChat2"))
-                    if not chat_id:
-                        continue
-                    chat_relations.setdefault(chat_id, {"resources": [], "records": []})["resources"].append(row)
-
-                for row in chat_records:
-                    chat_id = _safe_str(_first_value(row, "IDChat", "IDChat2"))
-                    if not chat_id:
-                        continue
-                    chat_relations.setdefault(chat_id, {"resources": [], "records": []})["records"].append(row)
-
-        chats_ingestados = 0
-        for row in chats:
-            chat_id = _safe_str(_first_value(row, "IDChat2", "IDChat", "IdChat"))
-            if not chat_id:
+        channels_by_resource = {}
+        member_count_by_channel = {}
+        for row in channels_permissions:
+            resource_id = _safe_str(_first_value(row, "ResourceId", "IDResource"))
+            channel_id = _safe_str(_first_value(row, "IDWorkRoom"))
+            if not resource_id or not channel_id:
                 continue
 
-            workroom_id = _safe_str(_first_value(row, "IDWorkRoom"), "canal_general")
-            raw_message = _safe_str(_first_value(row, "RawMessage", "Message", "Text"), "")
-            workroom_name = _safe_str(_first_value(row, "WorkRoomName", "Name"), "Canal sin nombre")
-            workroom_desc = _safe_str(_first_value(row, "WorkRoomDescription", "Description"), "")
-            workroom_kind = _safe_str(_first_value(row, "WorkRoomKind", "Kind"), "workroom")
+            member_count_by_channel[channel_id] = member_count_by_channel.get(channel_id, 0) + 1
+            channels_by_resource.setdefault(resource_id, []).append({
+                "channel_id": channel_id,
+                "channel_name": _safe_str(_first_value(row, "WorkRoomName"), "Canal sin nombre"),
+                "channel_kind": _safe_str(_first_value(row, "WorkRoomKind"), "workroom"),
+            })
 
-            relaciones = chat_relations.get(chat_id, {})
-            recursos_ref = relaciones.get("resources", [])
-            registros_ref = relaciones.get("records", [])
-
-            participant_ids = set()
-            for rel in recursos_ref:
-                rid = _safe_str(_first_value(rel, "IDResource", "ResourceID", "IDSysResource", "ResourceId", "LastIDResource"))
-                if rid:
-                    participant_ids.add(rid)
-
-            participant_names = []
-            for rid in sorted(participant_ids):
-                participant_names.append(resource_name_by_id.get(rid.lower(), rid))
-
-            participant_count = len(participant_names)
-            chat_scope = "canal_publico" if workroom_id and workroom_id != "canal_general" else "directo_privado"
-            if participant_count == 2 and chat_scope != "canal_publico":
-                chat_scope = "chat_privado"
-            elif participant_count > 2:
-                chat_scope = "canal_colaborativo"
+        permisos_canal_ingestados = 0
+        for resource_id, channels in channels_by_resource.items():
+            profile = resource_profiles.get(resource_id, {})
+            display_name = profile.get("display_name") or resource_id
+            unique_channel_names = sorted({c["channel_name"] for c in channels if c.get("channel_name")})
+            unique_channel_ids = sorted({c["channel_id"] for c in channels if c.get("channel_id")})
 
             actividad = Actividad(
-                id=f"chat_{chat_id}",
-                recurso_humano_id=_safe_str(_first_value(row, "IDResource", "IDLogin"), "chat_user"),
-                canal_id=workroom_id,
+                id=f"resource_channels_{resource_id}",
+                recurso_humano_id=resource_id,
+                canal_id="sysworkroom_permission",
+                tipo="permisos_canal",
+                descripcion=(
+                    f"Permisos de canal de {display_name}: "
+                    f"{', '.join(unique_channel_names[:20]) if unique_channel_names else 'sin_canales'}"
+                ),
+                timestamp=datetime.now(),
+                metadatos={
+                    "source_table": "SysWorkRoomResource",
+                    "display_name": display_name,
+                    "channel_count": len(unique_channel_ids),
+                    "channel_ids": unique_channel_ids,
+                    "channel_names": unique_channel_names,
+                },
+            )
+            sistema.aprender_actividad(actividad)
+            permisos_canal_ingestados += 1
+
+        print(f"  ✅ {permisos_canal_ingestados} perfiles de permisos de canal ingeridos")
+
+        # 5. Historial de conversación por recurso (consulta real compartida)
+        print("📚 Ingestando historial de conversación por recurso (SysChat + Sys* joins)...")
+        cursor.execute("""
+            SELECT TOP 5000
+                sc.IDChat2,
+                sc.Stamp,
+                sc.RawMessage,
+                swr.IDWorkRoom,
+                swr.Name AS WorkRoomName,
+                swr.Kind AS WorkRoomKind,
+                sr.ResourceId,
+                sr.DisplayName,
+                sl.FullName
+            FROM dbo.SysChat sc
+            INNER JOIN dbo.SysChat2SysWorkRoom sc2w
+                ON sc.IDChat2 = sc2w.IDChat2
+            INNER JOIN dbo.SysWorkRoom swr
+                ON swr.IDWorkRoom = sc2w.IDWorkRoom
+            INNER JOIN dbo.SysWorkRoomResource swrr
+                ON swrr.IDWorkRoom = swr.IDWorkRoom
+            INNER JOIN dbo.SysResources sr
+                ON sr.ResourceId = swrr.IDResource
+            INNER JOIN dbo.SysLogin sl
+                ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
+            ORDER BY sc.Stamp DESC
+        """)
+        chats_by_resource = cursor.fetchall() or []
+
+        chats_ingestados = 0
+        for row in chats_by_resource:
+            chat_id = _safe_str(_first_value(row, "IDChat2", "IDChat"))
+            resource_id = _safe_str(_first_value(row, "ResourceId", "IDResource"), "chat_user")
+            channel_id = _safe_str(_first_value(row, "IDWorkRoom"), "canal_general")
+            channel_name = _safe_str(_first_value(row, "WorkRoomName"), "Canal sin nombre")
+            channel_kind = _safe_str(_first_value(row, "WorkRoomKind"), "workroom")
+            raw_message = _safe_str(_first_value(row, "RawMessage", "Message"), "")
+            display_name = _safe_str(_first_value(row, "DisplayName"), resource_id)
+            full_name = _safe_str(_first_value(row, "FullName"), display_name)
+
+            member_count = member_count_by_channel.get(channel_id, 0)
+            kind_lower = channel_kind.lower()
+            if member_count <= 2 or "private" in kind_lower or "direct" in kind_lower:
+                chat_scope = "chat_privado"
+            else:
+                chat_scope = "canal_publico"
+
+            actividad = Actividad(
+                id=f"chat_{chat_id}_{resource_id}",
+                recurso_humano_id=resource_id,
+                canal_id=channel_id,
                 tipo="chat",
                 descripcion=(
-                    f"Chat ({chat_scope}): {raw_message} | Canal: {workroom_name} | "
-                    f"Participantes: {', '.join(participant_names) if participant_names else 'sin_participantes'} | "
-                    f"Recursos enlazados: {len(recursos_ref)} | Registros: {len(registros_ref)}"
+                    f"Chat ({chat_scope}) en {channel_name}: {raw_message} | "
+                    f"Recurso: {display_name} | Usuario: {full_name}"
                 ),
                 timestamp=_first_value(row, "Stamp", default=datetime.now()),
                 metadatos={
                     "source_table": "SysChat",
-                    "workroom_name": workroom_name,
-                    "workroom_kind": workroom_kind,
-                    "raw_message": raw_message,
+                    "chat_id": chat_id,
+                    "workroom_name": channel_name,
+                    "workroom_kind": channel_kind,
                     "chat_scope": chat_scope,
-                    "participants": participant_names,
-                    "participant_count": participant_count,
-                    "resources_linked": len(recursos_ref),
-                    "records_linked": len(registros_ref),
+                    "display_name": display_name,
+                    "full_name": full_name,
+                    "member_count": member_count,
+                    "raw_message": raw_message,
                 },
             )
             sistema.aprender_actividad(actividad)
