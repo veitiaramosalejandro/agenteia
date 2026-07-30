@@ -2,9 +2,11 @@ import asyncio
 import os
 import threading
 from contextlib import suppress
+from collections import OrderedDict
 from datetime import datetime
+from time import perf_counter, time
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +46,89 @@ notification_listener = NotificationApiListener()
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
 _dialogue_slots = threading.BoundedSemaphore(value=max(1, settings.DIALOGUE_MAX_CONCURRENT))
+_dialogue_cache_lock = threading.Lock()
+_dialogue_response_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+
+_dialogue_metrics_lock = threading.Lock()
+_dialogue_metrics = {
+    "count": 0,
+    "total_seconds": 0.0,
+    "max_seconds": 0.0,
+    "last_seconds": None,
+    "cache_hits": 0,
+}
+
+
+def _build_dialogue_cache_key(session_id: str, user_id: str, canal_id: Optional[str], message: str) -> str:
+    normalized_message = " ".join((message or "").strip().lower().split())
+    normalized_canal = (canal_id or "").strip().lower()
+    normalized_user = (user_id or "").strip().lower()
+    normalized_session = (session_id or "").strip().lower()
+    return f"{normalized_session}|{normalized_user}|{normalized_canal}|{normalized_message}"
+
+
+def _get_cached_dialogue_response(cache_key: str) -> Optional[str]:
+    if not settings.DIALOGUE_DUPLICATE_CACHE_ENABLED:
+        return None
+
+    now = time()
+    ttl = max(1, settings.DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS)
+    with _dialogue_cache_lock:
+        item = _dialogue_response_cache.get(cache_key)
+        if not item:
+            return None
+
+        timestamp, response_text = item
+        if (now - timestamp) > ttl:
+            _dialogue_response_cache.pop(cache_key, None)
+            return None
+
+        _dialogue_response_cache.move_to_end(cache_key)
+        return response_text
+
+
+def _store_cached_dialogue_response(cache_key: str, response_text: str) -> None:
+    if not settings.DIALOGUE_DUPLICATE_CACHE_ENABLED or not response_text:
+        return
+
+    now = time()
+    max_items = max(50, settings.DIALOGUE_DUPLICATE_CACHE_MAX_ITEMS)
+    with _dialogue_cache_lock:
+        _dialogue_response_cache[cache_key] = (now, response_text)
+        _dialogue_response_cache.move_to_end(cache_key)
+        while len(_dialogue_response_cache) > max_items:
+            _dialogue_response_cache.popitem(last=False)
+
+
+def _record_dialogue_metrics(duration_seconds: float, cache_hit: bool = False) -> None:
+    with _dialogue_metrics_lock:
+        _dialogue_metrics["count"] += 1
+        _dialogue_metrics["total_seconds"] += duration_seconds
+        _dialogue_metrics["max_seconds"] = max(_dialogue_metrics["max_seconds"], duration_seconds)
+        _dialogue_metrics["last_seconds"] = duration_seconds
+        if cache_hit:
+            _dialogue_metrics["cache_hits"] += 1
+
+
+def _get_dialogue_metrics_snapshot() -> dict:
+    with _dialogue_metrics_lock:
+        count = int(_dialogue_metrics["count"])
+        total = float(_dialogue_metrics["total_seconds"])
+        avg = (total / count) if count else 0.0
+        return {
+            "count": count,
+            "avg_seconds": round(avg, 3),
+            "max_seconds": round(float(_dialogue_metrics["max_seconds"]), 3),
+            "last_seconds": (
+                round(float(_dialogue_metrics["last_seconds"]), 3)
+                if _dialogue_metrics["last_seconds"] is not None
+                else None
+            ),
+            "cache_hits": int(_dialogue_metrics["cache_hits"]),
+            "cache_size": len(_dialogue_response_cache),
+            "cache_enabled": settings.DIALOGUE_DUPLICATE_CACHE_ENABLED,
+            "cache_ttl_seconds": settings.DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS,
+        }
 
 
 def _start_dialogue() -> None:
@@ -133,6 +218,11 @@ async def _ciclo_notificaciones_api() -> None:
         print("ℹ️ Listener de notificaciones deshabilitado (define NOTIF_API_BASE_URL para activarlo).")
         return
 
+    initial_delay = max(0, settings.NOTIF_API_START_DELAY_SECONDS)
+    if initial_delay > 0:
+        print(f"⏳ Listener Notification API iniciará en {initial_delay}s para priorizar arranque de diálogo")
+        await asyncio.sleep(initial_delay)
+
     print(f"🔔 Listener Notification API activo cada {intervalo} segundos")
 
     while True:
@@ -173,8 +263,12 @@ async def startup_db_learning() -> None:
         app.state.last_notification_result = None
         app.state.last_notification_error = None
         app.state.active_dialogues = 0
+        app.state.notification_task = None
         app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())
-        app.state.notification_task = asyncio.create_task(_ciclo_notificaciones_api())
+        if settings.NOTIF_API_BACKGROUND_ENABLED:
+            app.state.notification_task = asyncio.create_task(_ciclo_notificaciones_api())
+        else:
+            print("ℹ️ Listener Notification API en background desactivado por rendimiento (NOTIF_API_BACKGROUND_ENABLED=false)")
 
 
 @app.on_event("shutdown")
@@ -299,6 +393,8 @@ def handle_dialogue(req: ChatConversationRequest):
     """
     dialogue_started = False
     slot_acquired = False
+    request_started_at = perf_counter()
+    cache_key = _build_dialogue_cache_key(req.session_id, req.user_id, req.canal_id, req.message)
     try:
         # --- 1. VALIDACIONES DE SEGURIDAD ---
         
@@ -342,6 +438,28 @@ def handle_dialogue(req: ChatConversationRequest):
                 agent_response="🤖 Por favor, mantén un tono respetuoso en la conversación. Estoy aquí para ayudarte con tus consultas técnicas sobre maquinaria y sistemas. ¿En qué puedo asistirte?"
             )
 
+        cached_response_text = _get_cached_dialogue_response(cache_key)
+        if cached_response_text:
+            elapsed = perf_counter() - request_started_at
+            _record_dialogue_metrics(elapsed, cache_hit=True)
+            print(
+                f"⚡ Cache HIT en diálogo (sesión: {req.session_id}) -> {elapsed:.2f}s"
+            )
+            result = ChatConversationResponse(
+                session_id=req.session_id,
+                user_message=req.message,
+                agent_response=cached_response_text,
+            )
+
+            if req.generate_audio and cached_response_text:
+                try:
+                    audio_path = text_to_speech(cached_response_text)
+                    result.audio_url = f"/api/v1/agent/audio-response?file={os.path.basename(audio_path)}"
+                except Exception as audio_error:
+                    print(f"⚠️ Error generando audio desde cache: {audio_error}")
+
+            return result
+
         # --- 2. PROCESAR CON EL AGENTE ---
 
         # Control de admisión: evita que exceso de carga bloquee conversaciones.
@@ -361,57 +479,59 @@ def handle_dialogue(req: ChatConversationRequest):
         dialogue_started = True
         app.state.active_dialogues = _get_active_dialogues()
         
-        processing_timeout = settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS
-        if processing_timeout <= 0:
-            # Modo bloqueante: esperar respuesta real para que el cliente reciba el resultado final.
-            response_text = agent.analyze_event_with_dialogue(
-                session_id=req.session_id,
-                user_text=req.message,
-                user_id=req.user_id,
-                canal_id=req.canal_id,
+        configured_timeout = settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS
+        if configured_timeout <= 0:
+            processing_timeout = max(5, settings.DIALOGUE_HARD_TIMEOUT_SECONDS)
+            print(
+                f"ℹ️ Modo bloqueante con timeout duro de seguridad: {processing_timeout}s "
+                f"(sesión: {req.session_id})"
             )
         else:
-            # Ejecutar el agente con timeout para mantener tiempos de respuesta controlados.
-            response_holder = {}
-            error_holder = {}
+            processing_timeout = max(5, configured_timeout)
 
-            def _run_agent_dialogue() -> None:
-                try:
-                    response_holder["text"] = agent.analyze_event_with_dialogue(
-                        session_id=req.session_id,
-                        user_text=req.message,
-                        user_id=req.user_id,
-                        canal_id=req.canal_id,
-                    )
-                except Exception as exc:
-                    error_holder["error"] = exc
+        # Ejecutar el agente con timeout para mantener tiempos de respuesta controlados.
+        response_holder = {}
+        error_holder = {}
 
-            worker = threading.Thread(target=_run_agent_dialogue, daemon=True)
-            worker.start()
-            worker.join(timeout=max(5, processing_timeout))
-
-            if worker.is_alive():
-                print(
-                    f"⚠️ Timeout de conversación en sesión {req.session_id} tras {processing_timeout}s. "
-                    "Se devuelve respuesta controlada y se libera al terminar en segundo plano."
-                )
-                threading.Thread(
-                    target=_release_dialogue_resources_when_done,
-                    args=(worker,),
-                    daemon=True,
-                ).start()
-                dialogue_started = False
-                slot_acquired = False
-                return ChatConversationResponse(
+        def _run_agent_dialogue() -> None:
+            try:
+                response_holder["text"] = agent.analyze_event_with_dialogue(
                     session_id=req.session_id,
-                    user_message=req.message,
-                    agent_response="⏱️ La consulta está tomando más tiempo de lo esperado. Intenta de nuevo en unos segundos para mantener una respuesta ágil del sistema."
+                    user_text=req.message,
+                    user_id=req.user_id,
+                    canal_id=req.canal_id,
                 )
+            except Exception as exc:
+                error_holder["error"] = exc
 
-            if "error" in error_holder:
-                raise error_holder["error"]
+        worker = threading.Thread(target=_run_agent_dialogue, daemon=True)
+        worker.start()
+        worker.join(timeout=processing_timeout)
 
-            response_text = response_holder.get("text", "")
+        if worker.is_alive():
+            print(
+                f"⚠️ Timeout de conversación en sesión {req.session_id} tras {processing_timeout}s. "
+                "Se devuelve respuesta controlada y se libera al terminar en segundo plano."
+            )
+            threading.Thread(
+                target=_release_dialogue_resources_when_done,
+                args=(worker,),
+                daemon=True,
+            ).start()
+            dialogue_started = False
+            slot_acquired = False
+            return ChatConversationResponse(
+                session_id=req.session_id,
+                user_message=req.message,
+                agent_response="⏱️ La consulta está tomando más tiempo de lo esperado. Intenta de nuevo en unos segundos para mantener una respuesta ágil del sistema."
+            )
+
+        if "error" in error_holder:
+            raise error_holder["error"]
+
+        response_text = response_holder.get("text", "")
+
+        _store_cached_dialogue_response(cache_key, response_text)
         
         # --- 3. CONSTRUIR RESPUESTA ---
         
@@ -431,6 +551,15 @@ def handle_dialogue(req: ChatConversationRequest):
                 # No falla la respuesta completa si el audio falla
         
         print(f"✅ Respuesta generada para usuario {req.user_id}")
+        elapsed = perf_counter() - request_started_at
+        _record_dialogue_metrics(elapsed)
+        if elapsed >= max(0.1, settings.DIALOGUE_SLOW_LOG_SECONDS):
+            print(
+                f"🐢 Diálogo lento detectado (sesión: {req.session_id}) -> {elapsed:.2f}s, "
+                f"mensaje='{req.message[:80]}'"
+            )
+        else:
+            print(f"⏱️ Diálogo completado en {elapsed:.2f}s (sesión: {req.session_id})")
         return result
         
     except Exception as e:
@@ -465,9 +594,25 @@ def get_audio_file(file: str):
 
 
 @app.get("/api/v1/agent/history/{session_id}")
-def get_chat_history(session_id: str):
+def get_chat_history(
+    session_id: str,
+    before: int = Query(
+        0,
+        ge=0,
+        description="Cantidad de mensajes mas recientes a omitir antes de devolver resultados (cursor para scroll hacia atras)."
+    ),
+    limit: int = Query(
+        10,
+        ge=1,
+        le=50,
+        description="Cantidad maxima de mensajes a devolver por pagina."
+    ),
+):
     """
     Recupera el historial de conversación de una sesión específica desde Redis.
+    Devuelve mensajes paginados para soportar scroll infinito:
+    - before=0 trae los mensajes mas recientes.
+    - before=N omite los N mas recientes y trae mensajes anteriores.
     """
     try:
         history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
@@ -481,11 +626,25 @@ def get_chat_history(session_id: str):
                 "content": msg.content,
                 "type": msg.type
             })
+
+        total_messages = len(messages)
+        end_index = max(0, total_messages - before)
+        start_index = max(0, end_index - limit)
+        paged_messages = messages[start_index:end_index]
+        has_more = start_index > 0
+        next_before = before + len(paged_messages) if has_more else None
         
         return {
             "session_id": session_id, 
-            "messages": messages,
-            "total_messages": len(messages)
+            "messages": paged_messages,
+            "total_messages": total_messages,
+            "returned_messages": len(paged_messages),
+            "pagination": {
+                "before": before,
+                "limit": limit,
+                "has_more": has_more,
+                "next_before": next_before,
+            }
         }
     except Exception as e:
         raise HTTPException(
@@ -532,7 +691,12 @@ def health_check():
             "dialogue_max_concurrent": settings.DIALOGUE_MAX_CONCURRENT,
             "dialogue_admission_timeout_seconds": settings.DIALOGUE_ADMISSION_TIMEOUT_SECONDS,
             "dialogue_processing_timeout_seconds": settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS,
+            "dialogue_hard_timeout_seconds": settings.DIALOGUE_HARD_TIMEOUT_SECONDS,
+            "dialogue_slow_log_seconds": settings.DIALOGUE_SLOW_LOG_SECONDS,
+            "dialogue_metrics": _get_dialogue_metrics_snapshot(),
             "notification_listener_enabled": notification_listener.is_enabled(),
+            "notification_background_enabled": settings.NOTIF_API_BACKGROUND_ENABLED,
+            "notification_start_delay_seconds": settings.NOTIF_API_START_DELAY_SECONDS,
             "notification_poll_seconds": settings.NOTIF_API_POLL_SECONDS,
             "last_notification_poll_at": getattr(app.state, "last_notification_poll_at", None),
             "last_notification_result": getattr(app.state, "last_notification_result", None),
