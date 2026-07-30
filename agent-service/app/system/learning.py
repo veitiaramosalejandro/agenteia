@@ -628,8 +628,8 @@ class SistemaAprendizaje:
 
         try:
             conn = self._connect_sql_with_retry(
-                timeout=10,
-                retries=3,
+                timeout=max(1, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+                retries=max(1, settings.DB_INGEST_CONNECT_RETRIES),
                 base_delay_seconds=1,
                 context="chat_messages_bd",
             )
@@ -730,6 +730,97 @@ class SistemaAprendizaje:
             return messages
         except Exception as e:
             print(f"⚠️ Error obteniendo mensajes de chat desde BD: {e}")
+            return []
+
+    def obtener_usuarios_recurso_del_canal(
+        self,
+        user_id: str,
+        canal_id: Optional[str],
+        limit: int = 80,
+    ) -> List[Dict[str, Any]]:
+        """Obtiene usuarios recurso del canal de forma liviana y con validación de acceso."""
+        if not user_id or not (canal_id or "").strip():
+            return []
+
+        safe_limit = max(1, min(limit, 120))
+        try:
+            conn = self._connect_sql_with_retry(
+                timeout=max(1, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+                retries=max(1, settings.DB_INGEST_CONNECT_RETRIES),
+                base_delay_seconds=1,
+                context="channel_members",
+            )
+            cursor = conn.cursor(as_dict=True)
+
+            # Validar que el usuario solicitante pertenezca al canal (por recurso o login).
+            self._execute_with_retry(
+                cursor=cursor,
+                query="""
+                    SELECT TOP 1 1 AS allowed
+                    FROM dbo.SysWorkRoomResource req
+                    WHERE req.IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s)
+                      AND (
+                          req.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                          OR req.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                      )
+                """,
+                params=(canal_id, user_id, user_id),
+                retries=1,
+                base_delay_seconds=1,
+                context="channel_members_acl",
+            )
+            acl_row = cursor.fetchone()
+            if not acl_row:
+                conn.close()
+                return []
+
+            self._execute_with_retry(
+                cursor=cursor,
+                query=f"""
+                    SELECT TOP {safe_limit}
+                        wr.IDWorkRoom,
+                        wr.Name AS ChannelName,
+                        COALESCE(sr.ResourceId, wrr.IDResource) AS ResourceId,
+                        COALESCE(sr.DisplayName, sl.FullName, sl.Username, 'Sin nombre') AS DisplayName,
+                        sl.Username,
+                        sl.FullName,
+                        wrr.IDLogin
+                    FROM dbo.SysWorkRoomResource wrr
+                    INNER JOIN dbo.SysWorkRoom wr
+                        ON wr.IDWorkRoom = wrr.IDWorkRoom
+                    LEFT JOIN dbo.SysResources sr
+                        ON sr.ResourceId = wrr.IDResource
+                    LEFT JOIN dbo.SysLogin sl
+                        ON sl.IDLogin = wrr.IDLogin
+                    WHERE wrr.IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s)
+                    ORDER BY COALESCE(sr.DisplayName, sl.FullName, sl.Username, 'Sin nombre')
+                """,
+                params=(canal_id,),
+                retries=1,
+                base_delay_seconds=1,
+                context="channel_members_query",
+            )
+
+            rows = cursor.fetchall() or []
+            conn.close()
+
+            members: List[Dict[str, Any]] = []
+            for row in rows:
+                members.append(
+                    {
+                        "channel_id": str(row.get("IDWorkRoom") or canal_id),
+                        "channel_name": (row.get("ChannelName") or "Canal sin nombre").strip(),
+                        "resource_id": str(row.get("ResourceId") or "") or None,
+                        "display_name": (row.get("DisplayName") or "Sin nombre").strip(),
+                        "username": (row.get("Username") or "").strip() or None,
+                        "full_name": (row.get("FullName") or "").strip() or None,
+                        "login_id": str(row.get("IDLogin") or "") or None,
+                    }
+                )
+
+            return members
+        except Exception as e:
+            print(f"⚠️ Error obteniendo usuarios recurso del canal: {e}")
             return []
 
     def obtener_contexto_chat_desde_bd(self, user_id: str, canal_id: Optional[str] = None, limit: int = 8) -> str:

@@ -173,6 +173,63 @@ class MachiningAgent:
                     return candidate
         return None
 
+    def _is_channel_members_intent(self, user_text: str) -> bool:
+        """Detecta solicitudes de listar usuarios/recurso pertenecientes al canal."""
+        text = (user_text or "").strip().lower()
+        if not text:
+            return False
+
+        has_canal = any(k in text for k in ["canal", "workroom", "sala", "channel"])
+        has_membership = any(
+            k in text
+            for k in [
+                "usuarios",
+                "usuario",
+                "miembros",
+                "recursos",
+                "recurso",
+                "pertenecen",
+                "pertenecen",
+                "pertenece",
+            ]
+        )
+        return has_canal and has_membership
+
+    def _resolve_channel_members_from_db(self, user_id: str, canal_id: Optional[str]) -> Optional[str]:
+        """Resuelve miembros/recurso del canal directamente desde BD."""
+        effective_canal = (canal_id or "").strip()
+        if not effective_canal:
+            return (
+                "⚠️ Para listar usuarios recurso necesito el ID del canal. "
+                "Envía canal_id o usa session_id con el ID del canal."
+            )
+
+        rows = self.sistema_aprendizaje.obtener_usuarios_recurso_del_canal(
+            user_id=user_id,
+            canal_id=effective_canal,
+            limit=80,
+        )
+
+        if not rows:
+            return (
+                "⚠️ No pude obtener usuarios recurso de este canal desde la base de datos "
+                "(sin acceso, sin datos o sin conectividad SQL)."
+            )
+
+        channel_name = rows[0].get("channel_name") or "Canal sin nombre"
+        formatted = []
+        for idx, row in enumerate(rows, start=1):
+            display_name = row.get("display_name") or "Sin nombre"
+            resource_id = row.get("resource_id") or "sin_resource_id"
+            username = row.get("username")
+            username_text = f" | user: {username}" if username else ""
+            formatted.append(f"{idx}. {display_name} ({resource_id}){username_text}")
+
+        return (
+            f"Usuarios recurso del canal '{channel_name}' (base de datos):\n"
+            + "\n".join(formatted)
+        )
+
     def _resolve_last_chat_message_from_db(self, user_id: str, canal_id: Optional[str], user_text: str) -> Optional[str]:
         """Resuelve de forma directa mensajes recientes del canal desde la BD del sistema."""
         try:
@@ -563,7 +620,7 @@ class MachiningAgent:
         # --- 3.1 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if user_id and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
-            if direct_response:
+            if direct_response is not None:
                 if history:
                     try:
                         history.add_user_message(user_text)
@@ -584,6 +641,37 @@ class MachiningAgent:
                     print(f"⚠️ Error registrando interacción directa para aprendizaje: {e}")
 
                 return direct_response
+
+            # Evita caer al LLM cuando la intención era estrictamente recuperar chat desde BD.
+            return (
+                "⚠️ No pude consultar el historial del canal en la base de datos en este momento. "
+                "Verifica la conectividad de SQL Server e inténtalo nuevamente."
+            )
+
+        # --- 3.2 CONSULTA DIRECTA DE USUARIOS/RECURSO DEL CANAL (BD) ---
+        if user_id and self._is_channel_members_intent(user_text):
+            members_response = self._resolve_channel_members_from_db(user_id, canal_id)
+            if members_response is not None:
+                if history:
+                    try:
+                        history.add_user_message(user_text)
+                        history.add_ai_message(members_response)
+                    except Exception as e:
+                        print(f"⚠️ Error guardando respuesta directa de miembros en Redis: {e}")
+
+                try:
+                    self._registrar_interaccion(
+                        user_id=user_id,
+                        canal_id=canal_id,
+                        user_text=user_text,
+                        response_text=members_response,
+                        herramientas_usadas=[],
+                        session_id=session_id,
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error registrando interacción de miembros para aprendizaje: {e}")
+
+                return members_response
 
         # --- 4. OBTENER CONTEXTOS ---
         
