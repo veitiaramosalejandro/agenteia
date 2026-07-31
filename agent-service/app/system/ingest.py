@@ -108,51 +108,70 @@ def ingestar_sistema_completo():
 
         # 3. Usuarios asociados a recursos (consulta real compartida)
         print("📚 Ingestando usuarios asociados a recursos (SysLogin + SysResources)...")
+        
+        # Paso 3.1: Obtener todos los usuarios activos
         cursor.execute("""
-            SELECT TOP 3000
-                sl.FullName,
-                sr.DisplayName,
-                sr.ResourceName,
-                sr.ResourceId,
-                sr.ActiveIDLogin2Resource
-            FROM dbo.SysResources sr
-            INNER JOIN dbo.SysLogin sl
-                ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
-            ORDER BY sr.DisplayName ASC
+            SELECT IDLogin, FullName, Username
+            FROM dbo.SysLogin
+            WHERE Active = 1
+            ORDER BY FullName ASC
         """)
-        resource_users = cursor.fetchall() or []
+        all_users = cursor.fetchall() or []
+
+        # Paso 3.2: Obtener todos los mapeos de recursos para esos usuarios
+        cursor.execute("""
+            SELECT
+                sl2r.IDLogin,
+                sr.ResourceId,
+                sr.DisplayName,
+                sr.ResourceName
+            FROM dbo.SysLogin2SysResource sl2r
+            INNER JOIN dbo.SysResources sr ON sl2r.IDResource = sr.ResourceId
+            WHERE sl2r.Active = 1
+        """)
+        resource_mappings = cursor.fetchall() or []
+
+        # Agrupar recursos por usuario en Python
+        resources_by_user = {}
+        for mapping in resource_mappings:
+            user_id = _safe_str(mapping.get("IDLogin"))
+            if user_id:
+                resources_by_user.setdefault(user_id, []).append(mapping)
 
         resource_profiles = {}
-        for row in resource_users:
-            resource_id = _safe_str(_first_value(row, "ResourceId", "IDResource", "ResourceID"))
-            if not resource_id:
+        for user_row in all_users:
+            user_id = _safe_str(user_row.get("IDLogin"))
+            if not user_id:
                 continue
-            resource_profiles[resource_id] = {
-                "display_name": _safe_str(_first_value(row, "DisplayName"), resource_id),
-                "resource_name": _safe_str(_first_value(row, "ResourceName")),
-                "full_name": _safe_str(_first_value(row, "FullName")),
-                "active_login_ref": _safe_str(_first_value(row, "ActiveIDLogin2Resource")),
+
+            user_resources = resources_by_user.get(user_id, [])
+            resource_names = sorted([_safe_str(r.get("DisplayName")) for r in user_resources])
+            
+            # Usamos el ID de usuario como ID principal para el perfil de recurso humano
+            resource_profiles[user_id] = {
+                "display_name": _safe_str(user_row.get("FullName")) or _safe_str(user_row.get("Username")),
+                "resource_names": ", ".join(resource_names),
+                "full_name": _safe_str(user_row.get("FullName")),
             }
 
         recursos_ingestados = 0
-        for resource_id, profile in resource_profiles.items():
+        for user_id, profile in resource_profiles.items():
             actividad = Actividad(
-                id=f"resource_{resource_id}",
-                recurso_humano_id=resource_id,
+                id=f"resource_{user_id}",
+                recurso_humano_id=user_id, # El ID del recurso humano es el ID del Login
                 canal_id="sysresource",
                 tipo="recurso_sistema",
                 descripcion=(
                     f"Recurso: {profile['display_name']} | "
-                    f"Nombre recurso: {profile['resource_name'] or 'sin_resource_name'} | "
+                    f"Recursos asociados: {profile['resource_names'] or 'ninguno'} | "
                     f"Usuario: {profile['full_name'] or 'sin_fullname'}"
                 ),
                 timestamp=datetime.now(),
                 metadatos={
                     "source_table": "SysResources",
                     "display_name": profile["display_name"],
-                    "resource_name": profile["resource_name"],
+                    "resource_names": profile["resource_names"],
                     "full_name": profile["full_name"],
-                    "active_login_ref": profile["active_login_ref"],
                 },
             )
             sistema.aprender_actividad(actividad)
@@ -164,21 +183,18 @@ def ingestar_sistema_completo():
         print("📚 Ingestando permisos de canal por recurso (SysWorkRoom + SysWorkRoomResource + SysResources)...")
         cursor.execute("""
             SELECT TOP 5000
+                wrr.IDResource,
                 wr.IDWorkRoom,
-                wr.Name AS WorkRoomName,
-                wr.Description AS WorkRoomDescription,
-                wr.Kind AS WorkRoomKind,
-                sr.ResourceId,
-                sr.DisplayName
+                wr.Name as WorkRoomName,
+                wr.Kind as WorkRoomKind
             FROM dbo.SysWorkRoom wr
-            INNER JOIN dbo.SysWorkRoomResource wrr
-                ON wrr.IDWorkRoom = wr.IDWorkRoom
-            INNER JOIN dbo.SysResources sr
-                ON sr.ResourceId = wrr.IDResource
-            ORDER BY sr.DisplayName, wr.Name
+            INNER JOIN dbo.SysWorkRoomResource wrr ON wr.IDWorkRoom = wrr.IDWorkRoom
+            ORDER BY wrr.IDResource, wr.Name
         """)
         channels_permissions = cursor.fetchall() or []
 
+        # La consulta anterior fue reemplazada por una más eficiente que evita STRING_AGG
+                
         channels_by_resource = {}
         member_count_by_channel = {}
         for row in channels_permissions:
@@ -188,22 +204,22 @@ def ingestar_sistema_completo():
                 continue
 
             member_count_by_channel[channel_id] = member_count_by_channel.get(channel_id, 0) + 1
-            channels_by_resource.setdefault(resource_id, []).append({
+            channels_by_resource.setdefault(_safe_str(resource_id), []).append({
                 "channel_id": channel_id,
                 "channel_name": _safe_str(_first_value(row, "WorkRoomName"), "Canal sin nombre"),
                 "channel_kind": _safe_str(_first_value(row, "WorkRoomKind"), "workroom"),
             })
 
         permisos_canal_ingestados = 0
-        for resource_id, channels in channels_by_resource.items():
-            profile = resource_profiles.get(resource_id, {})
-            display_name = profile.get("display_name") or resource_id
+        for user_id, channels in channels_by_resource.items():
+            profile = resource_profiles.get(user_id, {})
+            display_name = profile.get("display_name") or user_id
             unique_channel_names = sorted({c["channel_name"] for c in channels if c.get("channel_name")})
             unique_channel_ids = sorted({c["channel_id"] for c in channels if c.get("channel_id")})
 
             actividad = Actividad(
-                id=f"resource_channels_{resource_id}",
-                recurso_humano_id=resource_id,
+                id=f"resource_channels_{user_id}",
+                recurso_humano_id=user_id,
                 canal_id="sysworkroom_permission",
                 tipo="permisos_canal",
                 descripcion=(
@@ -229,7 +245,7 @@ def ingestar_sistema_completo():
         chats_ingestados = 0
         try:
             cursor.execute("""
-                SELECT TOP 2000
+                SELECT TOP 500
                     sc.IDChat2,
                     MAX(sc.Stamp) AS Stamp,
                     sc.RawMessage,

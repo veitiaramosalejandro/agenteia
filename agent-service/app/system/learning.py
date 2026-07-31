@@ -202,10 +202,18 @@ class SistemaAprendizaje:
                     FROM dbo.SysWorkRoomResource wrr
                     INNER JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = wrr.IDWorkRoom
                     WHERE wrr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                       OR wrr.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                       OR EXISTS (SELECT 1 FROM dbo.SysLogin slu WHERE slu.IDLogin = wrr.IDLogin AND slu.Username = %s)
+                    OR wrr.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                    OR EXISTS (SELECT 1 FROM dbo.SysLogin slu WHERE slu.IDLogin = wrr.IDLogin AND slu.Username = %s)
                 ), room_members AS (
-                    SELECT wrr.IDWorkRoom, STRING_AGG(COALESCE(CONVERT(varchar(36), wrr.IDResource), CONVERT(varchar(36), wrr.IDLogin)), ',') AS Members
+                    SELECT 
+                        wrr.IDWorkRoom,
+                        -- Reemplazar STRING_AGG con FOR XML PATH para evitar límite de 8000 bytes
+                        STUFF((
+                            SELECT DISTINCT ',' + COALESCE(CONVERT(varchar(max), sub.IDResource), CONVERT(varchar(max), sub.IDLogin))
+                            FROM dbo.SysWorkRoomResource sub
+                            WHERE sub.IDWorkRoom = wrr.IDWorkRoom
+                            FOR XML PATH(''), TYPE
+                        ).value('.', 'varchar(max)'), 1, 1, '') AS Members
                     FROM dbo.SysWorkRoomResource wrr
                     INNER JOIN user_rooms ur ON ur.IDWorkRoom = wrr.IDWorkRoom
                     GROUP BY wrr.IDWorkRoom
@@ -222,22 +230,31 @@ class SistemaAprendizaje:
 
     def _get_user_activities_from_db(self, cursor: pymssql.Cursor, identity: Dict) -> List[Dict]:
         try:
+            # Usar una fecha límite para limitar los resultados
             self._execute_with_retry(
                 cursor,
                 query="""
-                    SELECT TOP 20 c.IDChat2, c.Stamp, c.RawMessage, COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) as IDChannel,
-                        wr.Name as ChannelName, wr.Description as ChannelDescription, c2r.RecordCode, c2r.RecordShortName
-                    FROM dbo.SysChat2SysResource c2rsc
-                    INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
-                    LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
-                    LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
-                    OUTER APPLY (
-                        SELECT TOP 1 r.RecordCode, r.RecordShortName
-                        FROM dbo.SysChat2Record r WHERE r.IDChat = c.IDChat2 ORDER BY r.Stamp DESC
-                    ) c2r
-                    WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                       OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                       OR EXISTS (SELECT 1 FROM dbo.SysLogin slu WHERE slu.IDLogin = c2rsc.IDLogin AND slu.Username = %s)
+                    SELECT TOP 20 
+                        c.IDChat2, 
+                        c.Stamp, 
+                        LEFT(c.RawMessage, 500) as RawMessage,
+                        COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) as IDChannel,
+                        wr.Name as ChannelName
+                    FROM dbo.SysChat2SysResource c2rsc WITH (NOLOCK)  -- Usar NOLOCK para evitar bloqueos
+                    INNER JOIN dbo.SysChat c WITH (NOLOCK) ON c.IDChat2 = c2rsc.IDChat
+                    LEFT JOIN dbo.SysChat2SysWorkRoom c2w WITH (NOLOCK) ON c2w.IDChat2 = c.IDChat2
+                    LEFT JOIN dbo.SysWorkRoom wr WITH (NOLOCK) ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
+                    WHERE (c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                    OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                    OR EXISTS (
+                        SELECT 1 
+                        FROM dbo.SysLogin slu WITH (NOLOCK)
+                        WHERE slu.IDLogin = c2rsc.IDLogin 
+                        AND slu.Username = %s
+                    ))
+                    AND c.RawMessage IS NOT NULL 
+                    AND LEN(c.RawMessage) > 0
+                    AND c.Stamp >= DATEADD(month, -6, GETDATE())  -- Solo últimos 6 meses
                     ORDER BY c.Stamp DESC
                 """,
                 params=(identity.get("resource_id"), identity.get("login_id"), identity.get("username")),
@@ -250,23 +267,54 @@ class SistemaAprendizaje:
 
     def _get_user_resources_from_db(self, cursor: pymssql.Cursor, identity: Dict) -> List[Dict]:
         try:
+            # Paso 1: Obtener IDs de chat del usuario
             self._execute_with_retry(
                 cursor,
                 query="""
-                    SELECT TOP 30 c2r.RecordCode, c2r.RecordShortName, c2w.IDWorkRoom
+                    SELECT TOP 50 c.IDChat2
                     FROM dbo.SysChat2SysResource c2rsc
                     INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
-                    LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
-                    INNER JOIN dbo.SysChat2Record c2r ON c2r.IDChat = c.IDChat2
                     WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                       OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                       OR EXISTS (SELECT 1 FROM dbo.SysLogin slu WHERE slu.IDLogin = c2rsc.IDLogin AND slu.Username = %s)
-                    ORDER BY c2r.Stamp DESC
+                    OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                    OR EXISTS (
+                        SELECT 1 
+                        FROM dbo.SysLogin slu 
+                        WHERE slu.IDLogin = c2rsc.IDLogin 
+                        AND slu.Username = %s
+                    )
+                    ORDER BY c.Stamp DESC
                 """,
                 params=(identity.get("resource_id"), identity.get("login_id"), identity.get("username")),
-                context="get_user_resources"
+                context="get_user_resources_ids"
+            )
+            
+            chat_ids = cursor.fetchall() or []
+            if not chat_ids:
+                return []
+            
+            # Construir lista de IDs para la segunda consulta
+            id_list = ','.join([str(row['IDChat2']) for row in chat_ids])
+            
+            # Paso 2: Obtener recursos de esos chats
+            self._execute_with_retry(
+                cursor,
+                query=f"""
+                    SELECT DISTINCT TOP 30
+                        c2r.RecordCode, 
+                        c2r.RecordShortName,
+                        COUNT(*) as UsageCount,
+                        MAX(c2r.Stamp) as LastUsed
+                    FROM dbo.SysChat2Record c2r
+                    WHERE c2r.IDChat IN ({id_list})
+                    AND c2r.RecordCode IS NOT NULL
+                    GROUP BY c2r.RecordCode, c2r.RecordShortName
+                    ORDER BY UsageCount DESC, LastUsed DESC
+                """,
+                params=(),
+                context="get_user_resources_details"
             )
             return cursor.fetchall() or []
+            
         except Exception as e:
             print(f"⚠️ Fallback recursos de chat no disponibles: {e}")
             return []

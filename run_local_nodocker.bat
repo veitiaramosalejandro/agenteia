@@ -33,12 +33,13 @@ cd /d "%SERVICE_DIR%"
 REM Variables de entorno para ejecución local.
 set "ENVIRONMENT=development"
 set "PYTHONPATH=%PYTHONPATH%;%SERVICE_DIR%"
-set "OLLAMA_BASE_URL=http://172.16.10.160:11435"
-set "VECTOR_DB_URL=http://172.16.10.160:6333"
-set "REDIS_URL=redis://172.16.10.160:6379"
+set "OLLAMA_BASE_URL=http://localhost:11435"
+set "VECTOR_DB_URL=http://localhost:6333"
+set "REDIS_URL=redis://localhost:6379"
 set "MODEL_NAME=qwen2.5:7b"
 set "EMBEDDING_MODEL_NAME=nomic-embed-text"
 set "NOTIF_API_BACKGROUND_ENABLED=false"
+set "DB_URL=postgresql://user:pass@localhost:5432/machining_db"
 
 if not defined DB_URL (
     echo ⚠️ DB_URL no está definida. Si usas PostgreSQL/Timescale local, define DB_URL antes de iniciar.
@@ -56,15 +57,15 @@ if %errorlevel% neq 0 (
     echo   ✅ Ollama: OK
 )
 
-curl.exe -s http://172.16.10.160:6333/collections > nul 2>&1
+curl.exe -s http://localhost:6333/collections > nul 2>&1
 if %errorlevel% neq 0 (
-    echo ⚠️ Qdrant no respondió en 172.16.10.160:6333.
+    echo ⚠️ Qdrant no respondió en localhost:6333.
     echo    Inicia Qdrant manualmente antes de continuar.
 ) else (
     echo   ✅ Qdrant: OK
 )
 
-curl.exe -s http://172.16.10.160:6379 > nul 2>&1
+curl.exe -s http://localhost:6379 > nul 2>&1
 if %errorlevel% neq 0 (
     echo   ℹ️ Redis: no verificado por HTTP. Si no usas Docker, confirma que el puerto 6379 esté abierto.
 ) else (
