@@ -231,14 +231,21 @@ def ingestar_sistema_completo():
             cursor.execute("""
                 SELECT TOP 2000
                     sc.IDChat2,
-                    sc.Stamp,
+                    MAX(sc.Stamp) AS Stamp,
                     sc.RawMessage,
                     sc2w.IDWorkRoom,
                     swr.Name AS WorkRoomName,
                     swr.Kind AS WorkRoomKind,
-                    COALESCE(sr.ResourceId, sc2r.IDResource) AS ResourceId,
-                    COALESCE(sr.DisplayName, sl.FullName, sl.Username) AS DisplayName,
-                    sl.FullName
+                    COALESCE(
+                        MAX(CONVERT(varchar(36), sr.ResourceId)),
+                        MAX(CONVERT(varchar(36), sc2r.IDResource))
+                    ) AS ResourceId,
+                    COALESCE(
+                        MAX(sr.DisplayName),
+                        MAX(sl.FullName),
+                        MAX(sl.Username)
+                    ) AS DisplayName,
+                    MAX(sl.FullName) AS FullName
                 FROM dbo.SysChat sc
                 INNER JOIN dbo.SysChat2SysWorkRoom sc2w
                     ON sc.IDChat2 = sc2w.IDChat2
@@ -249,10 +256,15 @@ def ingestar_sistema_completo():
                 LEFT JOIN dbo.SysResources sr
                     ON sr.ResourceId = sc2r.IDResource
                 LEFT JOIN dbo.SysLogin sl
-                    ON sl.IDLogin = sc2r.IDLogin
-                    OR sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
+                    ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
                 WHERE sc.RawMessage IS NOT NULL
-                ORDER BY sc.Stamp DESC
+                GROUP BY
+                    sc.IDChat2,
+                    sc.RawMessage,
+                    sc2w.IDWorkRoom,
+                    swr.Name,
+                    swr.Kind
+                ORDER BY MAX(sc.Stamp) DESC
             """)
             chats_by_resource = cursor.fetchall() or []
 
