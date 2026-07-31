@@ -5,6 +5,7 @@ Se apoya en las tablas reales de chat, roles, canales, recursos y login.
 
 import os
 import sys
+from contextlib import suppress
 from datetime import datetime
 
 import pymssql
@@ -42,6 +43,8 @@ def ingestar_sistema_completo():
             context="ingesta_sistema",
         )
         cursor = conn.cursor(as_dict=True)
+        with suppress(Exception):
+            cursor.execute("SET LOCK_TIMEOUT 5000")
 
         # 1. Canales reales del sistema
         print("📚 Ingestando canales (SysWorkRoom)...")
@@ -53,6 +56,7 @@ def ingestar_sistema_completo():
         workrooms = cursor.fetchall() or []
 
         canales = []
+        canales_indexados = 0
         for row in workrooms:
             canal_id = _safe_str(_first_value(row, "IDWorkRoom", "IdWorkRoom", "idWorkRoom"))
             if not canal_id:
@@ -67,10 +71,11 @@ def ingestar_sistema_completo():
                 recursos_materiales=[],
                 proyectos_activos=[],
             )
-            sistema.aprender_canal(canal)
+            if sistema.aprender_canal(canal):
+                canales_indexados += 1
             canales.append(canal)
 
-        print(f"  ✅ {len(canales)} canales ingeridos")
+        print(f"  ✅ {len(canales)} canales ingeridos ({canales_indexados} indexados en vector DB)")
 
         # 2. Roles del sistema
         print("📚 Ingestando roles (SysRole)...")
@@ -221,79 +226,85 @@ def ingestar_sistema_completo():
 
         # 5. Historial de conversación por recurso (consulta real compartida)
         print("📚 Ingestando historial de conversación por recurso (SysChat + Sys* joins)...")
-        cursor.execute("""
-            SELECT TOP 5000
-                sc.IDChat2,
-                sc.Stamp,
-                sc.RawMessage,
-                swr.IDWorkRoom,
-                swr.Name AS WorkRoomName,
-                swr.Kind AS WorkRoomKind,
-                sr.ResourceId,
-                sr.DisplayName,
-                sl.FullName
-            FROM dbo.SysChat sc
-            INNER JOIN dbo.SysChat2SysWorkRoom sc2w
-                ON sc.IDChat2 = sc2w.IDChat2
-            INNER JOIN dbo.SysWorkRoom swr
-                ON swr.IDWorkRoom = sc2w.IDWorkRoom
-            INNER JOIN dbo.SysWorkRoomResource swrr
-                ON swrr.IDWorkRoom = swr.IDWorkRoom
-            INNER JOIN dbo.SysResources sr
-                ON sr.ResourceId = swrr.IDResource
-            INNER JOIN dbo.SysLogin sl
-                ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
-            ORDER BY sc.Stamp DESC
-        """)
-        chats_by_resource = cursor.fetchall() or []
-
         chats_ingestados = 0
-        for row in chats_by_resource:
-            chat_id = _safe_str(_first_value(row, "IDChat2", "IDChat"))
-            resource_id = _safe_str(_first_value(row, "ResourceId", "IDResource"), "chat_user")
-            channel_id = _safe_str(_first_value(row, "IDWorkRoom"), "canal_general")
-            channel_name = _safe_str(_first_value(row, "WorkRoomName"), "Canal sin nombre")
-            channel_kind = _safe_str(_first_value(row, "WorkRoomKind"), "workroom")
-            raw_message = _safe_str(_first_value(row, "RawMessage", "Message"), "")
-            display_name = _safe_str(_first_value(row, "DisplayName"), resource_id)
-            full_name = _safe_str(_first_value(row, "FullName"), display_name)
+        try:
+            cursor.execute("""
+                SELECT TOP 2000
+                    sc.IDChat2,
+                    sc.Stamp,
+                    sc.RawMessage,
+                    sc2w.IDWorkRoom,
+                    swr.Name AS WorkRoomName,
+                    swr.Kind AS WorkRoomKind,
+                    COALESCE(sr.ResourceId, sc2r.IDResource) AS ResourceId,
+                    COALESCE(sr.DisplayName, sl.FullName, sl.Username) AS DisplayName,
+                    sl.FullName
+                FROM dbo.SysChat sc
+                INNER JOIN dbo.SysChat2SysWorkRoom sc2w
+                    ON sc.IDChat2 = sc2w.IDChat2
+                INNER JOIN dbo.SysWorkRoom swr
+                    ON swr.IDWorkRoom = sc2w.IDWorkRoom
+                LEFT JOIN dbo.SysChat2SysResource sc2r
+                    ON sc2r.IDChat = sc.IDChat2
+                LEFT JOIN dbo.SysResources sr
+                    ON sr.ResourceId = sc2r.IDResource
+                LEFT JOIN dbo.SysLogin sl
+                    ON sl.IDLogin = sc2r.IDLogin
+                    OR sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
+                WHERE sc.RawMessage IS NOT NULL
+                ORDER BY sc.Stamp DESC
+            """)
+            chats_by_resource = cursor.fetchall() or []
 
-            member_count = member_count_by_channel.get(channel_id, 0)
-            kind_lower = channel_kind.lower()
-            if member_count <= 2 or "private" in kind_lower or "direct" in kind_lower:
-                chat_scope = "chat_privado"
-            else:
-                chat_scope = "canal_publico"
+            for row in chats_by_resource:
+                chat_id = _safe_str(_first_value(row, "IDChat2", "IDChat"))
+                resource_id = _safe_str(_first_value(row, "ResourceId", "IDResource"), "chat_user")
+                channel_id = _safe_str(_first_value(row, "IDWorkRoom"), "canal_general")
+                channel_name = _safe_str(_first_value(row, "WorkRoomName"), "Canal sin nombre")
+                channel_kind = _safe_str(_first_value(row, "WorkRoomKind"), "workroom")
+                raw_message = _safe_str(_first_value(row, "RawMessage", "Message"), "")
+                display_name = _safe_str(_first_value(row, "DisplayName"), resource_id)
+                full_name = _safe_str(_first_value(row, "FullName"), display_name)
 
-            actividad = Actividad(
-                id=f"chat_{chat_id}_{resource_id}",
-                recurso_humano_id=resource_id,
-                canal_id=channel_id,
-                tipo="chat",
-                descripcion=(
-                    f"Chat ({chat_scope}) en {channel_name}: {raw_message} | "
-                    f"Recurso: {display_name} | Usuario: {full_name}"
-                ),
-                timestamp=_first_value(row, "Stamp", default=datetime.now()),
-                metadatos={
-                    "source_table": "SysChat",
-                    "chat_id": chat_id,
-                    "workroom_name": channel_name,
-                    "workroom_kind": channel_kind,
-                    "chat_scope": chat_scope,
-                    "display_name": display_name,
-                    "full_name": full_name,
-                    "member_count": member_count,
-                    "raw_message": raw_message,
-                },
-            )
-            sistema.aprender_actividad(actividad)
-            chats_ingestados += 1
+                member_count = member_count_by_channel.get(channel_id, 0)
+                kind_lower = channel_kind.lower()
+                if member_count <= 2 or "private" in kind_lower or "direct" in kind_lower:
+                    chat_scope = "chat_privado"
+                else:
+                    chat_scope = "canal_publico"
+
+                actividad = Actividad(
+                    id=f"chat_{chat_id}_{resource_id}",
+                    recurso_humano_id=resource_id,
+                    canal_id=channel_id,
+                    tipo="chat",
+                    descripcion=(
+                        f"Chat ({chat_scope}) en {channel_name}: {raw_message} | "
+                        f"Recurso: {display_name} | Usuario: {full_name}"
+                    ),
+                    timestamp=_first_value(row, "Stamp", default=datetime.now()),
+                    metadatos={
+                        "source_table": "SysChat",
+                        "chat_id": chat_id,
+                        "workroom_name": channel_name,
+                        "workroom_kind": channel_kind,
+                        "chat_scope": chat_scope,
+                        "display_name": display_name,
+                        "full_name": full_name,
+                        "member_count": member_count,
+                        "raw_message": raw_message,
+                    },
+                )
+                if sistema.aprender_actividad(actividad):
+                    chats_ingestados += 1
+        except Exception as e:
+            print(f"⚠️ Se omite la ingesta de chats por error SQL transitorio: {e}")
 
         conn.close()
 
         resumen = {
             "canales": len(canales),
+            "canales_indexados": canales_indexados,
             "roles": len(roles),
             "recursos": recursos_ingestados,
             "chats": chats_ingestados,
@@ -301,6 +312,7 @@ def ingestar_sistema_completo():
 
         print("\n✅ ¡Sistema real ingerido correctamente!")
         print(f"   - Canales: {resumen['canales']}")
+        print(f"   - Canales indexados: {resumen['canales_indexados']}")
         print(f"   - Roles: {resumen['roles']}")
         print(f"   - Recursos: {resumen['recursos']}")
         print(f"   - Chats: {resumen['chats']}")

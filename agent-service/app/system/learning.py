@@ -24,6 +24,8 @@ class SistemaAprendizaje:
             base_url=settings.OLLAMA_BASE_URL,
             model=settings.EMBEDDING_MODEL_NAME
         )
+        self._embeddings_enabled = True
+        self._embeddings_disabled_reason = None
         self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL)
         self.collection = settings.VECTOR_COLLECTION_NAME
         self.sql_retry_stats = {
@@ -35,6 +37,22 @@ class SistemaAprendizaje:
         }
         self._primary_schema_available = self._probe_primary_schema()
         self._ensure_collection()
+
+    def _embed_query_safe(self, text: str, context: str) -> Optional[List[float]]:
+        """Genera embedding con protección para evitar bloqueos repetidos si Ollama falla."""
+        if not self._embeddings_enabled:
+            return None
+
+        try:
+            return self.embeddings.embed_query(text)
+        except Exception as e:
+            self._embeddings_enabled = False
+            self._embeddings_disabled_reason = str(e)
+            print(
+                "⚠️ Embeddings deshabilitados temporalmente por error en Ollama "
+                f"({context}): {e}"
+            )
+            return None
 
     def _probe_primary_schema(self) -> bool:
         """Verifica si el esquema legacy (RecursosHumanos) existe en esta BD."""
@@ -739,6 +757,8 @@ class SistemaAprendizaje:
         limit: int = 80,
     ) -> List[Dict[str, Any]]:
         """Obtiene usuarios recurso del canal de forma liviana y con validación de acceso."""
+        print(f"ℹ️ Obteniendo ID del canal '{canal_id}' ")
+        print(f"ℹ️ Obteniendo ID del usuario '{user_id}' ")
         if not user_id or not (canal_id or "").strip():
             return []
 
@@ -788,10 +808,10 @@ class SistemaAprendizaje:
                     FROM dbo.SysWorkRoomResource wrr
                     INNER JOIN dbo.SysWorkRoom wr
                         ON wr.IDWorkRoom = wrr.IDWorkRoom
-                    LEFT JOIN dbo.SysResources sr
+                    INNER JOIN dbo.SysResources sr
                         ON sr.ResourceId = wrr.IDResource
-                    LEFT JOIN dbo.SysLogin sl
-                        ON sl.IDLogin = wrr.IDLogin
+                    INNER JOIN dbo.SysLogin sl
+                        ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
                     WHERE wrr.IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s)
                     ORDER BY COALESCE(sr.DisplayName, sl.FullName, sl.Username, 'Sin nombre')
                 """,
@@ -986,8 +1006,10 @@ class SistemaAprendizaje:
             - Permisos: {usuario_permisos}
             """
             
-            # Generar embedding
-            vector = self.embeddings.embed_query(texto_aprendizaje)
+            # Generar embedding con protección (evita congelar la ingesta si Ollama cae).
+            vector = self._embed_query_safe(texto_aprendizaje, context="aprender_actividad")
+            if vector is None:
+                return False
             
             # ID basado en hash para evitar duplicados
             point_id = str(uuid.UUID(hashlib.md5(texto_aprendizaje.encode()).hexdigest()))
@@ -1036,7 +1058,9 @@ class SistemaAprendizaje:
             Proyectos activos: {', '.join(canal.proyectos_activos) if canal.proyectos_activos else 'Ninguno'}
             """
             
-            vector = self.embeddings.embed_query(texto_canal)
+            vector = self._embed_query_safe(texto_canal, context="aprender_canal")
+            if vector is None:
+                return False
             
             point_id = str(uuid.UUID(hashlib.md5(canal.id.encode()).hexdigest()))
             
@@ -1140,7 +1164,9 @@ class SistemaAprendizaje:
         Puede filtrar por canal para dar contexto específico, pero siempre incluye resultados generales.
         """
         try:
-            query_vector = self.embeddings.embed_query(query)
+            query_vector = self._embed_query_safe(query, context="consultar_aprendizaje")
+            if query_vector is None:
+                return "No hay conocimiento previo relacionado con esta consulta."
 
             resultados = []
             canal_results = []
