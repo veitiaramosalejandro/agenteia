@@ -35,7 +35,8 @@ class SistemaAprendizaje:
             "query_by_context": {},
             "last_retry_at": None,
         }
-        self._primary_schema_available = self._probe_primary_schema()
+        # Legacy RecursosHumanos deshabilitado: este proyecto usa esquema real Sys*.
+        self._primary_schema_available = False
         self._ensure_collection()
 
     def _embed_query_safe(self, text: str, context: str) -> Optional[List[float]]:
@@ -53,34 +54,6 @@ class SistemaAprendizaje:
                 f"({context}): {e}"
             )
             return None
-
-    def _probe_primary_schema(self) -> bool:
-        """Verifica si el esquema legacy (RecursosHumanos) existe en esta BD."""
-        try:
-            conn = self._connect_sql_with_retry(
-                timeout=5,
-                retries=1,
-                base_delay_seconds=1,
-                context="schema_probe",
-            )
-            cursor = conn.cursor(as_dict=True)
-            cursor.execute(
-                """
-                SELECT TOP 1 1 AS has_primary_schema
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'RecursosHumanos'
-                """
-            )
-            row = cursor.fetchone()
-            conn.close()
-            available = bool(row)
-            if not available:
-                print("ℹ️ Esquema legacy no detectado; se usará mapeo real Sys* para contexto de usuario.")
-            return available
-        except Exception as e:
-            # Si no se puede validar al arranque, mantenemos compatibilidad y dejamos fallback en tiempo de ejecución.
-            print(f"⚠️ No se pudo verificar esquema primario al arranque: {e}")
-            return True
 
     def _increment_retry_metric(self, metric_key: str, context_key: str):
         """Incrementa contadores de reintento SQL para observabilidad básica."""
@@ -191,140 +164,7 @@ class SistemaAprendizaje:
         """
         Obtiene todo el contexto de un usuario para personalizar respuestas.
         """
-        if not self._primary_schema_available:
-            return self._obtener_contexto_usuario_fallback(user_id)
-
-        # Conectar a SQL Server para obtener datos del usuario
-        try:
-            conn = self._connect_sql_with_retry(
-                timeout=10,
-                retries=3,
-                base_delay_seconds=1,
-                context="contexto_usuario_primario",
-            )
-            cursor = conn.cursor(as_dict=True)
-            
-            # Obtener datos del recurso humano
-            cursor.execute("""
-                SELECT IDRecurso, Nombre, Email, Rol, Departamento, Especialidades
-                FROM dbo.RecursosHumanos
-                WHERE IDRecurso = %s
-            """, (user_id,))
-            usuario_data = cursor.fetchone()
-            
-            if not usuario_data:
-                return None
-            
-            usuario = RecursoHumano(
-                id=usuario_data["IDRecurso"],
-                nombre=usuario_data["Nombre"],
-                email=usuario_data["Email"],
-                rol=usuario_data["Rol"],
-                departamento=usuario_data.get("Departamento"),
-                especialidades=usuario_data.get("Especialidades", "").split(",") if usuario_data.get("Especialidades") else [],
-                canales=[]
-            )
-            
-            # Obtener canales del usuario
-            cursor.execute("""
-                SELECT c.IDCanal, c.Nombre, c.Descripcion, c.Tipo
-                FROM dbo.Canales c
-                INNER JOIN dbo.RecursosHumanosCanales rc ON c.IDCanal = rc.IDCanal
-                WHERE rc.IDRecurso = %s AND rc.Activo = 1
-            """, (user_id,))
-            canales_data = cursor.fetchall()
-            
-            canales = []
-            for c in canales_data:
-                canal = Canal(
-                    id=c["IDCanal"],
-                    nombre=c["Nombre"],
-                    descripcion=c["Descripcion"],
-                    tipo=c["Tipo"],
-                    recursos_humanos=[],
-                    recursos_materiales=[]
-                )
-                
-                # Obtener recursos humanos del canal (para que el agente sepa con quién colabora)
-                cursor.execute("""
-                    SELECT IDRecurso FROM dbo.RecursosHumanosCanales
-                    WHERE IDCanal = %s AND Activo = 1
-                """, (c["IDCanal"],))
-                canal.recursos_humanos = [r["IDRecurso"] for r in cursor.fetchall()]
-                
-                # Obtener recursos materiales del canal
-                cursor.execute("""
-                    SELECT IDMaterial, Nombre, Tipo, Estado
-                    FROM dbo.RecursosMateriales
-                    WHERE IDCanal = %s AND Activo = 1
-                """, (c["IDCanal"],))
-                materiales = cursor.fetchall()
-                canal.recursos_materiales = [m["IDMaterial"] for m in materiales]
-                
-                canales.append(canal)
-                usuario.canales.append(canal.id)
-            
-            # Obtener actividades recientes del usuario (últimos 7 días)
-            cursor.execute("""
-                SELECT IDActividad, IDCanal, Tipo, Descripcion, Fecha, Metadatos
-                FROM dbo.Actividades
-                WHERE IDRecurso = %s AND Fecha > DATEADD(day, -7, GETDATE())
-                ORDER BY Fecha DESC
-            """, (user_id,))
-            actividades_data = cursor.fetchall()
-            
-            actividades = [
-                Actividad(
-                    id=a["IDActividad"],
-                    recurso_humano_id=user_id,
-                    canal_id=a["IDCanal"],
-                    tipo=a["Tipo"],
-                    descripcion=a["Descripcion"],
-                    timestamp=a["Fecha"],
-                    metadatos=a["Metadatos"] if a.get("Metadatos") else {}
-                ) for a in actividades_data
-            ]
-            
-            # Obtener recursos materiales disponibles para el usuario (en sus canales)
-            recursos_disponibles = []
-            for canal in canales:
-                cursor.execute("""
-                    SELECT IDMaterial, Nombre, Tipo, Estado, Especificaciones
-                    FROM dbo.RecursosMateriales
-                    WHERE IDCanal = %s AND Estado = 'disponible'
-                """, (canal.id,))
-                materiales = cursor.fetchall()
-                for m in materiales:
-                    recursos_disponibles.append(
-                        RecursoMaterial(
-                            id=m["IDMaterial"],
-                            nombre=m["Nombre"],
-                            tipo=m["Tipo"],
-                            canal_id=canal.id,
-                            estado=m["Estado"],
-                            especificaciones=m["Especificaciones"] if m.get("Especificaciones") else {}
-                        )
-                    )
-            
-            conn.close()
-            
-            # Determinar permisos según rol
-            permisos = self._obtener_permisos_por_rol(usuario.rol)
-            
-            return ContextoUsuario(
-                usuario=usuario,
-                canales_acceso=canales,
-                actividades_recientes=actividades,
-                recursos_disponibles=recursos_disponibles,
-                permisos=permisos
-            )
-            
-        except Exception as e:
-            # Si la tabla principal no existe en este entorno, evitamos repetir el mismo error en cada turno.
-            if "RecursosHumanos" in str(e):
-                self._primary_schema_available = False
-            print(f"⚠️ Esquema primario no disponible para contexto de usuario: {e}")
-            return self._obtener_contexto_usuario_fallback(user_id)
+        return self._obtener_contexto_usuario_fallback(user_id)
 
     def _obtener_contexto_usuario_fallback(self, user_id: str) -> Optional[ContextoUsuario]:
         """
