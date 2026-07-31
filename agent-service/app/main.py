@@ -740,7 +740,7 @@ def handle_dialogue(req: ChatConversationRequest):
         if configured_timeout <= 0:
             hard_timeout = settings.DIALOGUE_HARD_TIMEOUT_SECONDS
             # Si ambos quedan en 0 por configuración, usa un valor operativo seguro.
-            processing_timeout = hard_timeout if hard_timeout > 0 else 25
+            processing_timeout = hard_timeout if hard_timeout > 0 else 300
             processing_timeout = max(5, processing_timeout)
             print(
                 f"ℹ️ Modo bloqueante con timeout duro de seguridad: {processing_timeout}s "
