@@ -21,7 +21,6 @@ from app.agent.tools import (
     analyze_pcm_audio_diagnostic,
 )
 from app.config import settings
-from app.rag.retriever import get_rag_context
 from app.system.learning import SistemaAprendizaje
 
 
@@ -648,31 +647,6 @@ class MachiningAgent:
                 "Verifica la conectividad de SQL Server e inténtalo nuevamente."
             )
 
-        # --- 3.2 CONSULTA DIRECTA DE USUARIOS/RECURSO DEL CANAL (BD) ---
-        if user_id and self._is_channel_members_intent(user_text):
-            members_response = self._resolve_channel_members_from_db(user_id, canal_id)
-            if members_response is not None:
-                if history:
-                    try:
-                        history.add_user_message(user_text)
-                        history.add_ai_message(members_response)
-                    except Exception as e:
-                        print(f"⚠️ Error guardando respuesta directa de miembros en Redis: {e}")
-
-                try:
-                    self._registrar_interaccion(
-                        user_id=user_id,
-                        canal_id=canal_id,
-                        user_text=user_text,
-                        response_text=members_response,
-                        herramientas_usadas=[],
-                        session_id=session_id,
-                    )
-                except Exception as e:
-                    print(f"⚠️ Error registrando interacción de miembros para aprendizaje: {e}")
-
-                return members_response
-
         # --- 4. OBTENER CONTEXTOS ---
         
         # 4.1 Contexto del usuario (canales, rol, permisos)
@@ -681,7 +655,7 @@ class MachiningAgent:
             contexto_usuario = self._get_user_context(user_id)
         
         # 4.2 Contexto RAG (documentos técnicos)
-        rag_context = get_rag_context(user_text)
+        rag_context = self.sistema_aprendizaje.consultar_documentacion(user_text)
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
         chat_context_bd = ""

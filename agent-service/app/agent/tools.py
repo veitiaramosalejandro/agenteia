@@ -127,9 +127,9 @@ def query_sql_server(query: str) -> str:
 
         # 🚨 NUEVA VALIDACIÓN: Si son más de 50 filas, advertir
         if len(rows) > 50:
-            return f"⚠️ ADVERTENCIA: La consulta devolvió {len(rows)} filas. Mostrando solo las primeras 15.\n\n{str(rows[:15])}"
+            return f"⚠️ ADVERTENCIA: La consulta devolvió {len(rows)} filas. Mostrando solo las primeras 15.\n\n{json.dumps(rows[:15])}"
 
-        return str(rows[:15])
+        return json.dumps(rows[:15])
 
     except pymssql.Error as db_err:
         return f"Error SQL Server: {str(db_err)}. Ajusta los campos/tablas y vuelve a intentar."

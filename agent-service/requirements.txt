@@ -2,7 +2,7 @@ fastapi
 uvicorn
 pydantic
 httpx
-qdrant-client
+qdrant-client==1.10.0
 langchain
 langchain-community
 langchain-ollama

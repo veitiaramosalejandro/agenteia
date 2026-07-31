@@ -535,6 +535,45 @@ class SistemaAprendizaje:
         return texto
     
     # ============================================================
+    # 4. CONSULTAR DOCUMENTACIÓN TÉCNICA (RAG)
+    # ============================================================
+
+    def consultar_documentacion(self, query: str, limit: int = 3) -> str:
+        """
+        Busca en la base de conocimiento (Qdrant) documentos técnicos relevantes.
+        Esta función es el núcleo del sistema RAG para documentación.
+        """
+        query_vector = self._embed_query_safe(query, context="consultar_documentacion_rag")
+        if query_vector is None:
+            return "" # Devolver vacío en lugar de un mensaje de error
+
+        # ✅ Usar el método de búsqueda interno
+        # No se aplica filtro para buscar en toda la documentación técnica
+        resultados = self._search_aprendizaje(
+            query_vector,
+            query_filter=None,
+            limit=limit
+        )
+
+        if not resultados:
+            return ""
+
+        # Formatear los resultados para el contexto del LLM
+        seen_ids = set()
+        formatted_results = []
+        for hit in resultados:
+            # Evitar duplicados si la búsqueda devuelve el mismo item
+            if hit['id'] not in seen_ids:
+                content = hit['payload'].get('page_content', '')
+                source = hit['payload'].get('source', 'desconocido')
+                formatted_results.append(f"Fuente: {source}\nContenido: {content[:400]}...")
+                seen_ids.add(hit['id'])
+            if len(formatted_results) >= limit:
+                break
+        
+        return "\n---\n".join(formatted_results)
+
+    # ============================================================
     # 4. APRENDER DE LAS ACTIVIDADES (RAG)
     # ============================================================
     
@@ -581,34 +620,148 @@ class SistemaAprendizaje:
     # 5. CONSULTAR CONOCIMIENTO APRENDIDO (para el agente)
     # ============================================================
     
-    def _search_aprendizaje(self, query_vector, query_filter: Optional[dict], limit: int):
-        """Busca en Qdrant utilizando un filtro opcional."""
+    def _search_aprendizaje(self, query_vector: List[float], 
+                       query_filter: Optional[Dict[str, Any]] = None, 
+                       limit: int = 10) -> List[Dict]:
+        """
+        Busca en Qdrant utilizando un filtro opcional.
+        
+        Args:
+            query_vector: Vector de consulta
+            query_filter: Filtro opcional (ej: {"categoria": "torno"})
+            limit: Número máximo de resultados
+        
+        Returns:
+            Lista de resultados con payload
+        """
         try:
-            return self.qdrant.search(collection_name=self.collection, query_vector=query_vector, limit=limit, query_filter=query_filter)
+            # Construir el filtro correctamente para v1.18.0
+            filter_obj = None
+            if query_filter:
+                from qdrant_client.http import models
+                
+                # Si query_filter ya es un objeto Filter, usarlo directamente
+                if isinstance(query_filter, models.Filter):
+                    filter_obj = query_filter
+                # Si es un diccionario, convertirlo
+                elif isinstance(query_filter, dict):
+                    # Verificar si tiene la estructura 'must'
+                    if 'must' in query_filter:
+                        # Ya tiene la estructura de Filter
+                        conditions = []
+                        for condition in query_filter['must']:
+                            if isinstance(condition, dict):
+                                conditions.append(
+                                    models.FieldCondition(
+                                        key=condition.get('key'),
+                                        match=models.MatchValue(value=condition.get('match', {}).get('value'))
+                                    )
+                                )
+                        filter_obj = models.Filter(must=conditions)
+                    else:
+                        # Convertir diccionario simple a Filter
+                        conditions = []
+                        for key, value in query_filter.items():
+                            conditions.append(
+                                models.FieldCondition(
+                                    key=key,
+                                    match=models.MatchValue(value=value)
+                                )
+                            )
+                        filter_obj = models.Filter(must=conditions)
+            
+            # ✅ MÉTODO CORRECTO para v1.18.0
+            # NOTA: El parámetro se llama 'query_vector' y 'query_filter'
+            results = self.qdrant.search(
+                collection_name=self.collection,
+                query_vector=query_vector,  # ✅ Correcto: 'query_vector'
+                limit=limit,
+                query_filter=filter_obj,    # ✅ Correcto: 'query_filter'
+                with_payload=True,
+                with_vectors=False,
+                score_threshold=0.0  # Opcional
+            )
+            
+            # Convertir resultados a formato amigable
+            formatted_results = []
+            for result in results:
+                formatted_results.append({
+                    'id': result.id,
+                    'score': result.score,
+                    'payload': result.payload
+                })
+            
+            return formatted_results
+            
+        except AttributeError as e:
+            print(f"❌ Error: El cliente Qdrant no tiene el método 'search'")
+            print(f"🔍 Versión instalada: {self._get_version()}")
+            print("💡 Solución: Verifica la instalación de qdrant-client")
+            return []
+            
         except Exception as e:
             print(f"❌ Error en búsqueda de aprendizaje: {e}")
+            print(f"   Tipo: {type(e).__name__}")
             return []
+
+    def _get_version(self):
+        """Obtiene la versión de qdrant-client instalada."""
+        try:
+            import pkg_resources
+            return pkg_resources.get_distribution("qdrant-client").version
+        except:
+            return "desconocida"
 
     def consultar_aprendizaje(self, query: str, canal_id: Optional[str] = None, limit: int = 3) -> str:
         """Consulta el conocimiento aprendido, opcionalmente filtrado por canal."""
         query_vector = self._embed_query_safe(query, context="consultar_aprendizaje")
-        if query_vector is None: return "No hay conocimiento previo."
+        if query_vector is None: 
+            return "No hay conocimiento previo."
 
         resultados = []
+        
+        # Búsqueda con filtro de canal
         if canal_id:
-            resultados.extend(self._search_aprendizaje(query_vector, {"must": [{"key": "canal_id", "match": {"value": canal_id}}]}, limit))
+            # ✅ Crear el filtro correctamente para v1.18.0
+            from qdrant_client.http import models
+            filtro = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="canal_id",
+                        match=models.MatchValue(value=canal_id)
+                    )
+                ]
+            )
+            resultados.extend(
+                self._search_aprendizaje(
+                    query_vector, 
+                    query_filter=filtro,  # Pasar el objeto Filter
+                    limit=limit
+                )
+            )
         
-        resultados.extend(self._search_aprendizaje(query_vector, None, limit))
+        # Búsqueda sin filtro (si no hay resultados con filtro o siempre)
+        if not resultados or len(resultados) < limit:
+            resultados.extend(
+                self._search_aprendizaje(
+                    query_vector, 
+                    query_filter=None, 
+                    limit=limit
+                )
+            )
         
-        if not resultados: return "No hay conocimiento previo relacionado."
+        if not resultados:
+            return "No hay conocimiento previo relacionado."
 
         seen_ids = set()
         formatted_results = []
         for hit in resultados:
-            if hit.id not in seen_ids:
-                formatted_results.append(f"• {hit.payload.get('page_content', '')[:300]}...")
-                seen_ids.add(hit.id)
-            if len(formatted_results) >= limit: break
+            if hit['id'] not in seen_ids:
+                content = hit['payload'].get('page_content', '')
+                formatted_results.append(f"• {content[:300]}...")
+                seen_ids.add(hit['id'])
+            if len(formatted_results) >= limit:
+                break
         
         return "📚 CONOCIMIENTO APRENDIDO RELACIONADO:\n" + "\n".join(formatted_results)
     
@@ -621,14 +774,21 @@ class SistemaAprendizaje:
         try:
             query = f"Actividad tipo {tipo_actividad} en canal {canal_id}"
             query_vector = self._embed_query_safe(query, context="sugerir_colaboradores")
-            if query_vector is None: return []
+            if query_vector is None: 
+                return []
 
-            resultados = self._search_aprendizaje(query_vector, None, 10)
+            # ✅ Usar el método corregido
+            resultados = self._search_aprendizaje(
+                query_vector, 
+                query_filter=None,  # Sin filtro para buscar en todo
+                limit=10
+            )
             
             colaboradores = {}
             for hit in resultados:
-                if hit.payload.get('source') == 'actividad_aprendida':
-                    usuario_id = hit.payload.get('recurso_humano_id')
+                payload = hit.get('payload', {})
+                if payload.get('source') == 'actividad_aprendida':
+                    usuario_id = payload.get('recurso_humano_id')
                     if usuario_id:
                         colaboradores[usuario_id] = colaboradores.get(usuario_id, 0) + 1
             
