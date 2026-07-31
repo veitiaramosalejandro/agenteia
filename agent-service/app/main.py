@@ -198,8 +198,7 @@ def _run_startup_connectivity_checks() -> dict:
         "tcp": _probe_tcp(*_extract_host_port_from_url(settings.SOLIDSET_RESTAPI_BASE_URL, 80)) if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
         "root": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL) if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
         "heartbeat": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL, "/RestApi/Heartbeat") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
-        "swagger": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL, "/swagger/index.html") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
-        "openapi": _probe_http_json(settings.SOLIDSET_RESTAPI_BASE_URL, "/openapi.json") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
+        "swagger": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL, "/swagger/index.html") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},        
     }
 
     sql_host, sql_port = _extract_host_port(settings.SQL_SERVER_HOST, 1433)
@@ -290,17 +289,7 @@ def _log_startup_connectivity(report: dict) -> None:
     print(f"     • TCP: {_probe_to_text(solidset_rest.get('tcp', {}))}")
     print(f"     • HTTP /: {_probe_to_text(solidset_rest.get('root', {}))}")
     print(f"     • HTTP /RestApi/Heartbeat: {_probe_to_text(solidset_rest.get('heartbeat', {}))}")
-    print(f"     • HTTP /swagger/index.html: {_probe_to_text(solidset_rest.get('swagger', {}))}")
-    openapi_probe = solidset_rest.get("openapi", {})
-    print(f"     • HTTP /openapi.json: {_probe_to_text(openapi_probe)}")
-    openapi_json = openapi_probe.get("json", {}) if isinstance(openapi_probe, dict) else {}
-    if openapi_json:
-        print(
-            "     • OpenAPI info: "
-            f"title={openapi_json.get('title') or 'n/a'}, "
-            f"version={openapi_json.get('version') or 'n/a'}, "
-            f"paths={openapi_json.get('paths_count') if openapi_json.get('paths_count') is not None else 'n/a'}"
-        )
+    print(f"     • HTTP /swagger/index.html: {_probe_to_text(solidset_rest.get('swagger', {}))}")    
 
 
 def _build_dialogue_cache_key(session_id: str, user_id: str, canal_id: Optional[str], message: str) -> str:
@@ -749,7 +738,10 @@ def handle_dialogue(req: ChatConversationRequest):
         
         configured_timeout = settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS
         if configured_timeout <= 0:
-            processing_timeout = max(5, settings.DIALOGUE_HARD_TIMEOUT_SECONDS)
+            hard_timeout = settings.DIALOGUE_HARD_TIMEOUT_SECONDS
+            # Si ambos quedan en 0 por configuración, usa un valor operativo seguro.
+            processing_timeout = hard_timeout if hard_timeout > 0 else 25
+            processing_timeout = max(5, processing_timeout)
             print(
                 f"ℹ️ Modo bloqueante con timeout duro de seguridad: {processing_timeout}s "
                 f"(sesión: {req.session_id})"
@@ -1059,8 +1051,7 @@ def test_solidset_connectivity():
     
     Endpoints probados:
     - /RestApi/Heartbeat (recomendado para verificar comunicación)
-    - /swagger/index.html (documentación)
-    - /openapi.json (documentación OpenAPI)
+    - /swagger/index.html (documentación)    
     """
     base_url = settings.SOLIDSET_RESTAPI_BASE_URL
     
@@ -1094,16 +1085,6 @@ def test_solidset_connectivity():
         "success": swagger_result.get("ok", False),
         "status_code": swagger_result.get("status_code"),
         "error": swagger_result.get("error")
-    }
-    
-    # Test 3: OpenAPI (para verificar documentación)
-    openapi_result = _probe_http_json(base_url, "/openapi.json")
-    results["tests"]["openapi"] = {
-        "endpoint": f"{base_url}/openapi.json",
-        "success": openapi_result.get("ok", False),
-        "status_code": openapi_result.get("status_code"),
-        "info": openapi_result.get("json", {}),
-        "error": openapi_result.get("error")
     }
     
     # Determinar estado general

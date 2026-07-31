@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     DIALOGUE_MAX_CONCURRENT: int = int(os.getenv("DIALOGUE_MAX_CONCURRENT", "1"))
     DIALOGUE_ADMISSION_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_ADMISSION_TIMEOUT_SECONDS", "2"))
     DIALOGUE_PROCESSING_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_PROCESSING_TIMEOUT_SECONDS", "0"))
-    DIALOGUE_HARD_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_HARD_TIMEOUT_SECONDS", "180"))
+    DIALOGUE_HARD_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_HARD_TIMEOUT_SECONDS", "0"))
     DIALOGUE_DUPLICATE_CACHE_ENABLED: bool = _env_bool("DIALOGUE_DUPLICATE_CACHE_ENABLED", "true")
     DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS: int = int(os.getenv("DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS", "15"))
     DIALOGUE_DUPLICATE_CACHE_MAX_ITEMS: int = int(os.getenv("DIALOGUE_DUPLICATE_CACHE_MAX_ITEMS", "400"))
@@ -88,3 +88,7 @@ if settings.ENVIRONMENT == "development":
     print(f"  - Qdrant: {settings.VECTOR_DB_URL}")
     print(f"  - Redis: {settings.REDIS_URL}")
     print(f"  - PostgreSQL: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}")
+    print(f"  - SQL Server: {settings.SQL_SERVER_HOST}")    
+    print(f"  - SolidSET RestApi: {settings.SOLIDSET_RESTAPI_BASE_URL}")
+    print(f"  - Notifications Api: {settings.NOTIF_API_BASE_URL}")
+    

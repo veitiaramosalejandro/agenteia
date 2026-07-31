@@ -35,7 +35,6 @@ class SistemaAprendizaje:
             "query_by_context": {},
             "last_retry_at": None,
         }
-        # Legacy RecursosHumanos deshabilitado: este proyecto usa esquema real Sys*.
         self._primary_schema_available = False
         self._ensure_collection()
 
@@ -156,6 +155,109 @@ class SistemaAprendizaje:
 
         raise last_error
 
+    def _resolve_user_identity(self, user_id: str) -> Dict[str, Optional[str]]:
+        """Resuelve username/login/resource para aceptar user_id como Username o GUID."""
+        raw_user = (user_id or "").strip()
+        identity: Dict[str, Optional[str]] = {
+            "input": raw_user,
+            "username": raw_user or None,
+            "login_id": None,
+            "resource_id": None,
+            "full_name": None,
+            "display_name": None,
+        }
+        if not raw_user:
+            return identity
+
+        conn = None
+        try:
+            conn = self._connect_sql_with_retry(
+                timeout=max(1, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+                retries=max(1, settings.DB_INGEST_CONNECT_RETRIES),
+                base_delay_seconds=1,
+                context="resolve_user_identity",
+            )
+            cursor = conn.cursor(as_dict=True)
+            self._execute_with_retry(
+                cursor=cursor,
+                query="""
+                    SELECT TOP 1
+                        sl.IDLogin,
+                        sl.Username,
+                        sl.FullName,
+                        sr.ResourceId,
+                        sr.DisplayName
+                    FROM dbo.SysLogin sl
+                    LEFT JOIN dbo.SysResources sr
+                        ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
+                    WHERE sl.Username = %s
+                       OR sl.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                       OR sr.ResourceId = TRY_CONVERT(uniqueidentifier, %s)
+                    ORDER BY CASE WHEN sl.Username = %s THEN 0 ELSE 1 END,
+                             sl.Username
+                """,
+                params=(raw_user, raw_user, raw_user, raw_user),
+                retries=1,
+                base_delay_seconds=1,
+                context="resolve_user_identity_query",
+            )
+            print(f"🔍 Resolviendo identidad de usuario '{raw_user}'...")
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                identity["username"] = (row.get("Username") or raw_user).strip() if row.get("Username") else raw_user
+                identity["login_id"] = str(row.get("IDLogin") or "").strip() or None
+                identity["resource_id"] = str(row.get("ResourceId") or "").strip() or None
+                identity["full_name"] = (row.get("FullName") or "").strip() or None
+                identity["display_name"] = (row.get("DisplayName") or "").strip() or None
+
+            return identity
+        except Exception as e:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            print(f"⚠️ No se pudo resolver identidad de usuario '{raw_user}': {e}")
+            return identity
+
+    def _get_user_resource_id(self, username: str) -> Optional[str]:
+        """Obtiene el ResourceId de un usuario por su username."""
+        if not username:
+            return None
+        
+        conn = None
+        try:
+            conn = self._connect_sql_with_retry(
+                timeout=5,
+                retries=2,
+                base_delay_seconds=1,
+                context="get_user_resource",
+            )
+            cursor = conn.cursor(as_dict=True)
+            cursor.execute(
+                """
+                SELECT TOP 1 sr.ResourceId
+                FROM dbo.SysLogin sl
+                INNER JOIN dbo.SysResources sr 
+                    ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
+                WHERE sl.Username = %s
+                """,
+                (username,)
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return str(row.get("ResourceId")) if row else None
+        except Exception as e:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            print(f"⚠️ Error obteniendo ResourceId para usuario '{username}': {e}")
+            return None
+
     # ============================================================
     # 1. OBTENER CONTEXTO DEL USUARIO
     # ============================================================
@@ -178,6 +280,11 @@ class SistemaAprendizaje:
         - Entidades relacionadas al chat -> dbo.SysChat2Record
         """
         try:
+            identity = self._resolve_user_identity(user_id)
+            username = (identity.get("username") or user_id or "").strip()
+            resolved_resource_id = (identity.get("resource_id") or "").strip()
+            resolved_login_id = (identity.get("login_id") or "").strip()
+
             conn = self._connect_sql_with_retry(
                 timeout=10,
                 retries=3,
@@ -199,10 +306,12 @@ class SistemaAprendizaje:
                     title
                 FROM dbo.SysPerson
                 WHERE IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                   OR IDUser = TRY_CONVERT(uniqueidentifier, %s)
+                   OR UPPER(accountname) = UPPER(%s)
                    OR organization_no = %s
                    OR reference = %s
                 """,
-                (user_id, user_id, user_id),
+                (resolved_resource_id or user_id, resolved_login_id or user_id, username, user_id, user_id),
             )
             usuario_data = cursor.fetchone()
             if not usuario_data:
@@ -211,12 +320,14 @@ class SistemaAprendizaje:
 
             nombre = (
                 usuario_data.get("accountname")
+                or identity.get("full_name")
+                or identity.get("display_name")
                 or f"{(usuario_data.get('firstname') or '').strip()} {(usuario_data.get('lastname') or '').strip()}".strip()
                 or str(usuario_data.get("IDResource") or user_id)
             )
 
-            resource_guid = str(usuario_data.get("IDResource") or user_id)
-            user_guid = str(usuario_data.get("IDUser") or "")
+            resource_guid = str(usuario_data.get("IDResource") or resolved_resource_id or user_id)
+            user_guid = str(resolved_login_id or usuario_data.get("IDUser") or "")
 
             # Resolver rol desde tablas del sistema, con fallback al título del contacto.
             rol = None
@@ -252,20 +363,52 @@ class SistemaAprendizaje:
                 canales=[],
             )
 
+            # Obtener canales del usuario con miembros en una sola consulta
             cursor.execute(
                 """
-                SELECT DISTINCT TOP 30
-                    wr.IDWorkRoom,
-                    wr.Name,
-                    wr.Description,
-                    wr.Kind
-                FROM dbo.SysWorkRoomResource wrr
-                INNER JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = wrr.IDWorkRoom
-                WHERE wrr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                   OR wrr.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                ORDER BY wr.Name
+                WITH user_rooms AS (
+                    SELECT DISTINCT 
+                        wr.IDWorkRoom,
+                        wr.Name,
+                        wr.Description,
+                        wr.Kind
+                    FROM dbo.SysWorkRoomResource wrr
+                    INNER JOIN dbo.SysWorkRoom wr 
+                        ON wr.IDWorkRoom = wrr.IDWorkRoom
+                    WHERE wrr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                       OR wrr.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                       OR EXISTS (
+                           SELECT 1 
+                           FROM dbo.SysLogin slu 
+                           WHERE slu.IDLogin = wrr.IDLogin 
+                             AND UPPER(slu.Username) = UPPER(%s)
+                       )
+                ),
+                room_members AS (
+                    SELECT 
+                        wrr.IDWorkRoom,
+                        STRING_AGG(
+                            COALESCE(
+                                CONVERT(varchar(36), wrr.IDResource), 
+                                CONVERT(varchar(36), wrr.IDLogin)
+                            ), 
+                            ','
+                        ) AS Members
+                    FROM dbo.SysWorkRoomResource wrr
+                    INNER JOIN user_rooms ur ON ur.IDWorkRoom = wrr.IDWorkRoom
+                    GROUP BY wrr.IDWorkRoom
+                )
+                SELECT 
+                    ur.IDWorkRoom,
+                    ur.Name,
+                    ur.Description,
+                    ur.Kind,
+                    rm.Members
+                FROM user_rooms ur
+                LEFT JOIN room_members rm ON rm.IDWorkRoom = ur.IDWorkRoom
+                ORDER BY ur.Name
                 """,
-                (resource_guid, user_guid),
+                (resource_guid, user_guid, username),
             )
             canales_rows = cursor.fetchall() or []
 
@@ -276,19 +419,10 @@ class SistemaAprendizaje:
                     continue
                 canal_nombre = row.get("Name") or f"Canal {canal_id[:8]}"
                 canal_descripcion = row.get("Description") or "Canal de trabajo"
-
-                # Miembros por canal (IDResource o IDLogin si IDResource está nulo).
-                cursor.execute(
-                    """
-                    SELECT TOP 100
-                        COALESCE(CONVERT(varchar(36), IDResource), CONVERT(varchar(36), IDLogin)) AS ResourceRef
-                    FROM dbo.SysWorkRoomResource
-                    WHERE IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s)
-                    """,
-                    (canal_id,),
-                )
-                miembros_rows = cursor.fetchall() or []
-                miembros = [m.get("ResourceRef") for m in miembros_rows if m.get("ResourceRef")]
+                
+                # Parsear miembros de la cadena concatenada
+                miembros_str = row.get("Members") or ""
+                miembros = [m.strip() for m in miembros_str.split(',') if m.strip()] if miembros_str else []
 
                 canal = Canal(
                     id=canal_id,
@@ -301,34 +435,41 @@ class SistemaAprendizaje:
                 canales.append(canal)
                 usuario.canales.append(canal_id)
 
+            # Obtener actividades recientes del chat
             try:
                 self._execute_with_retry(
                     cursor=cursor,
                     query="""
-                    SELECT TOP 20
-                        c.IDChat2,
-                        c.Stamp,
-                        c.RawMessage,
-                        COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) as IDChannel,
-                        wr.Name as ChannelName,
-                        wr.Description as ChannelDescription,
-                        c2r.RecordCode,
-                        c2r.RecordShortName
-                    FROM dbo.SysChat2SysResource c2rsc
-                    INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
-                    LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
-                    LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
-                    OUTER APPLY (
-                        SELECT TOP 1 r.RecordCode, r.RecordShortName
-                        FROM dbo.SysChat2Record r
-                        WHERE r.IDChat = c.IDChat2
-                        ORDER BY r.Stamp DESC
-                    ) c2r
-                    WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                       OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                    ORDER BY c.Stamp DESC
+                        SELECT TOP 20
+                            c.IDChat2,
+                            c.Stamp,
+                            c.RawMessage,
+                            COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) as IDChannel,
+                            wr.Name as ChannelName,
+                            wr.Description as ChannelDescription,
+                            c2r.RecordCode,
+                            c2r.RecordShortName
+                        FROM dbo.SysChat2SysResource c2rsc
+                        INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                        LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
+                        LEFT JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
+                        OUTER APPLY (
+                            SELECT TOP 1 r.RecordCode, r.RecordShortName
+                            FROM dbo.SysChat2Record r
+                            WHERE r.IDChat = c.IDChat2
+                            ORDER BY r.Stamp DESC
+                        ) c2r
+                        WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                           OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                           OR EXISTS (
+                               SELECT 1
+                               FROM dbo.SysLogin slu
+                               WHERE slu.IDLogin = c2rsc.IDLogin
+                                 AND UPPER(slu.Username) = UPPER(%s)
+                           )
+                        ORDER BY c.Stamp DESC
                     """,
-                    params=(resource_guid, user_guid),
+                    params=(resource_guid, user_guid, username),
                     retries=2,
                     base_delay_seconds=1,
                     context="fallback_chat_actividad",
@@ -364,23 +505,30 @@ class SistemaAprendizaje:
                     )
                 )
 
+            # Obtener recursos disponibles
             try:
                 self._execute_with_retry(
                     cursor=cursor,
                     query="""
-                    SELECT TOP 30
-                        c2r.RecordCode,
-                        c2r.RecordShortName,
-                        c2w.IDWorkRoom
-                    FROM dbo.SysChat2SysResource c2rsc
-                      INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
-                    LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
-                          INNER JOIN dbo.SysChat2Record c2r ON c2r.IDChat = c.IDChat2
-                    WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                       OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                    ORDER BY c2r.Stamp DESC
+                        SELECT TOP 30
+                            c2r.RecordCode,
+                            c2r.RecordShortName,
+                            c2w.IDWorkRoom
+                        FROM dbo.SysChat2SysResource c2rsc
+                        INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                        LEFT JOIN dbo.SysChat2SysWorkRoom c2w ON c2w.IDChat2 = c.IDChat2
+                        INNER JOIN dbo.SysChat2Record c2r ON c2r.IDChat = c.IDChat2
+                        WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                           OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                           OR EXISTS (
+                               SELECT 1
+                               FROM dbo.SysLogin slu
+                               WHERE slu.IDLogin = c2rsc.IDLogin
+                                 AND UPPER(slu.Username) = UPPER(%s)
+                           )
+                        ORDER BY c2r.Stamp DESC
                     """,
-                    params=(resource_guid, user_guid),
+                    params=(resource_guid, user_guid, username),
                     retries=2,
                     base_delay_seconds=1,
                     context="fallback_chat_recursos",
@@ -389,6 +537,7 @@ class SistemaAprendizaje:
             except Exception as e:
                 print(f"⚠️ Fallback recursos de chat no disponibles: {e}")
                 materiales_rows = []
+            
             recursos_disponibles = []
             for m in materiales_rows:
                 record_code = (m.get("RecordCode") or "").strip()
@@ -468,6 +617,10 @@ class SistemaAprendizaje:
             print(f"⚠️ Error buscando recurso por nombre '{nombre}': {e}")
             return None
 
+    # ============================================================
+    # 2. OBTENER MENSAJES DE CHAT (VERSIÓN ULTRARÁPIDA)
+    # ============================================================
+    
     def obtener_mensajes_chat_desde_bd(
         self,
         user_id: str,
@@ -476,88 +629,108 @@ class SistemaAprendizaje:
         offset: int = 0,
         sender_resource_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Obtiene mensajes recientes de chat desde BD respetando membresía real del canal."""
+        """
+        Obtiene mensajes recientes de chat desde BD con validación de membresía.
+        Versión ultra-rápida usando CTE para filtrar canales del usuario.
+        """
         if not user_id:
+            return []
+
+        identity = self._resolve_user_identity(user_id)
+        username = (identity.get("username") or user_id or "").strip()
+        
+        if not username:
+            print("⚠️ No se pudo resolver el username del usuario")
             return []
 
         safe_limit = max(1, min(limit, 30))
         safe_offset = max(0, offset)
-        fetch_limit = max(5, min(80, safe_limit + safe_offset + 5))
+        fetch_limit = safe_limit + safe_offset
 
+        # Query ultra-rápida con CTE para filtrar canales del usuario
+        query = """
+            WITH user_channels AS (
+                -- Obtener todos los canales donde el usuario es miembro
+                SELECT DISTINCT wrr.IDWorkRoom
+                FROM dbo.SysWorkRoomResource wrr
+                LEFT JOIN dbo.SysLogin sl ON sl.IDLogin = wrr.IDLogin
+                WHERE wrr.IDResource = (SELECT TOP 1 ResourceId 
+                                        FROM dbo.SysResources 
+                                        WHERE ActiveIDLogin2Resource = 
+                                            (SELECT TOP 1 ActiveIDLogin2Resource 
+                                             FROM dbo.SysLogin 
+                                             WHERE Username = %s))
+                   OR sl.Username = %s
+            )
+            SELECT TOP %s
+                c.IDChat2,
+                c.Stamp,
+                c.RawMessage,
+                wr.IDWorkRoom AS IDChannel,
+                wr.Name AS ChannelName,
+                sr.ResourceId AS SenderResourceId,
+                sr.DisplayName AS SenderDisplayName,
+                sl.FullName AS SenderFullName,
+                sl.Username AS SenderUsername
+            FROM dbo.SysChat c
+            INNER JOIN dbo.SysChat2SysWorkRoom c2w 
+                ON c.IDChat2 = c2w.IDChat2
+            INNER JOIN dbo.SysWorkRoom wr 
+                ON wr.IDWorkRoom = c2w.IDWorkRoom
+            INNER JOIN dbo.SysWorkRoomResource wrr 
+                ON wrr.IDWorkRoom = wr.IDWorkRoom
+            INNER JOIN dbo.SysResources sr 
+                ON sr.ResourceId = wrr.IDResource
+            INNER JOIN dbo.SysLogin sl 
+                ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
+            WHERE wr.IDWorkRoom IN (SELECT IDWorkRoom FROM user_channels)
+        """
+        
+        params: List[Any] = [username, username, fetch_limit]
+        
+        # Filtrar por canal específico si se proporciona
+        if canal_id:
+            query += " AND wr.IDWorkRoom = %s"
+            params.append(canal_id)
+        
+        # Filtrar por remitente específico si se proporciona
+        if sender_resource_id:
+            query += " AND sr.ResourceId = %s"
+            params.append(sender_resource_id)
+        
+        # Agrupar para eliminar duplicados (por si un recurso tiene múltiples logins)
+        query += """
+            GROUP BY 
+                c.IDChat2,
+                c.Stamp,
+                c.RawMessage,
+                wr.IDWorkRoom,
+                wr.Name,
+                sr.ResourceId,
+                sr.DisplayName,
+                sl.FullName,
+                sl.Username
+            ORDER BY 
+                c.Stamp DESC
+        """
+        
+        conn = None
         try:
             conn = self._connect_sql_with_retry(
                 timeout=max(1, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
                 retries=max(1, settings.DB_INGEST_CONNECT_RETRIES),
                 base_delay_seconds=1,
-                context="chat_messages_bd",
+                context="chat_messages_ultra",
             )
             cursor = conn.cursor(as_dict=True)
-
-            query = f"""
-                SELECT TOP {fetch_limit}
-                    c.IDChat2,
-                    c.Stamp,
-                    c.RawMessage,
-                    COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) AS IDChannel,
-                    wr.Name AS ChannelName,
-                    sender.IDResource AS SenderResourceId,
-                    sender.DisplayName AS SenderDisplayName
-                FROM dbo.SysChat c
-                LEFT JOIN dbo.SysChat2SysWorkRoom c2w
-                    ON c2w.IDChat2 = c.IDChat2
-                LEFT JOIN dbo.SysWorkRoom wr
-                    ON wr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
-                OUTER APPLY (
-                    SELECT TOP 1
-                        c2r_sender.IDResource,
-                        sr.DisplayName
-                    FROM dbo.SysChat2SysResource c2r_sender
-                    LEFT JOIN dbo.SysResources sr
-                        ON sr.ResourceId = c2r_sender.IDResource
-                    WHERE c2r_sender.IDChat = c.IDChat2
-                    ORDER BY CASE WHEN c2r_sender.IDResource IS NULL THEN 1 ELSE 0 END,
-                             c2r_sender.IDResource
-                ) sender
-                WHERE
-                    COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) IS NOT NULL
-                    AND EXISTS (
-                        SELECT 1
-                        FROM dbo.SysWorkRoomResource wrr
-                        WHERE wrr.IDWorkRoom = COALESCE(c.IDWorkRoom, c2w.IDWorkRoom)
-                          AND (
-                              wrr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                              OR wrr.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                          )
-                    )
-            """
-            params: List[Any] = [user_id, user_id]
-
-            if canal_id:
-                query += """
-                    AND COALESCE(c.IDWorkRoom, c2w.IDWorkRoom) = TRY_CONVERT(uniqueidentifier, %s)
-                """
-                params.append(canal_id)
-
-            if sender_resource_id:
-                query += """
-                    AND EXISTS (
-                        SELECT 1
-                        FROM dbo.SysChat2SysResource c2r_filter
-                        WHERE c2r_filter.IDChat = c.IDChat2
-                          AND c2r_filter.IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                    )
-                """
-                params.append(sender_resource_id)
-
-            query += " ORDER BY c.Stamp DESC"
-
+            
             self._execute_with_retry(
                 cursor=cursor,
                 query=query,
                 params=tuple(params),
                 retries=2,
                 base_delay_seconds=1,
-                context="chat_messages_bd_query",
+                context="chat_messages_ultra_query",
             )
             rows = cursor.fetchall() or []
             conn.close()
@@ -568,25 +741,33 @@ class SistemaAprendizaje:
                 if not raw_message:
                     continue
 
-                messages.append(
-                    {
-                        "chat_id": str(row.get("IDChat2") or ""),
-                        "timestamp": row.get("Stamp"),
-                        "message": raw_message,
-                        "channel_id": str(row.get("IDChannel") or ""),
-                        "channel_name": (row.get("ChannelName") or "Canal sin nombre").strip(),
-                        "sender_resource_id": str(row.get("SenderResourceId") or "") or None,
-                        "sender_display_name": (row.get("SenderDisplayName") or "").strip() or None,
-                    }
-                )
+                messages.append({
+                    "chat_id": str(row.get("IDChat2") or ""),
+                    "timestamp": row.get("Stamp"),
+                    "message": raw_message,
+                    "channel_id": str(row.get("IDChannel") or canal_id),
+                    "channel_name": (row.get("ChannelName") or "Canal sin nombre").strip(),
+                    "sender_resource_id": str(row.get("SenderResourceId") or "") or None,
+                    "sender_display_name": (row.get("SenderDisplayName") or "").strip() or None,
+                    "sender_full_name": (row.get("SenderFullName") or "").strip() or None,
+                    "sender_username": (row.get("SenderUsername") or "").strip() or None,
+                })
 
+            # Aplicar offset y limit
             if safe_offset > 0:
                 messages = messages[safe_offset:]
             if len(messages) > safe_limit:
                 messages = messages[:safe_limit]
 
+            print(f"✅ Mensajes obtenidos: {len(messages)} para usuario {username}")
             return messages
+            
         except Exception as e:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             print(f"⚠️ Error obteniendo mensajes de chat desde BD: {e}")
             return []
 
@@ -597,8 +778,11 @@ class SistemaAprendizaje:
         limit: int = 80,
     ) -> List[Dict[str, Any]]:
         """Obtiene usuarios recurso del canal de forma liviana y con validación de acceso."""
-        print(f"ℹ️ Obteniendo ID del canal '{canal_id}' ")
-        print(f"ℹ️ Obteniendo ID del usuario '{user_id}' ")
+        identity = self._resolve_user_identity(user_id)
+        username = (identity.get("username") or user_id or "").strip()
+        resolved_resource_id = (identity.get("resource_id") or user_id or "").strip()
+        resolved_login_id = (identity.get("login_id") or user_id or "").strip()
+
         if not user_id or not (canal_id or "").strip():
             return []
 
@@ -622,9 +806,15 @@ class SistemaAprendizaje:
                       AND (
                           req.IDResource = TRY_CONVERT(uniqueidentifier, %s)
                           OR req.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                          OR EXISTS (
+                              SELECT 1
+                              FROM dbo.SysLogin slu
+                              WHERE slu.IDLogin = req.IDLogin
+                                AND UPPER(slu.Username) = UPPER(%s)
+                          )
                       )
                 """,
-                params=(canal_id, user_id, user_id),
+                params=(canal_id, resolved_resource_id, resolved_login_id, username),
                 retries=1,
                 base_delay_seconds=1,
                 context="channel_members_acl",
@@ -711,7 +901,7 @@ class SistemaAprendizaje:
             msg = row.get("message") or ""
             if len(msg) > 180:
                 msg = msg[:180] + "..."
-            sender_name = row.get("sender_display_name")
+            sender_name = row.get("sender_display_name") or row.get("sender_username") or ""
             sender_text = f" [{sender_name}]" if sender_name else ""
             lines.append(f"[{ts_text}] ({channel_name}){sender_text} {msg}")
 
@@ -721,7 +911,7 @@ class SistemaAprendizaje:
         return "\n".join(lines)
     
     # ============================================================
-    # 2. GENERAR CONTEXTO PARA EL AGENTE (en texto)
+    # 3. GENERAR CONTEXTO PARA EL AGENTE (en texto)
     # ============================================================
     
     def generar_contexto_agente(self, user_id: str) -> str:
@@ -795,7 +985,7 @@ class SistemaAprendizaje:
         return texto
     
     # ============================================================
-    # 3. APRENDER DE LAS ACTIVIDADES (RAG)
+    # 4. APRENDER DE LAS ACTIVIDADES (RAG)
     # ============================================================
     
     def aprender_actividad(self, actividad: Actividad) -> bool:
@@ -926,7 +1116,7 @@ class SistemaAprendizaje:
             return False
     
     # ============================================================
-    # 4. CONSULTAR CONOCIMIENTO APRENDIDO (para el agente)
+    # 5. CONSULTAR CONOCIMIENTO APRENDIDO (para el agente)
     # ============================================================
     
     def _search_aprendizaje(self, query_vector, query_filter: Optional[dict], limit: int):
@@ -1039,7 +1229,7 @@ class SistemaAprendizaje:
             return f"Error consultando aprendizaje: {str(e)}"
     
     # ============================================================
-    # 5. SUGERIR COLABORADORES (basado en actividades pasadas)
+    # 6. SUGERIR COLABORADORES (basado en actividades pasadas)
     # ============================================================
     
     def sugerir_colaboradores(self, canal_id: str, tipo_actividad: str) -> List[Dict]:
