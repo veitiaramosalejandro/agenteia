@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     NOTIF_API_START_DELAY_SECONDS: int = int(os.getenv("NOTIF_API_START_DELAY_SECONDS", "30"))
     NOTIF_API_TIMEOUT_SECONDS: int = int(os.getenv("NOTIF_API_TIMEOUT_SECONDS", "15"))
     NOTIF_API_VERIFY_TLS: bool = _env_bool("NOTIF_API_VERIFY_TLS", "false")
+    NOTIF_AUDIT_LOG_ENABLED: bool = _env_bool("NOTIF_AUDIT_LOG_ENABLED", "true")
 
     # SolidSET controllers integration (ChatController + RestApiController)
     SOLIDSET_CHAT_BASE_URL: str = os.getenv("SOLIDSET_CHAT_BASE_URL", "")

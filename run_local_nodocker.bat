@@ -13,6 +13,7 @@ REM ------------------------------------------------------------
 set "SCRIPT_DIR=%~dp0"
 set "PROJECT_ROOT=%SCRIPT_DIR%"
 set "SERVICE_DIR=%PROJECT_ROOT%agent-service"
+set "ENV_FILE=%PROJECT_ROOT%.env"
 
 echo ========================================
 echo  🚀 Iniciando Machining Agent API (sin Docker)
@@ -30,16 +31,29 @@ if exist "%PROJECT_ROOT%venv_machining\Scripts\activate.bat" (
 
 cd /d "%SERVICE_DIR%"
 
-REM Variables de entorno para ejecución local.
-set "ENVIRONMENT=development"
+REM Cargar variables desde .env del proyecto (clave=valor).
+if exist "%ENV_FILE%" (
+    echo 📄 Cargando variables desde %ENV_FILE%
+    for /f "usebackq tokens=* delims=" %%L in ("%ENV_FILE%") do (
+        set "line=%%L"
+        if not "!line!"=="" if not "!line:~0,1!"=="#" (
+            for /f "tokens=1* delims==" %%A in ("!line!") do (
+                if not "%%A"=="" set "%%A=%%B"
+            )
+        )
+    )
+) else (
+    echo ⚠️ No se encontró %ENV_FILE%. Se usarán variables ya definidas en el entorno.
+)
+
+REM Variables mínimas del proceso local.
+if not defined ENVIRONMENT set "ENVIRONMENT=development"
 set "PYTHONPATH=%PYTHONPATH%;%SERVICE_DIR%"
-set "OLLAMA_BASE_URL=http://localhost:11435"
-set "VECTOR_DB_URL=http://localhost:6333"
-set "REDIS_URL=redis://localhost:6379"
-set "MODEL_NAME=qwen2.5:7b"
-set "EMBEDDING_MODEL_NAME=nomic-embed-text"
-set "NOTIF_API_BACKGROUND_ENABLED=false"
-set "DB_URL=postgresql://user:pass@localhost:5432/machining_db"
+
+REM Fallbacks por si faltan claves en .env.
+if not defined OLLAMA_BASE_URL set "OLLAMA_BASE_URL=http://localhost:11435"
+if not defined VECTOR_DB_URL set "VECTOR_DB_URL=http://localhost:6333"
+if not defined REDIS_URL set "REDIS_URL=redis://localhost:6379"
 
 if not defined DB_URL (
     echo ⚠️ DB_URL no está definida. Si usas PostgreSQL/Timescale local, define DB_URL antes de iniciar.

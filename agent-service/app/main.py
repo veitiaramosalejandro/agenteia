@@ -201,6 +201,15 @@ def _run_startup_connectivity_checks() -> dict:
         "swagger": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL, "/swagger/index.html") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},        
     }
 
+    solidset_chat_base = (settings.SOLIDSET_CHAT_BASE_URL or settings.NOTIF_API_BASE_URL or "").strip()
+    solidset_chat_enabled = bool(solidset_chat_base)
+    checks["solidset_chatapi"] = {
+        "configured": solidset_chat_enabled,
+        "tcp": _probe_tcp(*_extract_host_port_from_url(solidset_chat_base, 80)) if solidset_chat_enabled else {"ok": False, "error": "SOLIDSET_CHAT_BASE_URL_no_configurada"},
+        "root": _probe_http(solidset_chat_base) if solidset_chat_enabled else {"ok": False, "error": "SOLIDSET_CHAT_BASE_URL_no_configurada"},
+        "notifications": _probe_http(solidset_chat_base, "/Chat/GetNotifications") if solidset_chat_enabled else {"ok": False, "error": "SOLIDSET_CHAT_BASE_URL_no_configurada"},
+    }
+
     sql_host, sql_port = _extract_host_port(settings.SQL_SERVER_HOST, 1433)
     checks["sql_server"] = {
         "tcp": _probe_tcp(sql_host, sql_port),

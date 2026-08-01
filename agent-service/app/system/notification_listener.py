@@ -1,9 +1,12 @@
 import hashlib
 import json
+import os
 import re
+from collections import defaultdict
 from datetime import datetime
+from time import perf_counter
 from urllib.parse import urlparse
-from typing import Any, Dict, List, Optional
+from typing import Any, DefaultDict, Dict, List, Optional
 
 import httpx
 
@@ -22,9 +25,15 @@ class NotificationApiListener:
         self.base_urls = self._candidate_base_urls(self.base_url)
         self.chat_base_urls = self._candidate_base_urls(self.chat_base_url)
         self.rest_base_urls = self._candidate_base_urls(self.rest_base_url)
-        self.enabled = settings.NOTIF_API_ENABLED and bool(self.base_url)
+        any_api_configured = any([
+            bool(self.base_url),
+            bool(self.chat_base_url),
+            bool(self.rest_base_url),
+        ])
+        self.enabled = settings.NOTIF_API_ENABLED and any_api_configured
         self.timeout_seconds = max(5, settings.NOTIF_API_TIMEOUT_SECONDS)
         self.verify_tls = settings.NOTIF_API_VERIFY_TLS
+        self.audit_log_enabled = settings.NOTIF_AUDIT_LOG_ENABLED
         self.poll_seconds = max(10, settings.NOTIF_API_POLL_SECONDS)
         self.access_key = settings.NOTIF_API_ACCESS_KEY
         self.sistema = SistemaAprendizaje()
@@ -48,6 +57,15 @@ class NotificationApiListener:
             "/Chat/GetUnreadCount",
             "/Chat/GetUnreadCountGrouped",
         ]
+        self.chat_reaction_endpoints = [
+            "/chat/get-reaction-users",
+            "/chat/get-reactions-user",
+        ]
+        # Endpoints mutables: se documentan pero no se invocan en modo escucha.
+        self.chat_mutating_endpoints = [
+            "/chat/update-reaction",
+            "/SendMessageAsync",
+        ]
         self.rest_endpoints = [
             "/RestApi/Heartbeat",
         ]
@@ -67,8 +85,9 @@ class NotificationApiListener:
         parsed = urlparse(base_url)
         hostname = (parsed.hostname or "").lower()
 
-        # Inside Docker, localhost/127.0.0.1 points to the container itself.
-        if hostname in {"localhost", "127.0.0.1"}:
+        # Solo agrega host.docker.internal cuando realmente corre dentro de contenedor.
+        running_in_container = os.path.exists("/.dockerenv") or os.getenv("RUNNING_IN_DOCKER") == "1"
+        if running_in_container and hostname in {"localhost", "127.0.0.1"}:
             alt = base_url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
             alt = alt.rstrip("/")
             if alt not in urls:
@@ -101,6 +120,10 @@ class NotificationApiListener:
                 for key, value in node.items():
                     lower_key = str(key).lower()
                     if any(hint in lower_key for hint in ["workroom", "channel", "idworkroom", "idchannel"]):
+                        if self._is_uuid(value):
+                            found.append(value)
+                    # El esquema Channel usa la propiedad ID para el UUID del canal.
+                    if lower_key == "id":
                         if self._is_uuid(value):
                             found.append(value)
                     _visit(value)
@@ -141,7 +164,12 @@ class NotificationApiListener:
         if payload is None:
             return bool(self.access_key)
 
-        for base_url in self.base_urls:
+        login_base_urls: List[str] = []
+        for candidate in self.base_urls + self.chat_base_urls + self.rest_base_urls:
+            if candidate and candidate not in login_base_urls:
+                login_base_urls.append(candidate)
+
+        for base_url in login_base_urls:
             for endpoint in ["/api/User/LoginRaw", "/api/User/Login"]:
                 url = self._join_url(base_url, endpoint)
                 try:
@@ -183,6 +211,19 @@ class NotificationApiListener:
     def _fingerprint(self, entry: Dict[str, Any]) -> str:
         raw = json.dumps(entry, sort_keys=True, default=str, ensure_ascii=False)
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+    def _payload_item_count(self, payload: Any) -> int:
+        if isinstance(payload, list):
+            return len(payload)
+        if isinstance(payload, dict):
+            return 1
+        if payload is None:
+            return 0
+        return 1
+
+    def _audit_log(self, message: str) -> None:
+        if self.audit_log_enabled:
+            print(message)
 
     def _remember_fingerprint(self, fingerprint: str) -> None:
         self.seen_fingerprints.append(fingerprint)
@@ -263,6 +304,7 @@ class NotificationApiListener:
         source: str,
         method: str = "GET",
         json_body: Optional[Dict[str, Any]] = None,
+        query_params: Optional[Dict[str, Any]] = None,
         channel_id: Optional[str] = None,
     ) -> Dict[str, int]:
         learned = 0
@@ -271,14 +313,25 @@ class NotificationApiListener:
         last_exc: Optional[Exception] = None
         for base_url in base_urls:
             url = self._join_url(base_url, endpoint)
+            started_at = perf_counter()
             try:
                 if method == "POST":
-                    resp = await client.post(url, headers=self._headers(), json=json_body or {})
+                    resp = await client.post(
+                        url,
+                        headers=self._headers(),
+                        json=json_body or {},
+                        params=query_params,
+                    )
                 else:
-                    resp = await client.get(url, headers=self._headers())
+                    resp = await client.get(url, headers=self._headers(), params=query_params)
 
+                elapsed_ms = (perf_counter() - started_at) * 1000
                 if resp.status_code >= 400:
                     errors += 1
+                    self._audit_log(
+                        f"📡 AUDIT endpoint={source} method={method} status={resp.status_code} "
+                        f"elapsed_ms={elapsed_ms:.1f} channel={channel_id or '-'}"
+                    )
                     continue
 
                 content_type = (resp.headers.get("content-type") or "").lower()
@@ -286,6 +339,8 @@ class NotificationApiListener:
                     payload = resp.json()
                 else:
                     payload = resp.text
+
+                payload_items = self._payload_item_count(payload)
 
                 entries = self._normalize_entries(source, endpoint, payload, channel_id=channel_id)
                 for entry in entries:
@@ -299,7 +354,18 @@ class NotificationApiListener:
                     else:
                         errors += 1
 
-                return {"learned": learned, "skipped": skipped, "errors": errors}
+                self._audit_log(
+                    f"📡 AUDIT endpoint={source} method={method} status={resp.status_code} "
+                    f"elapsed_ms={elapsed_ms:.1f} payload_items={payload_items} "
+                    f"learned={learned} skipped={skipped} errors={errors} channel={channel_id or '-'}"
+                )
+
+                return {
+                    "learned": learned,
+                    "skipped": skipped,
+                    "errors": errors,
+                    "payload": payload,
+                }
             except Exception as exc:
                 last_exc = exc
                 continue
@@ -310,6 +376,71 @@ class NotificationApiListener:
 
         return {"learned": learned, "skipped": skipped, "errors": errors}
 
+    def _to_int_chat_id(self, value: Any) -> Optional[int]:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value >= 0 else None
+        if isinstance(value, str) and value.strip().isdigit():
+            parsed = int(value.strip())
+            return parsed if parsed >= 0 else None
+        return None
+
+    def _extract_chat_targets(self, payload: Any) -> List[Dict[str, Any]]:
+        """Extrae IDChat y posibles IDUser UUID desde payloads de mensajes."""
+        users_by_chat: DefaultDict[int, set] = defaultdict(set)
+
+        def _visit(node: Any) -> None:
+            if isinstance(node, dict):
+                chat_id = self._to_int_chat_id(
+                    node.get("IDChat")
+                    or node.get("idChat")
+                    or node.get("IdChat")
+                    or node.get("IDChat2")
+                )
+
+                user_candidates = [
+                    node.get("IDUser"),
+                    node.get("idUser"),
+                    node.get("IdUser"),
+                    node.get("IDSenderUser"),
+                    node.get("SenderUserId"),
+                    node.get("IdUserReaction"),
+                    node.get("IDUserReaction"),
+                    node.get("QuestionAuthor"),
+                    node.get("OpSender"),
+                ]
+                user_uuids = [
+                    candidate.strip()
+                    for candidate in user_candidates
+                    if isinstance(candidate, str) and self._is_uuid(candidate)
+                ]
+
+                if chat_id is not None:
+                    if user_uuids:
+                        for user_uuid in user_uuids:
+                            users_by_chat[chat_id].add(user_uuid)
+                    else:
+                        users_by_chat[chat_id]  # asegura clave
+
+                for value in node.values():
+                    _visit(value)
+            elif isinstance(node, list):
+                for item in node:
+                    _visit(item)
+
+        _visit(payload)
+
+        targets: List[Dict[str, Any]] = []
+        for chat_id in sorted(users_by_chat.keys(), reverse=True):
+            targets.append(
+                {
+                    "id_chat": chat_id,
+                    "id_users": sorted(users_by_chat[chat_id]),
+                }
+            )
+        return targets
+
     def _chat_message_payload_variants(self, channel_id: str) -> List[Dict[str, Any]]:
         page_size = max(5, min(settings.SOLIDSET_CHAT_PAGE_SIZE, 100))
         return [
@@ -319,8 +450,8 @@ class NotificationApiListener:
             {"idWorkRoom": channel_id, "skip": 0, "take": page_size},
         ]
 
-    async def _pull_channel_messages(self, client: httpx.AsyncClient, channel_id: str) -> Dict[str, int]:
-        totals = {"learned": 0, "skipped": 0, "errors": 0}
+    async def _pull_channel_messages(self, client: httpx.AsyncClient, channel_id: str) -> Dict[str, Any]:
+        totals: Dict[str, Any] = {"learned": 0, "skipped": 0, "errors": 0, "chat_targets": []}
         for endpoint in self.channel_message_endpoints:
             for payload in self._chat_message_payload_variants(channel_id):
                 result = await self._pull_endpoint(
@@ -335,19 +466,89 @@ class NotificationApiListener:
                 totals["learned"] += result["learned"]
                 totals["skipped"] += result["skipped"]
                 totals["errors"] += result["errors"]
+                response_payload = result.get("payload")
+                if response_payload is not None:
+                    extracted = self._extract_chat_targets(response_payload)
+                    if extracted:
+                        totals["chat_targets"] = extracted
+                        self._audit_log(
+                            f"🧪 AUDIT channel={channel_id} endpoint={endpoint} "
+                            f"chat_targets_detected={len(extracted)} sample_chat_ids="
+                            f"{[x.get('id_chat') for x in extracted[:5]]}"
+                        )
                 if result["learned"] > 0 or result["skipped"] > 0:
                     return totals
+        return totals
+
+    async def _pull_channel_reactions(
+        self,
+        client: httpx.AsyncClient,
+        channel_id: str,
+        chat_targets: List[Dict[str, Any]],
+    ) -> Dict[str, int]:
+        totals = {"learned": 0, "skipped": 0, "errors": 0}
+        if not chat_targets:
+            return totals
+
+        max_chats = 20
+        for target in chat_targets[:max_chats]:
+            id_chat = target.get("id_chat")
+            if not isinstance(id_chat, int):
+                continue
+
+            reaction_users_result = await self._pull_endpoint(
+                client=client,
+                base_urls=self.chat_base_urls,
+                endpoint="/chat/get-reaction-users",
+                source="chat_controller_reactions",
+                method="GET",
+                query_params={"IDChat": id_chat},
+                channel_id=channel_id,
+            )
+            totals["learned"] += reaction_users_result["learned"]
+            totals["skipped"] += reaction_users_result["skipped"]
+            totals["errors"] += reaction_users_result["errors"]
+            self._audit_log(
+                f"🎯 AUDIT reactions channel={channel_id} id_chat={id_chat} endpoint=get-reaction-users "
+                f"learned={reaction_users_result['learned']} skipped={reaction_users_result['skipped']} "
+                f"errors={reaction_users_result['errors']}"
+            )
+
+            user_ids = [u for u in (target.get("id_users") or []) if isinstance(u, str) and self._is_uuid(u)]
+            for user_id in user_ids[:5]:
+                result = await self._pull_endpoint(
+                    client=client,
+                    base_urls=self.chat_base_urls,
+                    endpoint="/chat/get-reactions-user",
+                    source="chat_controller_reactions",
+                    method="GET",
+                    query_params={"IDChat": id_chat, "IDUser": user_id},
+                    channel_id=channel_id,
+                )
+                totals["learned"] += result["learned"]
+                totals["skipped"] += result["skipped"]
+                totals["errors"] += result["errors"]
+                self._audit_log(
+                    f"🎯 AUDIT reactions channel={channel_id} id_chat={id_chat} endpoint=get-reactions-user "
+                    f"id_user={user_id} learned={result['learned']} skipped={result['skipped']} "
+                    f"errors={result['errors']}"
+                )
+
         return totals
 
     async def pull_once(self) -> Dict[str, Any]:
         if not self.enabled:
             return {"enabled": False, "learned": 0, "skipped": 0, "errors": 0}
 
+        cycle_started_at = perf_counter()
+        self._audit_log("🔎 AUDIT cycle=start source=notification_listener")
+
         learned = 0
         skipped = 0
         errors = 0
         channels_detected = 0
         chat_channel_pulls = 0
+        reaction_channel_pulls = 0
 
         async with httpx.AsyncClient(
             timeout=self.timeout_seconds,
@@ -369,21 +570,6 @@ class NotificationApiListener:
 
             channel_ids: List[str] = []
             for endpoint in self.user_endpoints:
-                payload = None
-                payload_error = None
-                for base_url in self.base_urls:
-                    url = self._join_url(base_url, endpoint)
-                    try:
-                        resp = await client.get(url, headers=self._headers())
-                        if resp.status_code >= 400:
-                            continue
-                        content_type = (resp.headers.get("content-type") or "").lower()
-                        payload = resp.json() if "json" in content_type else resp.text
-                        break
-                    except Exception as exc:
-                        payload_error = exc
-                        continue
-
                 result = await self._pull_endpoint(
                     client=client,
                     base_urls=self.base_urls,
@@ -394,10 +580,11 @@ class NotificationApiListener:
                 skipped += result["skipped"]
                 errors += result["errors"]
 
+                payload = result.get("payload")
                 if payload is not None:
                     channel_ids.extend(self._extract_channel_ids(payload))
-                elif payload_error is not None:
-                    print(f"⚠️ Error leyendo canales desde {endpoint}: {payload_error}")
+                else:
+                    self._audit_log(f"⚠️ AUDIT sin payload de canales en {endpoint}")
 
             for endpoint in self.chat_meta_endpoints:
                 result = await self._pull_endpoint(
@@ -431,6 +618,10 @@ class NotificationApiListener:
                     seen.add(key)
                     unique_channels.append(cid)
                 channels_detected = len(unique_channels)
+                self._audit_log(
+                    f"🔎 AUDIT channels detected={channels_detected} "
+                    f"selected={min(channels_detected, max(1, settings.SOLIDSET_CHAT_MAX_CHANNELS))}"
+                )
 
                 max_channels = max(1, settings.SOLIDSET_CHAT_MAX_CHANNELS)
                 for channel_id in unique_channels[:max_channels]:
@@ -440,6 +631,20 @@ class NotificationApiListener:
                     errors += msg_result["errors"]
                     chat_channel_pulls += 1
 
+                    chat_targets = msg_result.get("chat_targets") or []
+                    reaction_result = await self._pull_channel_reactions(client, channel_id, chat_targets)
+                    learned += reaction_result["learned"]
+                    skipped += reaction_result["skipped"]
+                    errors += reaction_result["errors"]
+                    reaction_channel_pulls += 1
+
+        cycle_elapsed_ms = (perf_counter() - cycle_started_at) * 1000
+        self._audit_log(
+            f"✅ AUDIT cycle=end elapsed_ms={cycle_elapsed_ms:.1f} learned={learned} "
+            f"skipped={skipped} errors={errors} channels_detected={channels_detected} "
+            f"chat_channel_pulls={chat_channel_pulls} reaction_channel_pulls={reaction_channel_pulls}"
+        )
+
         return {
             "enabled": True,
             "learned": learned,
@@ -447,5 +652,6 @@ class NotificationApiListener:
             "errors": errors,
             "channels_detected": channels_detected,
             "chat_channel_pulls": chat_channel_pulls,
+            "reaction_channel_pulls": reaction_channel_pulls,
             "timestamp": datetime.utcnow().isoformat(),
         }
