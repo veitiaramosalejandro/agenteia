@@ -776,6 +776,53 @@ class SistemaAprendizaje:
             for row in rows
         ]
         return "\n".join(lines) or "No hay mensajes de chat útiles para contexto en base de datos."
+
+    def obtener_resumen_operativo_canal(self, user_id: str, canal_id: Optional[str], limit: int = 6) -> str:
+        """Construye una vista operativa del canal actual (mensajes, miembros y señales aprendidas)."""
+        if not user_id:
+            return ""
+
+        if not (canal_id or "").strip():
+            return "No se recibió canal_id; no es posible generar resumen operativo del canal actual."
+
+        mensajes = self.obtener_mensajes_chat_desde_bd(user_id=user_id, canal_id=canal_id, limit=max(3, min(limit, 12)))
+        miembros = self.obtener_usuarios_recurso_del_canal(user_id=user_id, canal_id=canal_id, limit=12)
+        aprendizaje = self.consultar_aprendizaje(
+            query=f"eventos recientes notificaciones actividad canal {canal_id}",
+            canal_id=canal_id,
+            limit=2,
+        )
+
+        if not mensajes and not miembros:
+            return "No se encontró actividad operativa reciente del canal en este momento."
+
+        canal_nombre = "Canal actual"
+        if mensajes:
+            canal_nombre = mensajes[0].get("channel_name") or canal_nombre
+        elif miembros:
+            canal_nombre = miembros[0].get("channel_name") or canal_nombre
+
+        lines: List[str] = [f"Canal: {canal_nombre} ({canal_id})"]
+
+        if miembros:
+            miembros_txt = ", ".join(
+                [m.get("display_name") or m.get("username") or "sin_nombre" for m in miembros[:8]]
+            )
+            lines.append(f"Miembros activos/relevantes: {miembros_txt}")
+
+        if mensajes:
+            lines.append("Mensajes recientes:")
+            for row in mensajes[:6]:
+                ts = row.get("timestamp")
+                ts_text = ts.strftime("%H:%M") if hasattr(ts, "strftime") else "--:--"
+                autor = row.get("sender_display_name") or row.get("sender_username") or "N/A"
+                lines.append(f"- [{ts_text}] {autor}: {(row.get('message') or '')[:160]}")
+
+        if aprendizaje and "No hay conocimiento" not in aprendizaje:
+            lines.append("Señales aprendidas del canal:")
+            lines.append(aprendizaje)
+
+        return "\n".join(lines)
     
     # ============================================================
     # 3. GENERAR CONTEXTO PARA EL AGENTE (en texto)

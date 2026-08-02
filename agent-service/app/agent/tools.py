@@ -4,8 +4,11 @@ import re
 from typing import Optional, Union
 import uuid
 import hashlib
+from datetime import datetime
+from pathlib import Path
 
 import httpx
+import pandas as pd
 from langchain_core.tools import tool
 from langchain_ollama import OllamaEmbeddings
 import pymssql
@@ -15,6 +18,28 @@ from qdrant_client.models import PointStruct, Distance, VectorParams
 from app.config import settings
 from app.rag.audio_processor import extract_audio_features
 from app.rag.retriever import get_rag_context
+
+
+def _generated_docs_dir() -> Path:
+    target = Path(settings.GENERATED_DOCS_DIR).expanduser()
+    if not target.is_absolute():
+        root = Path(__file__).resolve().parents[2]
+        target = (root / target).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _safe_file_stem(value: Optional[str], fallback: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        raw = fallback
+    clean = re.sub(r"[^A-Za-z0-9_\-\s]", "", raw).strip().replace(" ", "_")
+    clean = re.sub(r"_+", "_", clean)
+    return clean[:60] or fallback
+
+
+def _timestamp_suffix() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def _extract_cte_names(query: str) -> set[str]:
@@ -381,3 +406,113 @@ def learn_new_fact(fact_description: str, category: str = "general") -> str:
         return f"✅ Aprendizaje registrado correctamente: '{fact_description}'"
     except Exception as e:
         return f"Error al registrar el aprendizaje: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# 4. TOOLS: Generación de documentos (Word / Excel / PDF)
+# ---------------------------------------------------------------------------
+@tool
+def create_word_document(title: str, content: str, file_name: Optional[str] = None) -> str:
+    """
+    CREA UN DOCUMENTO WORD (.docx) con un título y contenido libre.
+
+    CUÁNDO USARLA:
+    - El usuario pida "hazme un Word" o "genera un informe en Word"
+    - Se necesite exportar una respuesta a formato editable
+    """
+    try:
+        from docx import Document
+
+        stem = _safe_file_stem(file_name or title, "documento")
+        path = _generated_docs_dir() / f"{stem}_{_timestamp_suffix()}.docx"
+
+        doc = Document()
+        doc.add_heading(title.strip() or "Documento", level=1)
+        for block in (content or "").split("\n"):
+            doc.add_paragraph(block)
+        doc.save(path)
+
+        return f"✅ Documento Word creado correctamente en: {path}"
+    except Exception as e:
+        return f"Error creando documento Word: {str(e)}"
+
+
+@tool
+def create_excel_document(
+    title: str,
+    rows_json: str,
+    sheet_name: str = "Datos",
+    file_name: Optional[str] = None,
+) -> str:
+    """
+    CREA UN ARCHIVO EXCEL (.xlsx) a partir de filas en JSON.
+
+    Formato esperado en rows_json:
+    - Lista de objetos: [{"columna":"valor"}, {"columna":"valor2"}]
+    """
+    try:
+        stem = _safe_file_stem(file_name or title, "reporte")
+        safe_sheet = _safe_file_stem(sheet_name, "Datos")[:31]
+        path = _generated_docs_dir() / f"{stem}_{_timestamp_suffix()}.xlsx"
+
+        parsed = json.loads(rows_json) if rows_json else []
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        if not isinstance(parsed, list):
+            return "Error creando Excel: rows_json debe ser una lista JSON de filas u objeto JSON."
+
+        df = pd.DataFrame(parsed)
+        if df.empty:
+            df = pd.DataFrame([{"mensaje": "Sin datos para exportar"}])
+
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name=safe_sheet)
+            worksheet = writer.sheets[safe_sheet]
+            from openpyxl.utils import get_column_letter
+            for idx, col in enumerate(df.columns, start=1):
+                max_len = max(len(str(col)), *(len(str(v)) for v in df[col].astype(str).tolist()))
+                letter = get_column_letter(idx)
+                worksheet.column_dimensions[letter].width = min(max(12, max_len + 2), 50)
+
+        return f"✅ Archivo Excel creado correctamente en: {path}"
+    except json.JSONDecodeError:
+        return "Error creando Excel: rows_json no tiene formato JSON válido."
+    except Exception as e:
+        return f"Error creando Excel: {str(e)}"
+
+
+@tool
+def create_pdf_document(title: str, content: str, file_name: Optional[str] = None) -> str:
+    """
+    CREA UN DOCUMENTO PDF (.pdf) con un título y contenido textual.
+
+    CUÁNDO USARLA:
+    - El usuario pida "hazme un PDF" o "exporta este resumen en PDF"
+    """
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        stem = _safe_file_stem(file_name or title, "documento")
+        path = _generated_docs_dir() / f"{stem}_{_timestamp_suffix()}.pdf"
+
+        pdf = canvas.Canvas(str(path), pagesize=letter)
+        width, height = letter
+        y = height - 72
+        pdf.setFont("Helvetica-Bold", 14)
+        pdf.drawString(72, y, (title or "Documento").strip()[:90])
+
+        y -= 30
+        pdf.setFont("Helvetica", 11)
+        for line in (content or "").split("\n"):
+            if y < 72:
+                pdf.showPage()
+                pdf.setFont("Helvetica", 11)
+                y = height - 72
+            pdf.drawString(72, y, str(line)[:110])
+            y -= 16
+
+        pdf.save()
+        return f"✅ Documento PDF creado correctamente en: {path}"
+    except Exception as e:
+        return f"Error creando PDF: {str(e)}"

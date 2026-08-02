@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     
     # Audio
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_samples")
+    GENERATED_DOCS_DIR: str = os.getenv("GENERATED_DOCS_DIR", "./data/generated_docs")
     INGEST_INTERVAL_SECONDS: int = int(os.getenv("INGEST_INTERVAL_SECONDS", "3600"))
     
     class Config:

@@ -19,6 +19,9 @@ from app.agent.tools import (
     recommend_cnc_action,
     confirm_large_operation,
     analyze_pcm_audio_diagnostic,
+    create_word_document,
+    create_excel_document,
+    create_pdf_document,
 )
 from app.config import settings
 from app.system.learning import SistemaAprendizaje
@@ -56,6 +59,9 @@ class MachiningAgent:
             "fetch_external_api": fetch_external_api,
             "confirm_large_operation": confirm_large_operation,
             "analyze_pcm_audio_diagnostic": analyze_pcm_audio_diagnostic,
+            "create_word_document": create_word_document,
+            "create_excel_document": create_excel_document,
+            "create_pdf_document": create_pdf_document,
         }
         
         # Vincular herramientas al LLM
@@ -675,6 +681,15 @@ class MachiningAgent:
                 canal_id=canal_id,
                 limit=8,
             )
+
+        # 4.3.1 Resumen operativo vivo del canal actual
+        canal_operativo_context = ""
+        if user_id:
+            canal_operativo_context = self.sistema_aprendizaje.obtener_resumen_operativo_canal(
+                user_id=user_id,
+                canal_id=canal_id,
+                limit=6,
+            )
         
         # 4.4 Aprendizaje relevante (actividades pasadas similares)
         aprendizaje_relevante = ""
@@ -701,6 +716,12 @@ class MachiningAgent:
                 content=f"🗂️ CONTEXTO RECIENTE DESDE BASE DE DATOS (CHAT/CANAL):\n{chat_context_bd}"
             )
             messages.append(chat_msg)
+
+        if canal_operativo_context:
+            canal_msg = SystemMessage(
+                content=f"📡 RESUMEN OPERATIVO DEL CANAL ACTUAL:\n{canal_operativo_context}"
+            )
+            messages.append(canal_msg)
         
         # Añadir aprendizaje relevante si existe
         if aprendizaje_relevante and "No hay conocimiento" not in aprendizaje_relevante:
