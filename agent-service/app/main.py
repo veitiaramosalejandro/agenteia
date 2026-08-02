@@ -454,11 +454,11 @@ async def _ciclo_aprendizaje_bd() -> None:
             app.state.last_db_study_error = (
                 f"Ingesta excedió el tiempo máximo de {settings.DB_STUDY_MAX_RUN_SECONDS}s"
             )
-            consecutive_failures += 1
-            backoff_factor = min(2 ** min(consecutive_failures, 4), 16)
-            wait_seconds = intervalo * backoff_factor
+            # No castigamos exponencialmente un timeout de una tarea que sigue completándose en background.
+            consecutive_failures = 0
+            wait_seconds = intervalo
             print(f"⚠️ {app.state.last_db_study_error}")
-            print(f"⏳ Reintentando aprendizaje BD en {wait_seconds}s (fallos consecutivos: {consecutive_failures})")
+            print(f"⏳ Reintentando aprendizaje BD en {wait_seconds}s (timeout controlado, no se aplica backoff)")
         except Exception as exc:
             app.state.last_db_study_error = str(exc)
             consecutive_failures += 1

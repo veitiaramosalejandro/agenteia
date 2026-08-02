@@ -319,6 +319,14 @@ class SistemaAprendizaje:
             print(f"⚠️ Fallback recursos de chat no disponibles: {e}")
             return []
 
+    def _get_user_resources_from_db_safe(self, cursor: pymssql.Cursor, identity: Dict) -> List[Dict]:
+        """Versión tolerante a fallos temporales de SQL Server para no bloquear la ingesta completa."""
+        try:
+            return self._get_user_resources_from_db(cursor, identity)
+        except Exception as e:
+            print(f"⚠️ Se omiten recursos de chat por fallo temporal de SQL Server: {e}")
+            return []
+
     # ============================================================
     # 1. OBTENER CONTEXTO DEL USUARIO
     # ============================================================
@@ -368,7 +376,7 @@ class SistemaAprendizaje:
                             descripcion = f"{descripcion} | Registro relacionado: {a.get('RecordCode')} {a.get('RecordShortName')}".strip()
                         actividades.append(Actividad(id=str(a.get("IDChat2")), recurso_humano_id=usuario.id, canal_id=str(a.get("IDChannel") or "general"), tipo="chat", descripcion=descripcion, timestamp=a.get("Stamp") or datetime.now(), metadatos={"channel_name": a.get("ChannelName"), "record_code": a.get("RecordCode")}))
 
-                    recursos_rows = self._get_user_resources_from_db(cursor, identity)
+                    recursos_rows = self._get_user_resources_from_db_safe(cursor, identity)
                     recursos_disponibles = [RecursoMaterial(id=m.get("RecordCode"), nombre=(m.get("RecordShortName") or m.get("RecordCode")), tipo="chat_record", canal_id=str(m.get("IDWorkRoom") or "general"), estado="disponible", especificaciones={"record_code": m.get("RecordCode")}) for m in recursos_rows if m.get("RecordCode")]
 
             return ContextoUsuario(
