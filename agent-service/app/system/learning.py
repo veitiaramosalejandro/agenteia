@@ -1,6 +1,8 @@
 import uuid
 import hashlib
+import re
 import time
+from collections import Counter
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import pymssql
@@ -80,6 +82,33 @@ class SistemaAprendizaje:
         except Exception as e:
             print(f"⚠️ Error asegurando colección '{self.collection}': {e}")
 
+    def _normalize_learning_text(self, text: str) -> str:
+        text = (text or "").lower().strip()
+        text = re.sub(r"\s+", " ", text)
+        return text
+
+    def _extract_topic_keywords(self, *texts: str, limit: int = 8) -> List[str]:
+        stopwords = {
+            "para", "por", "con", "sin", "como", "que", "del", "las", "los", "una", "uno",
+            "este", "esta", "esto", "esas", "esos", "sobre", "desde", "porque", "cuando",
+            "donde", "what", "this", "that", "user", "username", "agente", "respuesta",
+            "mensaje", "canal", "chat", "usuario", "sistema", "hola", "buenas", "gracias",
+        }
+        words: List[str] = []
+        for text in texts:
+            words.extend(re.findall(r"[a-záéíóúñ0-9]{4,}", self._normalize_learning_text(text)))
+        counts = Counter(word for word in words if word not in stopwords)
+        return [word for word, _ in counts.most_common(limit)]
+
+    def _build_learning_tags(self, user_id: str, canal_id: Optional[str], activity_type: str, topics: List[str]) -> Dict[str, Any]:
+        return {
+            "user_id": user_id,
+            "canal_id": canal_id,
+            "activity_type": activity_type,
+            "topics": topics,
+            "topics_text": ", ".join(topics),
+        }
+
     def _connect_sql_with_retry(self, **kwargs):
         """Conexión robusta a SQL Server con reintentos para fallos transitorios."""
         last_error = None
@@ -157,18 +186,24 @@ class SistemaAprendizaje:
         self._execute_with_retry(
             cursor,
             query="""
-                SELECT TOP 1 IDResource, IDUser, accountname, firstname, lastname, email, departament, title
-                FROM dbo.SysPerson
-                WHERE IDResource = TRY_CONVERT(uniqueidentifier, %s)
-                   OR IDUser = TRY_CONVERT(uniqueidentifier, %s)
-                   OR accountname = %s OR organization_no = %s OR reference = %s
+                SELECT TOP 1
+                    sl.IDLogin,
+                    sl.Username,
+                    sl.FullName,
+                    sl.ActiveIDLogin2Resource,
+                    sr.ResourceId,
+                    sr.DisplayName
+                FROM dbo.SysLogin sl
+                LEFT JOIN dbo.SysResources sr
+                    ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
+                WHERE sl.Username = %s
+                   OR sl.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                ORDER BY CASE WHEN sl.Username = %s THEN 0 ELSE 1 END, sl.Username
             """,
             params=(
-                identity.get("resource_id") or identity.get("input"),
+                identity.get("username"),
                 identity.get("login_id") or identity.get("input"),
                 identity.get("username"),
-                identity.get("input"),
-                identity.get("input"),
             ),
             context="get_user_details"
         )
@@ -345,16 +380,22 @@ class SistemaAprendizaje:
                     if not usuario_data:
                         return None
 
-                    resource_guid = str(usuario_data.get("IDResource") or identity.get("resource_id") or user_id)
-                    rol = self._get_user_role_from_db(cursor, resource_guid) or (usuario_data.get("title") or "operario").strip()
-                    nombre = (usuario_data.get("accountname") or identity.get("full_name") or f"{(usuario_data.get('firstname') or '').strip()} {(usuario_data.get('lastname') or '').strip()}".strip())
+                    user_login = (usuario_data.get("Username") or identity.get("username") or user_id or "").strip()
+                    resource_guid = str(usuario_data.get("ResourceId") or identity.get("resource_id") or user_id)
+                    rol = self._get_user_role_from_db(cursor, resource_guid) or "operario"
+                    nombre = (
+                        usuario_data.get("FullName")
+                        or usuario_data.get("DisplayName")
+                        or identity.get("full_name")
+                        or user_login
+                    )
 
                     usuario = RecursoHumano(
-                        id=resource_guid,
+                        id=user_login,
                         nombre=nombre,
-                        email=(usuario_data.get("email") or ""),
+                        email="",
                         rol=rol,
-                        departamento=usuario_data.get("departament"),
+                        departamento=None,
                         especialidades=[rol] if rol else [],
                         canales=[]
                     )
@@ -389,6 +430,178 @@ class SistemaAprendizaje:
         except Exception as e:
             print(f"❌ Error construyendo contexto de usuario: {e}")
             return None
+
+    def analyze_reaction_patterns(
+        self,
+        user_text: str,
+        agent_response: str,
+        previous_user_text: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Analiza patrones explícitos e implícitos de feedback/reacción del usuario."""
+        normalized = self._normalize_learning_text(user_text)
+        previous_normalized = self._normalize_learning_text(previous_user_text or "")
+
+        negative_phrases = [
+            "no entend", "no es lo que busco", "no es eso", "eso no", "no sirve", "está mal",
+            "esta mal", "incorrect", "no quiero eso", "otra cosa", "no me refiero", "me equivoqué",
+            "te equivoc", "corrige", "respuesta correcta",
+        ]
+        repetition_phrases = [
+            "te lo repito", "te repito", "otra vez", "lo vuelvo a preguntar", "no respondiste",
+        ]
+
+        is_negative = any(phrase in normalized for phrase in negative_phrases)
+        is_repeated = bool(previous_normalized) and normalized == previous_normalized
+        if not is_repeated and previous_normalized:
+            from difflib import SequenceMatcher
+            is_repeated = SequenceMatcher(None, normalized, previous_normalized).ratio() >= 0.85
+        is_repeated = is_repeated or any(phrase in normalized for phrase in repetition_phrases)
+
+        if is_negative and is_repeated:
+            signal = "correccion_y_repeticion"
+        elif is_negative:
+            signal = "feedback_negativo"
+        elif is_repeated:
+            signal = "pregunta_repetida"
+        else:
+            signal = "sin_senal"
+
+        topics = self._extract_topic_keywords(user_text, agent_response, limit=5)
+        confidence = 0.0
+        if is_negative:
+            confidence += 0.5
+        if is_repeated:
+            confidence += 0.4
+        if topics:
+            confidence += 0.1
+
+        return {
+            "signal": signal,
+            "is_negative": is_negative,
+            "is_repeated": is_repeated,
+            "confidence": round(min(confidence, 1.0), 2),
+            "topics": topics,
+            "normalized_user_text": normalized,
+            "normalized_previous_text": previous_normalized,
+        }
+
+    def registrar_feedback_usuario(
+        self,
+        user_id: str,
+        canal_id: Optional[str],
+        session_id: str,
+        user_text: str,
+        agent_response: str,
+        corrected_response: Optional[str] = None,
+        feedback_type: str = "explicit",
+        reason: Optional[str] = None,
+        previous_user_text: Optional[str] = None,
+        implicit: bool = False,
+    ) -> bool:
+        """Guarda correcciones y feedback como ejemplos de entrenamiento."""
+        try:
+            identity = self._resolve_user_identity(user_id)
+            usuario_nombre = identity.get("full_name") or identity.get("display_name") or identity.get("username") or user_id
+            username = identity.get("username") or user_id
+            reaction = self.analyze_reaction_patterns(user_text, agent_response, previous_user_text=previous_user_text)
+            topics = reaction.get("topics") or self._extract_topic_keywords(user_text, agent_response, corrected_response or "", limit=5)
+
+            tipo = "feedback_negativo" if reaction.get("is_negative") and not corrected_response else "correccion_usuario"
+            descripcion = (
+                f"Feedback de {usuario_nombre} ({username}) en canal {canal_id or 'general'}: "
+                f"pregunta='{user_text[:250]}', respuesta_agente='{agent_response[:250]}', "
+                f"respuesta_correcta='{(corrected_response or '')[:250]}', motivo='{reason or feedback_type}', "
+                f"señal='{reaction.get('signal')}', repetida={reaction.get('is_repeated')}, negativa={reaction.get('is_negative')}"
+            )
+
+            actividad = Actividad(
+                id=f"feedback_{hashlib.md5(f'{session_id}:{user_text}:{agent_response}:{corrected_response or ""}'.encode()).hexdigest()[:24]}",
+                recurso_humano_id=username,
+                canal_id=canal_id or "general",
+                tipo=tipo,
+                descripcion=descripcion,
+                timestamp=datetime.now(),
+                metadatos={
+                    "source": "user_feedback",
+                    "session_id": session_id,
+                    "feedback_type": feedback_type,
+                    "implicit": implicit,
+                    "reason": reason,
+                    "agent_response": agent_response,
+                    "corrected_response": corrected_response,
+                    "previous_user_text": previous_user_text,
+                    "reaction": reaction,
+                    "topics": topics,
+                },
+            )
+            return self.aprender_actividad(actividad)
+        except Exception as e:
+            print(f"❌ Error registrando feedback de usuario: {e}")
+            return False
+
+    def actualizar_perfil_usuario(
+        self,
+        user_id: str,
+        canal_id: Optional[str] = None,
+        recent_user_text: Optional[str] = None,
+        recent_agent_response: Optional[str] = None,
+        feedback_summary: Optional[str] = None,
+    ) -> bool:
+        """Genera y persiste un snapshot del perfil dinámico del usuario."""
+        try:
+            contexto = self.obtener_contexto_usuario(user_id)
+            identity = self._resolve_user_identity(user_id)
+            username = identity.get("username") or user_id
+            display_name = identity.get("full_name") or identity.get("display_name") or username
+
+            topics = self._extract_topic_keywords(
+                recent_user_text or "",
+                recent_agent_response or "",
+                feedback_summary or "",
+                " ".join([a.descripcion for a in (contexto.actividades_recientes[:5] if contexto else [])]),
+                limit=8,
+            )
+
+            canales = [c.nombre for c in (contexto.canales_acceso[:5] if contexto else [])]
+            rol = contexto.usuario.rol if contexto else "desconocido"
+            perfil_texto = (
+                f"Perfil dinámico de {display_name} ({username}). Rol actual: {rol}. "
+                f"Canales frecuentes: {', '.join(canales) if canales else 'sin_datos'}. "
+                f"Temas detectados: {', '.join(topics) if topics else 'sin_temas'}. "
+                f"Feedback -reciente: {feedback_summary or 'sin_feedback_reciente'}."
+            )
+
+            actividad = Actividad(
+                id=f"profile_{hashlib.md5(f'{username}:{canal_id or "general"}:{perfil_texto}'.encode()).hexdigest()[:24]}",
+                recurso_humano_id=username,
+                canal_id=canal_id or "perfil_usuario",
+                tipo="perfil_usuario",
+                descripcion=perfil_texto,
+                timestamp=datetime.now(),
+                metadatos={
+                    "source": "dynamic_profile",
+                    "username": username,
+                    "display_name": display_name,
+                    "rol": rol,
+                    "canales": canales,
+                    "topics": topics,
+                    "feedback_summary": feedback_summary,
+                },
+            )
+            return self.aprender_actividad(actividad)
+        except Exception as e:
+            print(f"❌ Error actualizando perfil de usuario: {e}")
+            return False
+
+    def obtener_perfil_dinamico(self, user_id: str, canal_id: Optional[str] = None) -> str:
+        """Recupera un resumen dinámico del usuario desde el aprendizaje persistido."""
+        identity = self._resolve_user_identity(user_id)
+        username = identity.get("username") or user_id
+        query = f"perfil dinamico usuario {username} rol canales expertise feedback"
+        aprendizaje = self.consultar_aprendizaje(query, canal_id=canal_id, limit=3)
+        if aprendizaje.startswith("No hay"):
+            return f"Usuario: {username}. Sin perfil dinámico aún."
+        return aprendizaje
     
     def _obtener_permisos_por_rol(self, rol: str) -> List[str]:
         """Mapea roles a permisos específicos."""
@@ -586,6 +799,10 @@ class SistemaAprendizaje:
         texto += "\n=== ACTIVIDAD RECIENTE ===\n"
         for act in contexto.actividades_recientes[:5]:
             texto += f"  • {act.descripcion[:100]}... ({act.timestamp.strftime('%d/%m')})\n"
+
+        perfil_dinamico = self.obtener_perfil_dinamico(user_id)
+        if perfil_dinamico:
+            texto += f"\n=== PERFIL DINÁMICO ===\n{perfil_dinamico}\n"
         
         texto += f"\n=== PERMISOS: {', '.join(contexto.permisos)} ===\n"
         return texto
@@ -763,9 +980,9 @@ class SistemaAprendizaje:
     def _get_version(self):
         """Obtiene la versión de qdrant-client instalada."""
         try:
-            import pkg_resources
-            return pkg_resources.get_distribution("qdrant-client").version
-        except:
+            from importlib.metadata import version
+            return version("qdrant-client")
+        except Exception:
             return "desconocida"
 
     def consultar_aprendizaje(self, query: str, canal_id: Optional[str] = None, limit: int = 3) -> str:

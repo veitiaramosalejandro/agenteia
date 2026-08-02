@@ -564,7 +564,7 @@ class MachiningAgent:
         Args:
             session_id: ID de la sesión de conversación
             user_text: Mensaje del usuario
-            user_id: ID del recurso humano (para contexto personalizado)
+            user_id: Username del usuario (para contexto personalizado)
             canal_id: ID del canal específico (opcional)
         
         Returns:
@@ -584,6 +584,16 @@ class MachiningAgent:
         except Exception as e:
             print(f"❌ Error conectando a Redis: {e}")
             history = None
+
+        previous_user_text = None
+        if history:
+            try:
+                for msg in reversed(list(history.messages)):
+                    if isinstance(msg, HumanMessage):
+                        previous_user_text = msg.content
+                        break
+            except Exception as e:
+                print(f"⚠️ Error leyendo historial previo: {e}")
 
         # --- 3. DETECTAR SALUDOS ---
         clean_text = user_text.strip().lower()
@@ -840,6 +850,27 @@ class MachiningAgent:
                 )
             except Exception as e:
                 print(f"⚠️ Error registrando interacción: {e}")
+
+            try:
+                reaction = self.sistema_aprendizaje.analyze_reaction_patterns(
+                    user_text=user_text,
+                    agent_response=response_text,
+                    previous_user_text=previous_user_text,
+                )
+                if reaction.get("signal") != "sin_senal":
+                    self.sistema_aprendizaje.registrar_feedback_usuario(
+                        user_id=user_id,
+                        canal_id=canal_id,
+                        session_id=session_id,
+                        user_text=user_text,
+                        agent_response=response_text,
+                        feedback_type="implicit",
+                        reason=reaction.get("signal"),
+                        previous_user_text=previous_user_text,
+                        implicit=True,
+                    )
+            except Exception as e:
+                print(f"⚠️ Error registrando feedback implícito: {e}")
 
         return response_text
 

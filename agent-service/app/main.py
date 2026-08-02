@@ -560,7 +560,7 @@ async def shutdown_db_learning() -> None:
 class ChatConversationRequest(BaseModel):
     session_id: str = Field(..., description="ID de la sesión de conversación")
     message: str = Field(..., description="Mensaje enviado por el usuario")
-    user_id: str = Field(..., description="ID del usuario que está consultando (recurso humano)")
+    user_id: str = Field(..., description="Username del usuario que está consultando en el sistema")
     canal_id: Optional[str] = Field(None, description="ID del canal actual (opcional)")
     generate_audio: bool = Field(False, description="Si se debe generar audio de la respuesta")
 
@@ -570,6 +570,27 @@ class ChatConversationResponse(BaseModel):
     agent_response: str
     audio_url: Optional[str] = None
     user_context_used: Optional[str] = None  # Para debugging
+
+
+class UserFeedbackRequest(BaseModel):
+    session_id: str = Field(..., description="ID de la sesión de conversación")
+    user_id: str = Field(..., description="Username del usuario que aporta feedback")
+    user_text: str = Field(..., description="Mensaje original del usuario")
+    agent_response: str = Field(..., description="Respuesta del agente que se evalúa")
+    corrected_response: Optional[str] = Field(None, description="Respuesta correcta o corrección del usuario")
+    canal_id: Optional[str] = Field(None, description="ID del canal donde ocurrió la interacción")
+    feedback_type: str = Field("explicit", description="Tipo de feedback: explicit o implicit")
+    reason: Optional[str] = Field(None, description="Motivo del feedback o corrección")
+    previous_user_text: Optional[str] = Field(None, description="Mensaje anterior del usuario para detectar repetición")
+    update_profile: bool = Field(True, description="Si se debe actualizar el perfil dinámico del usuario")
+
+
+class UserFeedbackResponse(BaseModel):
+    status: str
+    learned: bool
+    profile_updated: bool
+    reaction_signal: str
+    topics: list[str] = []
 
 # ============================================================
 # SEGURIDAD: FILTROS CONTRA PROMPT INJECTION
@@ -839,6 +860,52 @@ def handle_dialogue(req: ChatConversationRequest):
             user_message=req.message,
             agent_response=f"⚠️ Lo siento, ocurrió un error al procesar tu consulta. Por favor, intenta nuevamente o contacta al administrador del sistema. (Error: {str(e)[:100]})"
         )
+
+
+@app.post("/api/v1/agent/feedback", response_model=UserFeedbackResponse)
+def submit_feedback(req: UserFeedbackRequest):
+    """Registra feedback explícito o correcciones del usuario para aprendizaje a largo plazo."""
+    try:
+        reaction = agent.sistema_aprendizaje.analyze_reaction_patterns(
+            user_text=req.user_text,
+            agent_response=req.agent_response,
+            previous_user_text=req.previous_user_text,
+        )
+        learned = agent.sistema_aprendizaje.registrar_feedback_usuario(
+            user_id=req.user_id,
+            canal_id=req.canal_id,
+            session_id=req.session_id,
+            user_text=req.user_text,
+            agent_response=req.agent_response,
+            corrected_response=req.corrected_response,
+            feedback_type=req.feedback_type,
+            reason=req.reason,
+            previous_user_text=req.previous_user_text,
+            implicit=req.feedback_type.lower() == "implicit",
+        )
+
+        profile_updated = False
+        if req.update_profile:
+            profile_updated = agent.sistema_aprendizaje.actualizar_perfil_usuario(
+                user_id=req.user_id,
+                canal_id=req.canal_id,
+                recent_user_text=req.user_text,
+                recent_agent_response=req.corrected_response or req.agent_response,
+                feedback_summary=req.reason or reaction.get("signal"),
+            )
+
+        return UserFeedbackResponse(
+            status="ok" if learned else "warning",
+            learned=learned,
+            profile_updated=profile_updated,
+            reaction_signal=reaction.get("signal", "sin_senal"),
+            topics=reaction.get("topics", []),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error registrando feedback del usuario: {str(e)}"
+        )
     finally:
         if dialogue_started:
             _finish_dialogue()
@@ -989,11 +1056,13 @@ def get_user_context(user_id: str):
         from app.system.learning import SistemaAprendizaje
         sistema = SistemaAprendizaje()
         contexto = sistema.obtener_contexto_usuario(user_id)
+        perfil_dinamico = sistema.obtener_perfil_dinamico(user_id)
         
         if contexto:
             return {
                 "user_id": user_id,
                 "context": contexto.dict(),
+                "dynamic_profile": perfil_dinamico,
                 "canales_count": len(contexto.canales_acceso),
                 "actividades_count": len(contexto.actividades_recientes),
                 "recursos_count": len(contexto.recursos_disponibles)
@@ -1001,6 +1070,7 @@ def get_user_context(user_id: str):
         else:
             return {
                 "user_id": user_id,
+                "dynamic_profile": perfil_dinamico,
                 "error": "Usuario no encontrado o sin contexto disponible"
             }
     except Exception as e:
