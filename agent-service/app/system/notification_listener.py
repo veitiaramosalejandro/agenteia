@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from collections import defaultdict
 from datetime import datetime
 from time import perf_counter
@@ -39,6 +40,27 @@ class NotificationApiListener:
         self.sistema = SistemaAprendizaje()
         self.seen_fingerprints: List[str] = []
         self.max_seen = 5000
+        self.metrics_lock = threading.Lock()
+        self.max_cycle_history = 300
+        self.cycle_history: List[Dict[str, Any]] = []
+        self.max_recent_captured_messages = 200
+        self.recent_captured_messages: List[Dict[str, Any]] = []
+        self.api_metrics: Dict[str, Any] = {
+            "calls_total": 0,
+            "calls_ok": 0,
+            "calls_error": 0,
+            "http_4xx": 0,
+            "http_5xx": 0,
+            "rate_limited_429": 0,
+            "timeouts": 0,
+            "network_errors": 0,
+            "latency_ms_total": 0.0,
+            "latency_ms_max": 0.0,
+            "payload_items_total": 0,
+            "last_error": None,
+            "last_error_at": None,
+            "by_endpoint": {},
+        }
 
         self.notification_endpoints = [
             "/api/Request",
@@ -232,7 +254,52 @@ class NotificationApiListener:
 
         return bool(self.access_key)
 
+    def _is_message_like_payload(self, node: Any) -> bool:
+        if not isinstance(node, dict):
+            return False
+
+        has_message = any(
+            isinstance(node.get(key), str) and node.get(key).strip()
+            for key in ["RawMessage", "Message", "Text"]
+        )
+        has_context = any(
+            node.get(key) is not None
+            for key in ["IDChat", "IDChat2", "IDWorkRoom", "IDChannel", "ChannelName", "SenderFullName", "IDSenderResource"]
+        )
+        return has_message and has_context
+
+    def _extract_message_entries(self, source: str, endpoint: str, payload: Any, channel_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        extracted: List[Dict[str, Any]] = []
+
+        def _visit(node: Any, inherited_channel_id: Optional[str]) -> None:
+            if isinstance(node, dict):
+                effective_channel_id = (
+                    node.get("IDWorkRoom")
+                    or node.get("IDChannel")
+                    or node.get("BookMarkedIDChannel")
+                    or inherited_channel_id
+                )
+                if self._is_message_like_payload(node):
+                    extracted.append({
+                        "source": source,
+                        "endpoint": endpoint,
+                        "channel_id": effective_channel_id,
+                        "data": node,
+                    })
+                for value in node.values():
+                    _visit(value, effective_channel_id)
+            elif isinstance(node, list):
+                for item in node:
+                    _visit(item, inherited_channel_id)
+
+        _visit(payload, channel_id)
+        return extracted
+
     def _normalize_entries(self, source: str, endpoint: str, payload: Any, channel_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        message_entries = self._extract_message_entries(source, endpoint, payload, channel_id=channel_id)
+        if message_entries:
+            return message_entries
+
         if isinstance(payload, list):
             entries = payload
         elif isinstance(payload, dict):
@@ -266,6 +333,241 @@ class NotificationApiListener:
     def _audit_log(self, message: str) -> None:
         if self.audit_log_enabled:
             print(message)
+
+    def _trace_captured_message(self, entry: Dict[str, Any], status: str) -> None:
+        if not settings.NOTIF_MESSAGE_TRACE_ENABLED:
+            return
+
+        data = entry.get("data") if isinstance(entry, dict) else None
+        if not isinstance(data, dict):
+            return
+
+        raw_message = data.get("RawMessage") or data.get("Message") or data.get("Text")
+        if not isinstance(raw_message, str) or not raw_message.strip():
+            return
+
+        sender_name = (
+            data.get("SenderFullName")
+            or data.get("DisplayName")
+            or data.get("SenderName")
+            or data.get("IDSenderResource")
+            or "desconocido"
+        )
+        channel_name = (
+            data.get("ChannelName")
+            or data.get("OriginChannelName")
+            or entry.get("channel_id")
+            or data.get("IDWorkRoom")
+            or "sin_canal"
+        )
+        channel_id = data.get("IDWorkRoom") or data.get("IDChannel") or entry.get("channel_id") or "-"
+        chat_id = data.get("IDChat") or data.get("IDChat2") or "-"
+        is_public = str(data.get("IsPublic") or "").lower() in {"1", "true"}
+        scope = "canal" if is_public else "chat"
+
+        compact = re.sub(r"\s+", " ", raw_message).strip()
+        max_len = max(40, settings.NOTIF_MESSAGE_TRACE_MAX_LEN)
+        if len(compact) > max_len:
+            compact = compact[: max_len - 3] + "..."
+
+        event = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": status,
+            "scope": scope,
+            "channel": str(channel_name),
+            "channel_id": str(channel_id),
+            "chat_id": str(chat_id),
+            "sender": str(sender_name),
+            "message": compact,
+        }
+        with self.metrics_lock:
+            self.recent_captured_messages.append(event)
+            if len(self.recent_captured_messages) > self.max_recent_captured_messages:
+                self.recent_captured_messages = self.recent_captured_messages[-self.max_recent_captured_messages :]
+
+        print(
+            f"📨 NOTIF_CAPTURE [{status}] scope={scope} channel='{channel_name}' "
+            f"channel_id={channel_id} chat_id={chat_id} sender='{sender_name}' msg='{compact}'"
+        )
+
+    def get_recent_captured_messages(self, limit: int = 30) -> List[Dict[str, Any]]:
+        with self.metrics_lock:
+            effective_limit = max(1, min(limit, self.max_recent_captured_messages))
+            return list(self.recent_captured_messages[-effective_limit:])
+
+    def _record_api_metric(
+        self,
+        source: str,
+        endpoint: str,
+        method: str,
+        elapsed_ms: Optional[float] = None,
+        status_code: Optional[int] = None,
+        payload_items: Optional[int] = None,
+        error: Optional[Exception] = None,
+    ) -> None:
+        key = f"{method.upper()} {source}:{endpoint}"
+        with self.metrics_lock:
+            self.api_metrics["calls_total"] += 1
+            if elapsed_ms is not None:
+                self.api_metrics["latency_ms_total"] += float(elapsed_ms)
+                self.api_metrics["latency_ms_max"] = max(self.api_metrics["latency_ms_max"], float(elapsed_ms))
+            if payload_items is not None:
+                self.api_metrics["payload_items_total"] += max(0, int(payload_items))
+
+            endpoint_stats = self.api_metrics["by_endpoint"].setdefault(
+                key,
+                {
+                    "calls": 0,
+                    "ok": 0,
+                    "errors": 0,
+                    "http_4xx": 0,
+                    "http_5xx": 0,
+                    "rate_limited_429": 0,
+                    "timeouts": 0,
+                    "network_errors": 0,
+                    "latency_ms_total": 0.0,
+                    "latency_ms_max": 0.0,
+                    "payload_items_total": 0,
+                    "last_status_code": None,
+                    "last_error": None,
+                    "last_error_at": None,
+                },
+            )
+            endpoint_stats["calls"] += 1
+            if elapsed_ms is not None:
+                endpoint_stats["latency_ms_total"] += float(elapsed_ms)
+                endpoint_stats["latency_ms_max"] = max(endpoint_stats["latency_ms_max"], float(elapsed_ms))
+            if payload_items is not None:
+                endpoint_stats["payload_items_total"] += max(0, int(payload_items))
+
+            if status_code is not None and status_code < 400:
+                self.api_metrics["calls_ok"] += 1
+                endpoint_stats["ok"] += 1
+                endpoint_stats["last_status_code"] = int(status_code)
+                return
+
+            self.api_metrics["calls_error"] += 1
+            endpoint_stats["errors"] += 1
+
+            if status_code is not None:
+                status = int(status_code)
+                endpoint_stats["last_status_code"] = status
+                if 400 <= status < 500:
+                    self.api_metrics["http_4xx"] += 1
+                    endpoint_stats["http_4xx"] += 1
+                if status >= 500:
+                    self.api_metrics["http_5xx"] += 1
+                    endpoint_stats["http_5xx"] += 1
+                if status == 429:
+                    self.api_metrics["rate_limited_429"] += 1
+                    endpoint_stats["rate_limited_429"] += 1
+
+            if error is not None:
+                err_text = str(error)
+                self.api_metrics["last_error"] = err_text
+                self.api_metrics["last_error_at"] = datetime.utcnow().isoformat()
+                endpoint_stats["last_error"] = err_text
+                endpoint_stats["last_error_at"] = self.api_metrics["last_error_at"]
+                if isinstance(error, httpx.TimeoutException):
+                    self.api_metrics["timeouts"] += 1
+                    endpoint_stats["timeouts"] += 1
+                else:
+                    self.api_metrics["network_errors"] += 1
+                    endpoint_stats["network_errors"] += 1
+
+    def _record_cycle_summary(self, summary: Dict[str, Any]) -> None:
+        with self.metrics_lock:
+            self.cycle_history.append(summary)
+            if len(self.cycle_history) > self.max_cycle_history:
+                self.cycle_history = self.cycle_history[-self.max_cycle_history :]
+
+    def get_api_metrics_snapshot(self) -> Dict[str, Any]:
+        with self.metrics_lock:
+            raw = dict(self.api_metrics)
+            by_endpoint = raw.get("by_endpoint", {})
+            calls_total = max(1, int(raw.get("calls_total", 0)))
+            latency_total = float(raw.get("latency_ms_total", 0.0))
+
+            endpoint_summary = []
+            for key, value in by_endpoint.items():
+                calls = max(1, int(value.get("calls", 0)))
+                endpoint_summary.append(
+                    {
+                        "endpoint": key,
+                        "calls": int(value.get("calls", 0)),
+                        "ok": int(value.get("ok", 0)),
+                        "errors": int(value.get("errors", 0)),
+                        "rate_limited_429": int(value.get("rate_limited_429", 0)),
+                        "timeouts": int(value.get("timeouts", 0)),
+                        "avg_latency_ms": round(float(value.get("latency_ms_total", 0.0)) / calls, 2),
+                        "max_latency_ms": round(float(value.get("latency_ms_max", 0.0)), 2),
+                        "payload_items_total": int(value.get("payload_items_total", 0)),
+                        "last_status_code": value.get("last_status_code"),
+                        "last_error": value.get("last_error"),
+                    }
+                )
+
+            endpoint_summary.sort(key=lambda item: item["errors"], reverse=True)
+            return {
+                "calls_total": int(raw.get("calls_total", 0)),
+                "calls_ok": int(raw.get("calls_ok", 0)),
+                "calls_error": int(raw.get("calls_error", 0)),
+                "http_4xx": int(raw.get("http_4xx", 0)),
+                "http_5xx": int(raw.get("http_5xx", 0)),
+                "rate_limited_429": int(raw.get("rate_limited_429", 0)),
+                "timeouts": int(raw.get("timeouts", 0)),
+                "network_errors": int(raw.get("network_errors", 0)),
+                "avg_latency_ms": round(latency_total / calls_total, 2),
+                "max_latency_ms": round(float(raw.get("latency_ms_max", 0.0)), 2),
+                "payload_items_total": int(raw.get("payload_items_total", 0)),
+                "last_error": raw.get("last_error"),
+                "last_error_at": raw.get("last_error_at"),
+                "by_endpoint": endpoint_summary,
+            }
+
+    def get_learning_metrics_snapshot(self) -> Dict[str, Any]:
+        with self.metrics_lock:
+            history = list(self.cycle_history)
+
+        total = len(history)
+        if total == 0:
+            return {
+                "cycles": 0,
+                "success_ratio": None,
+                "avg_learned_per_cycle": 0.0,
+                "avg_errors_per_cycle": 0.0,
+                "avg_cycle_ms": 0.0,
+                "learning_velocity_per_minute": 0.0,
+                "recent_trend": "sin_datos",
+            }
+
+        successful = sum(1 for item in history if int(item.get("errors", 0)) == 0)
+        learned_sum = sum(int(item.get("learned", 0)) for item in history)
+        errors_sum = sum(int(item.get("errors", 0)) for item in history)
+        cycle_ms_sum = sum(float(item.get("cycle_elapsed_ms", 0.0)) for item in history)
+        minutes = max(1e-6, cycle_ms_sum / 60000.0)
+
+        recent_window = history[-10:]
+        previous_window = history[-20:-10]
+        recent_avg = sum(int(item.get("learned", 0)) for item in recent_window) / max(1, len(recent_window))
+        previous_avg = sum(int(item.get("learned", 0)) for item in previous_window) / max(1, len(previous_window))
+
+        trend = "estable"
+        if recent_avg > previous_avg * 1.1:
+            trend = "mejorando"
+        elif recent_avg < previous_avg * 0.9:
+            trend = "degradando"
+
+        return {
+            "cycles": total,
+            "success_ratio": round(successful / total, 4),
+            "avg_learned_per_cycle": round(learned_sum / total, 3),
+            "avg_errors_per_cycle": round(errors_sum / total, 3),
+            "avg_cycle_ms": round(cycle_ms_sum / total, 2),
+            "learning_velocity_per_minute": round(learned_sum / minutes, 3),
+            "recent_trend": trend,
+            "last_cycle": history[-1],
+        }
 
     def _remember_fingerprint(self, fingerprint: str) -> None:
         self.seen_fingerprints.append(fingerprint)
@@ -370,6 +672,13 @@ class NotificationApiListener:
                 elapsed_ms = (perf_counter() - started_at) * 1000
                 if resp.status_code >= 400:
                     errors += 1
+                    self._record_api_metric(
+                        source=source,
+                        endpoint=endpoint,
+                        method=method,
+                        elapsed_ms=elapsed_ms,
+                        status_code=resp.status_code,
+                    )
                     self._audit_log(
                         f"📡 AUDIT endpoint={source} method={method} status={resp.status_code} "
                         f"elapsed_ms={elapsed_ms:.1f} channel={channel_id or '-'}"
@@ -383,18 +692,29 @@ class NotificationApiListener:
                     payload = resp.text
 
                 payload_items = self._payload_item_count(payload)
+                self._record_api_metric(
+                    source=source,
+                    endpoint=endpoint,
+                    method=method,
+                    elapsed_ms=elapsed_ms,
+                    status_code=resp.status_code,
+                    payload_items=payload_items,
+                )
 
                 entries = self._normalize_entries(source, endpoint, payload, channel_id=channel_id)
                 for entry in entries:
                     fp = self._fingerprint(entry)
                     if fp in self.seen_fingerprints:
                         skipped += 1
+                        self._trace_captured_message(entry, status="duplicate")
                         continue
                     if self._learn_entry(entry, fp):
                         learned += 1
                         self._remember_fingerprint(fp)
+                        self._trace_captured_message(entry, status="learned")
                     else:
                         errors += 1
+                        self._trace_captured_message(entry, status="learn_error")
 
                 self._audit_log(
                     f"📡 AUDIT endpoint={source} method={method} status={resp.status_code} "
@@ -410,6 +730,13 @@ class NotificationApiListener:
                 }
             except Exception as exc:
                 last_exc = exc
+                self._record_api_metric(
+                    source=source,
+                    endpoint=endpoint,
+                    method=method,
+                    elapsed_ms=(perf_counter() - started_at) * 1000,
+                    error=exc,
+                )
                 continue
 
         errors += 1
@@ -687,6 +1014,18 @@ class NotificationApiListener:
             f"chat_channel_pulls={chat_channel_pulls} reaction_channel_pulls={reaction_channel_pulls}"
         )
 
+        cycle_summary = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "learned": learned,
+            "skipped": skipped,
+            "errors": errors,
+            "channels_detected": channels_detected,
+            "chat_channel_pulls": chat_channel_pulls,
+            "reaction_channel_pulls": reaction_channel_pulls,
+            "cycle_elapsed_ms": round(cycle_elapsed_ms, 2),
+        }
+        self._record_cycle_summary(cycle_summary)
+
         return {
             "enabled": True,
             "learned": learned,
@@ -695,5 +1034,6 @@ class NotificationApiListener:
             "channels_detected": channels_detected,
             "chat_channel_pulls": chat_channel_pulls,
             "reaction_channel_pulls": reaction_channel_pulls,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": cycle_summary["timestamp"],
+            "cycle_elapsed_ms": cycle_summary["cycle_elapsed_ms"],
         }

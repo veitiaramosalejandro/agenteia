@@ -87,6 +87,16 @@ class SistemaAprendizaje:
         text = re.sub(r"\s+", " ", text)
         return text
 
+    def _looks_like_uuid(self, value: Optional[str]) -> bool:
+        raw = (value or "").strip()
+        if not raw:
+            return False
+        try:
+            uuid.UUID(raw)
+            return True
+        except Exception:
+            return False
+
     def _extract_topic_keywords(self, *texts: str, limit: int = 8) -> List[str]:
         stopwords = {
             "para", "por", "con", "sin", "como", "que", "del", "las", "los", "una", "uno",
@@ -716,32 +726,40 @@ class SistemaAprendizaje:
             """
             WITH user_channels AS (
                 SELECT DISTINCT wrr.IDWorkRoom
-                FROM dbo.SysWorkRoomResource wrr
-                LEFT JOIN dbo.SysLogin sl ON sl.IDLogin = wrr.IDLogin
+                FROM dbo.SysWorkRoomResource wrr WITH (NOLOCK)
+                LEFT JOIN dbo.SysLogin sl WITH (NOLOCK) ON sl.IDLogin = wrr.IDLogin
                 WHERE wrr.IDResource = (SELECT TOP 1 ResourceId FROM dbo.SysResources WHERE ActiveIDLogin2Resource = (SELECT TOP 1 ActiveIDLogin2Resource FROM dbo.SysLogin WHERE Username = %s))
                    OR sl.Username = %s
             )
-            SELECT TOP %s c.IDChat2, c.Stamp, c.RawMessage, wr.IDWorkRoom AS IDChannel, wr.Name AS ChannelName,
-                sr.ResourceId AS SenderResourceId, sr.DisplayName AS SenderDisplayName, sl.FullName AS SenderFullName, sl.Username AS SenderUsername
-            FROM dbo.SysChat c
-            INNER JOIN dbo.SysChat2SysWorkRoom c2w ON c.IDChat2 = c2w.IDChat2
-            INNER JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = c2w.IDWorkRoom
-            INNER JOIN dbo.SysWorkRoomResource wrr ON wrr.IDWorkRoom = wr.IDWorkRoom
-            INNER JOIN dbo.SysResources sr ON sr.ResourceId = wrr.IDResource
-            INNER JOIN dbo.SysLogin sl ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
-            WHERE wr.IDWorkRoom IN (SELECT IDWorkRoom FROM user_channels)
+            SELECT TOP %s
+                c.IDChat2,
+                c.Stamp,
+                c.RawMessage,
+                c.IDWorkRoom AS IDChannel,
+                wr.Name AS ChannelName,
+                c.IDSenderResource AS SenderResourceId,
+                COALESCE(sr.DisplayName, sl.FullName, sl.Username, 'Sin nombre') AS SenderDisplayName,
+                COALESCE(sl.FullName, '') AS SenderFullName,
+                COALESCE(sl.Username, '') AS SenderUsername
+            FROM dbo.SysChat c WITH (NOLOCK)
+            INNER JOIN dbo.SysWorkRoom wr WITH (NOLOCK) ON wr.IDWorkRoom = c.IDWorkRoom
+            LEFT JOIN dbo.SysResources sr WITH (NOLOCK) ON sr.ResourceId = c.IDSenderResource
+            LEFT JOIN dbo.SysLogin sl WITH (NOLOCK) ON sl.IDLogin = c.IDSender
+            WHERE c.IDWorkRoom IN (SELECT IDWorkRoom FROM user_channels)
+              AND c.RawMessage IS NOT NULL
+              AND LEN(LTRIM(RTRIM(c.RawMessage))) > 0
             """
         ]
         params = [username, username, safe_limit + safe_offset]
 
         if canal_id:
-            query_parts.append("AND wr.IDWorkRoom = %s")
+            query_parts.append("AND c.IDWorkRoom = %s")
             params.append(canal_id)
         if sender_resource_id:
-            query_parts.append("AND sr.ResourceId = %s")
+            query_parts.append("AND c.IDSenderResource = %s")
             params.append(sender_resource_id)
 
-        query_parts.append("GROUP BY c.IDChat2, c.Stamp, c.RawMessage, wr.IDWorkRoom, wr.Name, sr.ResourceId, sr.DisplayName, sl.FullName, sl.Username ORDER BY c.Stamp DESC")
+        query_parts.append("ORDER BY c.Stamp DESC, c.IDChat2 DESC")
         
         try:
             with self._connect_sql_with_retry(context="chat_messages_ultra") as conn:
@@ -951,9 +969,29 @@ class SistemaAprendizaje:
     def aprender_actividad(self, actividad: Actividad) -> bool:
         """Aprende de una actividad realizada por un usuario y la indexa en Qdrant."""
         try:
-            contexto_usuario = self.obtener_contexto_usuario(actividad.recurso_humano_id) if actividad.recurso_humano_id != "sistema" else None
-            usuario_nombre = contexto_usuario.usuario.nombre if contexto_usuario else actividad.recurso_humano_id
-            usuario_rol = contexto_usuario.usuario.rol if contexto_usuario else "sistema"
+            metadata = actividad.metadatos or {}
+            source_table = str(metadata.get("source_table") or "").strip().lower()
+            source = str(metadata.get("source") or "").strip().lower()
+
+            # Fast path para eventos de notificación/chat: evita consultas SQL por cada evento.
+            is_realtime_event = source_table == "notificationapi" or source.startswith("chat_") or source.startswith("notification_")
+
+            recurso_id = str(actividad.recurso_humano_id or "sistema").strip() or "sistema"
+            usuario_nombre = str(metadata.get("sender_name") or recurso_id)
+            usuario_rol = str(metadata.get("sender_role") or "sistema")
+
+            # Solo intenta resolver contexto SQL cuando aporta valor y no es un ID técnico.
+            should_resolve_context = (
+                recurso_id != "sistema"
+                and not is_realtime_event
+                and not self._looks_like_uuid(recurso_id)
+            )
+
+            if should_resolve_context:
+                contexto_usuario = self.obtener_contexto_usuario(recurso_id)
+                if contexto_usuario:
+                    usuario_nombre = contexto_usuario.usuario.nombre or usuario_nombre
+                    usuario_rol = contexto_usuario.usuario.rol or usuario_rol
 
             texto_aprendizaje = f"Actividad por {usuario_nombre} ({usuario_rol}) en canal {actividad.canal_id}: {actividad.descripcion}"
             

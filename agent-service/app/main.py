@@ -496,8 +496,14 @@ async def _ciclo_notificaciones_api() -> None:
 
     while True:
         try:
-            # Evita competir con diálogos solo en alta carga para no perder contexto en tiempo real.
+            # Evita competir con diálogos activos cuando el modo de pausa está habilitado.
             chats_activos = _get_active_dialogues()
+            should_pause_for_dialogue = settings.NOTIF_PAUSE_DURING_DIALOGUE and chats_activos > 0
+            if should_pause_for_dialogue:
+                await asyncio.sleep(min(intervalo, max(5, settings.DB_STUDY_IDLE_CHECK_SECONDS)))
+                continue
+
+            # Fallback: incluso con la pausa deshabilitada, no competir bajo carga máxima.
             max_dialogues = max(1, settings.DIALOGUE_MAX_CONCURRENT)
             if chats_activos >= max_dialogues:
                 await asyncio.sleep(min(intervalo, max(5, settings.DB_STUDY_IDLE_CHECK_SECONDS)))
@@ -1048,6 +1054,8 @@ def health_check():
             "last_notification_poll_at": getattr(app.state, "last_notification_poll_at", None),
             "last_notification_result": getattr(app.state, "last_notification_result", None),
             "last_notification_error": getattr(app.state, "last_notification_error", None),
+            "notification_api_metrics": notification_listener.get_api_metrics_snapshot(),
+            "notification_learning_metrics": notification_listener.get_learning_metrics_snapshot(),
             "startup_connectivity": getattr(app.state, "startup_connectivity", None),
             "db_study_interval_seconds": settings.DB_STUDY_INTERVAL_SECONDS,
             "db_study_idle_check_seconds": settings.DB_STUDY_IDLE_CHECK_SECONDS,
@@ -1056,6 +1064,64 @@ def health_check():
             "last_db_study_error": getattr(app.state, "last_db_study_error", None)
         }
     }
+
+
+@app.get("/api/v1/agent/evaluation/summary")
+def get_agent_evaluation_summary():
+    """
+    Resumen operacional para evaluar:
+    1) Calidad técnica de consumo API.
+    2) Evolución del aprendizaje del agente en ciclos de escucha.
+    """
+    try:
+        return {
+            "status": "ok",
+            "timestamp": datetime.utcnow().isoformat(),
+            "diagnostico_tecnico": {
+                "dialogue": {
+                    "active_dialogues": _get_active_dialogues(),
+                    "max_concurrent": settings.DIALOGUE_MAX_CONCURRENT,
+                    "admission_timeout_seconds": settings.DIALOGUE_ADMISSION_TIMEOUT_SECONDS,
+                    "processing_timeout_seconds": settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS,
+                    "hard_timeout_seconds": settings.DIALOGUE_HARD_TIMEOUT_SECONDS,
+                    "metrics": _get_dialogue_metrics_snapshot(),
+                },
+                "api_runtime": notification_listener.get_api_metrics_snapshot(),
+                "sql_retries": agent.sistema_aprendizaje.get_sql_retry_stats(),
+                "last_notification_error": getattr(app.state, "last_notification_error", None),
+            },
+            "metricas_evolucion": {
+                "learning_runtime": notification_listener.get_learning_metrics_snapshot(),
+                "last_notification_result": getattr(app.state, "last_notification_result", None),
+                "last_db_study_at": getattr(app.state, "last_db_study_at", None),
+                "last_db_study_error": getattr(app.state, "last_db_study_error", None),
+            },
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error construyendo resumen de evaluación: {str(e)}"
+        )
+
+
+@app.get("/api/v1/agent/notification/recent-messages")
+def get_recent_notification_messages(limit: int = Query(30, ge=1, le=200)):
+    """
+    Devuelve los últimos mensajes de canal/chat capturados por el listener.
+    Sirve para validar visualmente si la Notification API está entregando mensajes reales.
+    """
+    try:
+        return {
+            "status": "ok",
+            "listener_enabled": notification_listener.is_enabled(),
+            "count": limit,
+            "messages": notification_listener.get_recent_captured_messages(limit=limit),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo mensajes recientes de notification listener: {str(e)}"
+        )
 
 
 @app.get("/api/v1/agent/context/{user_id}")
@@ -1176,11 +1242,20 @@ def test_solidset_connectivity():
         "status_code": swagger_result.get("status_code"),
         "error": swagger_result.get("error")
     }
+
+    # Test 3: OpenAPI spec (algunas instalaciones lo exponen en /openapi.json)
+    openapi_result = _probe_http(base_url, "/openapi.json")
+    results["tests"]["openapi"] = {
+        "endpoint": f"{base_url}/openapi.json",
+        "success": openapi_result.get("ok", False),
+        "status_code": openapi_result.get("status_code"),
+        "error": openapi_result.get("error")
+    }
     
     # Determinar estado general
-    heartbeat_ok = results["tests"]["heartbeat"]["success"]
-    swagger_ok = results["tests"]["swagger"]["success"]
-    openapi_ok = results["tests"]["openapi"]["success"]
+    heartbeat_ok = bool(results["tests"].get("heartbeat", {}).get("success", False))
+    swagger_ok = bool(results["tests"].get("swagger", {}).get("success", False))
+    openapi_ok = bool(results["tests"].get("openapi", {}).get("success", False))
     
     if heartbeat_ok:
         results["overall_status"] = "healthy"

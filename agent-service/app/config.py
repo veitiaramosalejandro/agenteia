@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     NOTIF_API_TIMEOUT_SECONDS: int = int(os.getenv("NOTIF_API_TIMEOUT_SECONDS", "15"))
     NOTIF_API_VERIFY_TLS: bool = _env_bool("NOTIF_API_VERIFY_TLS", "false")
     NOTIF_AUDIT_LOG_ENABLED: bool = _env_bool("NOTIF_AUDIT_LOG_ENABLED", "true")
+    NOTIF_MESSAGE_TRACE_ENABLED: bool = _env_bool("NOTIF_MESSAGE_TRACE_ENABLED", "true")
+    NOTIF_MESSAGE_TRACE_MAX_LEN: int = int(os.getenv("NOTIF_MESSAGE_TRACE_MAX_LEN", "220"))
+    NOTIF_PAUSE_DURING_DIALOGUE: bool = _env_bool("NOTIF_PAUSE_DURING_DIALOGUE", "true")
 
     # SolidSET controllers integration (ChatController + RestApiController)
     SOLIDSET_CHAT_BASE_URL: str = os.getenv("SOLIDSET_CHAT_BASE_URL", "")
