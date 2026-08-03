@@ -146,6 +146,34 @@ class SistemaAprendizaje:
                     time.sleep(delay)
         raise last_error
 
+    def _fetch_one_with_fresh_connection_retry(
+        self,
+        query: str,
+        params: tuple,
+        context: str,
+        retries: int = 2,
+    ) -> Optional[Dict[str, Any]]:
+        """Ejecuta una consulta de una fila reabriendo conexión en cada reintento."""
+        last_error = None
+        max_retries = max(1, retries)
+        for attempt in range(1, max_retries + 1):
+            try:
+                with self._connect_sql_with_retry(context=f"{context}_connect") as conn:
+                    with conn.cursor(as_dict=True) as cursor:
+                        cursor.execute(query, params)
+                        return cursor.fetchone()
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    self._increment_retry_metric("query_retries", context)
+                    delay = attempt
+                    print(
+                        f"⚠️ Consulta SQL con reconexión falló ({context}) intento "
+                        f"{attempt}/{max_retries}: {e}. Reintentando en {delay}s..."
+                    )
+                    time.sleep(delay)
+        raise last_error
+
     def _resolve_user_identity(self, user_id: str) -> Dict[str, Optional[str]]:
         """Resuelve username/login/resource para aceptar user_id como Username o GUID."""
         raw_user = (user_id or "").strip()
@@ -153,31 +181,28 @@ class SistemaAprendizaje:
         if not raw_user:
             return identity
         try:
-            with self._connect_sql_with_retry(context="resolve_user_identity") as conn:
-                with conn.cursor(as_dict=True) as cursor:
-                    self._execute_with_retry(
-                        cursor,
-                        query="""
-                            SELECT TOP 1 sl.IDLogin, sl.Username, sl.FullName, sr.ResourceId, sr.DisplayName
-                            FROM dbo.SysLogin sl
-                            LEFT JOIN dbo.SysResources sr ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
-                            WHERE sl.Username = %s
-                               OR sl.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                               OR sr.ResourceId = TRY_CONVERT(uniqueidentifier, %s)
-                            ORDER BY CASE WHEN sl.Username = %s THEN 0 ELSE 1 END, sl.Username
-                        """,
-                        params=(raw_user, raw_user, raw_user, raw_user),
-                        context="resolve_user_identity_query"
-                    )
-                    row = cursor.fetchone()
-                    if row:
-                        identity.update({
-                            "username": (row.get("Username") or raw_user).strip(),
-                            "login_id": str(row.get("IDLogin") or "").strip() or None,
-                            "resource_id": str(row.get("ResourceId") or "").strip() or None,
-                            "full_name": (row.get("FullName") or "").strip() or None,
-                            "display_name": (row.get("DisplayName") or "").strip() or None,
-                        })
+            row = self._fetch_one_with_fresh_connection_retry(
+                query="""
+                    SELECT TOP 1 sl.IDLogin, sl.Username, sl.FullName, sr.ResourceId, sr.DisplayName
+                    FROM dbo.SysLogin sl WITH (NOLOCK)
+                    LEFT JOIN dbo.SysResources sr WITH (NOLOCK) ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
+                    WHERE sl.Username = %s
+                       OR sl.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                       OR sr.ResourceId = TRY_CONVERT(uniqueidentifier, %s)
+                    ORDER BY CASE WHEN sl.Username = %s THEN 0 ELSE 1 END, sl.Username
+                """,
+                params=(raw_user, raw_user, raw_user, raw_user),
+                context="resolve_user_identity_query",
+                retries=2,
+            )
+            if row:
+                identity.update({
+                    "username": (row.get("Username") or raw_user).strip(),
+                    "login_id": str(row.get("IDLogin") or "").strip() or None,
+                    "resource_id": str(row.get("ResourceId") or "").strip() or None,
+                    "full_name": (row.get("FullName") or "").strip() or None,
+                    "display_name": (row.get("DisplayName") or "").strip() or None,
+                })
         except Exception as e:
             print(f"⚠️ No se pudo resolver identidad de usuario '{raw_user}': {e}")
         return identity
@@ -376,9 +401,35 @@ class SistemaAprendizaje:
             identity = self._resolve_user_identity(user_id)
             with self._connect_sql_with_retry(context="build_user_context") as conn:
                 with conn.cursor(as_dict=True) as cursor:
-                    usuario_data = self._get_user_details_from_db(cursor, identity)
+                    usuario_data = None
+                    try:
+                        usuario_data = self._get_user_details_from_db(cursor, identity)
+                    except Exception as e:
+                        print(f"⚠️ get_user_details temporalmente no disponible, usando fallback mínimo: {e}")
+
                     if not usuario_data:
-                        return None
+                        fallback_username = (identity.get("username") or user_id or "usuario").strip()
+                        fallback_name = (
+                            identity.get("full_name")
+                            or identity.get("display_name")
+                            or fallback_username
+                        )
+                        usuario = RecursoHumano(
+                            id=fallback_username,
+                            nombre=fallback_name,
+                            email="",
+                            rol="operario",
+                            departamento=None,
+                            especialidades=["operario"],
+                            canales=[]
+                        )
+                        return ContextoUsuario(
+                            usuario=usuario,
+                            canales_acceso=[],
+                            actividades_recientes=[],
+                            recursos_disponibles=[],
+                            permisos=self._obtener_permisos_por_rol(usuario.rol)
+                        )
 
                     user_login = (usuario_data.get("Username") or identity.get("username") or user_id or "").strip()
                     resource_guid = str(usuario_data.get("ResourceId") or identity.get("resource_id") or user_id)
@@ -990,17 +1041,58 @@ class SistemaAprendizaje:
                             )
                         filter_obj = models.Filter(must=conditions)
             
-            # ✅ MÉTODO CORRECTO para v1.18.0
-            # NOTA: El parámetro se llama 'query_vector' y 'query_filter'
-            results = self.qdrant.search(
-                collection_name=self.collection,
-                query_vector=query_vector,  # ✅ Correcto: 'query_vector'
-                limit=limit,
-                query_filter=filter_obj,    # ✅ Correcto: 'query_filter'
-                with_payload=True,
-                with_vectors=False,
-                score_threshold=0.0  # Opcional
-            )
+            # Compatibilidad entre versiones del cliente: query_points (nuevo) y search (legado)
+            results = None
+            query_points_error = None
+
+            if hasattr(self.qdrant, "query_points"):
+                try:
+                    response = self.qdrant.query_points(
+                        collection_name=self.collection,
+                        query=query_vector,
+                        limit=limit,
+                        query_filter=filter_obj,
+                        with_payload=True,
+                        with_vectors=False,
+                        score_threshold=0.0,
+                    )
+                except TypeError:
+                    # Algunas versiones no exponen todos los kwargs opcionales.
+                    response = self.qdrant.query_points(
+                        collection_name=self.collection,
+                        query=query_vector,
+                        limit=limit,
+                        query_filter=filter_obj,
+                    )
+                except Exception as e:
+                    query_points_error = e
+                else:
+                    results = response.points if hasattr(response, "points") else response
+
+            if results is None and hasattr(self.qdrant, "search"):
+                try:
+                    results = self.qdrant.search(
+                        collection_name=self.collection,
+                        query_vector=query_vector,
+                        limit=limit,
+                        query_filter=filter_obj,
+                        with_payload=True,
+                        with_vectors=False,
+                        score_threshold=0.0,
+                    )
+                except TypeError:
+                    # Fallback para firmas antiguas sin kwargs extra.
+                    results = self.qdrant.search(
+                        collection_name=self.collection,
+                        query_vector=query_vector,
+                        limit=limit,
+                        query_filter=filter_obj,
+                    )
+
+            if results is None:
+                if query_points_error is not None:
+                    raise query_points_error
+                raise AttributeError("El cliente Qdrant no expone 'query_points' ni 'search'.")
             
             # Convertir resultados a formato amigable
             formatted_results = []

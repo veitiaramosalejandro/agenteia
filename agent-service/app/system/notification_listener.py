@@ -159,6 +159,34 @@ class NotificationApiListener:
 
         return payload
 
+    def _legacy_login_headers(self) -> Dict[str, str]:
+        headers = self._headers()
+        headers["X-Requested-With"] = "XMLHttpRequest"
+
+        cookie_parts = []
+        if settings.SOLIDSET_WORKSTATION_ID:
+            cookie_parts.append(f"IDWorkstation={settings.SOLIDSET_WORKSTATION_ID}")
+        if settings.SOLIDSET_WORKSTATION_NAME:
+            cookie_parts.append(f"NameWorkstation={settings.SOLIDSET_WORKSTATION_NAME}")
+        if settings.SOLIDSET_CLIENT_VERSION:
+            cookie_parts.append(f"ClientVersion={settings.SOLIDSET_CLIENT_VERSION}")
+        if settings.SOLIDSET_APPLICATION_ID:
+            cookie_parts.append(f"IDApplication={settings.SOLIDSET_APPLICATION_ID}")
+
+        if cookie_parts:
+            headers["Cookie"] = ";".join(cookie_parts)
+
+        return headers
+
+    def _legacy_login_form_payload(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "UserName": settings.SOLIDSET_LOGIN_USERNAME or "",
+            "Password": settings.SOLIDSET_LOGIN_PASSWORD or "",
+        }
+        if settings.SOLIDSET_TIMEZONE_ID:
+            payload["TimezoneID"] = settings.SOLIDSET_TIMEZONE_ID
+        return payload
+
     async def _ensure_login(self, client: httpx.AsyncClient) -> bool:
         payload = self._login_payload()
         if payload is None:
@@ -187,6 +215,20 @@ class NotificationApiListener:
                     return True
                 except Exception:
                     continue
+
+            # Fallback legado para instalaciones que solo exponen /User/LoginJson
+            # y requieren body x-www-form-urlencoded con cabeceras tipo navegador.
+            legacy_url = self._join_url(base_url, "/User/LoginJson")
+            try:
+                legacy_resp = await client.post(
+                    legacy_url,
+                    data=self._legacy_login_form_payload(),
+                    headers=self._legacy_login_headers(),
+                )
+                if legacy_resp.status_code < 400:
+                    return True
+            except Exception:
+                continue
 
         return bool(self.access_key)
 

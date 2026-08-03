@@ -409,12 +409,22 @@ def _get_active_dialogues() -> int:
 
 def _release_dialogue_resources_when_done(worker: threading.Thread) -> None:
     """Libera recursos de diálogo cuando un procesamiento tardío finalmente termina."""
+    grace_seconds = max(5, settings.DIALOGUE_TIMEOUT_RELEASE_GRACE_SECONDS)
     try:
-        worker.join()
+        worker.join(timeout=grace_seconds)
+        if worker.is_alive():
+            print(
+                "⚠️ Worker de diálogo sigue activo tras timeout y periodo de gracia. "
+                "Se liberan recursos para evitar bloqueo de nuevas conversaciones."
+            )
     finally:
         _finish_dialogue()
         app.state.active_dialogues = _get_active_dialogues()
-        _dialogue_slots.release()
+        try:
+            _dialogue_slots.release()
+        except ValueError:
+            # Evita que una doble liberación accidental tumbe el proceso.
+            pass
 
 
 async def _ciclo_aprendizaje_bd() -> None:
@@ -860,6 +870,12 @@ def handle_dialogue(req: ChatConversationRequest):
             user_message=req.message,
             agent_response=f"⚠️ Lo siento, ocurrió un error al procesar tu consulta. Por favor, intenta nuevamente o contacta al administrador del sistema. (Error: {str(e)[:100]})"
         )
+    finally:
+        if dialogue_started:
+            _finish_dialogue()
+            app.state.active_dialogues = _get_active_dialogues()
+        if slot_acquired:
+            _dialogue_slots.release()
 
 
 @app.post("/api/v1/agent/feedback", response_model=UserFeedbackResponse)
@@ -906,12 +922,6 @@ def submit_feedback(req: UserFeedbackRequest):
             status_code=500,
             detail=f"Error registrando feedback del usuario: {str(e)}"
         )
-    finally:
-        if dialogue_started:
-            _finish_dialogue()
-            app.state.active_dialogues = _get_active_dialogues()
-        if slot_acquired:
-            _dialogue_slots.release()
 
 
 @app.get("/api/v1/agent/audio-response")

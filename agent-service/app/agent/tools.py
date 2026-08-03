@@ -42,6 +42,32 @@ def _timestamp_suffix() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def _normalize_document_lines(content: str) -> list[str]:
+    text = (content or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in text.split("\n")]
+    # Compactar bloques vacíos consecutivos para evitar saltos excesivos.
+    normalized: list[str] = []
+    previous_blank = False
+    for line in lines:
+        is_blank = not line.strip()
+        if is_blank and previous_blank:
+            continue
+        normalized.append(line)
+        previous_blank = is_blank
+    return normalized
+
+
+def _infer_document_kind(title: str, content: str) -> str:
+    probe = f"{title} {content}".lower()
+    if any(word in probe for word in ["acta", "meeting", "minuta"]):
+        return "Acta"
+    if any(word in probe for word in ["resumen", "summary"]):
+        return "Resumen"
+    if any(word in probe for word in ["canal", "incidencia", "diagnost", "informe", "report"]):
+        return "Informe"
+    return "Documento"
+
+
 def _extract_cte_names(query: str) -> set[str]:
     cte_names = set()
     for match in re.finditer(r"(?:WITH|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s+AS\s*\(", query, flags=re.IGNORECASE):
@@ -412,7 +438,12 @@ def learn_new_fact(fact_description: str, category: str = "general") -> str:
 # 4. TOOLS: Generación de documentos (Word / Excel / PDF)
 # ---------------------------------------------------------------------------
 @tool
-def create_word_document(title: str, content: str, file_name: Optional[str] = None) -> str:
+def create_word_document(
+    title: str,
+    content: str,
+    file_name: Optional[str] = None,
+    document_kind: Optional[str] = None,
+) -> str:
     """
     CREA UN DOCUMENTO WORD (.docx) con un título y contenido libre.
 
@@ -422,14 +453,49 @@ def create_word_document(title: str, content: str, file_name: Optional[str] = No
     """
     try:
         from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Pt
 
         stem = _safe_file_stem(file_name or title, "documento")
         path = _generated_docs_dir() / f"{stem}_{_timestamp_suffix()}.docx"
 
+        kind = (document_kind or _infer_document_kind(title, content)).strip() or "Documento"
+        lines = _normalize_document_lines(content)
+
         doc = Document()
-        doc.add_heading(title.strip() or "Documento", level=1)
-        for block in (content or "").split("\n"):
-            doc.add_paragraph(block)
+        header = doc.add_heading(title.strip() or "Documento", level=1)
+        header.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        meta = doc.add_paragraph()
+        meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        meta_run = meta.add_run(f"Tipo: {kind} | Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        meta_run.italic = True
+        meta_run.font.size = Pt(10)
+
+        doc.add_paragraph("")
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                doc.add_paragraph("")
+                continue
+
+            # Títulos de sección: "Sección:" o líneas totalmente en mayúsculas.
+            is_section_title = stripped.endswith(":") or (stripped.upper() == stripped and len(stripped) <= 60)
+            if is_section_title:
+                p = doc.add_paragraph(stripped)
+                p.runs[0].bold = True
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                continue
+
+            # Viñetas básicas.
+            if stripped.startswith(("- ", "• ", "* ")):
+                p = doc.add_paragraph(stripped[2:].strip(), style="List Bullet")
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                continue
+
+            p = doc.add_paragraph(stripped)
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
         doc.save(path)
 
         return f"✅ Documento Word creado correctamente en: {path}"
@@ -443,6 +509,7 @@ def create_excel_document(
     rows_json: str,
     sheet_name: str = "Datos",
     file_name: Optional[str] = None,
+    document_kind: Optional[str] = None,
 ) -> str:
     """
     CREA UN ARCHIVO EXCEL (.xlsx) a partir de filas en JSON.
@@ -451,9 +518,13 @@ def create_excel_document(
     - Lista de objetos: [{"columna":"valor"}, {"columna":"valor2"}]
     """
     try:
+        from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+
         stem = _safe_file_stem(file_name or title, "reporte")
         safe_sheet = _safe_file_stem(sheet_name, "Datos")[:31]
         path = _generated_docs_dir() / f"{stem}_{_timestamp_suffix()}.xlsx"
+        kind = (document_kind or _infer_document_kind(title, rows_json)).strip() or "Documento"
 
         parsed = json.loads(rows_json) if rows_json else []
         if isinstance(parsed, dict):
@@ -466,13 +537,39 @@ def create_excel_document(
             df = pd.DataFrame([{"mensaje": "Sin datos para exportar"}])
 
         with pd.ExcelWriter(path, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name=safe_sheet)
+            start_row = 3
+            df.to_excel(writer, index=False, sheet_name=safe_sheet, startrow=start_row)
             worksheet = writer.sheets[safe_sheet]
-            from openpyxl.utils import get_column_letter
+
+            # Encabezado formal.
+            worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(1, len(df.columns)))
+            worksheet["A1"] = title.strip() or "Reporte"
+            worksheet["A2"] = f"Tipo: {kind} | Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            worksheet["A1"].font = Font(bold=True, size=14)
+            worksheet["A2"].font = Font(italic=True, size=10)
+
+            header_row = start_row + 1
+            thin = Side(style="thin", color="D9D9D9")
+            for col_idx in range(1, len(df.columns) + 1):
+                header_cell = worksheet.cell(row=header_row, column=col_idx)
+                header_cell.font = Font(bold=True, color="FFFFFF")
+                header_cell.fill = PatternFill("solid", fgColor="1F4E78")
+                header_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                header_cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
+
+            for row_idx in range(header_row + 1, header_row + 1 + len(df.index)):
+                for col_idx in range(1, len(df.columns) + 1):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+                    cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
+
             for idx, col in enumerate(df.columns, start=1):
                 max_len = max(len(str(col)), *(len(str(v)) for v in df[col].astype(str).tolist()))
                 letter = get_column_letter(idx)
                 worksheet.column_dimensions[letter].width = min(max(12, max_len + 2), 50)
+
+            worksheet.freeze_panes = worksheet.cell(row=header_row + 1, column=1)
+            worksheet.auto_filter.ref = worksheet.dimensions
 
         return f"✅ Archivo Excel creado correctamente en: {path}"
     except json.JSONDecodeError:
@@ -482,7 +579,12 @@ def create_excel_document(
 
 
 @tool
-def create_pdf_document(title: str, content: str, file_name: Optional[str] = None) -> str:
+def create_pdf_document(
+    title: str,
+    content: str,
+    file_name: Optional[str] = None,
+    document_kind: Optional[str] = None,
+) -> str:
     """
     CREA UN DOCUMENTO PDF (.pdf) con un título y contenido textual.
 
@@ -491,28 +593,97 @@ def create_pdf_document(title: str, content: str, file_name: Optional[str] = Non
     """
     try:
         from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
 
         stem = _safe_file_stem(file_name or title, "documento")
         path = _generated_docs_dir() / f"{stem}_{_timestamp_suffix()}.pdf"
+        kind = (document_kind or _infer_document_kind(title, content)).strip() or "Documento"
+        lines = _normalize_document_lines(content)
 
-        pdf = canvas.Canvas(str(path), pagesize=letter)
-        width, height = letter
-        y = height - 72
-        pdf.setFont("Helvetica-Bold", 14)
-        pdf.drawString(72, y, (title or "Documento").strip()[:90])
+        doc = SimpleDocTemplate(
+            str(path),
+            pagesize=letter,
+            leftMargin=54,
+            rightMargin=54,
+            topMargin=54,
+            bottomMargin=54,
+        )
 
-        y -= 30
-        pdf.setFont("Helvetica", 11)
-        for line in (content or "").split("\n"):
-            if y < 72:
-                pdf.showPage()
-                pdf.setFont("Helvetica", 11)
-                y = height - 72
-            pdf.drawString(72, y, str(line)[:110])
-            y -= 16
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            "DocTitle",
+            parent=styles["Title"],
+            alignment=TA_CENTER,
+            fontName="Helvetica-Bold",
+            fontSize=16,
+            leading=20,
+            spaceAfter=6,
+        )
+        meta_style = ParagraphStyle(
+            "DocMeta",
+            parent=styles["Normal"],
+            alignment=TA_CENTER,
+            fontName="Helvetica-Oblique",
+            fontSize=9,
+            textColor=colors.HexColor("#555555"),
+            leading=12,
+            spaceAfter=10,
+        )
+        section_style = ParagraphStyle(
+            "DocSection",
+            parent=styles["Heading3"],
+            alignment=TA_LEFT,
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            leading=14,
+            spaceBefore=8,
+            spaceAfter=4,
+        )
+        body_style = ParagraphStyle(
+            "DocBody",
+            parent=styles["Normal"],
+            alignment=TA_JUSTIFY,
+            fontName="Helvetica",
+            fontSize=10.5,
+            leading=14,
+            spaceAfter=6,
+        )
+        bullet_style = ParagraphStyle(
+            "DocBullet",
+            parent=body_style,
+            leftIndent=14,
+            bulletIndent=2,
+            spaceAfter=4,
+        )
 
-        pdf.save()
+        story = [
+            Paragraph((title or "Documento").strip(), title_style),
+            Paragraph(f"Tipo: {kind} | Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}", meta_style),
+            HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#D0D7DE"), spaceAfter=10),
+        ]
+
+        for raw in lines:
+            stripped = raw.strip()
+            if not stripped:
+                story.append(Spacer(1, 4))
+                continue
+
+            safe = stripped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            is_section_title = safe.endswith(":") or (safe.upper() == safe and len(safe) <= 60)
+            if is_section_title:
+                story.append(Paragraph(safe, section_style))
+                continue
+
+            if safe.startswith(("- ", "• ", "* ")):
+                story.append(Paragraph(safe[2:].strip(), bullet_style, bulletText="•"))
+                continue
+
+            story.append(Paragraph(safe, body_style))
+
+        doc.build(story)
         return f"✅ Documento PDF creado correctamente en: {path}"
     except Exception as e:
         return f"Error creando PDF: {str(e)}"
