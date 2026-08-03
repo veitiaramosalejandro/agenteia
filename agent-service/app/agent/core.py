@@ -22,6 +22,8 @@ from app.agent.tools import (
     create_word_document,
     create_excel_document,
     create_pdf_document,
+    solidset_send_chat_message,
+    solidset_update_reaction,
 )
 from app.config import settings
 from app.system.learning import SistemaAprendizaje
@@ -62,6 +64,8 @@ class MachiningAgent:
             "create_word_document": create_word_document,
             "create_excel_document": create_excel_document,
             "create_pdf_document": create_pdf_document,
+            "solidset_send_chat_message": solidset_send_chat_message,
+            "solidset_update_reaction": solidset_update_reaction,
         }
         
         # Vincular herramientas al LLM

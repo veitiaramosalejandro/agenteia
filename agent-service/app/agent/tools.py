@@ -6,6 +6,7 @@ import uuid
 import hashlib
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 import pandas as pd
@@ -40,6 +41,83 @@ def _safe_file_stem(value: Optional[str], fallback: str) -> str:
 
 def _timestamp_suffix() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _solidset_candidate_base_urls(base_url: str) -> list[str]:
+    if not base_url:
+        return []
+
+    urls = [base_url.rstrip("/")]
+    parsed = urlparse(base_url)
+    hostname = (parsed.hostname or "").lower()
+    running_in_container = os.path.exists("/.dockerenv") or os.getenv("RUNNING_IN_DOCKER") == "1"
+    if running_in_container and hostname in {"localhost", "127.0.0.1"}:
+        alt = base_url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+        alt = alt.rstrip("/")
+        if alt not in urls:
+            urls.append(alt)
+    return urls
+
+
+def _solidset_action_headers() -> dict:
+    headers = {
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
+    cookie_parts = []
+    if settings.SOLIDSET_WORKSTATION_ID:
+        cookie_parts.append(f"IDWorkstation={settings.SOLIDSET_WORKSTATION_ID}")
+    if settings.SOLIDSET_WORKSTATION_NAME:
+        cookie_parts.append(f"NameWorkstation={settings.SOLIDSET_WORKSTATION_NAME}")
+    if settings.SOLIDSET_CLIENT_VERSION:
+        cookie_parts.append(f"ClientVersion={settings.SOLIDSET_CLIENT_VERSION}")
+    if settings.SOLIDSET_APPLICATION_ID:
+        cookie_parts.append(f"IDApplication={settings.SOLIDSET_APPLICATION_ID}")
+    if cookie_parts:
+        headers["Cookie"] = ";".join(cookie_parts)
+
+    return headers
+
+
+def _solidset_login(client: httpx.Client, base_url: str) -> bool:
+    if not settings.SOLIDSET_LOGIN_USERNAME and not settings.SOLIDSET_LOGIN_HASHPASS:
+        return False
+
+    # API login (JSON)
+    payload = {
+        "username": settings.SOLIDSET_LOGIN_USERNAME or None,
+        "pass": settings.SOLIDSET_LOGIN_PASSWORD or None,
+        "hashPass": settings.SOLIDSET_LOGIN_HASHPASS or None,
+        "accessKey": True,
+        "generateAccessKey": False,
+    }
+    if settings.SOLIDSET_LOGIN_RESOURCE_ID:
+        payload["resource"] = settings.SOLIDSET_LOGIN_RESOURCE_ID
+
+    for endpoint in ["/api/User/LoginRaw", "/api/User/Login"]:
+        try:
+            resp = client.post(f"{base_url}{endpoint}", json=payload, headers=_solidset_action_headers())
+            if resp.status_code < 400:
+                return True
+        except Exception:
+            continue
+
+    # Legacy login (form)
+    legacy_payload = {
+        "UserName": settings.SOLIDSET_LOGIN_USERNAME or "",
+        "Password": settings.SOLIDSET_LOGIN_PASSWORD or "",
+        "TimezoneID": settings.SOLIDSET_TIMEZONE_ID or "GMT Standard Time",
+    }
+    try:
+        legacy = client.post(
+            f"{base_url}/User/LoginJson",
+            data=legacy_payload,
+            headers=_solidset_action_headers(),
+        )
+        return legacy.status_code < 400
+    except Exception:
+        return False
 
 
 def _normalize_document_lines(content: str) -> list[str]:
@@ -307,6 +385,153 @@ def fetch_external_api(endpoint_url: str, method: str = "GET", payload: Optional
         return f"Error HTTP {exc.response.status_code}: {exc.response.text}"
     except Exception as e:
         return f"Error de conexión con la API: {str(e)}"
+
+
+@tool
+def solidset_send_chat_message(
+    canal_id: str,
+    mensaje: str,
+    importance: int = 1,
+    kind: int = 60,
+    visibility_level: int = 0,
+    confirm: bool = False,
+) -> str:
+    """
+    ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
+
+    Reglas:
+    - Solo se ejecuta cuando SOLIDSET_USER_ACTIONS_ENABLED=true.
+    - Requiere confirm=true para evitar envíos accidentales.
+    - Usa credenciales SOLIDSET_LOGIN_* del .env.
+    """
+    if not settings.SOLIDSET_USER_ACTIONS_ENABLED:
+        return (
+            "Acción bloqueada: habilita SOLIDSET_USER_ACTIONS_ENABLED=true en .env "
+            "para permitir operaciones de escritura en SOLIDSET."
+        )
+
+    if not confirm:
+        return (
+            "⚠️ Confirmación requerida. Repite la acción con confirm=true "
+            "si deseas enviar el mensaje al canal real de SOLIDSET."
+        )
+
+    channel = (canal_id or "").strip()
+    text = (mensaje or "").strip()
+    if not channel:
+        return "Error: canal_id es obligatorio."
+    if not text:
+        return "Error: mensaje está vacío."
+
+    chat_base = (settings.SOLIDSET_CHAT_BASE_URL or settings.NOTIF_API_BASE_URL or "").rstrip("/")
+    candidates = _solidset_candidate_base_urls(chat_base)
+    if not candidates:
+        return "Error: falta SOLIDSET_CHAT_BASE_URL o NOTIF_API_BASE_URL en configuración."
+
+    params = {
+        "Importance": int(importance),
+        "Kind": int(kind),
+        "Destiny.WorkRoom": channel,
+        "VisibilityLevel": int(visibility_level),
+        "RawMessage": text,
+    }
+
+    last_error = ""
+    for base in candidates:
+        try:
+            with httpx.Client(timeout=15.0, verify=settings.NOTIF_API_VERIFY_TLS, follow_redirects=True) as client:
+                logged_in = _solidset_login(client, base)
+                if not logged_in:
+                    last_error = f"No se pudo autenticar en {base}"
+                    continue
+
+                response = client.post(
+                    f"{base}/Chat/SendMessageForm",
+                    params=params,
+                    headers=_solidset_action_headers(),
+                )
+                if response.status_code < 400:
+                    return (
+                        f"✅ Mensaje enviado a canal {channel}. "
+                        f"Endpoint: {base}/Chat/SendMessageForm"
+                    )
+                last_error = f"HTTP {response.status_code} -> {response.text[:200]}"
+        except Exception as e:
+            last_error = str(e)
+
+    return f"Error enviando mensaje a SOLIDSET: {last_error or 'sin detalle'}"
+
+
+@tool
+def solidset_update_reaction(
+    id_chat: int,
+    reaction: str,
+    id_user: Optional[str] = None,
+    confirm: bool = False,
+) -> str:
+    """
+    REGISTRA UNA REACCIÓN EN UN MENSAJE/DUDA DEL CHAT DE SOLIDSET.
+
+    Reglas:
+    - Solo se ejecuta cuando SOLIDSET_USER_ACTIONS_ENABLED=true.
+    - Requiere confirm=true para evitar cambios accidentales.
+    - Usa credenciales SOLIDSET_LOGIN_* del .env.
+    """
+    if not settings.SOLIDSET_USER_ACTIONS_ENABLED:
+        return (
+            "Acción bloqueada: habilita SOLIDSET_USER_ACTIONS_ENABLED=true en .env "
+            "para permitir operaciones de escritura en SOLIDSET."
+        )
+
+    if not confirm:
+        return (
+            "⚠️ Confirmación requerida. Repite la acción con confirm=true "
+            "si deseas registrar la reacción en SOLIDSET."
+        )
+
+    if not isinstance(id_chat, int) or id_chat <= 0:
+        return "Error: id_chat debe ser un entero positivo."
+
+    reaction_value = (reaction or "").strip()
+    if not reaction_value:
+        return "Error: reaction está vacía."
+
+    chat_base = (settings.SOLIDSET_CHAT_BASE_URL or settings.NOTIF_API_BASE_URL or "").rstrip("/")
+    candidates = _solidset_candidate_base_urls(chat_base)
+    if not candidates:
+        return "Error: falta SOLIDSET_CHAT_BASE_URL o NOTIF_API_BASE_URL en configuración."
+
+    payload = {
+        "IDChat": id_chat,
+        "Reaction": reaction_value,
+    }
+    if id_user:
+        payload["IDUser"] = id_user.strip()
+
+    last_error = ""
+    for base in candidates:
+        try:
+            with httpx.Client(timeout=15.0, verify=settings.NOTIF_API_VERIFY_TLS, follow_redirects=True) as client:
+                logged_in = _solidset_login(client, base)
+                if not logged_in:
+                    last_error = f"No se pudo autenticar en {base}"
+                    continue
+
+                response = client.post(
+                    f"{base}/chat/update-reaction",
+                    json=payload,
+                    headers=_solidset_action_headers(),
+                )
+                if response.status_code < 400:
+                    return (
+                        f"✅ Reacción '{reaction_value}' registrada en chat {id_chat}. "
+                        f"Endpoint: {base}/chat/update-reaction"
+                    )
+                last_error = f"HTTP {response.status_code} -> {response.text[:200]}"
+        except Exception as e:
+            last_error = str(e)
+
+    return f"Error registrando reacción en SOLIDSET: {last_error or 'sin detalle'}"
 
 
 # ---------------------------------------------------------------------------

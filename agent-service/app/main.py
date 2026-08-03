@@ -496,9 +496,10 @@ async def _ciclo_notificaciones_api() -> None:
 
     while True:
         try:
-            # Evita competir con diálogos en alta carga.
+            # Evita competir con diálogos solo en alta carga para no perder contexto en tiempo real.
             chats_activos = _get_active_dialogues()
-            if chats_activos > 0:
+            max_dialogues = max(1, settings.DIALOGUE_MAX_CONCURRENT)
+            if chats_activos >= max_dialogues:
                 await asyncio.sleep(min(intervalo, max(5, settings.DB_STUDY_IDLE_CHECK_SECONDS)))
                 continue
 
