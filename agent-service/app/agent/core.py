@@ -22,8 +22,20 @@ from app.agent.tools import (
     create_word_document,
     create_excel_document,
     create_pdf_document,
+    solidset_authenticate,
+    solidset_chat_get_messages,
+    solidset_chat_get_targets,
+    solidset_chat_get_tasks_for_channel,
+    solidset_featureflag_get_on,
+    solidset_featureflag_get_resource_flags,
+    solidset_logout,
+    solidset_point_get_activity_info,
+    solidset_point_get_task_info,
+    solidset_point_read_tasks,
+    solidset_request,
     solidset_send_chat_message,
     solidset_update_reaction,
+    solidset_vehicle_info,
 )
 from app.config import settings
 from app.system.learning import SistemaAprendizaje
@@ -64,8 +76,20 @@ class MachiningAgent:
             "create_word_document": create_word_document,
             "create_excel_document": create_excel_document,
             "create_pdf_document": create_pdf_document,
+            "solidset_authenticate": solidset_authenticate,
+            "solidset_chat_get_messages": solidset_chat_get_messages,
+            "solidset_chat_get_targets": solidset_chat_get_targets,
+            "solidset_chat_get_tasks_for_channel": solidset_chat_get_tasks_for_channel,
+            "solidset_featureflag_get_on": solidset_featureflag_get_on,
+            "solidset_featureflag_get_resource_flags": solidset_featureflag_get_resource_flags,
+            "solidset_logout": solidset_logout,
+            "solidset_point_get_activity_info": solidset_point_get_activity_info,
+            "solidset_point_get_task_info": solidset_point_get_task_info,
+            "solidset_point_read_tasks": solidset_point_read_tasks,
+            "solidset_request": solidset_request,
             "solidset_send_chat_message": solidset_send_chat_message,
             "solidset_update_reaction": solidset_update_reaction,
+            "solidset_vehicle_info": solidset_vehicle_info,
         }
         
         # Vincular herramientas al LLM

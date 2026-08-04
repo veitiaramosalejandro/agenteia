@@ -1,0 +1,1772 @@
+{
+  "info": {
+    "_postman_id": "924a31ef-9539-4177-8b34-3dea5fc7ca17",
+    "name": "SRVAndroidTeste",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "57098105",
+    "_collection_link": "https://go.postman.co/collection/57098105-924a31ef-9539-4177-8b34-3dea5fc7ca17?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "ToggleTestingMode",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/RestApi/ToggleTestingMode",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "RestApi",
+            "ToggleTestingMode"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "User/LoginJson",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Cookie",
+            "value": "IDWorkstation=1;NameWorkstation=XiaomiMiA2Lite28(9) ;ClientVersion=Android.20.0.0; IDApplication=C9F19A23-36C2-430C-B939-CB495F975D36"
+          },
+          {
+            "key": "TimezoneID",
+            "value": "",
+            "disabled": true
+          },
+          {
+            "key": "X-Requested-With",
+            "value": "XMLHttpRequest",
+            "disabled": true
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded",
+            "disabled": true
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "UserName",
+              "value": "alejandro.veitia",
+              "type": "text"
+            },
+            {
+              "key": "Password",
+              "value": "alejandro.veitia",
+              "type": "text"
+            },
+            {
+              "key": "TimezoneID",
+              "value": "GMT Standard Time",
+              "type": "text"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json; charset=UTF-8",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/User/LoginJson",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "User",
+            "LoginJson"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "User/LogOffJson",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Requested-With",
+            "value": "XMLHttpRequest"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": []
+        },
+        "url": {
+          "raw": "http://localhost:52130/User/LogOffJson",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "User",
+            "LogOffJson"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Home/ClearFireBaseTokenByResource",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Home/ClearFireBaseTokenByResource",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Home",
+            "ClearFireBaseTokenByResource"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/GetAllChatTargets",
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Cookie",
+            "value": "IDWorkstation=1;NameWorkstation=Android.1;ClientVersion=Android.20.0.0"
+          },
+          {
+            "key": "TimezoneID",
+            "value": "",
+            "disabled": true
+          },
+          {
+            "key": "X-Requested-With",
+            "value": "XMLHttpRequest"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "UserName",
+              "value": "ricardo.oliveira",
+              "type": "text"
+            },
+            {
+              "key": "Password",
+              "value": "admin",
+              "type": "text"
+            },
+            {
+              "key": "TimezoneID",
+              "value": "GMT Standard Time",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetAllChatTargets?mode=1&includeUserReadPointers=false&includeTabs=false",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetAllChatTargets"
+          ],
+          "query": [
+            {
+              "key": "mode",
+              "value": "1"
+            },
+            {
+              "key": "includeUserReadPointers",
+              "value": "false"
+            },
+            {
+              "key": "includeTabs",
+              "value": "false"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/ChatMessages",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/ChatMessages?Options=2&Kind=1&Latest=true&IDLoginCurrent=1790fc78-023d-4506-a7e8-5c030e9386d1&SelectAll=false&LatestCount=20&LatestIDChat=0&SelectedWorkRooms[0]=debf64b2-3b3e-eb11-870c-d850e63f5833",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "ChatMessages"
+          ],
+          "query": [
+            {
+              "key": "Options",
+              "value": "2"
+            },
+            {
+              "key": "Kind",
+              "value": "1"
+            },
+            {
+              "key": "Latest",
+              "value": "true"
+            },
+            {
+              "key": "IDLoginCurrent",
+              "value": "1790fc78-023d-4506-a7e8-5c030e9386d1"
+            },
+            {
+              "key": "SelectAll",
+              "value": "false"
+            },
+            {
+              "key": "LatestCount",
+              "value": "20"
+            },
+            {
+              "key": "LatestIDChat",
+              "value": "0"
+            },
+            {
+              "key": "SelectedWorkRooms[0]",
+              "value": "debf64b2-3b3e-eb11-870c-d850e63f5833",
+              "description": "SolidSET Communicator"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "/Chat/ChatMessages(BODY)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "Options",
+              "value": "14",
+              "type": "text"
+            },
+            {
+              "key": "Kind",
+              "value": "1",
+              "type": "text"
+            },
+            {
+              "key": "Latest",
+              "value": "true",
+              "type": "text"
+            },
+            {
+              "key": "SelectedWorkRooms[0]",
+              "value": "6983dcea-d1ba-4de5-9d7b-53bcc00b65b4",
+              "type": "text",
+              "description": "T-Menu"
+            },
+            {
+              "key": "SelectedWorkRooms[0]",
+              "value": "9ec464b2-3b3e-eb11-870c-d850e63f5833",
+              "type": "text",
+              "description": "Des. ERP",
+              "disabled": true
+            },
+            {
+              "key": "IDLoginCurrent",
+              "value": "bb132fdd-97cb-4784-8d94-1c6f1c27b090",
+              "type": "text"
+            },
+            {
+              "key": "LatestCount",
+              "value": "10",
+              "type": "text"
+            },
+            {
+              "key": "LatestIDChat",
+              "value": "0",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/Chat/ChatMessages",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "ChatMessages"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/UpdateTaskForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "IDTask",
+              "value": "51834270-7dff-eb11-a3e2-60a44c4f53f0",
+              "type": "text"
+            },
+            {
+              "key": "Description",
+              "value": "123456",
+              "type": "text"
+            },
+            {
+              "key": "ShortName",
+              "value": "43453452 SN",
+              "type": "text"
+            },
+            {
+              "key": "Importance",
+              "value": "",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/Chat/UpdateTaskForm",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "UpdateTaskForm"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/GetTasksForChannelV2Form",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "https://android.isicom.pt:52130/Chat/GetTasksForChannelV2Form?MinPriority=1&OrderBy[0][Field]=4&Assignments=0&Following=0&OrderBy[0][SortOrder]=1&MinImportance=1&MaxImportance=55&SelectAll=false&MinComplexity=1&RunningStates[0]=2723&RunningStates[1]=2724&RunningStates[2]=2725&RunningStates[3]=2731&RunningStates[4]=2732&MaxPriority=200&MaxComplexity=55&RequestKind=1&RunningStates[0]=2733&IDWorkRooms[0]=6983dcea-d1ba-4de5-9d7b-53bcc00b65b4&Opts[0].FullVoteData=true",
+          "protocol": "https",
+          "host": [
+            "android",
+            "isicom",
+            "pt"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetTasksForChannelV2Form"
+          ],
+          "query": [
+            {
+              "key": "MinPriority",
+              "value": "1"
+            },
+            {
+              "key": "OrderBy[0][Field]",
+              "value": "4"
+            },
+            {
+              "key": "Assignments",
+              "value": "0"
+            },
+            {
+              "key": "Following",
+              "value": "0"
+            },
+            {
+              "key": "OrderBy[0][SortOrder]",
+              "value": "1"
+            },
+            {
+              "key": "MinImportance",
+              "value": "1"
+            },
+            {
+              "key": "MaxImportance",
+              "value": "55"
+            },
+            {
+              "key": "SelectAll",
+              "value": "false"
+            },
+            {
+              "key": "MinComplexity",
+              "value": "1"
+            },
+            {
+              "key": "RunningStates[0]",
+              "value": "2723"
+            },
+            {
+              "key": "RunningStates[1]",
+              "value": "2724"
+            },
+            {
+              "key": "RunningStates[2]",
+              "value": "2725"
+            },
+            {
+              "key": "RunningStates[3]",
+              "value": "2731"
+            },
+            {
+              "key": "RunningStates[4]",
+              "value": "2732"
+            },
+            {
+              "key": "MaxPriority",
+              "value": "200"
+            },
+            {
+              "key": "MaxComplexity",
+              "value": "55"
+            },
+            {
+              "key": "RequestKind",
+              "value": "1"
+            },
+            {
+              "key": "RunningStates[0]",
+              "value": "2733"
+            },
+            {
+              "key": "IDWorkRooms[0]",
+              "value": "684bfbc3-22df-eb11-8727-d850e63f5833",
+              "disabled": true
+            },
+            {
+              "key": "IDWorkRooms[0]",
+              "value": "6983dcea-d1ba-4de5-9d7b-53bcc00b65b4",
+              "description": "T-MENU"
+            },
+            {
+              "key": "IDWorkRooms[0]",
+              "value": "9ec464b2-3b3e-eb11-870c-d850e63f5833",
+              "description": "ERP DEV",
+              "disabled": true
+            },
+            {
+              "key": "Opts[0].FullVoteData",
+              "value": "true"
+            },
+            {
+              "key": "IDWorkRooms[0]",
+              "value": "64c764b2-3b3e-eb11-870c-d850e63f5833",
+              "description": "private Ricardo Oliveira",
+              "disabled": true
+            },
+            {
+              "key": "WithChannels",
+              "value": "1",
+              "disabled": true
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "/Chat/GetActivitiesForChannelForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetActivitiesForChannelForm?RequestKind=1&RunningStates[1]=2725&RunningStates[0]=2724&RunningStates[2]=2731&Assignments=0&Following=0&SelectAll=false&IDWorkRooms[0]=9ec464b2-3b3e-eb11-870c-d850e63f5833&Types=&WithChannels=1",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetActivitiesForChannelForm"
+          ],
+          "query": [
+            {
+              "key": "RequestKind",
+              "value": "1"
+            },
+            {
+              "key": "RunningStates[1]",
+              "value": "2725"
+            },
+            {
+              "key": "RunningStates[0]",
+              "value": "2724"
+            },
+            {
+              "key": "RunningStates[2]",
+              "value": "2731"
+            },
+            {
+              "key": "Assignments",
+              "value": "0"
+            },
+            {
+              "key": "Following",
+              "value": "0"
+            },
+            {
+              "key": "SelectAll",
+              "value": "false"
+            },
+            {
+              "key": "IDWorkRooms[0]",
+              "value": "9ec464b2-3b3e-eb11-870c-d850e63f5833",
+              "description": "ERP DEV"
+            },
+            {
+              "key": "Types",
+              "value": ""
+            },
+            {
+              "key": "WithChannels",
+              "value": "1"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Point/GetActivityInfo",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Point/GetActivityInfo?idActivity=2436645&idModule=78c873aa-bdf4-4f1a-9f63-6a8fbb788b95",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Point",
+            "GetActivityInfo"
+          ],
+          "query": [
+            {
+              "key": "idActivity",
+              "value": "2436645"
+            },
+            {
+              "key": "idModule",
+              "value": "78c873aa-bdf4-4f1a-9f63-6a8fbb788b95"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "point/GetMyTeams",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/point/GetMyTeams",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "point",
+            "GetMyTeams"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Point/ReadPointTask",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Point/ReadPointTask?readActivities=true&res[0]=5226aeac-d518-4e74-84c3-e6f982729b59&onlyTasksAssignedToMe=false&wPart=true&plannedStartDate=2021-6-01T00:00:00&plannedEndDate=2022-7-01T00:00:00&onlyAct=true&thirdParties=false",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Point",
+            "ReadPointTask"
+          ],
+          "query": [
+            {
+              "key": "readActivities",
+              "value": "true"
+            },
+            {
+              "key": "res[0]",
+              "value": "5226aeac-d518-4e74-84c3-e6f982729b59"
+            },
+            {
+              "key": "onlyTasksAssignedToMe",
+              "value": "false"
+            },
+            {
+              "key": "wPart",
+              "value": "true"
+            },
+            {
+              "key": "plannedStartDate",
+              "value": "2021-6-01T00:00:00"
+            },
+            {
+              "key": "plannedEndDate",
+              "value": "2022-7-01T00:00:00"
+            },
+            {
+              "key": "onlyAct",
+              "value": "true"
+            },
+            {
+              "key": "thirdParties",
+              "value": "false"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Point/ReadPointTask",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Point/ReadPointTask?readActivities=true&res[0]=5226aeac-d518-4e74-84c3-e6f982729b59&onlyTasksAssignedToMe=true&wPart=false&wPointOpts=true&onlyAct=false",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Point",
+            "ReadPointTask"
+          ],
+          "query": [
+            {
+              "key": "readActivities",
+              "value": "true"
+            },
+            {
+              "key": "res[0]",
+              "value": "5226aeac-d518-4e74-84c3-e6f982729b59"
+            },
+            {
+              "key": "onlyTasksAssignedToMe",
+              "value": "true"
+            },
+            {
+              "key": "wPart",
+              "value": "false"
+            },
+            {
+              "key": "wPointOpts",
+              "value": "true"
+            },
+            {
+              "key": "onlyAct",
+              "value": "false"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Point/OptionsPointTotals",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Point/OptionsPointTotals",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Point",
+            "OptionsPointTotals"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Point/ReadSchedulerPoint",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "viewName",
+              "value": "timeline",
+              "type": "text"
+            },
+            {
+              "key": "start",
+              "value": "01/01/2022 00:00",
+              "type": "text"
+            },
+            {
+              "key": "end",
+              "value": "01/08/2022 00:00",
+              "type": "text"
+            },
+            {
+              "key": "",
+              "value": "",
+              "type": "text",
+              "disabled": true
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/Point/ReadSchedulerPointV2",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Point",
+            "ReadSchedulerPointV2"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Point/OptionsPoint",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Point/OptionsPoint",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Point",
+            "OptionsPoint"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Point/Android_GetAccessesList",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Point/Android_GetAccessesList?DoFilterAccesses=false&AccessesMask=15&Teams=[]&Roles=[]&Resources=[]",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Point",
+            "Android_GetAccessesList"
+          ],
+          "query": [
+            {
+              "key": "DoFilterAccesses",
+              "value": "false"
+            },
+            {
+              "key": "AccessesMask",
+              "value": "15"
+            },
+            {
+              "key": "Teams",
+              "value": "[]"
+            },
+            {
+              "key": "Roles",
+              "value": "[]"
+            },
+            {
+              "key": "Resources",
+              "value": "[]"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "NewComponent/GetUserVars",
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "idLogin",
+              "value": "1790fc78-023d-4506-a7e8-5c030e9386d1",
+              "type": "text"
+            },
+            {
+              "key": "idResource",
+              "value": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+              "type": "text"
+            },
+            {
+              "key": "varName",
+              "value": "patt",
+              "type": "text",
+              "disabled": true
+            },
+            {
+              "key": "varNames",
+              "value": "patt, patt2",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/NewComponent/GetUserVars",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "NewComponent",
+            "GetUserVars"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "NewComponent/GetUserVar",
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "idLogin",
+              "value": "1790fc78-023d-4506-a7e8-5c030e9386d1",
+              "type": "text"
+            },
+            {
+              "key": "idResource",
+              "value": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+              "type": "text"
+            },
+            {
+              "key": "varName",
+              "value": "patt",
+              "type": "text"
+            },
+            {
+              "key": "varNames",
+              "value": "{patt, patt2}",
+              "type": "text",
+              "disabled": true
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/NewComponent/GetUserVar",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "NewComponent",
+            "GetUserVar"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "NewComponent/StoreUserVar",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/NewComponent/StoreUserVar?idLogin=bb132fdd-97cb-4784-8d94-1c6f1c27b090&idResource=5226aeac-d518-4e74-84c3-e6f982729b59&varName=patt2&varValue=1111",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "NewComponent",
+            "StoreUserVar"
+          ],
+          "query": [
+            {
+              "key": "idLogin",
+              "value": "bb132fdd-97cb-4784-8d94-1c6f1c27b090"
+            },
+            {
+              "key": "idResource",
+              "value": "5226aeac-d518-4e74-84c3-e6f982729b59"
+            },
+            {
+              "key": "varName",
+              "value": "patt2"
+            },
+            {
+              "key": "varValue",
+              "value": "1111"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "NewComponent/ReadSchedulerTimesExtended",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "scheduler[0].start",
+              "value": "01/01/2021 00:00",
+              "type": "text"
+            },
+            {
+              "key": "scheduler[0].end",
+              "value": "01/02/2021 00:00",
+              "type": "text"
+            },
+            {
+              "key": "scheduler[0].resource",
+              "value": "5226aeac-d518-4e74-84c3-e6f982729b59",
+              "type": "text"
+            },
+            {
+              "key": "scheduler[0].onlyOwnResource",
+              "value": "true",
+              "type": "text"
+            },
+            {
+              "key": "MouthDate",
+              "value": "2021-6-01T00:00:00",
+              "type": "text"
+            },
+            {
+              "key": "viewName",
+              "value": "timeline",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/NewComponent/ReadSchedulerTimesExtended",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "NewComponent",
+            "ReadSchedulerTimesExtended"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "NewComponent/RenderReportPdf",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "idReport",
+              "value": "d6c1c2e1-407c-41ac-acaf-647a873ef0f9",
+              "type": "text"
+            },
+            {
+              "key": "idModule",
+              "value": "241a28aa-2dd2-481a-bfe0-86c800c45ed5",
+              "type": "text"
+            },
+            {
+              "key": "idRegister",
+              "value": "153e5134-bc2d-ec11-8730-d850e63f5833",
+              "type": "text"
+            },
+            {
+              "key": "open",
+              "value": "true",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/NewComponent/RenderReportPdf",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "NewComponent",
+            "RenderReportPdf"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "/Chat/SendMessageForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/SendMessageForm?Importance=1&Kind=60&Destiny.WorkRoom=debf64b2-3b3e-eb11-870c-d850e63f5833&VisibilityLevel=0&RawMessage=teste",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "SendMessageForm"
+          ],
+          "query": [
+            {
+              "key": "Importance",
+              "value": "1"
+            },
+            {
+              "key": "Kind",
+              "value": "60"
+            },
+            {
+              "key": "Destiny.WorkRoom",
+              "value": "debf64b2-3b3e-eb11-870c-d850e63f5833"
+            },
+            {
+              "key": "VisibilityLevel",
+              "value": "0"
+            },
+            {
+              "key": "RawMessage",
+              "value": "teste"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "/Chat/SendMessageScheduledForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/SendMessageScheduledForm?Req.Importance=1&Req.Kind=60&Req.Destiny.WorkRoom=6983dcea-d1ba-4de5-9d7b-53bcc00b65b4&Req.VisibilityLevel=0&Req.RawMessage=comment task&Req.TaskData.IDTask=65aa57ba-b82d-ec11-8730-d850e63f5833&Req.VisibilityLevel=0&startDate=12/05/2021 16:00",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "SendMessageScheduledForm"
+          ],
+          "query": [
+            {
+              "key": "Req.Importance",
+              "value": "1"
+            },
+            {
+              "key": "Req.Kind",
+              "value": "60"
+            },
+            {
+              "key": "Req.Destiny.WorkRoom",
+              "value": "6983dcea-d1ba-4de5-9d7b-53bcc00b65b4"
+            },
+            {
+              "key": "Req.VisibilityLevel",
+              "value": "0"
+            },
+            {
+              "key": "Req.RawMessage",
+              "value": "comment task"
+            },
+            {
+              "key": "Req.TaskData.IDTask",
+              "value": "65aa57ba-b82d-ec11-8730-d850e63f5833"
+            },
+            {
+              "key": "Req.VisibilityLevel",
+              "value": "0"
+            },
+            {
+              "key": "startDate",
+              "value": "12/05/2021 16:00"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "/Chat/GetAllTaskVotes",
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "idTask",
+              "value": "30da72a6-ca3b-ec11-8733-d850e63f5833",
+              "type": "text",
+              "disabled": true
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetAllTaskVotes?idTask=c77bc601-cc3b-ec11-8733-d850e63f5833",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetAllTaskVotes"
+          ],
+          "query": [
+            {
+              "key": "idTask",
+              "value": "c77bc601-cc3b-ec11-8733-d850e63f5833"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/GetActivityEditionData",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetActivityEditionData",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetActivityEditionData"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/GetTaskEditionData",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetTaskEditionData",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetTaskEditionData"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/GetEmailInfo",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetEmailInfo?IDEmail=0bafb6fa-8cee-413d-9f18-06701fa3e3b1",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetEmailInfo"
+          ],
+          "query": [
+            {
+              "key": "IDEmail",
+              "value": "0bafb6fa-8cee-413d-9f18-06701fa3e3b1",
+              "description": "c\\ anexos"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "/Chat/GetEmailList",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetEmailList?page=0&size=10&SearchTerm=&order=1&idChannel=9ec464b2-3b3e-eb11-870c-d850e63f5833",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetEmailList"
+          ],
+          "query": [
+            {
+              "key": "page",
+              "value": "0"
+            },
+            {
+              "key": "size",
+              "value": "10"
+            },
+            {
+              "key": "SearchTerm",
+              "value": ""
+            },
+            {
+              "key": "order",
+              "value": "1",
+              "description": "Order {0 = ASC, 1 = Desc} Default = 1"
+            },
+            {
+              "key": "idChannel",
+              "value": "9ec464b2-3b3e-eb11-870c-d850e63f5833",
+              "description": "SolidSet ERP Desenv"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/GetQuestionsForChannelForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetQuestionsForChannelForm?FilterSendReceive=1&FilterPending=false&FilterClosed=false&FilterAssignedQuestions=false&FilterUnassignedQuestions=false&IDWorkRoom=684bfbc3-22df-eb11-8727-d850e63f5833",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetQuestionsForChannelForm"
+          ],
+          "query": [
+            {
+              "key": "FilterSendReceive",
+              "value": "1"
+            },
+            {
+              "key": "FilterPending",
+              "value": "false"
+            },
+            {
+              "key": "FilterClosed",
+              "value": "false"
+            },
+            {
+              "key": "FilterAssignedQuestions",
+              "value": "false"
+            },
+            {
+              "key": "FilterUnassignedQuestions",
+              "value": "false"
+            },
+            {
+              "key": "IDWorkRoom",
+              "value": "684bfbc3-22df-eb11-8727-d850e63f5833",
+              "description": "ANDROID DEV workroom"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Point/GetTaskInfo",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Point/GetTaskInfo?idTask=4124d36c-a806-ed11-a401-60a44c4f53f0",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Point",
+            "GetTaskInfo"
+          ],
+          "query": [
+            {
+              "key": "idTask",
+              "value": "4124d36c-a806-ed11-a401-60a44c4f53f0"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/GetListOfCompanies",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetListOfCompanies?idChannel=31e464b2-3b3e-eb11-870c-d850e63f5833",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetListOfCompanies"
+          ],
+          "query": [
+            {
+              "key": "idChannel",
+              "value": "31e464b2-3b3e-eb11-870c-d850e63f5833",
+              "description": "Android UI/UX News & Tutorials"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Vehicle/Info",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Vehicle/Info?WithLastLogs=true&LastLogPageSize=70&LastLogPage=1&ResourceID=759fd06f-e6cb-41c7-9756-e23342aa0f22",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Vehicle",
+            "Info"
+          ],
+          "query": [
+            {
+              "key": "WithLastLogs",
+              "value": "true"
+            },
+            {
+              "key": "LastLogPageSize",
+              "value": "70"
+            },
+            {
+              "key": "LastLogPage",
+              "value": "1"
+            },
+            {
+              "key": "ResourceID",
+              "value": "759fd06f-e6cb-41c7-9756-e23342aa0f22",
+              "description": "Ford Focus (86-UA-19)"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Vehicle/KilometersForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Vehicle/KilometersForm?KilometersCount=121000&Description=ssfsfs&InOut=1&ResourceID=759fd06f-e6cb-41c7-9756-e23342aa0f22",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Vehicle",
+            "KilometersForm"
+          ],
+          "query": [
+            {
+              "key": "KilometersCount",
+              "value": "121000"
+            },
+            {
+              "key": "Description",
+              "value": "ssfsfs"
+            },
+            {
+              "key": "InOut",
+              "value": "1"
+            },
+            {
+              "key": "ResourceID",
+              "value": "759fd06f-e6cb-41c7-9756-e23342aa0f22",
+              "description": "Ford Focus (86-UA-19)"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Vehicle/KilometersAdjustmentForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Vehicle/KilometersAdjustmentForm?ResourceID=0337a291-1ab4-433d-83fc-7ce38051474e&KilometersCount=69500&Description=teste 2",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Vehicle",
+            "KilometersAdjustmentForm"
+          ],
+          "query": [
+            {
+              "key": "ResourceID",
+              "value": "0337a291-1ab4-433d-83fc-7ce38051474e",
+              "description": "Peugeot 308 (66-PJ-15)"
+            },
+            {
+              "key": "KilometersCount",
+              "value": "69500"
+            },
+            {
+              "key": "Description",
+              "value": "teste 2"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "FeatureFlag/GetResourceFeatureFlags",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/FeatureFlag/GetResourceFeatureFlags?ResourceID=4eeb7c8f-84bd-4876-9712-ca43d12fd226",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "FeatureFlag",
+            "GetResourceFeatureFlags"
+          ],
+          "query": [
+            {
+              "key": "ResourceID",
+              "value": "4eeb7c8f-84bd-4876-9712-ca43d12fd226",
+              "description": "Fiat Punto 84-76-RG"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "FeatureFlag/GetFeatureFlagsOn",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/FeatureFlag/GetFeatureFlagsOn",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "FeatureFlag",
+            "GetFeatureFlagsOn"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/GetListOfDesktopItems",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:52130/Chat/GetListOfDesktopItems?idChannel=40e264b2-3b3e-eb11-870c-d850e63f5833&ParentID=00000000-0000-0000-0000-000000000000",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "GetListOfDesktopItems"
+          ],
+          "query": [
+            {
+              "key": "idChannel",
+              "value": "40e264b2-3b3e-eb11-870c-d850e63f5833",
+              "description": "Implementacao Solidset PMM"
+            },
+            {
+              "key": "ParentID",
+              "value": "00000000-0000-0000-0000-000000000000"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/IsLockedChannelForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "idLogin",
+              "value": "bb132fdd-97cb-4784-8d94-1c6f1c27b090",
+              "type": "text",
+              "description": "Ricardo Oliveira "
+            },
+            {
+              "key": "idChannel",
+              "value": "40e264b2-3b3e-eb11-870c-d850e63f5833",
+              "type": "text",
+              "description": "Implementacao Solidset PMM"
+            },
+            {
+              "key": "idChannel",
+              "value": "22dd64b2-3b3e-eb11-870c-d850e63f5833",
+              "type": "text",
+              "description": "SolidSet Android - Bugs / Duvidas / Melhorias",
+              "disabled": true
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/Chat/IsLockedChannelForm",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "IsLockedChannelForm"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/LockChannelForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "idLogin",
+              "value": "bb132fdd-97cb-4784-8d94-1c6f1c27b090",
+              "type": "text",
+              "description": "Ricardo Oliveira "
+            },
+            {
+              "key": "idChannel",
+              "value": "40e264b2-3b3e-eb11-870c-d850e63f5833",
+              "type": "text",
+              "description": "Implementacao Solidset PMM"
+            },
+            {
+              "key": "idChannel",
+              "value": "22dd64b2-3b3e-eb11-870c-d850e63f5833",
+              "type": "text",
+              "description": "SolidSet Android - Bugs / Duvidas / Melhorias",
+              "disabled": true
+            },
+            {
+              "key": "idLogin",
+              "value": "d9f63fd9-28a8-4b81-8914-ebf9eadd9f7e",
+              "type": "text",
+              "description": "Sergio Campos",
+              "disabled": true
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/Chat/LockChannelForm",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "LockChannelForm"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat/UnLockChannelForm",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "idLogin",
+              "value": "bb132fdd-97cb-4784-8d94-1c6f1c27b090",
+              "type": "text",
+              "description": "Ricardo Oliveira "
+            },
+            {
+              "key": "idChannel",
+              "value": "40e264b2-3b3e-eb11-870c-d850e63f5833",
+              "type": "text",
+              "description": "Implementacao Solidset PMM"
+            },
+            {
+              "key": "idChannel",
+              "value": "22dd64b2-3b3e-eb11-870c-d850e63f5833",
+              "type": "text",
+              "description": "SolidSet Android - Bugs / Duvidas / Melhorias",
+              "disabled": true
+            },
+            {
+              "key": "idLogin",
+              "value": "d9f63fd9-28a8-4b81-8914-ebf9eadd9f7e",
+              "type": "text",
+              "description": "Sergio Campos",
+              "disabled": true
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:52130/Chat/UnLockChannelForm",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "52130",
+          "path": [
+            "Chat",
+            "UnLockChannelForm"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}

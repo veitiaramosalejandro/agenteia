@@ -1,7 +1,9 @@
 import json
 import os
 import re
-from typing import Optional, Union
+import threading
+from time import time
+from typing import Any, Optional, Union
 import uuid
 import hashlib
 from datetime import datetime
@@ -80,9 +82,117 @@ def _solidset_action_headers() -> dict:
     return headers
 
 
-def _solidset_login(client: httpx.Client, base_url: str) -> bool:
+_solidset_runtime_lock = threading.Lock()
+_solidset_runtime_auth: dict[str, Any] = {
+    "base_url": "",
+    "access_key": "",
+    "cookie_header": "",
+    "authenticated_at": 0.0,
+    "login_endpoint": "",
+}
+
+
+def _solidset_cookie_dict_from_header(cookie_header: str) -> dict[str, str]:
+    cookie_map: dict[str, str] = {}
+    for chunk in (cookie_header or "").split(";"):
+        part = chunk.strip()
+        if not part or "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        cookie_map[key] = value.strip()
+    return cookie_map
+
+
+def _solidset_cookie_header_from_dict(cookie_map: dict[str, str]) -> str:
+    if not cookie_map:
+        return ""
+    return "; ".join(f"{k}={v}" for k, v in cookie_map.items() if k)
+
+
+def _solidset_merge_cookie_headers(*headers: str) -> str:
+    merged: dict[str, str] = {}
+    for header in headers:
+        merged.update(_solidset_cookie_dict_from_header(header))
+    return _solidset_cookie_header_from_dict(merged)
+
+
+def _solidset_extract_access_key(response: httpx.Response) -> str:
+    content_type = (response.headers.get("content-type") or "").lower()
+    if "json" not in content_type:
+        return ""
+
+    try:
+        payload = response.json()
+    except Exception:
+        return ""
+
+    if not isinstance(payload, dict):
+        return ""
+
+    access_key = payload.get("accessKey") or payload.get("AccessKey") or ""
+    return access_key.strip() if isinstance(access_key, str) else ""
+
+
+def _solidset_client_cookie_header(client: httpx.Client) -> str:
+    try:
+        cookie_map = {name: value for name, value in client.cookies.items()}
+    except Exception:
+        cookie_map = {}
+    return _solidset_cookie_header_from_dict(cookie_map)
+
+
+def _solidset_set_runtime_auth(
+    *,
+    base_url: str,
+    cookie_header: str,
+    access_key: str,
+    login_endpoint: str,
+) -> None:
+    with _solidset_runtime_lock:
+        _solidset_runtime_auth["base_url"] = (base_url or "").rstrip("/")
+        _solidset_runtime_auth["cookie_header"] = cookie_header or ""
+        _solidset_runtime_auth["access_key"] = access_key or ""
+        _solidset_runtime_auth["login_endpoint"] = login_endpoint or ""
+        _solidset_runtime_auth["authenticated_at"] = time()
+
+
+def _solidset_get_runtime_auth() -> dict[str, Any]:
+    with _solidset_runtime_lock:
+        return dict(_solidset_runtime_auth)
+
+
+def _solidset_clear_runtime_auth() -> None:
+    with _solidset_runtime_lock:
+        _solidset_runtime_auth.update(
+            {
+                "base_url": "",
+                "access_key": "",
+                "cookie_header": "",
+                "authenticated_at": 0.0,
+                "login_endpoint": "",
+            }
+        )
+
+
+def _solidset_get_all_base_candidates() -> list[str]:
+    collected: list[str] = []
+    for configured in [
+        settings.SOLIDSET_CHAT_BASE_URL,
+        settings.SOLIDSET_RESTAPI_BASE_URL,
+        settings.NOTIF_API_BASE_URL,
+    ]:
+        for candidate in _solidset_candidate_base_urls((configured or "").strip()):
+            if candidate and candidate not in collected:
+                collected.append(candidate)
+    return collected
+
+
+def _solidset_login(client: httpx.Client, base_url: str) -> tuple[bool, str, str]:
     if not settings.SOLIDSET_LOGIN_USERNAME and not settings.SOLIDSET_LOGIN_HASHPASS:
-        return False
+        return False, "", ""
 
     # API login (JSON)
     payload = {
@@ -99,7 +209,8 @@ def _solidset_login(client: httpx.Client, base_url: str) -> bool:
         try:
             resp = client.post(f"{base_url}{endpoint}", json=payload, headers=_solidset_action_headers())
             if resp.status_code < 400:
-                return True
+                access_key = _solidset_extract_access_key(resp)
+                return True, endpoint, access_key
         except Exception:
             continue
 
@@ -115,9 +226,108 @@ def _solidset_login(client: httpx.Client, base_url: str) -> bool:
             data=legacy_payload,
             headers=_solidset_action_headers(),
         )
-        return legacy.status_code < 400
+        if legacy.status_code < 400:
+            return True, "/User/LoginJson", ""
+        return False, "", ""
     except Exception:
-        return False
+        return False, "", ""
+
+
+def _solidset_authenticate_runtime(force: bool = False) -> tuple[bool, str]:
+    current = _solidset_get_runtime_auth()
+    if not force and current.get("base_url") and (
+        current.get("access_key") or current.get("cookie_header")
+    ):
+        return True, str(current.get("base_url"))
+
+    candidates = _solidset_get_all_base_candidates()
+    if not candidates:
+        return False, "falta SOLIDSET_CHAT_BASE_URL o SOLIDSET_RESTAPI_BASE_URL o NOTIF_API_BASE_URL"
+
+    last_error = "sin detalle"
+    for base in candidates:
+        try:
+            with httpx.Client(timeout=15.0, verify=settings.NOTIF_API_VERIFY_TLS, follow_redirects=True) as client:
+                ok, endpoint, access_key = _solidset_login(client, base)
+                if not ok:
+                    last_error = f"No se pudo autenticar en {base}"
+                    continue
+
+                cookie_header = _solidset_client_cookie_header(client)
+                workstation_cookie = (_solidset_action_headers().get("Cookie") or "").strip()
+                merged_cookie = _solidset_merge_cookie_headers(workstation_cookie, cookie_header)
+                _solidset_set_runtime_auth(
+                    base_url=base,
+                    cookie_header=merged_cookie,
+                    access_key=access_key,
+                    login_endpoint=endpoint,
+                )
+                return True, base
+        except Exception as exc:
+            last_error = str(exc)
+
+    return False, last_error
+
+
+def _solidset_authenticated_headers(base_headers: Optional[dict[str, str]] = None) -> dict[str, str]:
+    headers = dict(base_headers or _solidset_action_headers())
+    auth = _solidset_get_runtime_auth()
+    runtime_cookie = (auth.get("cookie_header") or "").strip()
+    base_cookie = (headers.get("Cookie") or "").strip()
+    merged_cookie = _solidset_merge_cookie_headers(base_cookie, runtime_cookie)
+    if merged_cookie:
+        headers["Cookie"] = merged_cookie
+
+    access_key = (auth.get("access_key") or "").strip()
+    if access_key:
+        headers["X-Access-Key"] = access_key
+        headers["Authorization"] = f"Bearer {access_key}"
+    return headers
+
+
+def _solidset_request_authenticated(
+    *,
+    method: str,
+    endpoint: str,
+    params: Optional[dict[str, Any]] = None,
+    json_payload: Optional[dict[str, Any]] = None,
+    form_payload: Optional[dict[str, Any]] = None,
+) -> tuple[Optional[httpx.Response], str, str]:
+    ok, detail = _solidset_authenticate_runtime(force=False)
+    if not ok:
+        return None, "", f"No se pudo autenticar: {detail}"
+
+    auth = _solidset_get_runtime_auth()
+    base = (auth.get("base_url") or "").rstrip("/")
+    if not base:
+        return None, "", "No hay base URL autenticada"
+
+    request_kwargs: dict[str, Any] = {
+        "params": params or None,
+        "headers": _solidset_authenticated_headers(),
+    }
+    if json_payload is not None:
+        request_kwargs["json"] = json_payload
+    if form_payload is not None:
+        request_kwargs["data"] = form_payload
+
+    target = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+    url = f"{base}{target}"
+
+    try:
+        with httpx.Client(timeout=20.0, verify=settings.NOTIF_API_VERIFY_TLS, follow_redirects=True) as client:
+            response = client.request(method.upper(), url, **request_kwargs)
+            if response.status_code in {401, 403}:
+                # Reintento único con relogin forzado.
+                ok_retry, detail_retry = _solidset_authenticate_runtime(force=True)
+                if not ok_retry:
+                    return None, base, f"autenticación expirada y no se pudo renovar: {detail_retry}"
+                retry_kwargs = dict(request_kwargs)
+                retry_kwargs["headers"] = _solidset_authenticated_headers()
+                response = client.request(method.upper(), url, **retry_kwargs)
+            return response, base, ""
+    except Exception as exc:
+        return None, base, str(exc)
 
 
 def _normalize_document_lines(content: str) -> list[str]:
@@ -423,11 +633,6 @@ def solidset_send_chat_message(
     if not text:
         return "Error: mensaje está vacío."
 
-    chat_base = (settings.SOLIDSET_CHAT_BASE_URL or settings.NOTIF_API_BASE_URL or "").rstrip("/")
-    candidates = _solidset_candidate_base_urls(chat_base)
-    if not candidates:
-        return "Error: falta SOLIDSET_CHAT_BASE_URL o NOTIF_API_BASE_URL en configuración."
-
     params = {
         "Importance": int(importance),
         "Kind": int(kind),
@@ -435,31 +640,19 @@ def solidset_send_chat_message(
         "VisibilityLevel": int(visibility_level),
         "RawMessage": text,
     }
-
-    last_error = ""
-    for base in candidates:
-        try:
-            with httpx.Client(timeout=15.0, verify=settings.NOTIF_API_VERIFY_TLS, follow_redirects=True) as client:
-                logged_in = _solidset_login(client, base)
-                if not logged_in:
-                    last_error = f"No se pudo autenticar en {base}"
-                    continue
-
-                response = client.post(
-                    f"{base}/Chat/SendMessageForm",
-                    params=params,
-                    headers=_solidset_action_headers(),
-                )
-                if response.status_code < 400:
-                    return (
-                        f"✅ Mensaje enviado a canal {channel}. "
-                        f"Endpoint: {base}/Chat/SendMessageForm"
-                    )
-                last_error = f"HTTP {response.status_code} -> {response.text[:200]}"
-        except Exception as e:
-            last_error = str(e)
-
-    return f"Error enviando mensaje a SOLIDSET: {last_error or 'sin detalle'}"
+    response, base, error = _solidset_request_authenticated(
+        method="POST",
+        endpoint="/Chat/SendMessageForm",
+        params=params,
+    )
+    if response is None:
+        return f"Error enviando mensaje a SOLIDSET: {error or 'sin detalle'}"
+    if response.status_code >= 400:
+        return f"Error enviando mensaje a SOLIDSET: HTTP {response.status_code} -> {response.text[:220]}"
+    return (
+        f"✅ Mensaje enviado a canal {channel}. "
+        f"Endpoint: {base}/Chat/SendMessageForm"
+    )
 
 
 @tool
@@ -496,42 +689,482 @@ def solidset_update_reaction(
     if not reaction_value:
         return "Error: reaction está vacía."
 
-    chat_base = (settings.SOLIDSET_CHAT_BASE_URL or settings.NOTIF_API_BASE_URL or "").rstrip("/")
-    candidates = _solidset_candidate_base_urls(chat_base)
-    if not candidates:
-        return "Error: falta SOLIDSET_CHAT_BASE_URL o NOTIF_API_BASE_URL en configuración."
-
     payload = {
         "IDChat": id_chat,
         "Reaction": reaction_value,
     }
     if id_user:
         payload["IDUser"] = id_user.strip()
+    response, base, error = _solidset_request_authenticated(
+        method="POST",
+        endpoint="/chat/update-reaction",
+        json_payload=payload,
+    )
+    if response is None:
+        return f"Error registrando reacción en SOLIDSET: {error or 'sin detalle'}"
+    if response.status_code >= 400:
+        return f"Error registrando reacción en SOLIDSET: HTTP {response.status_code} -> {response.text[:220]}"
+    return (
+        f"✅ Reacción '{reaction_value}' registrada en chat {id_chat}. "
+        f"Endpoint: {base}/chat/update-reaction"
+    )
 
-    last_error = ""
-    for base in candidates:
+
+@tool
+def solidset_authenticate(force_login: bool = False) -> str:
+    """
+    AUTENTICA EL AGENTE CONTRA SOLIDSET Y GUARDA LA SESIÓN (cookies/access key).
+
+    Reglas:
+    - Usa credenciales SOLIDSET_LOGIN_* del .env.
+    - Si ya existe sesión, la reutiliza salvo force_login=true.
+    """
+    ok, detail = _solidset_authenticate_runtime(force=bool(force_login))
+    if not ok:
+        return f"Error de autenticación SOLIDSET: {detail}"
+
+    auth = _solidset_get_runtime_auth()
+    has_cookie = bool((auth.get("cookie_header") or "").strip())
+    has_key = bool((auth.get("access_key") or "").strip())
+    return (
+        "✅ Autenticación SOLIDSET activa. "
+        f"Base: {auth.get('base_url')}. "
+        f"Login: {auth.get('login_endpoint') or 'desconocido'}. "
+        f"Cookie: {'sí' if has_cookie else 'no'}. "
+        f"AccessKey: {'sí' if has_key else 'no'}."
+    )
+
+
+@tool
+def solidset_logout(confirm: bool = False) -> str:
+    """
+    CIERRA LA SESIÓN ACTUAL DE SOLIDSET EN EL AGENTE Y limpia credenciales en memoria.
+    """
+    if not confirm:
+        return "⚠️ Confirmación requerida. Repite la acción con confirm=true para cerrar sesión en SOLIDSET."
+
+    auth = _solidset_get_runtime_auth()
+    base = (auth.get("base_url") or "").rstrip("/")
+    if not base:
+        _solidset_clear_runtime_auth()
+        return "No había una sesión activa en memoria."
+
+    try:
+        with httpx.Client(timeout=15.0, verify=settings.NOTIF_API_VERIFY_TLS, follow_redirects=True) as client:
+            response = client.post(
+                f"{base}/User/LogOffJson",
+                headers=_solidset_authenticated_headers(),
+            )
+            _solidset_clear_runtime_auth()
+            if response.status_code < 400:
+                return f"✅ Sesión cerrada correctamente en {base}/User/LogOffJson"
+            return (
+                "Sesión local limpiada, pero el backend devolvió "
+                f"HTTP {response.status_code} al cerrar sesión."
+            )
+    except Exception as exc:
+        _solidset_clear_runtime_auth()
+        return f"Sesión local limpiada, pero falló el logoff remoto: {exc}"
+
+
+@tool
+def solidset_request(
+    endpoint: str,
+    method: str = "GET",
+    query_json: Optional[str] = None,
+    body_json: Optional[str] = None,
+    form_json: Optional[str] = None,
+    confirm: bool = False,
+) -> str:
+    """
+    EJECUTA UNA LLAMADA AUTENTICADA A CUALQUIER ENDPOINT DE SOLIDSET.
+
+    Reglas:
+    - Autentica primero (login) y reutiliza sesión.
+    - Para métodos con escritura (POST/PUT/PATCH/DELETE), exige confirm=true.
+    """
+    target = (endpoint or "").strip()
+    if not target:
+        return "Error: endpoint es obligatorio."
+    if not target.startswith("/"):
+        target = f"/{target}"
+
+    verb = (method or "GET").strip().upper()
+    allowed = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+    if verb not in allowed:
+        return f"Error: método '{verb}' no soportado. Usa uno de: {', '.join(sorted(allowed))}."
+
+    if verb in {"POST", "PUT", "PATCH", "DELETE"} and not confirm:
+        return (
+            "⚠️ Confirmación requerida. Repite la acción con confirm=true "
+            "para ejecutar operaciones con escritura en SOLIDSET."
+        )
+
+    def _parse_optional_json(raw: Optional[str], field_name: str) -> Optional[dict[str, Any]]:
+        if raw is None or not str(raw).strip():
+            return None
         try:
-            with httpx.Client(timeout=15.0, verify=settings.NOTIF_API_VERIFY_TLS, follow_redirects=True) as client:
-                logged_in = _solidset_login(client, base)
-                if not logged_in:
-                    last_error = f"No se pudo autenticar en {base}"
-                    continue
+            parsed = json.loads(raw)
+        except Exception as exc:
+            raise ValueError(f"{field_name} no es JSON válido: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{field_name} debe ser un objeto JSON (clave/valor).")
+        return parsed
 
-                response = client.post(
-                    f"{base}/chat/update-reaction",
-                    json=payload,
-                    headers=_solidset_action_headers(),
-                )
-                if response.status_code < 400:
-                    return (
-                        f"✅ Reacción '{reaction_value}' registrada en chat {id_chat}. "
-                        f"Endpoint: {base}/chat/update-reaction"
-                    )
-                last_error = f"HTTP {response.status_code} -> {response.text[:200]}"
-        except Exception as e:
-            last_error = str(e)
+    try:
+        query_data = _parse_optional_json(query_json, "query_json")
+        body_data = _parse_optional_json(body_json, "body_json")
+        form_data = _parse_optional_json(form_json, "form_json")
+    except ValueError as exc:
+        return f"Error: {exc}"
 
-    return f"Error registrando reacción en SOLIDSET: {last_error or 'sin detalle'}"
+    if body_data is not None and form_data is not None:
+        return "Error: usa body_json o form_json, pero no ambos a la vez."
+
+    response, base, error = _solidset_request_authenticated(
+        method=verb,
+        endpoint=target,
+        params=query_data,
+        json_payload=body_data,
+        form_payload=form_data,
+    )
+    if response is None:
+        return f"Error llamando endpoint SOLIDSET: {error or 'sin detalle'}"
+
+    content_type = (response.headers.get("content-type") or "").lower()
+    payload_preview: str
+    if "json" in content_type:
+        try:
+            payload_preview = json.dumps(response.json(), ensure_ascii=False)[:3500]
+        except Exception:
+            payload_preview = response.text[:3500]
+    else:
+        payload_preview = response.text[:3500]
+
+    return (
+        f"status={response.status_code}; method={verb}; url={base}{target}; "
+        f"body={payload_preview}"
+    )
+
+
+def _solidset_preview_response(response: httpx.Response, max_chars: int = 3500) -> str:
+    content_type = (response.headers.get("content-type") or "").lower()
+    if "json" in content_type:
+        try:
+            return json.dumps(response.json(), ensure_ascii=False)[:max_chars]
+        except Exception:
+            return response.text[:max_chars]
+    return response.text[:max_chars]
+
+
+def _solidset_add_indexed_params(params: dict[str, Any], key: str, values: list[str]) -> dict[str, Any]:
+    for idx, value in enumerate(values):
+        params[f"{key}[{idx}]"] = value
+    return params
+
+
+@tool
+def solidset_chat_get_targets(
+    mode: int = 1,
+    include_user_read_pointers: bool = False,
+    include_tabs: bool = False,
+) -> str:
+    """
+    LEE LOS DESTINOS/CHATS DISPONIBLES DEL USUARIO AUTENTICADO EN SOLIDSET.
+    Endpoint: GET /Chat/GetAllChatTargets
+    """
+    params = {
+        "mode": int(mode),
+        "includeUserReadPointers": str(bool(include_user_read_pointers)).lower(),
+        "includeTabs": str(bool(include_tabs)).lower(),
+    }
+    response, base, error = _solidset_request_authenticated(
+        method="GET",
+        endpoint="/Chat/GetAllChatTargets",
+        params=params,
+    )
+    if response is None:
+        return f"Error consultando destinos de chat: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=GET; "
+        f"url={base}/Chat/GetAllChatTargets; body={_solidset_preview_response(response)}"
+    )
+
+
+@tool
+def solidset_chat_get_messages(
+    id_login_current: str,
+    selected_workrooms_json: str,
+    latest_count: int = 20,
+    options: int = 2,
+    kind: int = 1,
+    latest: bool = True,
+    select_all: bool = False,
+    latest_id_chat: int = 0,
+) -> str:
+    """
+    LEE MENSAJES DE UNO O VARIOS CANALES EN SOLIDSET.
+    Endpoint: POST /Chat/ChatMessages
+
+    selected_workrooms_json debe ser una lista JSON de UUIDs.
+    """
+    try:
+        rooms = json.loads(selected_workrooms_json)
+    except Exception as exc:
+        return f"Error: selected_workrooms_json no es JSON válido: {exc}"
+
+    if not isinstance(rooms, list) or not rooms:
+        return "Error: selected_workrooms_json debe contener al menos un ID de canal."
+
+    room_ids = [str(item).strip() for item in rooms if str(item).strip()]
+    if not room_ids:
+        return "Error: selected_workrooms_json no contiene IDs de canal válidos."
+
+    params: dict[str, Any] = {
+        "Options": int(options),
+        "Kind": int(kind),
+        "Latest": str(bool(latest)).lower(),
+        "IDLoginCurrent": id_login_current,
+        "SelectAll": str(bool(select_all)).lower(),
+        "LatestCount": int(latest_count),
+        "LatestIDChat": int(latest_id_chat),
+    }
+    _solidset_add_indexed_params(params, "SelectedWorkRooms", room_ids)
+
+    response, base, error = _solidset_request_authenticated(
+        method="POST",
+        endpoint="/Chat/ChatMessages",
+        params=params,
+    )
+    if response is None:
+        return f"Error consultando mensajes de chat: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=POST; "
+        f"url={base}/Chat/ChatMessages; body={_solidset_preview_response(response)}"
+    )
+
+
+@tool
+def solidset_chat_get_tasks_for_channel(
+    id_workroom: str,
+    running_states_json: str,
+    min_priority: int = 1,
+    max_priority: int = 200,
+    request_kind: int = 1,
+) -> str:
+    """
+    CONSULTA TAREAS DE UN CANAL EN SOLIDSET.
+    Endpoint: POST /Chat/GetTasksForChannelV2Form
+
+    running_states_json debe ser lista JSON de enteros (ej: [2723,2724,2725]).
+    """
+    try:
+        running_states = json.loads(running_states_json)
+    except Exception as exc:
+        return f"Error: running_states_json no es JSON válido: {exc}"
+
+    if not isinstance(running_states, list) or not running_states:
+        return "Error: running_states_json debe contener al menos un estado."
+
+    params: dict[str, Any] = {
+        "MinPriority": int(min_priority),
+        "MaxPriority": int(max_priority),
+        "RequestKind": int(request_kind),
+        "Assignments": 0,
+        "Following": 0,
+        "SelectAll": "false",
+        "OrderBy[0][Field]": 4,
+        "OrderBy[0][SortOrder]": 1,
+        "MinImportance": 1,
+        "MaxImportance": 55,
+        "MinComplexity": 1,
+        "MaxComplexity": 55,
+        "Opts[0].FullVoteData": "true",
+    }
+    _solidset_add_indexed_params(params, "RunningStates", [str(int(v)) for v in running_states])
+    _solidset_add_indexed_params(params, "IDWorkRooms", [id_workroom])
+
+    response, base, error = _solidset_request_authenticated(
+        method="POST",
+        endpoint="/Chat/GetTasksForChannelV2Form",
+        params=params,
+    )
+    if response is None:
+        return f"Error consultando tareas del canal: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=POST; "
+        f"url={base}/Chat/GetTasksForChannelV2Form; body={_solidset_preview_response(response)}"
+    )
+
+
+@tool
+def solidset_point_get_task_info(id_task: str) -> str:
+    """
+    OBTIENE EL DETALLE DE UNA TAREA DE POINT.
+    Endpoint: GET /Point/GetTaskInfo
+    """
+    params = {"idTask": (id_task or "").strip()}
+    if not params["idTask"]:
+        return "Error: id_task es obligatorio."
+
+    response, base, error = _solidset_request_authenticated(
+        method="GET",
+        endpoint="/Point/GetTaskInfo",
+        params=params,
+    )
+    if response is None:
+        return f"Error consultando task info: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=GET; "
+        f"url={base}/Point/GetTaskInfo; body={_solidset_preview_response(response)}"
+    )
+
+
+@tool
+def solidset_point_get_activity_info(id_activity: int, id_module: str) -> str:
+    """
+    OBTIENE INFORMACIÓN DETALLADA DE UNA ACTIVIDAD DE POINT.
+    Endpoint: GET /Point/GetActivityInfo
+    """
+    module_id = (id_module or "").strip()
+    if not module_id:
+        return "Error: id_module es obligatorio."
+
+    params = {
+        "idActivity": int(id_activity),
+        "idModule": module_id,
+    }
+    response, base, error = _solidset_request_authenticated(
+        method="GET",
+        endpoint="/Point/GetActivityInfo",
+        params=params,
+    )
+    if response is None:
+        return f"Error consultando activity info: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=GET; "
+        f"url={base}/Point/GetActivityInfo; body={_solidset_preview_response(response)}"
+    )
+
+
+@tool
+def solidset_point_read_tasks(
+    resource_id: str,
+    read_activities: bool = True,
+    only_tasks_assigned_to_me: bool = False,
+    with_participants: bool = True,
+    only_activities: bool = True,
+    third_parties: bool = False,
+    planned_start_date: Optional[str] = None,
+    planned_end_date: Optional[str] = None,
+) -> str:
+    """
+    LEE TAREAS/ACTIVIDADES DE POINT PARA UN RECURSO.
+    Endpoint: GET /Point/ReadPointTask
+    """
+    rid = (resource_id or "").strip()
+    if not rid:
+        return "Error: resource_id es obligatorio."
+
+    params: dict[str, Any] = {
+        "readActivities": str(bool(read_activities)).lower(),
+        "res[0]": rid,
+        "onlyTasksAssignedToMe": str(bool(only_tasks_assigned_to_me)).lower(),
+        "wPart": str(bool(with_participants)).lower(),
+        "onlyAct": str(bool(only_activities)).lower(),
+        "thirdParties": str(bool(third_parties)).lower(),
+    }
+    if planned_start_date:
+        params["plannedStartDate"] = planned_start_date
+    if planned_end_date:
+        params["plannedEndDate"] = planned_end_date
+
+    response, base, error = _solidset_request_authenticated(
+        method="GET",
+        endpoint="/Point/ReadPointTask",
+        params=params,
+    )
+    if response is None:
+        return f"Error leyendo tareas de Point: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=GET; "
+        f"url={base}/Point/ReadPointTask; body={_solidset_preview_response(response)}"
+    )
+
+
+@tool
+def solidset_vehicle_info(
+    resource_id: str,
+    with_last_logs: bool = True,
+    last_log_page_size: int = 70,
+    last_log_page: int = 1,
+) -> str:
+    """
+    LEE DATOS DE VEHÍCULO Y ÚLTIMOS REGISTROS.
+    Endpoint: GET /Vehicle/Info
+    """
+    rid = (resource_id or "").strip()
+    if not rid:
+        return "Error: resource_id es obligatorio."
+
+    params = {
+        "WithLastLogs": str(bool(with_last_logs)).lower(),
+        "LastLogPageSize": int(last_log_page_size),
+        "LastLogPage": int(last_log_page),
+        "ResourceID": rid,
+    }
+    response, base, error = _solidset_request_authenticated(
+        method="GET",
+        endpoint="/Vehicle/Info",
+        params=params,
+    )
+    if response is None:
+        return f"Error consultando vehículo: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=GET; "
+        f"url={base}/Vehicle/Info; body={_solidset_preview_response(response)}"
+    )
+
+
+@tool
+def solidset_featureflag_get_resource_flags(resource_id: str) -> str:
+    """
+    LEE FEATURE FLAGS ACTIVAS PARA UN RECURSO.
+    Endpoint: GET /FeatureFlag/GetResourceFeatureFlags
+    """
+    rid = (resource_id or "").strip()
+    if not rid:
+        return "Error: resource_id es obligatorio."
+
+    response, base, error = _solidset_request_authenticated(
+        method="GET",
+        endpoint="/FeatureFlag/GetResourceFeatureFlags",
+        params={"ResourceID": rid},
+    )
+    if response is None:
+        return f"Error consultando feature flags del recurso: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=GET; "
+        f"url={base}/FeatureFlag/GetResourceFeatureFlags; body={_solidset_preview_response(response)}"
+    )
+
+
+@tool
+def solidset_featureflag_get_on() -> str:
+    """
+    LEE LAS FEATURE FLAGS ACTIVADAS GLOBALMENTE.
+    Endpoint: GET /FeatureFlag/GetFeatureFlagsOn
+    """
+    response, base, error = _solidset_request_authenticated(
+        method="GET",
+        endpoint="/FeatureFlag/GetFeatureFlagsOn",
+    )
+    if response is None:
+        return f"Error consultando feature flags activas: {error or 'sin detalle'}"
+    return (
+        f"status={response.status_code}; method=GET; "
+        f"url={base}/FeatureFlag/GetFeatureFlagsOn; body={_solidset_preview_response(response)}"
+    )
 
 
 # ---------------------------------------------------------------------------
