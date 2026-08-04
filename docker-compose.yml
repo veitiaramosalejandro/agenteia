@@ -1,0 +1,154 @@
+services:
+  # 5. Interfaz Gráfica de Chat (Streamlit)
+  #agent-ui:
+  #  build:
+  #    context: ./agent-service
+  #    dockerfile: Dockerfile
+  #  container_name: machining_ui
+  #  command: streamlit run /app/app/ui.py --server.port=8501 --server.address=0.0.0.0
+  #  restart: always
+   # ports:
+   #   - 8501:8501
+   # environment:
+   #   - API_URL=http://agent-service:8000/api/v1/agent
+   # depends_on:
+   #   - agent-service
+   # networks:
+  #    - machining-network
+  # 1. Servicio del Agente de IA (Core)
+#  agent-service:
+#    build:
+#      context: ./agent-service
+#      dockerfile: Dockerfile
+#    container_name: machining_agent
+#    restart: always
+#    ports:
+#      - 8000:8000
+#    env_file:
+#      - .env
+#    environment:
+#      - ENVIRONMENT=development
+#      - LLM_PROVIDER=openai # O ollama, vllm, azure, etc.
+#      - LLM_API_KEY=${LLM_API_KEY}
+#      - VECTOR_DB_URL=${VECTOR_DB_URL:-http://vector-db:6333}
+#      - DB_URL=${DB_URL:-postgresql://user:pass@timescaledb:5432/machining_db}
+#      - REDIS_URL=${REDIS_URL:-redis://redis-cache:6379}
+#      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama-llm:11434}
+      #- MODEL_NAME=llama3.2:3b
+#      - MODEL_NAME=${MODEL_NAME:-qwen2.5:7b}
+#      - EMBEDDING_MODEL_NAME=${EMBEDDING_MODEL_NAME:-nomic-embed-text}
+#      - SQL_SERVER_HOST=${SQL_SERVER_HOST}
+#      - SQL_SERVER_USER=${SQL_SERVER_USER}
+#      - SQL_SERVER_PASSWORD=${SQL_SERVER_PASSWORD}
+#      - SQL_SERVER_DB=${SQL_SERVER_DB}
+#      - DB_STUDY_INTERVAL_SECONDS=${DB_STUDY_INTERVAL_SECONDS:-3600}
+#      - DB_STUDY_IDLE_CHECK_SECONDS=${DB_STUDY_IDLE_CHECK_SECONDS:-10}
+#      - DB_STUDY_MAX_RUN_SECONDS=${DB_STUDY_MAX_RUN_SECONDS:-900}
+#      - DB_INGEST_CONNECT_TIMEOUT_SECONDS=${DB_INGEST_CONNECT_TIMEOUT_SECONDS:-5}
+#      - DB_INGEST_CONNECT_RETRIES=${DB_INGEST_CONNECT_RETRIES:-2}
+#      - DIALOGUE_MAX_CONCURRENT=${DIALOGUE_MAX_CONCURRENT:-2}
+#      - DIALOGUE_ADMISSION_TIMEOUT_SECONDS=${DIALOGUE_ADMISSION_TIMEOUT_SECONDS:-2}
+#      - DIALOGUE_PROCESSING_TIMEOUT_SECONDS=${DIALOGUE_PROCESSING_TIMEOUT_SECONDS:-0}
+#      - DIALOGUE_HARD_TIMEOUT_SECONDS=${DIALOGUE_HARD_TIMEOUT_SECONDS:-90}
+#      - DIALOGUE_DUPLICATE_CACHE_ENABLED=${DIALOGUE_DUPLICATE_CACHE_ENABLED:-true}
+#      - DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS=${DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS:-15}
+#      - DIALOGUE_DUPLICATE_CACHE_MAX_ITEMS=${DIALOGUE_DUPLICATE_CACHE_MAX_ITEMS:-400}
+#      - DIALOGUE_SLOW_LOG_SECONDS=${DIALOGUE_SLOW_LOG_SECONDS:-8}
+#      - NOTIF_API_ENABLED=${NOTIF_API_ENABLED:-true}
+#      - NOTIF_API_BACKGROUND_ENABLED=${NOTIF_API_BACKGROUND_ENABLED:-false}
+#      - NOTIF_API_BASE_URL=${NOTIF_API_BASE_URL}
+#      - NOTIF_API_ACCESS_KEY=${NOTIF_API_ACCESS_KEY}
+#      - NOTIF_API_START_DELAY_SECONDS=${NOTIF_API_START_DELAY_SECONDS:-30}
+#      - NOTIF_API_TIMEOUT_SECONDS=${NOTIF_API_TIMEOUT_SECONDS:-15}
+#      - NOTIF_API_VERIFY_TLS=${NOTIF_API_VERIFY_TLS:-false}
+#      - SOLIDSET_CHAT_BASE_URL=${SOLIDSET_CHAT_BASE_URL}
+#      - SOLIDSET_RESTAPI_BASE_URL=${SOLIDSET_RESTAPI_BASE_URL}
+#      - SOLIDSET_LOGIN_USERNAME=${SOLIDSET_LOGIN_USERNAME}
+#      - SOLIDSET_LOGIN_PASSWORD=${SOLIDSET_LOGIN_PASSWORD}
+#      - SOLIDSET_LOGIN_HASHPASS=${SOLIDSET_LOGIN_HASHPASS}
+#      - SOLIDSET_LOGIN_RESOURCE_ID=${SOLIDSET_LOGIN_RESOURCE_ID}
+#      - SOLIDSET_LISTEN_CHAT_MESSAGES=${SOLIDSET_LISTEN_CHAT_MESSAGES:-true}
+#      - SOLIDSET_CHAT_MAX_CHANNELS=${SOLIDSET_CHAT_MAX_CHANNELS:-15}
+#      - SOLIDSET_CHAT_PAGE_SIZE=${SOLIDSET_CHAT_PAGE_SIZE:-20}
+#    volumes:
+#      - ./agent-service:/app
+#      - ./data:/app/data
+#      - ./audio:/app/audio
+#    depends_on:
+#      - vector-db
+#      - timescaledb
+#      - redis-cache
+#      - ollama-llm
+#    networks:
+#      - machining-network
+
+  # 3. Servidor de Modelos Locales (Ollama)
+  ollama-llm:
+    image: ollama/ollama:latest
+    container_name: machining_ollama
+    restart: always
+    ports:
+      - 11435:11434
+    volumes:
+      # Este volumen guarda los modelos descargados localmente:
+      - ./ollama_storage:/root/.ollama
+    # Si cuentas con GPU Nvidia, descomenta estas líneas para aceleración hardware:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - machining-network
+
+  # 2. Base de Datos Vectorial (Para RAG)
+  vector-db:
+    image: qdrant/qdrant:latest # Opción robusta y ligera (o chromadb / pgvector)
+    container_name: machining_vector_db
+    restart: always
+    ports:
+      - 6333:6333
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - machining-network
+
+  # 3. Base de Datos de Producción y Sensores (TimescaleDB / PostgreSQL)
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: machining_db
+    restart: always
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=machining_db
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - machining-network
+
+  # 4. Cache y Gestión de Estado/Colas
+  redis-cache:
+    image: redis:alpine
+    container_name: machining_redis
+    restart: always
+    command: redis-server --appendonly yes --save 60 1 --requirepass ""
+    volumes:  # <-- AÑADIR ESTO
+      - redis_data:/data
+    ports:
+      - 6379:6379
+    networks:
+      - machining-network
+
+networks:
+  machining-network:
+    driver: bridge
+
+volumes:
+  qdrant_data:
+  postgres_data:
+  redis_data:

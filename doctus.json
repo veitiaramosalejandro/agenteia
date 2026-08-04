@@ -1,0 +1,5147 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "CloudMold API",
+    "description": "A simple CloudMold API",
+    "contact": {
+      "name": "Isicom"
+    },
+    "license": {
+      "name": "Isicom"
+    },
+    "version": "v1"
+  },
+  "paths": {
+    "/chat/update-reaction": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Updates the reaction using the specified request data.",
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeReactionRequest"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeReactionRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeReactionRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeReactionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/chat/get-reaction-users": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "parameters": [
+          {
+            "name": "IDChat",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/chat/get-reactions-user": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "parameters": [
+          {
+            "name": "IDChat",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "IDUser",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/SendMessageAsync": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrameworkMessage"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrameworkMessage"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrameworkMessage"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrameworkMessage"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/CloudMold/Company/GetCountries": {
+      "get": {
+        "tags": [
+          "CloudMoldApi"
+        ],
+        "summary": "CreateDefaultComnityCompany",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CountryListGenericApiWResultResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/CloudMold/Login/ApiFullRegister": {
+      "post": {
+        "tags": [
+          "CloudMoldApi"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudFullRegisterRequest"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudFullRegisterRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudFullRegisterRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudFullRegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudFullRegisterResponseGenericApiWResultResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/CloudMold/Company/Register": {
+      "post": {
+        "tags": [
+          "CloudMoldApi"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanyRequest"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanyRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanyRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyGenericApiWResultResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/Community/GetCommunitiesVisible": {
+      "get": {
+        "tags": [
+          "Community"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Community"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/Company/CreateCompany": {
+      "post": {
+        "tags": [
+          "Company"
+        ],
+        "parameters": [
+          {
+            "name": "companyJson",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "oldResourceID",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "oldLoginID",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/call/guest/join": {
+      "get": {
+        "tags": [
+          "LiveKitCall"
+        ],
+        "summary": "Página HTML para convidado externo entrar na chamada (browser).",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/guest/join": {
+      "get": {
+        "tags": [
+          "MeetingGuestJoin"
+        ],
+        "summary": "Página de entrada do convidado (URL curta em vez do path estático).",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/guest/manifest.webmanifest": {
+      "get": {
+        "tags": [
+          "MeetingGuestJoin"
+        ],
+        "summary": "Web App Manifest (PWA) com start_url/scope absolutos sob /guest/.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/guest/sw.js": {
+      "get": {
+        "tags": [
+          "MeetingGuestJoin"
+        ],
+        "summary": "Service worker do guest PWA (scope /guest/ via Service-Worker-Allowed).",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/guest/ringtone.wav": {
+      "get": {
+        "tags": [
+          "MeetingGuestJoin"
+        ],
+        "summary": "Timbre de chamada (mesmo FileSoundChatCall do cliente WPF). Anónimo para a PWA guest.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/MeetingGuestJoin/RingTone": {
+      "get": {
+        "tags": [
+          "MeetingGuestJoin"
+        ],
+        "summary": "Timbre de chamada (mesmo FileSoundChatCall do cliente WPF). Anónimo para a PWA guest.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/Person/PersonRegisterJson": {
+      "post": {
+        "tags": [
+          "Person"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudLoginRequest"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudLoginRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudLoginRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/rececao": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "summary": "Página PWA kiosco de receção.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/reception/livekit-client.js": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "summary": "LiveKit client JS (misma ruta lógica que la PWA /rececao).",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/reception/manifest.webmanifest": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "summary": "Manifest PWA (rutas bajo /reception/).",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/reception/icons/icon-192.png": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "summary": "Iconos PWA bajo /reception/icons/.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/reception/icons/icon-512.png": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/reception/assets/{fileName}": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "summary": "Assets estáticos da PWA (logo, ícones login).",
+        "parameters": [
+          {
+            "name": "fileName",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/reception/logo.png": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "summary": "Logo SolidSET para login PWA.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/reception/ringtone.wav": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "summary": "Timbre de chamada saliente (mesmo ringtone do meeting guest).",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/reception/sw.js": {
+      "get": {
+        "tags": [
+          "ReceptionDesk"
+        ],
+        "summary": "Service worker (scope via cabeçalho Service-Worker-Allowed).",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/WhatsApp/Webhook": {
+      "get": {
+        "tags": [
+          "WhatsApp"
+        ],
+        "summary": "Verificação do webhook Meta (GET).\r\nCallback URL sugerido: `/WhatsApp/Webhook`",
+        "parameters": [
+          {
+            "name": "hub.mode",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hub.verify_token",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hub.challenge",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "WhatsApp"
+        ],
+        "summary": "Receção de eventos Meta (POST): messages, statuses, etc.\r\nResponde 200 rapidamente; processamentos pesados ficam para depois.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActTaskChannel": {
+        "type": "object",
+        "properties": {
+          "IDTask2Channel": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDTask": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDActivity2Channel": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDActivity": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDChannel": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Participation": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/ChannelKind"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActiveType": {
+        "enum": [
+          0,
+          1,
+          2
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ActivityData": {
+        "type": "object",
+        "properties": {
+          "IDChat": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDActivity": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Subject": {
+            "type": "string",
+            "nullable": true
+          },
+          "Kind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "ThirdParty": {
+            "type": "string",
+            "nullable": true
+          },
+          "GUIDActivity": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityResourceRoleActivity": {
+        "type": "object",
+        "properties": {
+          "IDActivityResourceRoleActivity": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDActivityRole": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDActivity": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ParticipationActive": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDUser": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Kind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "UserName": {
+            "type": "string",
+            "nullable": true
+          },
+          "RoleName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ResourceBGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceFGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeamMask01": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "TeamMask02": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "TeamName": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDTeam": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDActivityModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "AssignMode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDResourceOnWork": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDChannel": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityWorkStatus": {
+        "enum": [
+          0,
+          1,
+          2
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "AddressSpec": {
+        "type": "object",
+        "properties": {
+          "Room": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Session": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Login": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Resource": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Team": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Role": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "RecordId": {
+            "nullable": true
+          },
+          "ModuleId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ConversationId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "WorkRoom": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "WorkRooms": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          },
+          "Resources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          },
+          "Logins": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          },
+          "Dests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dest"
+            },
+            "nullable": true
+          },
+          "LanguageId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AttentionCallNotificationLevel": {
+        "enum": [
+          0,
+          1,
+          3
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ChangeReactionRequest": {
+        "type": "object",
+        "properties": {
+          "IDChat": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDUser": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDChannel": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDEmoji": {
+            "type": "string",
+            "nullable": true
+          },
+          "Counter": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Channel": {
+        "type": "object",
+        "properties": {
+          "ID": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "AllowEdit": {
+            "type": "boolean"
+          },
+          "Active": {
+            "type": "boolean"
+          },
+          "Visibility": {
+            "$ref": "#/components/schemas/Visibility"
+          },
+          "Dissemination": {
+            "$ref": "#/components/schemas/Dissemination"
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/ChannelKind"
+          },
+          "IDCommunity": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "NoCompanies": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "NoCommunities": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "NoHResources": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "NoMessages": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Photo": {
+            "type": "string",
+            "nullable": true
+          },
+          "PhotoBase64": {
+            "type": "string",
+            "nullable": true
+          },
+          "ActiveAction": {
+            "$ref": "#/components/schemas/ActiveType"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChannelKind": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "Chat": {
+        "type": "object",
+        "properties": {
+          "IDChat2": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDChat": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDSender": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDSenderResource": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "SenderFullName": {
+            "type": "string",
+            "nullable": true
+          },
+          "SenderPhoto": {
+            "type": "string",
+            "nullable": true
+          },
+          "RawMessage": {
+            "maxLength": 2000,
+            "type": "string",
+            "nullable": true
+          },
+          "Stamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "Importance": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IsPublic": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "AttentionCallNotificationLevel": {
+            "$ref": "#/components/schemas/AttentionCallNotificationLevel"
+          },
+          "IDActivityConversation": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Status": {
+            "$ref": "#/components/schemas/ChatStatus"
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/ChatKind"
+          },
+          "ChatAnswerValue": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ChatAnswerMessage": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ChatQuestionMessage": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDVideoCall": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "deprecated": true
+          },
+          "IDMail": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "deprecated": true
+          },
+          "IDThirdParty": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "deprecated": true
+          },
+          "IsVideoCallActive": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "IDTask": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "deprecated": true
+          },
+          "IDActivity": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "deprecated": true
+          },
+          "TaskTitle": {
+            "type": "string",
+            "nullable": true,
+            "deprecated": true
+          },
+          "TaskStatus": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TaskStatusStr": {
+            "type": "string",
+            "nullable": true
+          },
+          "ThirdParty": {
+            "type": "string",
+            "nullable": true
+          },
+          "TaskRunningStatus": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TaskShortName": {
+            "type": "string",
+            "nullable": true
+          },
+          "TaskArchived": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TaskAssigned": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "TaskResourceAssigned": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "TaskKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TaskWorkStatus": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "TaskEnableQuestion": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TaskLockVoting": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TaskIsQuestion": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TaskHasVote": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ReadByCurrentResource": {
+            "type": "boolean"
+          },
+          "MessageStateForCurrentResource": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IsBookMarked": {
+            "type": "boolean"
+          },
+          "BookMarkedIDChannel": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ReactionCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "IdUserReaction": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ReactionCounters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReactionCounter"
+            },
+            "nullable": true
+          },
+          "ChatQuestion": {
+            "$ref": "#/components/schemas/Chat"
+          },
+          "LastChatAwnser": {
+            "$ref": "#/components/schemas/Chat"
+          },
+          "IDWorkRoom": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDMeeting": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDChannelOrigin": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "OriginChannelName": {
+            "type": "string",
+            "nullable": true
+          },
+          "OriginChannelKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ProgressPercentage": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "IDChatExtVars": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "MessageMonitoring": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "MaskMessage": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDTaskVote": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Op1NumVotes": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Op2NumVotes": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Op3NumVotes": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Op4NumVotes": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Op5NumVotes": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "OpChosenText": {
+            "type": "string",
+            "nullable": true
+          },
+          "ExtraData": {
+            "type": "string",
+            "nullable": true
+          },
+          "InviteTasksPermissions": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "InviteActivitiesPermissions": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "InviteLinkKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ChannelName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ChannelKind": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "RelatedRecords": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Chat2Record"
+            },
+            "nullable": true
+          },
+          "ExternalChannelsStr": {
+            "type": "string",
+            "nullable": true
+          },
+          "ExternalDestinations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalAddressSpec"
+            },
+            "nullable": true
+          },
+          "ExternalChannels": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Chat2Channel"
+            },
+            "nullable": true
+          },
+          "ResourceTable": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Chat2ResourceTable"
+            },
+            "nullable": true
+          },
+          "InviteResourceAccessType": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "InviteIsOwner": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Destiny": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Chat2Resource"
+            },
+            "nullable": true
+          },
+          "QuestionType": {
+            "$ref": "#/components/schemas/QuestionType"
+          },
+          "QuestionStatus": {
+            "$ref": "#/components/schemas/QuestionStatus"
+          },
+          "QuestionID": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionAuthor": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "QuestionIsAnswer": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionCloseRequested": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "QuestionStatusLastChange": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "IDRecord": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "deprecated": true
+          },
+          "IDRecordModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "deprecated": true
+          },
+          "GIDRecord": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "deprecated": true
+          },
+          "RecordCode": {
+            "type": "string",
+            "nullable": true,
+            "deprecated": true
+          },
+          "RecordShortName": {
+            "maxLength": 120,
+            "type": "string",
+            "nullable": true,
+            "deprecated": true
+          },
+          "DataLinkType": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "InviteAllowPublish": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "InviteMonitorFeatureFlags": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "InviteSpokesperson": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "InviteShowCurrentWork": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "InviteShowCurrentAttendance": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Type": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "Chat2Channel": {
+        "type": "object",
+        "properties": {
+          "IDChannel": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ChannelName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ChannelKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Kind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "Chat2Record": {
+        "type": "object",
+        "properties": {
+          "IDRecord": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "IDRecordModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "GIDRecord": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "RecordCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecordShortName": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecordTypeName": {
+            "type": "string",
+            "nullable": true
+          },
+          "RelatedRecordKind": {
+            "$ref": "#/components/schemas/RelatedRecordKind"
+          },
+          "ThirdParty": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsVideoCallActive": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "ExtraData": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDActivityType": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IsChannelOwnerOfTask": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Action": {
+            "$ref": "#/components/schemas/Chat2RecordAction"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Chat2RecordAction": {
+        "enum": [
+          0,
+          1,
+          2
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "Chat2Resource": {
+        "type": "object",
+        "properties": {
+          "IDLogin": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "UserName": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ResourceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Type": {
+            "$ref": "#/components/schemas/Chat2ResourceType"
+          },
+          "IDChannel": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Sequence": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Action": {
+            "$ref": "#/components/schemas/Chat2ResourceActionOnEdit"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Chat2ResourceActionOnEdit": {
+        "enum": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "Chat2ResourceTable": {
+        "type": "object",
+        "properties": {
+          "IDChannel": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDLogin": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "UserName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Type": {
+            "$ref": "#/components/schemas/Chat2ResourceType"
+          },
+          "ResourceKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Sequence": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "Chat2ResourceType": {
+        "enum": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ChatData": {
+        "type": "object",
+        "properties": {
+          "IDChat": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChatKind": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ChatMessageDestKind": {
+        "enum": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ChatReadData": {
+        "type": "object",
+        "properties": {
+          "IDChat": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "StartIDChat": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDWorkRoom": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/ChannelKind"
+          },
+          "Count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "MessageState": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Action": {
+            "$ref": "#/components/schemas/ReadAction"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChatStatus": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ChatTransferingData": {
+        "type": "object",
+        "properties": {
+          "IDChats": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          },
+          "ChannelSrc": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ChannelDest": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudFullRegisterRequest": {
+        "type": "object",
+        "properties": {
+          "LoginReq": {
+            "$ref": "#/components/schemas/CloudLoginRequest"
+          },
+          "CompanyReq": {
+            "$ref": "#/components/schemas/CompanyRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudFullRegisterResponse": {
+        "type": "object",
+        "properties": {
+          "IDLogin": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Company": {
+            "$ref": "#/components/schemas/Company"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudFullRegisterResponseGenericApiWResultResponse": {
+        "type": "object",
+        "properties": {
+          "Success": {
+            "type": "boolean"
+          },
+          "ErrorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "WarningMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "Result": {
+            "$ref": "#/components/schemas/CloudFullRegisterResponse"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudLoginRequest": {
+        "required": [
+          "FullName",
+          "Terms",
+          "Username"
+        ],
+        "type": "object",
+        "properties": {
+          "IDLogin": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Username": {
+            "minLength": 1,
+            "type": "string",
+            "format": "email"
+          },
+          "Password": {
+            "type": "string",
+            "format": "password",
+            "nullable": true
+          },
+          "ConfirmPassword": {
+            "type": "string",
+            "format": "password",
+            "nullable": true
+          },
+          "FullName": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "CreateResource": {
+            "type": "boolean"
+          },
+          "IDCompany": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "InheritMode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "fromDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "Photo": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Terms": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Community": {
+        "type": "object",
+        "properties": {
+          "ID": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "Active": {
+            "type": "boolean"
+          },
+          "Visibility": {
+            "$ref": "#/components/schemas/Visibility"
+          },
+          "AllowEdit": {
+            "type": "boolean"
+          },
+          "NoCompanies": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "NoChannels": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "NoHResources": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Owner": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsOwner": {
+            "type": "boolean"
+          },
+          "IDWorkroomDefault": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Workrooms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Channel"
+            },
+            "nullable": true
+          },
+          "IsCompanyDefault": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Photo": {
+            "type": "string",
+            "nullable": true
+          },
+          "PhotoBase64": {
+            "type": "string",
+            "nullable": true
+          },
+          "LinkStatus": {
+            "$ref": "#/components/schemas/LinkStatus"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Company": {
+        "type": "object",
+        "properties": {
+          "IDEntity": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ID": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShortName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Accountname": {
+            "type": "string",
+            "nullable": true
+          },
+          "Billingstreet": {
+            "type": "string",
+            "nullable": true
+          },
+          "Billingzip": {
+            "type": "string",
+            "nullable": true
+          },
+          "Billingcity": {
+            "type": "string",
+            "nullable": true
+          },
+          "NIF": {
+            "type": "string",
+            "nullable": true
+          },
+          "InviteCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "Email": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDCountry": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Visibility": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IsOwner": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Active": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Owner": {
+            "type": "string",
+            "nullable": true
+          },
+          "Photo": {
+            "type": "string",
+            "nullable": true
+          },
+          "PhotoBase64": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompanyData": {
+        "type": "object",
+        "properties": {
+          "IDThirdParty": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompanyGenericApiWResultResponse": {
+        "type": "object",
+        "properties": {
+          "Success": {
+            "type": "boolean"
+          },
+          "ErrorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "WarningMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "Result": {
+            "$ref": "#/components/schemas/Company"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompanyRequest": {
+        "required": [
+          "Accountname",
+          "Email",
+          "NIF",
+          "ShortName"
+        ],
+        "type": "object",
+        "properties": {
+          "Accountname": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "ShortName": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "NIF": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "ConfirmNIF": {
+            "type": "string",
+            "nullable": true
+          },
+          "Email": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "IDCountry": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Billingcity": {
+            "type": "string",
+            "nullable": true
+          },
+          "Billingstreet": {
+            "type": "string",
+            "nullable": true
+          },
+          "Billingzip": {
+            "type": "string",
+            "nullable": true
+          },
+          "Visibility": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDEntity": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ID": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "Country": {
+        "type": "object",
+        "properties": {
+          "IDCountry": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Name": {
+            "maxLength": 100,
+            "type": "string",
+            "nullable": true
+          },
+          "IsEU": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CountryListGenericApiWResultResponse": {
+        "type": "object",
+        "properties": {
+          "Success": {
+            "type": "boolean"
+          },
+          "ErrorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "WarningMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "Result": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Country"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "DebugInfo": {
+        "type": "object",
+        "properties": {
+          "Module": {
+            "type": "string",
+            "nullable": true
+          },
+          "Method": {
+            "type": "string",
+            "nullable": true
+          },
+          "Thread": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "Counter": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Dest": {
+        "type": "object",
+        "properties": {
+          "Login": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Resource": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/ChatMessageDestKind"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Dissemination": {
+        "enum": [
+          0,
+          1
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ExtDest": {
+        "type": "object",
+        "properties": {
+          "IDLogin": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Resource": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/ChatMessageDestKind"
+          },
+          "Sequence": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExternalAddressSpec": {
+        "type": "object",
+        "properties": {
+          "WorkRoom": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Dests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExtDest"
+            },
+            "nullable": true
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/ChatMessageDestKind"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FeatureFlagData": {
+        "type": "object",
+        "properties": {
+          "IDFeatureFlag": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FrameworkMessage": {
+        "type": "object",
+        "properties": {
+          "Stamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "Sender": {
+            "$ref": "#/components/schemas/AddressSpec"
+          },
+          "Destiny": {
+            "$ref": "#/components/schemas/AddressSpec"
+          },
+          "ExternalDestinations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalAddressSpec"
+            },
+            "nullable": true
+          },
+          "ExcludeSenderUser": {
+            "type": "boolean"
+          },
+          "ExcludeSenderSession": {
+            "type": "boolean"
+          },
+          "IncludeSenderSession": {
+            "type": "boolean"
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/KindMessage"
+          },
+          "IDNotification": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "RawMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "RawMessageHtml": {
+            "type": "string",
+            "nullable": true
+          },
+          "Importance": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "VisibilityLevel": {
+            "$ref": "#/components/schemas/VisibilityLevel"
+          },
+          "MaskMessage": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Priority": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Modifiers": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "MessageMonitoring": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Args": {
+            "type": "array",
+            "items": { },
+            "nullable": true
+          },
+          "PointData": {
+            "$ref": "#/components/schemas/PointData"
+          },
+          "Chat": {
+            "$ref": "#/components/schemas/Chat"
+          },
+          "UserData": {
+            "$ref": "#/components/schemas/UserData"
+          },
+          "ChatReadData": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatReadData"
+            },
+            "nullable": true
+          },
+          "ImportanceSettingData": {
+            "$ref": "#/components/schemas/ImportanceSettingData"
+          },
+          "NotificationSettingsData": {
+            "$ref": "#/components/schemas/NotificationSettingsData"
+          },
+          "MailData": {
+            "$ref": "#/components/schemas/MailData"
+          },
+          "CompanyData": {
+            "$ref": "#/components/schemas/CompanyData"
+          },
+          "VideoCallData": {
+            "$ref": "#/components/schemas/VideoCallData"
+          },
+          "MeetingData": {
+            "$ref": "#/components/schemas/MeetingData"
+          },
+          "TaskData": {
+            "$ref": "#/components/schemas/SysTaskData"
+          },
+          "ActivityData": {
+            "$ref": "#/components/schemas/ActivityData"
+          },
+          "Task": {
+            "$ref": "#/components/schemas/SysTask"
+          },
+          "ScheduleActivity": {
+            "$ref": "#/components/schemas/ScheduleActivity"
+          },
+          "QuestionData": {
+            "$ref": "#/components/schemas/QuestionData"
+          },
+          "ScheduledData": {
+            "$ref": "#/components/schemas/ScheduledData"
+          },
+          "WorkRoomData": {
+            "$ref": "#/components/schemas/WorkRoomData"
+          },
+          "RecordData": {
+            "$ref": "#/components/schemas/MsgRecordData"
+          },
+          "ChatData": {
+            "$ref": "#/components/schemas/ChatData"
+          },
+          "ChatTransferingData": {
+            "$ref": "#/components/schemas/ChatTransferingData"
+          },
+          "ObjectContent": {
+            "nullable": true
+          },
+          "IDChatExtVars": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Info": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "nullable": true
+            },
+            "nullable": true
+          },
+          "ExtraData": {
+            "type": "string",
+            "nullable": true
+          },
+          "LinkData": {
+            "$ref": "#/components/schemas/LinkData"
+          },
+          "TimeData": {
+            "$ref": "#/components/schemas/TimeData"
+          },
+          "FeatureFlagData": {
+            "$ref": "#/components/schemas/FeatureFlagData"
+          },
+          "RelatedRecordsData": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelatedRecordData"
+            },
+            "nullable": true
+          },
+          "ReminderData": {
+            "$ref": "#/components/schemas/SincReminder"
+          },
+          "AttentionCallNotificationLevel": {
+            "$ref": "#/components/schemas/AttentionCallNotificationLevel"
+          },
+          "DebugData": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DebugInfo"
+            },
+            "nullable": true
+          },
+          "TreatLaterNotifData": {
+            "$ref": "#/components/schemas/TreatLaterNotif"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportanceSettingData": {
+        "type": "object",
+        "properties": {
+          "Target": {
+            "$ref": "#/components/schemas/AddressSpec"
+          },
+          "Importance": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "MonitorChannel": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDFollowProfileChannel": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IndexFollowProfileChannel": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "NameFollowProfileChannel": {
+            "type": "string",
+            "nullable": true
+          },
+          "Kind": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Login": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Resource": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "KindMessage": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137,
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145,
+          146,
+          147,
+          148,
+          149,
+          150,
+          151,
+          152,
+          153,
+          154,
+          155,
+          156,
+          157,
+          158,
+          159,
+          160
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "LinkData": {
+        "type": "object",
+        "properties": {
+          "LinkDataType": {
+            "$ref": "#/components/schemas/LinkDataType"
+          },
+          "IDRecordSrc": {
+            "nullable": true
+          },
+          "IDRecordModuleSrc": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "CodeSrc": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShortNameSrc": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDRecordDest": {
+            "nullable": true
+          },
+          "IDRecordModuleDest": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "CodeDest": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShortNameDest": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LinkDataType": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "LinkStatus": {
+        "enum": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "LoginOnlineStatus": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          99
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "MailData": {
+        "type": "object",
+        "properties": {
+          "IDMail": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Subject": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "MailToTask": {
+        "type": "object",
+        "properties": {
+          "IDTask": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDMail": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeetingData": {
+        "type": "object",
+        "properties": {
+          "IDMeeting": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "Status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IsPublic": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "CreatedTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "IDResourceCreator": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "RoomIDWorkRoom": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ChannelName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Channels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          },
+          "Participants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "MsgRecordData": {
+        "type": "object",
+        "properties": {
+          "IDRecord": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "IDModule": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NotificationSettings": {
+        "type": "object",
+        "properties": {
+          "PlayChatSound": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ShowChatAlerts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "WindowFlashing": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ChatTopMost": {
+            "type": "boolean"
+          },
+          "PeriodicReminders": {
+            "type": "boolean"
+          },
+          "MinImportanceLevelForNotif": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "KeepChatOnTray": {
+            "type": "boolean"
+          },
+          "ShowTaskProductionColumns": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NotificationSettingsData": {
+        "type": "object",
+        "properties": {
+          "Login": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Settings": {
+            "$ref": "#/components/schemas/NotificationSettings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OpQuestionAnswer": {
+        "type": "object",
+        "properties": {
+          "IDTaskOption": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Value": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Text": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "Acr": {
+            "type": "string",
+            "nullable": true
+          },
+          "Count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Checked": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "NumVotes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "MaxCount": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "OpQuestionVoted": {
+        "type": "object",
+        "properties": {
+          "Value": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDTaskOption": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Checked": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "NumVotes": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsNew": {
+            "type": "boolean"
+          },
+          "Acr": {
+            "type": "string",
+            "nullable": true
+          },
+          "Text": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PointData": {
+        "type": "object",
+        "properties": {
+          "UpdateOptions": {
+            "type": "boolean"
+          },
+          "TimeWorking": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "TimePaused": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "TimeTraveling": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "TimeOff": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "TimeOffDuty": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "lastWorkconfirm": {
+            "type": "string",
+            "nullable": true
+          },
+          "DataSource": {
+            "nullable": true
+          },
+          "Src": {
+            "$ref": "#/components/schemas/UpdateStatePointSrc"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QuestionData": {
+        "type": "object",
+        "properties": {
+          "NbrOptions": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Option1": {
+            "type": "string",
+            "nullable": true
+          },
+          "Option2": {
+            "type": "string",
+            "nullable": true
+          },
+          "Option3": {
+            "type": "string",
+            "nullable": true
+          },
+          "Option4": {
+            "type": "string",
+            "nullable": true
+          },
+          "Option5": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "QuestionStatus": {
+        "enum": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "QuestionType": {
+        "enum": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ReactionCounter": {
+        "type": "object",
+        "properties": {
+          "IDEmoji": {
+            "type": "string",
+            "nullable": true
+          },
+          "Counter": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReadAction": {
+        "enum": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "RelatedRecord": {
+        "type": "object",
+        "properties": {
+          "IDRecord": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDRecordModule": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Text": {
+            "type": "string",
+            "nullable": true
+          },
+          "ModuleName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "RelatedRecordData": {
+        "type": "object",
+        "properties": {
+          "IDRecord": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "IDRecordModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "GIDRecord": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "RecordCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecordShortName": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecordTypeName": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecordKind": {
+            "$ref": "#/components/schemas/RelatedRecordKind"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RelatedRecordKind": {
+        "enum": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "ScheduleActivity": {
+        "required": [
+          "Title"
+        ],
+        "type": "object",
+        "properties": {
+          "IDActivity": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDActivityModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Subject": {
+            "type": "string",
+            "nullable": true
+          },
+          "AutoEnd": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Duration": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "TaskProgressPercentage": {
+            "type": "number",
+            "format": "double"
+          },
+          "Status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDUser": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDUserCreation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "CreatedTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "parentId": {
+            "type": "string",
+            "nullable": true
+          },
+          "OpenHint": {
+            "type": "boolean"
+          },
+          "ID": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "TechnicalSpecification": {
+            "type": "string",
+            "nullable": true
+          },
+          "End": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "DueDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "TaskKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDFilterView": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDRecord": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDModuleRelated": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDRecordRelated": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDRecord_ac": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDResourceClose": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDResourceCreate": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDScheduleActivity": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "IsAllDay": {
+            "type": "boolean"
+          },
+          "IsOwnerChannel": {
+            "type": "boolean"
+          },
+          "Kind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Type": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TypeLocation": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "OwnerID": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Recurrence": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecurrenceException": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecurrenceID": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "RecurrenceRule": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceBGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceFGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "CalendarResBGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "CalendarResFGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "AssignableUsers": {
+            "type": "string",
+            "nullable": true
+          },
+          "Start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "WorkingResources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          },
+          "StateBGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "StateFGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "StateTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "Title": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "cacheHint": {
+            "type": "string",
+            "nullable": true
+          },
+          "GUIDActivity": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ActivityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDMail": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDMailBox": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ConversationId": {
+            "type": "string",
+            "nullable": true
+          },
+          "ConversationTopic": {
+            "type": "string",
+            "nullable": true
+          },
+          "ModuleName": {
+            "type": "string",
+            "nullable": true
+          },
+          "RegisterTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "EmailLink": {
+            "type": "string",
+            "nullable": true
+          },
+          "HintTypeName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ActivityRoleName": {
+            "type": "string",
+            "nullable": true
+          },
+          "LastWorkConfirm": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "TimeWeight": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "ActivityResourceRoleActivities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityResourceRoleActivity"
+            },
+            "nullable": true
+          },
+          "TaskResourceRoles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskResourceRoleView"
+            },
+            "nullable": true
+          },
+          "Schedule": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Commit": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Closed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Executed": {
+            "type": "string",
+            "nullable": true
+          },
+          "TimelineType": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ActivityTypeTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "AssignedResources": {
+            "type": "string",
+            "nullable": true
+          },
+          "Assignments": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDTask": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "WorkStatus": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "UserWorkStatus": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDTime": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleActivity"
+            },
+            "nullable": true
+          },
+          "Task": {
+            "$ref": "#/components/schemas/SysTask"
+          },
+          "RelatedRecords": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelatedRecord"
+            },
+            "nullable": true
+          },
+          "Entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskEntity"
+            },
+            "nullable": true
+          },
+          "Importance": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ImportanceValue": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Complexity": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Priority": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "PriorityAcr": {
+            "type": "string",
+            "nullable": true
+          },
+          "PriorityText": {
+            "type": "string",
+            "nullable": true
+          },
+          "PriorityBg": {
+            "type": "string",
+            "nullable": true
+          },
+          "PriorityFg": {
+            "type": "string",
+            "nullable": true
+          },
+          "Channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActTaskChannel"
+            },
+            "nullable": true
+          },
+          "Times": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SysTaskTime"
+            },
+            "nullable": true
+          },
+          "Activities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelatedRecord"
+            },
+            "nullable": true
+          },
+          "TasksIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          },
+          "ActivitiesIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          },
+          "ThirdParties": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDThirdParty": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDThirdPartyModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "OwnUserChangedPoint": {
+            "type": "boolean"
+          },
+          "WorkRoomsNames": {
+            "type": "string",
+            "nullable": true
+          },
+          "AppointmentType": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionProfile": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "EnableQuestion": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "LockVoting": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "LockQuestionEdit": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IsQuestion": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionSelectionMode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionAllowVoteInt": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionJustifMandatory": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionAllowUserOptions": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "NbrOptions": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionPublicVoting": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Opts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpQuestionAnswer"
+            },
+            "nullable": true
+          },
+          "VoteComment": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDTaskVote": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ChannelParticipation": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "LastStatus": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "LastStatusTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "LastStatusBGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsProduction": {
+            "type": "boolean"
+          },
+          "CanStartTaskProduction": {
+            "type": "boolean"
+          },
+          "StartDateEstimated": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "HasTechnicalDescription": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScheduledData": {
+        "type": "object",
+        "properties": {
+          "IDChat": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Msg": {
+            "type": "string",
+            "nullable": true
+          },
+          "StartDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "OnlyDateUpdated": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "VisibilityLevel": {
+            "$ref": "#/components/schemas/VisibilityLevel"
+          },
+          "Importance": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SincReminder": {
+        "type": "object",
+        "properties": {
+          "ID": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "State": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "StartDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "Title": {
+            "type": "string",
+            "nullable": true
+          },
+          "Content": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsRecursive": {
+            "type": "boolean"
+          },
+          "RecursiveUnit": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "RecursiveValue": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "DurationType": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "DurationEndDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "DurationEndTimes": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDRecordLink": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDRecordLinkModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "RecordLinkTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "ActivityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsActivity": {
+            "type": "boolean"
+          },
+          "IsActivityReminder": {
+            "type": "boolean"
+          },
+          "ActivityReminderBeforeTime": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "IsDeleted": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "PeriodicityWeeklyDays": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsEnabled": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "WeeklyDays": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true,
+            "readOnly": true
+          },
+          "ModifiedTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "DelayedDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "IDChannel": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ShowNotification": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDResourceAssign": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "GIDRecordLink": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "SysTask": {
+        "type": "object",
+        "properties": {
+          "IDTask": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShortName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "TechnicalSpecification": {
+            "type": "string",
+            "nullable": true
+          },
+          "ThirdParties": {
+            "type": "string",
+            "nullable": true
+          },
+          "Status": {
+            "$ref": "#/components/schemas/SysTaskStatus"
+          },
+          "StatusStr": {
+            "type": "string",
+            "nullable": true
+          },
+          "ProgressPercentage": {
+            "type": "number",
+            "format": "double"
+          },
+          "Importance": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "PriorityAcr": {
+            "type": "string",
+            "nullable": true
+          },
+          "PriorityText": {
+            "type": "string",
+            "nullable": true
+          },
+          "PriorityBg": {
+            "type": "string",
+            "nullable": true
+          },
+          "PriorityFg": {
+            "type": "string",
+            "nullable": true
+          },
+          "CreatedTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ModifiedTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "IDActivity": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDActivityModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDUserAssign": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDUserCreation": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDResourceAssign": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Scheduled": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDScheduledChatMessage": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDLoginSrc": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ScheduledDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "Archived": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActTaskChannel"
+            },
+            "nullable": true
+          },
+          "Times": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SysTaskTime"
+            },
+            "nullable": true
+          },
+          "Participants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskResourceRole"
+            },
+            "nullable": true
+          },
+          "RelatedRecords": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskRelatedRecord"
+            },
+            "nullable": true
+          },
+          "Entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskEntity"
+            },
+            "nullable": true
+          },
+          "RunningStatus": {
+            "$ref": "#/components/schemas/TaskRunningStatus"
+          },
+          "RunningStatusStr": {
+            "type": "string",
+            "nullable": true
+          },
+          "WorkingResources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          },
+          "WorkStatus": {
+            "$ref": "#/components/schemas/ActivityWorkStatus"
+          },
+          "Start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "End": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "DueDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "TaskKind": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Duration": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "Complexity": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Priority": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Activities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelatedRecord"
+            },
+            "nullable": true
+          },
+          "Emails": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MailToTask"
+            },
+            "nullable": true
+          },
+          "IsFollowedByResource": {
+            "type": "boolean"
+          },
+          "TaskAssigningType": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ManagedType": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IsManagedByResource": {
+            "type": "boolean"
+          },
+          "QuestionProfile": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "EnableQuestion": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "LockVoting": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "LockQuestionEdit": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IsQuestion": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionSelectionMode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionAllowVoteInt": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionAllowUserOptions": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionJustifMandatory": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "NbrOptions": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "QuestionPublicVoting": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Opts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpQuestionAnswer"
+            },
+            "nullable": true
+          },
+          "VoteComment": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDTaskVote": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "AllVotes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VoteData"
+            },
+            "nullable": true
+          },
+          "Assignments": {
+            "type": "string",
+            "nullable": true
+          },
+          "ChannelParticipation": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IsProduction": {
+            "type": "boolean"
+          },
+          "CanStartTaskProduction": {
+            "type": "boolean"
+          },
+          "IDThirdParty": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDThirdPartyModule": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ThirdParty": {
+            "type": "string",
+            "nullable": true
+          },
+          "StartDateEstimated": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "IsOwnerChannel": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SysTaskData": {
+        "type": "object",
+        "properties": {
+          "IDChat": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDTask": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "TaskTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "TaskShortName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Kind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IDActivity": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ForceNewVote": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "IDTaskVote": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Opts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpQuestionVoted"
+            },
+            "nullable": true
+          },
+          "OptsLastAnswer": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpQuestionVoted"
+            },
+            "nullable": true
+          },
+          "OpSender": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "OpSenderResource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IsShare": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "Comment": {
+            "type": "string",
+            "nullable": true
+          },
+          "CommentLastAnswer": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "SysTaskStatus": {
+        "enum": [
+          0,
+          1,
+          2,
+          99
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "SysTaskTime": {
+        "type": "object",
+        "properties": {
+          "IDTime": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Start": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "End": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDUser": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "TimeWeight": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "TimeType": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TimeTypeText": {
+            "type": "string",
+            "nullable": true
+          },
+          "Duration": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "IDUserText": {
+            "type": "string",
+            "nullable": true,
+            "readOnly": true
+          },
+          "IDResourceText": {
+            "type": "string",
+            "nullable": true,
+            "readOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskEntity": {
+        "type": "object",
+        "properties": {
+          "IDTaskEntity": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDTask": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDTaskModule": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDRecord": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDRecordModule": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Kind": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "KindText": {
+            "type": "string",
+            "nullable": true
+          },
+          "ModuleName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Text": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskParticipantKind": {
+        "enum": [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "TaskRelatedRecord": {
+        "type": "object",
+        "properties": {
+          "IDTaskRelatedRecord": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDTask": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDTaskModule": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDRecord": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IDRecordModule": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ModuleName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Text": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskResourceRole": {
+        "type": "object",
+        "properties": {
+          "IDTaskResourceRole": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDTask": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDActivityRole": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDUser": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "TeamMask01": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "TeamMask02": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "AssignMode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/TaskParticipantKind"
+          },
+          "IDChannel": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskResourceRoleView": {
+        "type": "object",
+        "properties": {
+          "IDTaskResourceRole": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDTask": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDActivityRole": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDTeam": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "IDUser": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "RoleName": {
+            "type": "string",
+            "nullable": true
+          },
+          "UserName": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeamMask01": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "TeamMask02": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "AssignMode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/TaskParticipantKind"
+          },
+          "IDResourceOnWork": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ResourceBGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceFGColor": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ResourceKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TeamName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskRunningStatus": {
+        "enum": [
+          2723,
+          2724,
+          2725,
+          2726,
+          2727,
+          2731,
+          2732,
+          2733
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "TimeData": {
+        "type": "object",
+        "properties": {
+          "IDTime": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TreatLaterNotif": {
+        "type": "object",
+        "properties": {
+          "ID": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IdChannel": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "CreatedTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ModifiedTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "SourceKind": {
+            "$ref": "#/components/schemas/TreatLaterSourceKind"
+          },
+          "SourceId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "SourceGuid": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Type": {
+            "$ref": "#/components/schemas/TreatLaterType"
+          },
+          "NotifyDateTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "Message": {
+            "$ref": "#/components/schemas/FrameworkMessage"
+          },
+          "CanBeChanged": {
+            "type": "boolean"
+          },
+          "IsAcknowledged": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TreatLaterSourceKind": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "TreatLaterType": {
+        "enum": [
+          0,
+          1,
+          2
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "UpdateStatePointSrc": {
+        "enum": [
+          0,
+          1
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "UserData": {
+        "type": "object",
+        "properties": {
+          "IDUser": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDSession": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "IDResource": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/LoginOnlineStatus"
+          },
+          "Changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserDataChange"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UserDataChange": {
+        "type": "object",
+        "properties": {
+          "Field": {
+            "$ref": "#/components/schemas/UserField"
+          },
+          "Value": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UserField": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "VideoCallCurrentState": {
+        "enum": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "VideoCallData": {
+        "type": "object",
+        "properties": {
+          "IDVideoCall": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Code": {
+            "type": "string",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "CreatedTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "Permission": {
+            "$ref": "#/components/schemas/VideoCallPermission"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/VideoCallCurrentState"
+          },
+          "RoomIDWorkRoom": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ChannelName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Channels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          },
+          "Participants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "VideoCallPermission": {
+        "enum": [
+          0,
+          1,
+          2,
+          4,
+          8,
+          15
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "Visibility": {
+        "enum": [
+          0,
+          1,
+          2
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "VisibilityLevel": {
+        "enum": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "VoteData": {
+        "type": "object",
+        "properties": {
+          "Date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "IDTaskVote": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "Comment": {
+            "type": "string",
+            "nullable": true
+          },
+          "Answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpQuestionAnswer"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkRoomData": {
+        "type": "object",
+        "properties": {
+          "ID": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/ChannelKind"
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          },
+          "Resource": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "Login": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "StillVisible": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "IsOwner": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ResourceAccessType": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TasksPermissions": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ActivitiesPermissions": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "LinkKind": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "AllowPublish": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "MonitorFeatureFlags": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "Spokesperson": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ShowCurrentWork": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ShowCurrentAttendance": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

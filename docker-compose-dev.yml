@@ -1,0 +1,67 @@
+services:
+  # 3. Servidor de Modelos Locales (Ollama)
+  ollama-llm:
+    image: ollama/ollama:latest
+    container_name: machining_ollama
+    restart: always
+    ports:
+      - 11435:11434
+    volumes:
+      # Este volumen guarda los modelos descargados localmente:
+      - ./ollama_storage:/root/.ollama
+    # Si cuentas con GPU Nvidia, descomenta estas líneas para aceleración hardware:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - machining-network
+
+  # 2. Base de Datos Vectorial (Para RAG)
+  vector-db:
+    image: qdrant/qdrant:latest # Opción robusta y ligera (o chromadb / pgvector)
+    container_name: machining_vector_db
+    restart: always
+    ports:
+      - 6333:6333
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - machining-network
+
+  # 3. Base de Datos de Producción y Sensores (TimescaleDB / PostgreSQL)
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: machining_db
+    restart: always
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=machining_db
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - machining-network
+
+  # 4. Cache y Gestión de Estado/Colas
+  redis-cache:
+    image: redis:alpine
+    container_name: machining_redis
+    restart: always
+    ports:
+      - 6379:6379
+    networks:
+      - machining-network
+
+networks:
+  machining-network:
+    driver: bridge
+
+volumes:
+  qdrant_data:
+  postgres_data:
