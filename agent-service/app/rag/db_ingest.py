@@ -220,7 +220,7 @@ class DatabaseIngestor:
             print("\n🗃️ Ingestando TODAS las tablas de SQL Server...")
             print(
                 f"   📌 DB={settings.SQL_SERVER_DB} schema={schema_name or '*'} "
-                f"rows_per_table={rows_per_table} max_tables={max_tables or 'all'}"
+                f"rows_per_table={'all' if rows_per_table <= 0 else rows_per_table} max_tables={max_tables or 'all'}"
             )
             conn = self._sql_server_connection()
             cursor = conn.cursor(as_dict=True)
@@ -276,8 +276,11 @@ class DatabaseIngestor:
                     if schema_point is not None:
                         schema_points += self._ingest_points([schema_point], source=f"Schema {fqn_text}")
 
-                    safe_limit = max(1, int(rows_per_table))
-                    query = f"SELECT TOP {safe_limit} * FROM {self._table_fqn(tbl_schema, tbl_name)}"
+                    if int(rows_per_table) <= 0:
+                        query = f"SELECT * FROM {self._table_fqn(tbl_schema, tbl_name)}"
+                    else:
+                        safe_limit = max(1, int(rows_per_table))
+                        query = f"SELECT TOP {safe_limit} * FROM {self._table_fqn(tbl_schema, tbl_name)}"
                     cursor.execute(query)
                     rows = cursor.fetchall() or []
 
@@ -782,7 +785,11 @@ def ingest_from_database():
     
     ingestor = DatabaseIngestor()
     
-    rows_per_table = max(1, int(os.getenv("SQL_SERVER_INGEST_ROWS_PER_TABLE", "120")))
+    raw_rows_per_table = os.getenv("SQL_SERVER_INGEST_ROWS_PER_TABLE", "0").strip().lower()
+    if raw_rows_per_table in {"all", "*", "0", ""}:
+        rows_per_table = 0
+    else:
+        rows_per_table = max(1, int(raw_rows_per_table))
     max_tables = max(0, int(os.getenv("SQL_SERVER_INGEST_MAX_TABLES", "0")))
     batch_size = max(1, int(os.getenv("SQL_SERVER_INGEST_BATCH_SIZE", "20")))
     schema_name = (os.getenv("SQL_SERVER_INGEST_SCHEMA", "").strip() or None)
