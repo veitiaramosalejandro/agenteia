@@ -441,8 +441,7 @@ def _log_startup_connectivity(report: dict) -> None:
     print(f"     • Configured: {solidset_rest.get('configured', False)}")
     print(f"     • TCP: {_probe_to_text(solidset_rest.get('tcp', {}))}")
     print(f"     • HTTP /: {_probe_to_text(solidset_rest.get('root', {}))}")
-    print(f"     • HTTP /RestApi/Heartbeat: {_probe_to_text(solidset_rest.get('heartbeat', {}))}")
-    print(f"     • HTTP /swagger/index.html: {_probe_to_text(solidset_rest.get('swagger', {}))}")    
+    print(f"     • HTTP /RestApi/Heartbeat: {_probe_to_text(solidset_rest.get('heartbeat', {}))}")        
 
 
 def _build_dialogue_cache_key(session_id: str, user_id: str, canal_id: Optional[str], message: str) -> str:
@@ -1396,9 +1395,9 @@ def test_solidset_connectivity():
     }
     
     # Test 2: Swagger (para verificar que la API está servida)
-    swagger_result = _probe_http(base_url, "/swagger/index.html")
+    swagger_result = _probe_http(base_url, "User/LoginJson")
     results["tests"]["swagger"] = {
-        "endpoint": f"{base_url}/swagger/index.html",
+        "endpoint": f"{base_url}User/LoginJson",
         "success": swagger_result.get("ok", False),
         "status_code": swagger_result.get("status_code"),
         "error": swagger_result.get("error")

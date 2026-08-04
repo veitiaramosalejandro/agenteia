@@ -31,7 +31,10 @@ class NotificationApiListener:
             bool(self.chat_base_url),
             bool(self.rest_base_url),
         ])
-        self.enabled = settings.NOTIF_API_ENABLED and any_api_configured
+        # Hard-disable operativo: cuando el background está apagado, la lógica del listener
+        # también queda inactiva aunque alguien intente invocarla por código.
+        self.runtime_disabled = not settings.NOTIF_API_BACKGROUND_ENABLED
+        self.enabled = settings.NOTIF_API_ENABLED and any_api_configured and (not self.runtime_disabled)
         self.timeout_seconds = max(5, settings.NOTIF_API_TIMEOUT_SECONDS)
         self.verify_tls = settings.NOTIF_API_VERIFY_TLS
         self.audit_log_enabled = settings.NOTIF_AUDIT_LOG_ENABLED
@@ -813,6 +816,14 @@ class NotificationApiListener:
         query_params: Optional[Dict[str, Any]] = None,
         channel_id: Optional[str] = None,
     ) -> Dict[str, int]:
+        if self.runtime_disabled:
+            return {
+                "learned": 0,
+                "skipped": 0,
+                "errors": 0,
+                "auto_reply_candidates": [],
+            }
+
         learned = 0
         skipped = 0
         errors = 0
@@ -1132,8 +1143,17 @@ class NotificationApiListener:
         return totals
 
     async def pull_once(self) -> Dict[str, Any]:
+        if self.runtime_disabled:
+            return {
+                "enabled": False,
+                "runtime_disabled": True,
+                "learned": 0,
+                "skipped": 0,
+                "errors": 0,
+                "auto_reply_candidates": [],
+            }
         if not self.enabled:
-            return {"enabled": False, "learned": 0, "skipped": 0, "errors": 0}
+            return {"enabled": False, "learned": 0, "skipped": 0, "errors": 0, "auto_reply_candidates": []}
 
         cycle_started_at = perf_counter()
         self._audit_log("🔎 AUDIT cycle=start source=notification_listener")
@@ -1291,6 +1311,13 @@ class NotificationApiListener:
 
     async def warmup_session(self) -> Dict[str, Any]:
         """Autentica al arrancar y precarga los chats/canales donde la cuenta puede operar."""
+        if self.runtime_disabled:
+            return {
+                "enabled": False,
+                "runtime_disabled": True,
+                "logged_in": False,
+                "channel_ids": [],
+            }
         if not self.enabled:
             return {"enabled": False, "logged_in": False, "channel_ids": []}
 
