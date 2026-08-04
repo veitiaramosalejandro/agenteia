@@ -171,10 +171,16 @@ class NotificationApiListener:
         return self.enabled
 
     def _headers(self) -> Dict[str, str]:
-        headers = {
-            "Accept": "*/*",
-            "Cookie": "IDWorkstation=1;NameWorkstation=XiaomiMiA2Lite28(9) ;ClientVersion=Android.20.0.0; IDApplication=C9F19A23-36C2-430C-B939-CB495F975D36"
-        }        
+        headers: Dict[str, str] = {
+            "Accept": "application/json, text/plain, */*",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+
+        active_key = (self.access_key or settings.NOTIF_API_ACCESS_KEY or "").strip()
+        if active_key:
+            headers["X-Access-Key"] = active_key
+            headers["Authorization"] = f"Bearer {active_key}"
+
         return headers
 
     def _join_url(self, base_url: str, endpoint: str) -> str:
@@ -303,7 +309,7 @@ class NotificationApiListener:
 
     async def _ensure_login(self, client: httpx.AsyncClient) -> bool:
         payload = self._login_payload()
-        headers = self._headers()        
+        headers = self._legacy_login_headers()
         if payload is None:
             return bool(self.access_key)
         
@@ -317,8 +323,7 @@ class NotificationApiListener:
 
                 content_type = (resp.headers.get("content-type") or "").lower()
                 if "json" in content_type:
-                    data = resp.json()
-                    print(f"🔑 Login exitoso a {url}: {data}")
+                    data = resp.json()                    
                     if isinstance(data, dict):
                         self._apply_login_response(data)
                         new_key = data.get("accessKey") or data.get("AccessKey")
@@ -866,15 +871,20 @@ class NotificationApiListener:
                         skipped += 1
                         self._trace_captured_message(entry, status="duplicate")
                         continue
+
+                    # Publicar candidatos de auto-reply incluso si el aprendizaje RAG falla.
+                    candidate = self._build_auto_reply_candidate(entry, fingerprint=fp)
+                    if candidate is not None:
+                        auto_reply_candidates.append(candidate)
+
                     if self._learn_entry(entry, fp):
                         learned += 1
                         self._remember_fingerprint(fp)
                         self._trace_captured_message(entry, status="learned")
-                        candidate = self._build_auto_reply_candidate(entry, fingerprint=fp)
-                        if candidate is not None:
-                            auto_reply_candidates.append(candidate)
                     else:
-                        errors += 1
+                        # Evita inflar "errors" cuando solo falla la indexación semántica.
+                        skipped += 1
+                        self._remember_fingerprint(fp)
                         self._trace_captured_message(entry, status="learn_error")
 
                 self._audit_log(

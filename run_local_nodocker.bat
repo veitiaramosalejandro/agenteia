@@ -14,17 +14,29 @@ set "SCRIPT_DIR=%~dp0"
 set "PROJECT_ROOT=%SCRIPT_DIR%"
 set "SERVICE_DIR=%PROJECT_ROOT%agent-service"
 set "ENV_FILE=%PROJECT_ROOT%.env"
+set "PYTHON_EXE="
 
 echo ========================================
 echo  🚀 Iniciando Machining Agent API (sin Docker)
 echo ========================================
 echo.
 
-if exist "%PROJECT_ROOT%venv_machining\Scripts\activate.bat" (
+if defined VIRTUAL_ENV (
+    if exist "%VIRTUAL_ENV%\Scripts\python.exe" (
+            set PYTHON_EXE=%VIRTUAL_ENV%\Scripts\python.exe
+        echo 🐍 Usando entorno activo: %VIRTUAL_ENV%
+    )
+)
+
+if not defined PYTHON_EXE if exist "%PROJECT_ROOT%venv_machining\Scripts\python.exe" (
+    set PYTHON_EXE=%PROJECT_ROOT%venv_machining\Scripts\python.exe
     call "%PROJECT_ROOT%venv_machining\Scripts\activate.bat"
-) else (
-    echo ❌ No se encontró el entorno virtual.
-    echo    Ejecuta primero: setup.bat
+    echo 🐍 Usando entorno del proyecto: %PROJECT_ROOT%venv_machining
+)
+
+if not defined PYTHON_EXE (
+    echo ❌ No se encontró un entorno virtual utilizable.
+    echo    Activa un venv o ejecuta primero: setup.bat
     pause
     exit /b 1
 )
@@ -94,6 +106,18 @@ echo  ⏹️  Presiona Ctrl+C para detener
 echo ========================================
 echo.
 
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level info
+"%PYTHON_EXE%" -c "import uvicorn, click" > nul 2>&1
+if %errorlevel% neq 0 (
+    echo ⚙️ Dependencias runtime faltantes. Instalando uvicorn y click...
+    "%PYTHON_EXE%" -m pip install uvicorn click > nul 2>&1
+    "%PYTHON_EXE%" -c "import uvicorn, click" > nul 2>&1
+    if %errorlevel% neq 0 (
+        echo ❌ No se pudieron instalar uvicorn/click en el entorno activo.
+        pause
+        exit /b 1
+    )
+)
+
+"%PYTHON_EXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level info
 
 pause

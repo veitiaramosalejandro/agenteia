@@ -53,10 +53,12 @@ class MachiningAgent:
     """
     
     def __init__(self):
+        model_name = (settings.MODEL_NAME or "").strip() or "qwen2.5:7b"
+
         # Configuración del LLM
         self.llm = ChatOllama(
             base_url=settings.OLLAMA_BASE_URL,
-            model=settings.MODEL_NAME,
+            model=model_name,
             temperature=0.2,
             num_predict=2048,  # Máximo de tokens a generar
             top_p=0.9,

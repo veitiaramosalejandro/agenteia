@@ -4,11 +4,14 @@ services:
     image: ollama/ollama:latest
     container_name: machining_ollama
     restart: always
+    user: root  # Añadir esta línea
     ports:
       - 11435:11434
     volumes:
       # Este volumen guarda los modelos descargados localmente:
       - ./ollama_storage:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
     # Si cuentas con GPU Nvidia, descomenta estas líneas para aceleración hardware:
     deploy:
       resources:

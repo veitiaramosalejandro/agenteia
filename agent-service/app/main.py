@@ -696,8 +696,7 @@ async def startup_db_learning() -> None:
         app.state.notification_task = None
         if notification_listener.is_enabled():
             try:
-                app.state.notification_warmup = await notification_listener.warmup_session()
-                print(f"🔐 Warmup SOLIDSET listener: {app.state.notification_warmup}")
+                app.state.notification_warmup = await notification_listener.warmup_session()                
             except Exception as exc:
                 app.state.notification_warmup = {"enabled": True, "logged_in": False, "error": str(exc)}
                 print(f"⚠️ Warmup SOLIDSET listener falló: {exc}")
