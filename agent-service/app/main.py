@@ -23,6 +23,7 @@ from app.config import settings
 
 from app.agent.core import MachiningAgent
 from app.agent.speech import text_to_speech
+from app.agent.tools import solidset_send_chat_message
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
 
@@ -63,6 +64,149 @@ _dialogue_metrics = {
     "last_seconds": None,
     "cache_hits": 0,
 }
+
+_auto_reply_lock = threading.Lock()
+_auto_reply_seen_fingerprints: "OrderedDict[str, float]" = OrderedDict()
+_auto_reply_max_seen = 2000
+
+
+def _auto_reply_seen(fingerprint: str) -> bool:
+    key = (fingerprint or "").strip()
+    if not key:
+        return False
+    with _auto_reply_lock:
+        return key in _auto_reply_seen_fingerprints
+
+
+def _remember_auto_reply_fingerprint(fingerprint: str) -> None:
+    key = (fingerprint or "").strip()
+    if not key:
+        return
+    with _auto_reply_lock:
+        _auto_reply_seen_fingerprints[key] = time()
+        _auto_reply_seen_fingerprints.move_to_end(key)
+        while len(_auto_reply_seen_fingerprints) > _auto_reply_max_seen:
+            _auto_reply_seen_fingerprints.popitem(last=False)
+
+
+def _is_self_sender(sender_resource: str, sender_name: str) -> bool:
+    own_resource = (settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip().lower()
+    own_username = (settings.SOLIDSET_LOGIN_USERNAME or "").strip().lower()
+    sender_resource_norm = (sender_resource or "").strip().lower()
+    sender_name_norm = (sender_name or "").strip().lower()
+
+    if own_resource and sender_resource_norm and own_resource == sender_resource_norm:
+        return True
+    if own_username and sender_name_norm and own_username in sender_name_norm:
+        return True
+    return False
+
+
+def _sanitize_auto_reply_input(raw_text: str) -> str:
+    text = (raw_text or "").strip()
+    if not text:
+        return ""
+    mention_token = (settings.SOLIDSET_AUTO_REPLY_MENTION_TOKEN or "").strip()
+    if mention_token:
+        text = text.replace(mention_token, " ")
+        text = text.replace(mention_token.lower(), " ")
+        text = text.replace(mention_token.upper(), " ")
+    text = " ".join(text.split())
+    max_len = max(80, settings.SOLIDSET_AUTO_REPLY_MAX_INPUT_CHARS)
+    return text[:max_len].strip()
+
+
+def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
+    fingerprint = (candidate.get("fingerprint") or "").strip()
+    if not fingerprint or _auto_reply_seen(fingerprint):
+        return False
+
+    channel_id = (candidate.get("channel_id") or "").strip()
+    message = (candidate.get("message") or "").strip()
+    sender_resource = str(candidate.get("sender_resource") or "")
+    sender_name = str(candidate.get("sender_name") or "")
+    if not channel_id or not message:
+        return False
+    if _is_self_sender(sender_resource=sender_resource, sender_name=sender_name):
+        return False
+
+    if settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION:
+        token = (settings.SOLIDSET_AUTO_REPLY_MENTION_TOKEN or "").strip().lower()
+        if token and token not in message.lower():
+            return False
+
+    return True
+
+
+async def _process_auto_replies(candidates: list[dict]) -> int:
+    if not settings.SOLIDSET_AUTO_REPLY_ENABLED:
+        return 0
+    if not settings.SOLIDSET_USER_ACTIONS_ENABLED:
+        print("⚠️ Auto-reply SOLIDSET activo en config, pero SOLIDSET_USER_ACTIONS_ENABLED=false. No se enviarán respuestas.")
+        return 0
+
+    max_replies = max(1, settings.SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE)
+    sent = 0
+    local_seen = set()
+
+    for candidate in candidates:
+        if sent >= max_replies:
+            break
+        fingerprint = (candidate.get("fingerprint") or "").strip()
+        if not fingerprint or fingerprint in local_seen:
+            continue
+        local_seen.add(fingerprint)
+
+        if not _candidate_qualifies_for_auto_reply(candidate):
+            continue
+
+        incoming_text = _sanitize_auto_reply_input(str(candidate.get("message") or ""))
+        channel_id = (candidate.get("channel_id") or "").strip()
+        if not incoming_text or not channel_id:
+            continue
+
+        session_id = f"solidset_auto_{channel_id[:8]}"
+        user_id = (settings.SOLIDSET_LOGIN_USERNAME or "solidset.agent").strip()
+
+        try:
+            response_text = await asyncio.to_thread(
+                agent.analyze_event_with_dialogue,
+                session_id=session_id,
+                user_text=incoming_text,
+                user_id=user_id,
+                canal_id=channel_id,
+            )
+        except Exception as exc:
+            print(f"⚠️ Error generando auto-respuesta para canal {channel_id}: {exc}")
+            continue
+
+        response_text = (response_text or "").strip()
+        if not response_text:
+            continue
+
+        try:
+            send_result = await asyncio.to_thread(
+                solidset_send_chat_message.invoke,
+                {
+                    "canal_id": channel_id,
+                    "mensaje": response_text,
+                    "confirm": True,
+                },
+            )
+            send_result_text = str(send_result)
+            if send_result_text.startswith("✅"):
+                sent += 1
+                _remember_auto_reply_fingerprint(fingerprint)
+                print(
+                    f"🤖 Auto-reply enviado channel={channel_id} "
+                    f"sender={candidate.get('sender_name', 'desconocido')}"
+                )
+            else:
+                print(f"⚠️ Auto-reply no enviado en canal {channel_id}: {send_result_text}")
+        except Exception as exc:
+            print(f"⚠️ Error enviando auto-respuesta a SOLIDSET (canal {channel_id}): {exc}")
+
+    return sent
 
 
 def _extract_host_port_from_url(raw_url: str, default_port: int) -> tuple[Optional[str], int]:
@@ -510,16 +654,18 @@ async def _ciclo_notificaciones_api() -> None:
                 continue
 
             resultado = await notification_listener.pull_once()
+            auto_reply_sent = await _process_auto_replies(resultado.get("auto_reply_candidates") or [])
             app.state.last_notification_poll_at = resultado.get("timestamp")
             app.state.last_notification_result = resultado
             app.state.last_notification_error = None
+            app.state.last_auto_reply_sent = auto_reply_sent
             learned = resultado.get("learned", 0)
             skipped = resultado.get("skipped", 0)
             errors = resultado.get("errors", 0)
-            if learned or errors:
+            if learned or errors or auto_reply_sent:
                 print(
                     f"🔔 Notification API sync -> learned={learned}, "
-                    f"skipped={skipped}, errors={errors}"
+                    f"skipped={skipped}, errors={errors}, auto_replies={auto_reply_sent}"
                 )
         except Exception as exc:
             app.state.last_notification_error = str(exc)
@@ -544,6 +690,7 @@ async def startup_db_learning() -> None:
         app.state.last_notification_poll_at = None
         app.state.last_notification_result = None
         app.state.last_notification_error = None
+        app.state.last_auto_reply_sent = 0
         app.state.active_dialogues = 0
         app.state.notification_task = None
         app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())

@@ -45,6 +45,8 @@ class NotificationApiListener:
         self.cycle_history: List[Dict[str, Any]] = []
         self.max_recent_captured_messages = 200
         self.recent_captured_messages: List[Dict[str, Any]] = []
+        self.max_recent_auto_reply_candidates = 200
+        self.recent_auto_reply_candidates: List[Dict[str, Any]] = []
         self.api_metrics: Dict[str, Any] = {
             "calls_total": 0,
             "calls_ok": 0,
@@ -395,6 +397,63 @@ class NotificationApiListener:
             effective_limit = max(1, min(limit, self.max_recent_captured_messages))
             return list(self.recent_captured_messages[-effective_limit:])
 
+    def _build_auto_reply_candidate(self, entry: Dict[str, Any], fingerprint: str) -> Optional[Dict[str, Any]]:
+        data = entry.get("data") if isinstance(entry, dict) else None
+        if not isinstance(data, dict):
+            return None
+
+        raw_message = data.get("RawMessage") or data.get("Message") or data.get("Text")
+        if not isinstance(raw_message, str) or not raw_message.strip():
+            return None
+
+        channel_id = (
+            data.get("IDWorkRoom")
+            or data.get("IDChannel")
+            or data.get("BookMarkedIDChannel")
+            or entry.get("channel_id")
+        )
+        if not isinstance(channel_id, str) or not channel_id.strip():
+            return None
+
+        sender_resource = data.get("IDSenderResource")
+        sender_name = (
+            data.get("SenderFullName")
+            or data.get("DisplayName")
+            or data.get("SenderName")
+            or sender_resource
+            or "desconocido"
+        )
+        is_public = str(data.get("IsPublic") or "").lower() in {"1", "true"}
+        chat_id = data.get("IDChat") or data.get("IDChat2")
+
+        candidate = {
+            "fingerprint": fingerprint,
+            "timestamp": datetime.utcnow().isoformat(),
+            "source": entry.get("source", "notification_api"),
+            "endpoint": entry.get("endpoint", ""),
+            "channel_id": channel_id.strip(),
+            "channel_name": data.get("ChannelName") or data.get("OriginChannelName") or channel_id.strip(),
+            "sender_resource": str(sender_resource or "").strip(),
+            "sender_name": str(sender_name),
+            "chat_id": chat_id,
+            "is_public": is_public,
+            "scope": "canal" if is_public else "chat",
+            "message": raw_message.strip(),
+            "payload": data,
+        }
+
+        with self.metrics_lock:
+            self.recent_auto_reply_candidates.append(candidate)
+            if len(self.recent_auto_reply_candidates) > self.max_recent_auto_reply_candidates:
+                self.recent_auto_reply_candidates = self.recent_auto_reply_candidates[-self.max_recent_auto_reply_candidates :]
+
+        return candidate
+
+    def get_recent_auto_reply_candidates(self, limit: int = 30) -> List[Dict[str, Any]]:
+        with self.metrics_lock:
+            effective_limit = max(1, min(limit, self.max_recent_auto_reply_candidates))
+            return list(self.recent_auto_reply_candidates[-effective_limit:])
+
     def _record_api_metric(
         self,
         source: str,
@@ -654,6 +713,7 @@ class NotificationApiListener:
         learned = 0
         skipped = 0
         errors = 0
+        auto_reply_candidates: List[Dict[str, Any]] = []
         last_exc: Optional[Exception] = None
         for base_url in base_urls:
             url = self._join_url(base_url, endpoint)
@@ -712,6 +772,9 @@ class NotificationApiListener:
                         learned += 1
                         self._remember_fingerprint(fp)
                         self._trace_captured_message(entry, status="learned")
+                        candidate = self._build_auto_reply_candidate(entry, fingerprint=fp)
+                        if candidate is not None:
+                            auto_reply_candidates.append(candidate)
                     else:
                         errors += 1
                         self._trace_captured_message(entry, status="learn_error")
@@ -727,6 +790,7 @@ class NotificationApiListener:
                     "skipped": skipped,
                     "errors": errors,
                     "payload": payload,
+                    "auto_reply_candidates": auto_reply_candidates,
                 }
             except Exception as exc:
                 last_exc = exc
@@ -743,7 +807,12 @@ class NotificationApiListener:
         if last_exc:
             print(f"⚠️ Error consultando {source} {endpoint}: {last_exc}")
 
-        return {"learned": learned, "skipped": skipped, "errors": errors}
+        return {
+            "learned": learned,
+            "skipped": skipped,
+            "errors": errors,
+            "auto_reply_candidates": auto_reply_candidates,
+        }
 
     def _to_int_chat_id(self, value: Any) -> Optional[int]:
         if isinstance(value, bool):
@@ -820,7 +889,13 @@ class NotificationApiListener:
         ]
 
     async def _pull_channel_messages(self, client: httpx.AsyncClient, channel_id: str) -> Dict[str, Any]:
-        totals: Dict[str, Any] = {"learned": 0, "skipped": 0, "errors": 0, "chat_targets": []}
+        totals: Dict[str, Any] = {
+            "learned": 0,
+            "skipped": 0,
+            "errors": 0,
+            "chat_targets": [],
+            "auto_reply_candidates": [],
+        }
         for endpoint in self.channel_message_endpoints:
             for payload in self._chat_message_payload_variants(channel_id):
                 result = await self._pull_endpoint(
@@ -835,6 +910,7 @@ class NotificationApiListener:
                 totals["learned"] += result["learned"]
                 totals["skipped"] += result["skipped"]
                 totals["errors"] += result["errors"]
+                totals["auto_reply_candidates"].extend(result.get("auto_reply_candidates") or [])
                 response_payload = result.get("payload")
                 if response_payload is not None:
                     extracted = self._extract_chat_targets(response_payload)
@@ -918,6 +994,7 @@ class NotificationApiListener:
         channels_detected = 0
         chat_channel_pulls = 0
         reaction_channel_pulls = 0
+        auto_reply_candidates: List[Dict[str, Any]] = []
 
         async with httpx.AsyncClient(
             timeout=self.timeout_seconds,
@@ -936,6 +1013,7 @@ class NotificationApiListener:
                 learned += result["learned"]
                 skipped += result["skipped"]
                 errors += result["errors"]
+                auto_reply_candidates.extend(result.get("auto_reply_candidates") or [])
 
             channel_ids: List[str] = []
             for endpoint in self.user_endpoints:
@@ -948,6 +1026,7 @@ class NotificationApiListener:
                 learned += result["learned"]
                 skipped += result["skipped"]
                 errors += result["errors"]
+                auto_reply_candidates.extend(result.get("auto_reply_candidates") or [])
 
                 payload = result.get("payload")
                 if payload is not None:
@@ -965,6 +1044,7 @@ class NotificationApiListener:
                 learned += result["learned"]
                 skipped += result["skipped"]
                 errors += result["errors"]
+                auto_reply_candidates.extend(result.get("auto_reply_candidates") or [])
 
             for endpoint in self.rest_endpoints:
                 result = await self._pull_endpoint(
@@ -976,6 +1056,7 @@ class NotificationApiListener:
                 learned += result["learned"]
                 skipped += result["skipped"]
                 errors += result["errors"]
+                auto_reply_candidates.extend(result.get("auto_reply_candidates") or [])
 
             if settings.SOLIDSET_LISTEN_CHAT_MESSAGES:
                 unique_channels = []
@@ -998,6 +1079,7 @@ class NotificationApiListener:
                     learned += msg_result["learned"]
                     skipped += msg_result["skipped"]
                     errors += msg_result["errors"]
+                    auto_reply_candidates.extend(msg_result.get("auto_reply_candidates") or [])
                     chat_channel_pulls += 1
 
                     chat_targets = msg_result.get("chat_targets") or []
@@ -1036,4 +1118,5 @@ class NotificationApiListener:
             "reaction_channel_pulls": reaction_channel_pulls,
             "timestamp": cycle_summary["timestamp"],
             "cycle_elapsed_ms": cycle_summary["cycle_elapsed_ms"],
+            "auto_reply_candidates": auto_reply_candidates,
         }

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.system.learning import SistemaAprendizaje
+from app.rag.solidset_api_ingest import ingest_solidset_api_collection
 
 router = APIRouter(prefix="/api/v1/learning", tags=["learning"])
 sistema = SistemaAprendizaje()
@@ -11,6 +12,10 @@ class ActividadRegistro(BaseModel):
     tipo: str
     descripcion: str
     metadatos: dict = {}
+
+
+class SolidSetApiTrainingRequest(BaseModel):
+    collection_path: str = ""
 
 @router.post("/actividad")
 def registrar_actividad(data: ActividadRegistro):
@@ -38,3 +43,14 @@ def sugerir_colaboradores(canal_id: str, tipo_actividad: str):
     """Sugiere colaboradores para un tipo de actividad en un canal."""
     colaboradores = sistema.sugerir_colaboradores(canal_id, tipo_actividad)
     return {"colaboradores": colaboradores}
+
+
+@router.post("/train-solidset-api")
+def train_solidset_api(data: SolidSetApiTrainingRequest):
+    """Entrena el conocimiento de API SOLIDSET desde una coleccion Postman JSON."""
+    try:
+        path = (data.collection_path or "").strip() or None
+        result = ingest_solidset_api_collection(path)
+        return {"status": "success", "result": result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error entrenando API SOLIDSET: {exc}")
