@@ -182,6 +182,100 @@ class MachiningAgent:
                     return candidate
         return None
 
+    def _is_identity_intent(self, user_text: str) -> bool:
+        """Detecta preguntas sobre quién es el usuario que conversa con el agente."""
+        text = (user_text or "").strip().lower()
+        if not text:
+            return False
+
+        patterns = [
+            r"dime\s+que\s+usuario",
+            r"qu[eé]n\s+est[aá]\s+hablando\s+contigo",
+            r"con\s+qu[ií]en\s+est[aá]s\s+hablando",
+            r"qui[eé]n\s+soy",
+            r"mi\s+usuario",
+            r"which\s+user\s+is\s+talking",
+            r"who\s+is\s+talking\s+to\s+you",
+            r"qual\s+usu[aá]rio\s+est[aá]\s+falando",
+        ]
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    def _extract_resource_alias(self, *values: Optional[str]) -> Optional[str]:
+        """Extrae alias de recurso tipo Dev17/Dev20 desde textos de identidad."""
+        for value in values:
+            text = (value or "").strip()
+            if not text:
+                continue
+            match = re.search(r"\b(dev\d{1,4}|devmgr\d{0,3})\b", text, flags=re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return None
+
+    def _build_identity_response(self, user_id: Optional[str], canal_id: Optional[str]) -> str:
+        """Construye respuesta de identidad usando user_id de sesión y contexto opcional desde BD."""
+        if not user_id:
+            return (
+                "⚠️ No recibí un user_id en esta sesión. "
+                "Si compartes tu usuario, puedo identificarte correctamente."
+            )
+
+        display_name = user_id
+        role_name = ""
+        channel_note = ""
+        resource_model_id = ""
+        resource_guid = ""
+        resource_alias = ""
+
+        try:
+            identity = self.sistema_aprendizaje._resolve_user_identity(user_id)
+            resource_guid = (identity.get("resource_id") or "").strip()
+            resource_alias = self._extract_resource_alias(
+                identity.get("display_name"),
+                identity.get("full_name"),
+                identity.get("username"),
+            ) or ""
+        except Exception as e:
+            print(f"⚠️ Error resolviendo identity/resource_id para '{user_id}': {e}")
+
+        try:
+            contexto = self.sistema_aprendizaje.obtener_contexto_usuario(user_id)
+            if contexto and contexto.usuario:
+                display_name = contexto.usuario.nombre or display_name
+                role_name = contexto.usuario.rol or ""
+                resource_model_id = (contexto.usuario.id or "").strip()
+                resource_alias = resource_alias or self._extract_resource_alias(
+                    contexto.usuario.id,
+                    contexto.usuario.nombre,
+                ) or ""
+        except Exception as e:
+            print(f"⚠️ Error resolviendo identidad de usuario '{user_id}': {e}")
+
+        if canal_id:
+            channel_note = f"\nCanal actual: {canal_id}"
+
+        resource_parts = []
+        if resource_alias:
+            resource_parts.append(f"alias recurso: {resource_alias}")
+        if resource_model_id:
+            resource_parts.append(f"resource_id modelo: {resource_model_id}")
+        if resource_guid:
+            resource_parts.append(f"resource_guid: {resource_guid}")
+
+        resource_note = ""
+        if resource_parts:
+            resource_note = "\n" + " | ".join(resource_parts)
+
+        if role_name:
+            return (
+                f"Estás hablando conmigo como usuario **{user_id}** "
+                f"({display_name}, rol: {role_name}).{resource_note}{channel_note}"
+            )
+
+        return (
+            f"Estás hablando conmigo como usuario **{user_id}** "
+            f"({display_name}).{resource_note}{channel_note}"
+        )
+
     def _is_channel_members_intent(self, user_text: str) -> bool:
         """Detecta solicitudes de listar usuarios/recurso pertenecientes al canal."""
         text = (user_text or "").strip().lower()
@@ -604,6 +698,32 @@ class MachiningAgent:
                         break
             except Exception as e:
                 print(f"⚠️ Error leyendo historial previo: {e}")
+
+        # --- 2.5 RESPUESTA DIRECTA DE IDENTIDAD DE SESIÓN ---
+        if self._is_identity_intent(user_text):
+            identity_response = self._build_identity_response(user_id=user_id, canal_id=canal_id)
+
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(identity_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando respuesta de identidad en Redis: {e}")
+
+            if user_id and len(identity_response) > 10:
+                try:
+                    self._registrar_interaccion(
+                        user_id=user_id,
+                        canal_id=canal_id,
+                        user_text=user_text,
+                        response_text=identity_response,
+                        herramientas_usadas=[],
+                        session_id=session_id,
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error registrando interacción de identidad: {e}")
+
+            return identity_response
 
         # --- 3. DETECTAR SALUDOS ---
         clean_text = user_text.strip().lower()

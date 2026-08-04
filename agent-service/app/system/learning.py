@@ -244,8 +244,41 @@ class SistemaAprendizaje:
         )
         return cursor.fetchone()
 
-    def _get_user_role_from_db(self, cursor: pymssql.Cursor, resource_guid: str) -> Optional[str]:
+    def _get_user_role_from_db(self, cursor: pymssql.Cursor, identity: Dict, resource_guid: str) -> Optional[str]:
+        """
+        Obtiene el rol funcional del usuario según modelo SOLIDSET.
+
+        Fuente principal (requerimiento funcional): SysResources.DisplayName.
+        Fallback: catálogo SysRole cuando DisplayName no esté disponible.
+        """
         try:
+            # Fuente principal indicada por negocio: SysResources.DisplayName.
+            self._execute_with_retry(
+                cursor,
+                query="""
+                    SELECT TOP 1 sr.DisplayName
+                    FROM dbo.SysResources sr WITH (NOLOCK)
+                    INNER JOIN dbo.SysLogin sl WITH (NOLOCK)
+                        ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
+                    WHERE sl.Username = %s
+                       OR sl.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                       OR sr.ResourceId = TRY_CONVERT(uniqueidentifier, %s)
+                    ORDER BY CASE WHEN sl.Username = %s THEN 0 ELSE 1 END, sl.Username
+                """,
+                params=(
+                    identity.get("username"),
+                    identity.get("login_id") or identity.get("input"),
+                    resource_guid,
+                    identity.get("username"),
+                ),
+                context="get_user_role_display_name",
+            )
+            row = cursor.fetchone()
+            role_name = str(row.get("DisplayName") or "").strip() if row else ""
+            if role_name:
+                return role_name
+
+            # Fallback técnico al catálogo de roles clásico.
             self._execute_with_retry(
                 cursor,
                 query="""
@@ -256,7 +289,7 @@ class SistemaAprendizaje:
                     ORDER BY sr.ShareChat DESC, sr.ViewScheduler DESC, sr.Code
                 """,
                 params=(resource_guid,),
-                context="get_user_role"
+                context="get_user_role_fallback",
             )
             rol_row = cursor.fetchone()
             return str(rol_row.get("Code")).strip() if rol_row and rol_row.get("Code") else None
@@ -443,7 +476,7 @@ class SistemaAprendizaje:
 
                     user_login = (usuario_data.get("Username") or identity.get("username") or user_id or "").strip()
                     resource_guid = str(usuario_data.get("ResourceId") or identity.get("resource_id") or user_id)
-                    rol = self._get_user_role_from_db(cursor, resource_guid) or "operario"
+                    rol = self._get_user_role_from_db(cursor, identity, resource_guid) or "operario"
                     nombre = (
                         usuario_data.get("FullName")
                         or usuario_data.get("DisplayName")
