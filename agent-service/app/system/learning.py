@@ -989,7 +989,14 @@ class SistemaAprendizaje:
             if hit['id'] not in seen_ids:
                 content = hit['payload'].get('page_content', '')
                 source = hit['payload'].get('source', 'desconocido')
-                formatted_results.append(f"Fuente: {source}\nContenido: {content[:400]}...")
+                source_url = hit['payload'].get('source_url', '')
+                learned_at = hit['payload'].get('learned_at', '')
+                provenance = f"Fuente: {source}"
+                if source_url:
+                    provenance += f"\nURL original: {source_url}"
+                if learned_at:
+                    provenance += f"\nAprendido el: {learned_at}"
+                formatted_results.append(f"{provenance}\nContenido: {content[:400]}...")
                 seen_ids.add(hit['id'])
             if len(formatted_results) >= limit:
                 break
