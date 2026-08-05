@@ -403,7 +403,75 @@ class NotificationApiListener:
         _visit(payload, channel_id)
         return extracted
 
+    def _normalize_framework_message(self, payload: Any) -> Any:
+        """Aplana los campos relevantes del DTO FrameworkMessage sin perder el original."""
+        if not isinstance(payload, dict):
+            return payload
+
+        normalized = dict(payload)
+        top_level_names = [
+            "Stamp", "Sender", "Destiny", "Kind", "IDNotification", "RawMessage",
+            "RawMessageHtml", "Args", "Chat", "ChatData", "WorkRoomData",
+            "Importance", "Priority", "Modifiers", "VisibilityLevel", "MaskMessage",
+        ]
+        payload_lower = {str(key).lower(): value for key, value in payload.items()}
+        for field_name in top_level_names:
+            if field_name not in normalized and field_name.lower() in payload_lower:
+                normalized[field_name] = payload_lower[field_name.lower()]
+
+        if "RawMessage" not in normalized:
+            return payload
+
+        sender = normalized.get("Sender") if isinstance(normalized.get("Sender"), dict) else {}
+        destiny = normalized.get("Destiny") if isinstance(normalized.get("Destiny"), dict) else {}
+        chat = normalized.get("Chat") if isinstance(normalized.get("Chat"), dict) else {}
+        chat_data = normalized.get("ChatData") if isinstance(normalized.get("ChatData"), dict) else {}
+        workroom = normalized.get("WorkRoomData") if isinstance(normalized.get("WorkRoomData"), dict) else {}
+
+        def first(*values: Any) -> Any:
+            return next((value for value in values if value not in (None, "")), None)
+
+        def nested(data: Dict[str, Any], *names: str) -> Any:
+            lowered = {str(key).lower(): value for key, value in data.items()}
+            return first(*(lowered.get(name.lower()) for name in names))
+
+        args = normalized.get("Args") if isinstance(normalized.get("Args"), list) else []
+        normalized["IDSenderResource"] = first(
+            normalized.get("IDSenderResource"),
+            nested(sender, "IDResource", "IdResource", "ResourceID", "resource"),
+        )
+        normalized["SenderFullName"] = first(
+            normalized.get("SenderFullName"),
+            nested(sender, "FullName", "DisplayName", "Name", "Username", "login"),
+        )
+        normalized["IDWorkRoom"] = first(
+            normalized.get("IDWorkRoom"),
+            nested(workroom, "IDWorkRoom", "IdWorkRoom", "workRoom"),
+            nested(chat, "IDWorkRoom", "workRoom"), nested(chat_data, "IDWorkRoom", "workRoom"),
+            nested(destiny, "IDWorkRoom", "IdWorkRoom", "workRoom", "room"),
+        )
+        normalized["ChannelName"] = first(
+            normalized.get("ChannelName"),
+            nested(workroom, "Name", "ChannelName"),
+            nested(chat, "ChannelName"), nested(chat_data, "ChannelName"), nested(destiny, "Name"),
+        )
+        normalized["IDChat"] = first(
+            normalized.get("IDChat"), nested(chat, "IDChat", "IdChat"),
+            nested(chat_data, "IDChat", "IdChat"), args[0] if args else None,
+        )
+        normalized["IsPublic"] = first(
+            normalized.get("IsPublic"), nested(chat, "IsPublic"), nested(chat_data, "IsPublic"),
+            nested(destiny, "IsPublic"),
+        )
+        normalized["FrameworkKind"] = normalized.get("Kind")
+        normalized["FrameworkStamp"] = normalized.get("Stamp")
+        normalized["FrameworkSender"] = sender
+        normalized["FrameworkDestiny"] = destiny
+        return normalized
+
     def _normalize_entries(self, source: str, endpoint: str, payload: Any, channel_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        if endpoint.lower().rstrip("/").endswith("frameworkhub/sendmessage"):
+            payload = self._normalize_framework_message(payload)
         message_entries = self._extract_message_entries(source, endpoint, payload, channel_id=channel_id)
         if message_entries:
             return message_entries
@@ -531,6 +599,15 @@ class NotificationApiListener:
         )
         is_public = str(data.get("IsPublic") or "").lower() in {"1", "true"}
         chat_id = data.get("IDChat") or data.get("IDChat2")
+        destiny = data.get("FrameworkDestiny") if isinstance(data.get("FrameworkDestiny"), dict) else {}
+        destiny_lower = {str(key).lower(): value for key, value in destiny.items()}
+        destiny_resource = str(destiny_lower.get("resource") or destiny_lower.get("idresource") or "").strip()
+        own_resource = str(self.current_resource_id or settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip()
+        addressed_to_agent = bool(
+            destiny_resource
+            and own_resource
+            and destiny_resource.lower() == own_resource.lower()
+        )
 
         candidate = {
             "fingerprint": fingerprint,
@@ -545,6 +622,8 @@ class NotificationApiListener:
             "is_public": is_public,
             "scope": "canal" if is_public else "chat",
             "message": raw_message.strip(),
+            "destiny_resource": destiny_resource,
+            "addressed_to_agent": addressed_to_agent,
             "payload": data,
         }
 
@@ -760,6 +839,13 @@ class NotificationApiListener:
         is_public = payload.get("IsPublic") if payload else None
         resource_table = payload.get("ResourceTable") if payload else None
         destiny = payload.get("Destiny") if payload else None
+        framework_stamp = payload.get("FrameworkStamp") or payload.get("Stamp") if payload else None
+        event_timestamp = datetime.utcnow()
+        if isinstance(framework_stamp, str) and framework_stamp.strip():
+            try:
+                event_timestamp = datetime.fromisoformat(framework_stamp.strip().replace("Z", "+00:00"))
+            except ValueError:
+                pass
 
         if payload and any(key in payload for key in ["IDSenderResource", "RawMessage", "IDWorkRoom", "ChannelName"]):
             source = "solidset_restapi_chat"
@@ -785,7 +871,7 @@ class NotificationApiListener:
             canal_id=channel_id or "solidset_communicator_notifications",
             tipo=source,
             descripcion=summary,
-            timestamp=datetime.utcnow(),
+            timestamp=event_timestamp,
             metadatos={
                 "source_table": "NotificationAPI",
                 "source": source,
@@ -798,12 +884,67 @@ class NotificationApiListener:
                 "is_public": is_public,
                 "resource_table": resource_table,
                 "destiny": destiny,
+                "framework_kind": payload.get("FrameworkKind") or payload.get("Kind"),
+                "framework_stamp": framework_stamp,
+                "id_notification": payload.get("IDNotification"),
+                "importance": payload.get("Importance"),
+                "priority": payload.get("Priority"),
+                "modifiers": payload.get("Modifiers"),
+                "visibility_level": payload.get("VisibilityLevel"),
+                "mask_message": payload.get("MaskMessage"),
                 "fingerprint": fingerprint,
                 "captured_at": datetime.utcnow().isoformat(),
                 "payload": data,
             },
         )
         return self.sistema.aprender_actividad(actividad)
+
+    def capture_realtime_payload(
+        self,
+        payload: Any,
+        endpoint: str = "/frameworkHub/SendMessage",
+    ) -> Dict[str, Any]:
+        """Indexa inmediatamente un mensaje recibido por el proxy del hub."""
+        entries = self._normalize_entries(
+            source="framework_hub_realtime",
+            endpoint=endpoint,
+            payload=payload,
+        )
+        learned = 0
+        skipped = 0
+        errors = 0
+        auto_reply_candidates: List[Dict[str, Any]] = []
+
+        for entry in entries:
+            fingerprint = self._fingerprint(entry)
+            if fingerprint in self.seen_fingerprints:
+                skipped += 1
+                self._trace_captured_message(entry, status="duplicate")
+                continue
+
+            candidate = self._build_auto_reply_candidate(entry, fingerprint=fingerprint)
+            if candidate is not None:
+                auto_reply_candidates.append(candidate)
+            try:
+                if self._learn_entry(entry, fingerprint):
+                    learned += 1
+                    self._trace_captured_message(entry, status="learned_realtime")
+                else:
+                    skipped += 1
+                    self._trace_captured_message(entry, status="learn_error_realtime")
+            except Exception as exc:
+                errors += 1
+                print(f"⚠️ Error indexando mensaje en tiempo real: {exc}")
+            finally:
+                self._remember_fingerprint(fingerprint)
+
+        return {
+            "received": len(entries),
+            "learned": learned,
+            "skipped": skipped,
+            "errors": errors,
+            "auto_reply_candidates": auto_reply_candidates,
+        }
 
     async def _pull_endpoint(
         self,

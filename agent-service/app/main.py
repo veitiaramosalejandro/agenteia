@@ -1,20 +1,22 @@
 import asyncio
 import json
 import os
+import re
 import socket
 import ssl
 import threading
+import httpx
 from contextlib import suppress
 from collections import OrderedDict
 from datetime import datetime
 from time import perf_counter, time
-from typing import Optional
+from typing import Any, Optional
 from urllib import error as urlerror
 from urllib.parse import urlparse
 from urllib.request import Request as URLRequest, urlopen
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -116,6 +118,22 @@ def _sanitize_auto_reply_input(raw_text: str) -> str:
     return text[:max_len].strip()
 
 
+def _looks_like_question_or_request(raw_text: str) -> bool:
+    text = " ".join((raw_text or "").strip().lower().split())
+    if not text:
+        return False
+    if "?" in text or "¿" in text:
+        return True
+    starters = (
+        "qué ", "que ", "cómo ", "como ", "cuál ", "cual ", "cuándo ", "cuando ",
+        "dónde ", "donde ", "quién ", "quien ", "por qué ", "puedes ", "podrías ",
+        "dime ", "busca ", "consulta ", "explica ", "ayúdame ", "ayudame ",
+        "what ", "how ", "when ", "where ", "who ", "why ", "can you ", "please ",
+        "o que ", "como ", "quando ", "onde ", "quem ", "por que ", "pode ", "procura ",
+    )
+    return text.startswith(starters)
+
+
 def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     fingerprint = (candidate.get("fingerprint") or "").strip()
     if not fingerprint or _auto_reply_seen(fingerprint):
@@ -127,10 +145,12 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     sender_name = str(candidate.get("sender_name") or "")
     if not channel_id or not message:
         return False
+    if not _looks_like_question_or_request(message):
+        return False
     if (not settings.SOLIDSET_AUTO_REPLY_ALLOW_SELF) and _is_self_sender(sender_resource=sender_resource, sender_name=sender_name):
         return False
 
-    if settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION:
+    if settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION and not candidate.get("addressed_to_agent"):
         token = (settings.SOLIDSET_AUTO_REPLY_MENTION_TOKEN or "").strip().lower()
         if token and token not in message.lower():
             return False
@@ -166,7 +186,12 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             continue
 
         session_id = f"solidset_auto_{channel_id[:8]}"
-        user_id = (settings.SOLIDSET_LOGIN_USERNAME or "solidset.agent").strip()
+        user_id = str(
+            candidate.get("sender_resource")
+            or candidate.get("sender_name")
+            or settings.SOLIDSET_LOGIN_USERNAME
+            or "solidset.agent"
+        ).strip()
 
         try:
             response_text = await asyncio.to_thread(
@@ -762,6 +787,81 @@ class UserFeedbackResponse(BaseModel):
     reaction_signal: str
     topics: list[str] = []
 
+
+def _to_camel_alias(field_name: str) -> str:
+    """Convierte PascalCase a camelCase respetando prefijos como ID."""
+    acronym = re.match(r"^[A-Z]+(?=[A-Z][a-z]|$)", field_name)
+    if acronym:
+        prefix = acronym.group(0)
+        return prefix.lower() + field_name[len(prefix):]
+    return field_name[:1].lower() + field_name[1:]
+
+
+class FrameworkMessageDTO(BaseModel):
+    """Contrato receptor compatible con el DTO FrameworkMessage de Notification."""
+    Stamp: Optional[datetime] = None
+    Sender: Optional[dict[str, Any]] = None
+    Destiny: Optional[dict[str, Any]] = None
+    ExternalDestinations: Optional[list[dict[str, Any]]] = None
+    ExcludeSenderUser: bool = False
+    ExcludeSenderSession: bool = False
+    IncludeSenderSession: bool = False
+    Kind: Any = None
+    IDNotification: Optional[str] = None
+    RawMessage: Optional[str] = None
+    RawMessageHtml: Optional[str] = None
+    Importance: int = 0
+    Priority: int = 0
+    Modifiers: int = 0
+    VisibilityLevel: Any = None
+    MaskMessage: int = 0
+    MessageMonitoring: int = 0
+    Args: Optional[list[Any]] = None
+    PointData: Any = None
+    Chat: Any = None
+    UserData: Any = None
+    ChatReadData: Optional[list[Any]] = None
+    ImportanceSettingData: Any = None
+    NotificationSettingsData: Any = None
+    MailData: Any = None
+    CompanyData: Any = None
+    VideoCallData: Any = None
+    MeetingData: Any = None
+    TaskData: Any = None
+    ActivityData: Any = None
+    Task: Any = None
+    ScheduleActivity: Any = None
+    ChatData: Any = None
+    ChatTransferingData: Any = None
+    ScheduledData: Any = None
+    WorkRoomData: Any = None
+    RecordData: Any = None
+    ObjectContent: Any = None
+    IDChatExtVars: Optional[str] = None
+    Info: Optional[dict[str, str]] = None
+    ExtraData: Optional[str] = None
+    LinkData: Any = None
+    TimeData: Any = None
+    FeatureFlagData: Any = None
+    RelatedRecordsData: Optional[list[Any]] = None
+    ReminderData: Any = None
+    AttentionCallNotificationLevel: Any = None
+    AttentionCallNotify: bool = False
+    NotifyDate: Optional[datetime] = None
+    DebugData: Optional[list[Any]] = None
+    TreatLaterNotifData: Any = None
+
+    class Config:
+        extra = "allow"
+        populate_by_name = True
+        alias_generator = _to_camel_alias
+
+
+class SendMessageResultDTO(BaseModel):
+    Result: int
+    Message: FrameworkMessageDTO
+    Error: Optional[str] = None
+
 # ============================================================
 # SEGURIDAD: FILTROS CONTRA PROMPT INJECTION
 # ============================================================
@@ -836,6 +936,89 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 # ENDPOINTS PRINCIPALES
 # ============================================================
+
+@app.post(
+    "/api/v1/agent/notification/framework-message",
+    response_model=SendMessageResultDTO,
+)
+async def receive_framework_notification(message: FrameworkMessageDTO):
+    """Recibe desde Notification un FrameworkMessage ya capturado y lo aprende en Qdrant."""
+
+    print(f"📩 Recibido FrameworkMessage para indexación en Qdrant: {message}")
+
+    payload = (
+        message.model_dump(mode="json")
+        if hasattr(message, "model_dump")
+        else message.dict()
+    )
+    capture = notification_listener.capture_realtime_payload(payload)
+    candidates = capture.get("auto_reply_candidates") or []
+    if candidates:
+        asyncio.create_task(_process_auto_replies(candidates))
+    if capture["errors"]:
+        return SendMessageResultDTO(
+            Result=2,  # UnexpectedException
+            Message=message,
+            Error=f"No se pudo indexar el mensaje en Qdrant: {capture['errors']} error(es).",
+        )
+    print(
+        f"📥 FrameworkMessage aprendido={capture['learned']} "
+        f"omitido={capture['skipped']} respuestas_programadas={len(candidates)}"
+    )
+    return SendMessageResultDTO(Result=0, Message=message, Error=None)
+
+@app.post("/api/v1/agent/notification/frameworkHub/SendMessage")
+async def capture_and_forward_framework_message(request: Request):
+    """Captura el mensaje en Qdrant antes de reenviarlo al endpoint real de SolidSET."""
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body) if raw_body else {}
+    except json.JSONDecodeError:
+        payload = {"RawMessage": raw_body.decode("utf-8", errors="replace")}
+
+    capture = notification_listener.capture_realtime_payload(payload)
+
+    upstream_base = (settings.NOTIF_API_BASE_URL or "").rstrip("/")
+    if not upstream_base:
+        raise HTTPException(status_code=503, detail={
+            "message": "NOTIF_API_BASE_URL no está configurada para reenviar el mensaje.",
+            "capture": capture,
+        })
+
+    upstream_url = f"{upstream_base}/frameworkHub/SendMessage"
+    excluded_headers = {"host", "content-length", "connection", "transfer-encoding"}
+    forward_headers = {
+        key: value for key, value in request.headers.items()
+        if key.lower() not in excluded_headers
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=settings.NOTIF_API_TIMEOUT_SECONDS,
+            verify=settings.NOTIF_API_VERIFY_TLS,
+            follow_redirects=False,
+        ) as client:
+            upstream = await client.post(
+                upstream_url,
+                content=raw_body,
+                headers=forward_headers,
+                params=dict(request.query_params),
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={
+            "message": f"El mensaje fue capturado, pero no pudo reenviarse a SolidSET: {exc}",
+            "capture": capture,
+        }) from exc
+
+    response_headers = {}
+    if upstream.headers.get("content-type"):
+        response_headers["content-type"] = upstream.headers["content-type"]
+    response_headers["X-Agent-Capture-Learned"] = str(capture["learned"])
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
 
 @app.post("/api/v1/agent/dialogue", response_model=ChatConversationResponse)
 def handle_dialogue(req: ChatConversationRequest):
