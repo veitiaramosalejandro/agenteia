@@ -56,6 +56,15 @@ class TestWebSearch(unittest.TestCase):
             "No tengo información suficiente.", ["google_web_search"]
         ))
 
+    def test_web_answer_hides_links_and_generic_attribution(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        answer = agent._clean_web_answer(
+            "Según [este artículo](https://example.com/kimi), Kimi K3 destaca en programación."
+        )
+        self.assertNotIn("http", answer)
+        self.assertNotIn("Según", answer)
+        self.assertIn("Kimi K3 destaca en programación", answer)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -635,16 +635,36 @@ class MachiningAgent:
             web_messages.append(SystemMessage(content=(
                 "RESULTADOS DE BÚSQUEDA WEB EXTERNA (no verificados):\n"
                 f"{web_result}\n\n"
-                "Responde la consulta original usando estos resultados. Indica que la información "
-                "procede de Internet, cita las URL, no inventes datos y expresa la incertidumbre."
+                "Responde la consulta original usando la información útil de estos resultados. "
+                "Redacta una respuesta natural y directa: no muestres URLs, nombres de fuentes, "
+                "ni expresiones como 'según este artículo', 'este análisis' o 'esta fuente'. "
+                "No menciones que buscaste en Internet ni añadas advertencias genéricas sobre las "
+                "fuentes, salvo que exista una incertidumbre concreta y relevante. No inventes datos."
             )))
             web_messages.append(HumanMessage(content=f"Responde de nuevo a mi consulta original: {user_text}"))
             web_response = self.llm.invoke(web_messages)
             answer = web_response.content if hasattr(web_response, "content") else str(web_response)
-            return answer.strip() or None
+            return self._clean_web_answer(answer) or None
         except Exception as exc:
             print(f"⚠️ Falló la búsqueda web automática: {exc}")
             return None
+
+    def _clean_web_answer(self, answer: str) -> str:
+        """Oculta enlaces y atribuciones genéricas; la procedencia queda guardada internamente."""
+        text = str(answer or "")
+        text = re.sub(r"\[([^\]]+)\]\(https?://[^)]+\)", r"\1", text, flags=re.IGNORECASE)
+        text = re.sub(r"https?://\S+", "", text, flags=re.IGNORECASE)
+        attribution_patterns = [
+            r"\bseg[uú]n\s+(?:este|esta|el|la)\s+(?:art[ií]culo|an[aá]lisis|fuente|sitio|publicaci[oó]n)\s*,?\s*",
+            r"\b(?:este|esta|el|la)\s+(?:art[ií]culo|an[aá]lisis|fuente|sitio|publicaci[oó]n)\s+(?:indica|menciona|señala|destaca|explica)\s+que\s+",
+            r"\baccording to (?:this|the) (?:article|analysis|source|site|publication)\s*,?\s*",
+            r"\bde acordo com (?:este|esta|o|a) (?:artigo|an[aá]lise|fonte|site|publica[cç][aã]o)\s*,?\s*",
+        ]
+        for pattern in attribution_patterns:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r" {2,}", " ", text)
+        return text.strip()
 
     # ============================================================
     # 4. REGISTRO DE ACTIVIDADES PARA APRENDIZAJE
@@ -1121,30 +1141,32 @@ class MachiningAgent:
         print(f"👋 Procesando saludo para user_id={user_id}")
 
         if not user_id:
-            return "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"
+            return "👋 ¡Hola! Soy tu asistente virtual de SolidSET Communicator. ¿En qué puedo ayudarte?"
         
         try:
             contexto_obj = self.sistema_aprendizaje.obtener_contexto_usuario(user_id)            
             if contexto_obj:
-                nombre = contexto_obj.usuario.nombre or "operario"
-                rol = contexto_obj.usuario.rol or "técnico"
+                nombre = contexto_obj.usuario.nombre or "usuario"
+                rol = contexto_obj.usuario.rol or "sin rol asignado"
                 canales = len(contexto_obj.canales_acceso)
-                
-                return f"""👋 ¡Hola {nombre}! Soy tu asistente.
+                canal_texto = "canal" if canales == 1 else "canales"
 
-                    📋 Veo que eres **{rol}** y tienes acceso a **{canales} canales** de trabajo.
-                    ¿En qué área necesitas asistencia hoy?
-                    - 🔧 Diagnóstico de máquinas
-                    - 📊 Consulta de datos de producción
-                    - 📚 Documentación técnica
-                    - ⚙️ Recomendaciones de mantenimiento
+                return f"""👋 ¡Hola, {nombre}! Soy tu asistente virtual de **SolidSET Communicator**.
 
-                    ¡Dime qué necesitas!"""
+                    He identificado tu perfil como **{rol}** y tienes acceso a **{canales} {canal_texto}**.
+
+                    Puedo ayudarte a:
+                    - 💬 Consultar mensajes y conversaciones
+                    - 👥 Localizar canales, usuarios y recursos
+                    - ✅ Revisar tareas y actividades
+                    - 📚 Resolver dudas sobre SolidSET Communicator
+
+                    ¿Qué necesitas hacer?"""
             else:
-                return "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"
+                return "👋 ¡Hola! Soy tu asistente virtual de SolidSET Communicator. ¿En qué puedo ayudarte?"
         except Exception as e:
             print(f"⚠️ Error en saludo personalizado: {e}")
-            return "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"
+            return "👋 ¡Hola! Soy tu asistente virtual de SolidSET Communicator. ¿En qué puedo ayudarte?"
 
     # ============================================================
     # 7. MÉTODO DE UTILIDAD PARA DEPURACIÓN
