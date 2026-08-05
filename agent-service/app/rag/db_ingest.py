@@ -78,6 +78,42 @@ class DatabaseIngestor:
             print(f"   ⚠️ Error creando punto: {e}")
             return None
 
+    def _embed_and_create_points(self, texts: List[str], metadatas: List[Dict[str, Any]]) -> List[PointStruct]:
+        """Embeds a batch of texts and creates Qdrant points."""
+        points = []
+        if not texts:
+            return points
+
+        try:
+            # 1. Get embeddings for all texts in one go
+            vectors = self.embeddings.embed_documents(texts)
+
+            # 2. Create points
+            for i, text in enumerate(texts):
+                metadata = metadatas[i]
+                vector = vectors[i]
+
+                payload_metadata = dict(metadata)
+                point_id = payload_metadata.pop("_point_id", None) or str(uuid.uuid4())
+
+                if "timestamp" not in payload_metadata:
+                    payload_metadata["timestamp"] = datetime.now().isoformat()
+
+                payload = {
+                    "page_content": text,
+                    **payload_metadata
+                }
+
+                points.append(PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload=payload
+                ))
+        except Exception as e:
+            print(f"   ⚠️ Error creating points in batch: {e}")
+
+        return points
+
     def _sql_server_connection(self):
         import pymssql
 
@@ -288,7 +324,8 @@ class DatabaseIngestor:
                         print("      ℹ️ Tabla sin filas (o sin resultados en TOP)")
                         continue
 
-                    points_batch: List[PointStruct] = []
+                    texts_batch: List[str] = []
+                    metadatas_batch: List[Dict[str, Any]] = []
                     table_indexed = 0
                     for row_number, row in enumerate(rows, start=1):
                         row_dict = dict(row)
@@ -306,21 +343,25 @@ class DatabaseIngestor:
                             "column_count": len(row_dict),
                             "_point_id": self._deterministic_point_id(seed),
                         }
-                        point = self._create_point(row_text, metadata)
-                        if point is None:
-                            continue
+                        
+                        texts_batch.append(row_text)
+                        metadatas_batch.append(metadata)
 
-                        points_batch.append(point)
-                        if len(points_batch) >= max(1, batch_size):
+                        if len(texts_batch) >= max(1, batch_size):
+                            points_batch = self._embed_and_create_points(texts_batch, metadatas_batch)
+                            if points_batch:
+                                inserted = self._ingest_points(points_batch, source=f"Rows {fqn_text}")
+                                table_indexed += inserted
+                                row_points += inserted
+                            texts_batch = []
+                            metadatas_batch = []
+
+                    if texts_batch:
+                        points_batch = self._embed_and_create_points(texts_batch, metadatas_batch)
+                        if points_batch:
                             inserted = self._ingest_points(points_batch, source=f"Rows {fqn_text}")
                             table_indexed += inserted
                             row_points += inserted
-                            points_batch = []
-
-                    if points_batch:
-                        inserted = self._ingest_points(points_batch, source=f"Rows {fqn_text}")
-                        table_indexed += inserted
-                        row_points += inserted
 
                     print(f"      ✅ Filas indexadas: {table_indexed}")
                 except Exception as table_exc:
@@ -519,17 +560,17 @@ class DatabaseIngestor:
             points = []
             for row in rows:
                 text = f"""
-MÁQUINA: {row.get('Name', 'N/A')}
-Modelo: {row.get('Model', 'N/A')}
-Serial: {row.get('SerialNumber', 'N/A')}
-Fabricante: {row.get('Manufacturer', 'N/A')}
-Estado: {row.get('Status', 'N/A')}
-Ubicación: {row.get('Location', 'N/A')}
-Instalación: {row.get('InstallationDate', 'N/A')}
-Último mantenimiento: {row.get('LastMaintenance', 'N/A')}
-Próximo mantenimiento: {row.get('NextMaintenance', 'N/A')}
-ID: {row.get('IDAsset', 'N/A')}
-"""
+                    MÁQUINA: {row.get('Name', 'N/A')}
+                    Modelo: {row.get('Model', 'N/A')}
+                    Serial: {row.get('SerialNumber', 'N/A')}
+                    Fabricante: {row.get('Manufacturer', 'N/A')}
+                    Estado: {row.get('Status', 'N/A')}
+                    Ubicación: {row.get('Location', 'N/A')}
+                    Instalación: {row.get('InstallationDate', 'N/A')}
+                    Último mantenimiento: {row.get('LastMaintenance', 'N/A')}
+                    Próximo mantenimiento: {row.get('NextMaintenance', 'N/A')}
+                    ID: {row.get('IDAsset', 'N/A')}
+                    """
                 
                 metadata = {
                     "entity_type": "asset",
@@ -604,15 +645,15 @@ ID: {row.get('IDAsset', 'N/A')}
             points = []
             for row in rows:
                 text = f"""
-ACTIVIDAD: {row.get('ActivityType', 'N/A')}
-Descripción: {row.get('Description', 'N/A')}
-Estado: {row.get('Status', 'N/A')}
-Prioridad: {row.get('Priority', 'N/A')}
-Asignado a: {row.get('AssignedTo', 'N/A')}
-Fecha: {row.get('CreatedDate', 'N/A')}
-Fecha límite: {row.get('DueDate', 'N/A')}
-ID: {row.get('IDActivity', 'N/A')}
-"""
+                        ACTIVIDAD: {row.get('ActivityType', 'N/A')}
+                        Descripción: {row.get('Description', 'N/A')}
+                        Estado: {row.get('Status', 'N/A')}
+                        Prioridad: {row.get('Priority', 'N/A')}
+                        Asignado a: {row.get('AssignedTo', 'N/A')}
+                        Fecha: {row.get('CreatedDate', 'N/A')}
+                        Fecha límite: {row.get('DueDate', 'N/A')}
+                        ID: {row.get('IDActivity', 'N/A')}
+                        """
                 
                 metadata = {
                     "entity_type": "activity",
@@ -638,137 +679,6 @@ ID: {row.get('IDActivity', 'N/A')}
         except Exception as e:
             print(f"   ❌ Error ingiriendo desde SQL Server: {e}")
             return 0
-    
-    # ============================================================
-    # INGESTA DESDE POSTGRESQL (TimescaleDB)
-    # ============================================================
-    
-    def ingest_postgresql_sensors(self, limit: int = 100) -> int:
-        """
-        Ingiere datos de sensores desde PostgreSQL.
-        """
-        try:
-            import psycopg2
-            import psycopg2.extras
-            
-            print("\n📊 Ingestando datos de sensores desde PostgreSQL...")
-            
-            conn = psycopg2.connect(
-                host=settings.POSTGRES_HOST,
-                port=settings.POSTGRES_PORT,
-                user=settings.POSTGRES_USER,
-                password=settings.POSTGRES_PASSWORD,
-                database=settings.POSTGRES_DB
-            )
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            
-            # Verificar tablas existentes
-            cursor.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public'
-                ORDER BY table_name
-            """)
-            tables = cursor.fetchall()
-            table_names = [t['table_name'] for t in tables]
-            print(f"   📋 Tablas disponibles: {', '.join(table_names[:10])}")
-            
-            # Buscar tabla de sensores o mediciones
-            sensor_table = None
-            for table in table_names:
-                if any(kw in table.lower() for kw in ['sensor', 'measurement', 'telemetry', 'machine']):
-                    sensor_table = table
-                    break
-            
-            if not sensor_table:
-                print("   ⚠️ No se encontró tabla de sensores/mediciones")
-                print("   Creando tabla de ejemplo...")
-                self._create_sample_sensor_table(conn, cursor)
-                return 0
-            
-            print(f"   📊 Usando tabla: {sensor_table}")
-            
-            # Obtener datos
-            query = f"""
-                SELECT * FROM {sensor_table}
-                ORDER BY id DESC
-                LIMIT {limit}
-            """
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            conn.close()
-            
-            if not rows:
-                print("   ⚠️ No se encontraron registros")
-                return 0
-            
-            print(f"   📋 Encontrados {len(rows)} registros")
-            
-            points = []
-            for row in rows:
-                # Convertir fila a texto
-                row_dict = dict(row)
-                text = f"""
-REGISTRO DE SENSOR:
-"""
-                for key, value in row_dict.items():
-                    text += f"{key}: {value}\n"
-                
-                metadata = {
-                    "entity_type": "sensor_data",
-                    "source": "postgresql",
-                    "table": sensor_table,
-                    "database": settings.POSTGRES_DB
-                }
-                
-                # Añadir campos clave como metadatos
-                if 'id' in row_dict:
-                    metadata["record_id"] = str(row_dict['id'])
-                if 'machine_id' in row_dict:
-                    metadata["machine_id"] = str(row_dict['machine_id'])
-                
-                point = self._create_point(text, metadata)
-                if point:
-                    points.append(point)
-            
-            return self._ingest_points(points, "PostgreSQL Sensors")
-            
-        except ImportError:
-            print("   ❌ psycopg2 no está instalado. Instala: pip install psycopg2-binary")
-            return 0
-        except Exception as e:
-            print(f"   ❌ Error ingiriendo desde PostgreSQL: {e}")
-            return 0
-    
-    def _create_sample_sensor_table(self, conn, cursor):
-        """Crea una tabla de ejemplo para sensores."""
-        try:
-            print("   📝 Creando tabla de ejemplo: sensor_readings")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS sensor_readings (
-                    id SERIAL PRIMARY KEY,
-                    machine_id VARCHAR(50),
-                    sensor_type VARCHAR(50),
-                    value FLOAT,
-                    unit VARCHAR(20),
-                    status VARCHAR(20),
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Insertar datos de ejemplo
-            cursor.execute("""
-                INSERT INTO sensor_readings (machine_id, sensor_type, value, unit, status)
-                VALUES 
-                    ('CNC-001', 'temperature', 45.5, '°C', 'normal'),
-                    ('CNC-001', 'vibration', 0.12, 'mm/s', 'normal'),
-                    ('CNC-002', 'temperature', 52.3, '°C', 'warning'),
-                    ('CNC-002', 'pressure', 78.5, 'bar', 'normal')
-            """)
-            conn.commit()
-            print("   ✅ Tabla de ejemplo creada con datos de prueba")
-        except Exception as e:
-            print(f"   ⚠️ Error creando tabla de ejemplo: {e}")
 
 
 # ============================================================
@@ -785,13 +695,13 @@ def ingest_from_database():
     
     ingestor = DatabaseIngestor()
     
-    raw_rows_per_table = os.getenv("SQL_SERVER_INGEST_ROWS_PER_TABLE", "0").strip().lower()
+    raw_rows_per_table = os.getenv("SQL_SERVER_INGEST_ROWS_PER_TABLE", "1000").strip().lower()
     if raw_rows_per_table in {"all", "*", "0", ""}:
         rows_per_table = 0
     else:
         rows_per_table = max(1, int(raw_rows_per_table))
     max_tables = max(0, int(os.getenv("SQL_SERVER_INGEST_MAX_TABLES", "0")))
-    batch_size = max(1, int(os.getenv("SQL_SERVER_INGEST_BATCH_SIZE", "20")))
+    batch_size = max(1, int(os.getenv("SQL_SERVER_INGEST_BATCH_SIZE", "1000")))
     schema_name = (os.getenv("SQL_SERVER_INGEST_SCHEMA", "").strip() or None)
     raw_excluded = os.getenv("SQL_SERVER_INGEST_EXCLUDE_TABLES", "").strip()
     exclude_tables = [part.strip() for part in raw_excluded.split(",") if part.strip()]
