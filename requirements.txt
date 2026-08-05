@@ -8,6 +8,7 @@ langchain-community
 langchain-ollama
 python-dotenv
 gTTS
+ddgs
 # Dependencias para procesar Audio y Señales
 librosa
 numpy

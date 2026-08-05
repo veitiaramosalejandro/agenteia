@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     VECTOR_DB_URL: str = os.getenv("VECTOR_DB_URL", "http://vector-db:6333")
     VECTOR_COLLECTION_NAME: str = os.getenv("VECTOR_COLLECTION_NAME", "machining_docs")
 
+    # Web search and persistent learning
+    WEB_SEARCH_ENABLED: bool = _env_bool("WEB_SEARCH_ENABLED", "true")
+    WEB_SEARCH_MAX_RESULTS: int = max(1, min(int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")), 10))
+    WEB_SEARCH_TIMEOUT_SECONDS: int = max(3, int(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "15")))
+    WEB_SEARCH_REGION: str = os.getenv("WEB_SEARCH_REGION", "wt-wt")
+    WEB_SEARCH_SAFESEARCH: str = os.getenv("WEB_SEARCH_SAFESEARCH", "moderate")
+    WEB_SEARCH_AUTO_LEARN: bool = _env_bool("WEB_SEARCH_AUTO_LEARN", "true")
+
     # Redis Cache / Memory
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")
     

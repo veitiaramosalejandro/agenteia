@@ -402,6 +402,138 @@ def _load_real_tables(cursor) -> set[str]:
 # 1. TOOL: SQL Server Query (MEJORADA con validación de filas)
 # ---------------------------------------------------------------------------
 @tool
+def _legacy_google_web_search(query: str) -> str:
+    """
+    REALIZA UNA BÚSQUEDA EN INTERNET USANDO GOOGLE.
+
+    CUÁNDO USARLA:
+    - Cuando el usuario pregunte por información que no esté en la base de datos o en la documentación técnica.
+    - Cuando el usuario pregunte por noticias, eventos actuales o temas generales de conocimiento.
+    - Cuando una consulta sobre un error, componente o término técnico no devuelva resultados en los sistemas internos.
+    
+    EJEMPLOS:
+    - "¿Cuál es el precio actual del acero 1045?"
+    - "Busca información sobre el error 'F3001' en un controlador Fanuc."
+    - "Noticias sobre la industria metalmecánica."
+    """
+    # Esta es una implementación de marcador de posición.
+    # El usuario debe reemplazar esto con una llamada a una API de búsqueda web real.
+    try:
+        # Aquí iría la lógica de búsqueda real.
+        # Por ejemplo, usando una biblioteca como 'googlesearch-python':
+        # from googlesearch import search
+        # search_results = []
+        # for result_url in search(query, num=3, stop=3, pause=1):
+        #     search_results.append(result_url)
+        # if not search_results:
+        #     return f"No se encontraron resultados para '{query}'."
+        # return f"Resultados de búsqueda para '{query}':\n" + "\n".join(search_results)
+        
+        print(f"--- SIMULANDO BÚSQUEDA WEB PARA: '{query}' ---")
+        return f"Resultados de búsqueda para '{query}':\n- https://es.wikipedia.org/wiki/Acero\n- https://www.ejemplo-proveedor.com/acero-1045\n- https://www.machining-forums.com/error-f3001-fanuc"
+
+    except Exception as e:
+        return f"Error durante la búsqueda web: {e}"
+
+
+def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bool:
+    """Index web results with deterministic IDs and full provenance."""
+    client = QdrantClient(url=settings.VECTOR_DB_URL)
+    embeddings = OllamaEmbeddings(base_url=settings.OLLAMA_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
+    collections = [c.name for c in client.get_collections().collections]
+    probe_vector = None
+    if settings.VECTOR_COLLECTION_NAME not in collections:
+        probe_vector = embeddings.embed_query(query)
+        client.create_collection(
+            collection_name=settings.VECTOR_COLLECTION_NAME,
+            vectors_config=VectorParams(size=len(probe_vector), distance=Distance.COSINE),
+        )
+
+    learned_at = datetime.now().astimezone().isoformat()
+    points = []
+    for index, result in enumerate(results):
+        content = (
+            f"Consulta web: {query}\nTítulo: {result['title']}\n"
+            f"Resumen: {result['snippet']}\nFuente: {result['url']}"
+        )
+        vector = probe_vector if index == 0 and probe_vector is not None else embeddings.embed_query(content)
+        digest = hashlib.md5(f"web:{result['url']}:{content}".encode("utf-8")).hexdigest()
+        points.append(PointStruct(
+            id=str(uuid.UUID(digest)),
+            vector=vector,
+            payload={
+                "page_content": content,
+                "category": "web_research",
+                "source": "web_search",
+                "source_url": result["url"],
+                "source_title": result["title"],
+                "search_query": query,
+                "external_unverified": True,
+                "learned_at": learned_at,
+            },
+        ))
+    client.upsert(collection_name=settings.VECTOR_COLLECTION_NAME, points=points)
+    return True
+
+
+@tool
+def google_web_search(query: str) -> str:
+    """Search the public web and persist results with source provenance for later retrieval."""
+    try:
+        clean_query = " ".join((query or "").split())
+        if not clean_query:
+            return "Error: la consulta de búsqueda no puede estar vacía."
+        if not settings.WEB_SEARCH_ENABLED:
+            return "La búsqueda web está desactivada por configuración."
+
+        from ddgs import DDGS
+
+        with DDGS(timeout=settings.WEB_SEARCH_TIMEOUT_SECONDS) as client:
+            raw_results = list(client.text(
+                clean_query,
+                region=settings.WEB_SEARCH_REGION,
+                safesearch=settings.WEB_SEARCH_SAFESEARCH,
+                max_results=settings.WEB_SEARCH_MAX_RESULTS,
+            ))
+
+        results = []
+        seen_urls = set()
+        for item in raw_results:
+            url = str(item.get("href") or item.get("url") or "").strip()
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            results.append({
+                "title": str(item.get("title") or "Sin título").strip()[:300],
+                "snippet": str(item.get("body") or item.get("snippet") or "").strip()[:1200],
+                "url": url[:2000],
+            })
+        if not results:
+            return f"No se encontraron resultados web para '{clean_query}'."
+
+        learned = False
+        learning_error = ""
+        if settings.WEB_SEARCH_AUTO_LEARN:
+            try:
+                learned = _store_web_search_knowledge(clean_query, results)
+            except Exception as exc:
+                learning_error = str(exc)[:200]
+
+        payload = {
+            "query": clean_query,
+            "source_type": "web_search",
+            "external_unverified": True,
+            "learned": learned,
+            "results": results,
+        }
+        if learning_error:
+            payload["learning_warning"] = learning_error
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception as exc:
+        return f"Error durante la búsqueda web: {str(exc)[:300]}"
+
+
+@tool
 def query_sql_server(query: str) -> str:
     """
     EJECUTA CONSULTAS SELECT EN SQL SERVER.
@@ -603,7 +735,7 @@ def solidset_send_chat_message(
     mensaje: str,
     importance: int = 1,
     kind: int = 60,
-    visibility_level: int = 0,
+    visibility_level: int = 1,
     confirm: bool = False,
 ) -> str:
     """

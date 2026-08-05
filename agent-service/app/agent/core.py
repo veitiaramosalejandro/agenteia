@@ -12,6 +12,7 @@ from langchain_ollama import ChatOllama
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.tools import (
     fetch_external_api,
+    google_web_search,
     get_cnc_telemetry,
     learn_new_fact,
     get_db_schema,
@@ -35,7 +36,7 @@ from app.agent.tools import (
     solidset_request,
     solidset_send_chat_message,
     solidset_update_reaction,
-    solidset_vehicle_info,
+    #solidset_vehicle_info,
 )
 from app.config import settings
 from app.system.learning import SistemaAprendizaje
@@ -59,10 +60,10 @@ class MachiningAgent:
         self.llm = ChatOllama(
             base_url=settings.OLLAMA_BASE_URL,
             model=model_name,
-            temperature=0.2,
-            num_predict=2048,  # Máximo de tokens a generar
+            temperature=0.5,
+            num_predict=8192,  # Máximo de tokens a generar
             top_p=0.9,
-            repeat_penalty=1.1,
+            repeat_penalty=1.2,
         )
         
         # Mapa de herramientas disponibles
@@ -73,6 +74,7 @@ class MachiningAgent:
             "query_sql_server": query_sql_server,
             "get_db_schema": get_db_schema,
             "fetch_external_api": fetch_external_api,
+            "google_web_search": google_web_search,
             "confirm_large_operation": confirm_large_operation,
             "analyze_pcm_audio_diagnostic": analyze_pcm_audio_diagnostic,
             "create_word_document": create_word_document,
@@ -91,7 +93,7 @@ class MachiningAgent:
             "solidset_request": solidset_request,
             "solidset_send_chat_message": solidset_send_chat_message,
             "solidset_update_reaction": solidset_update_reaction,
-            "solidset_vehicle_info": solidset_vehicle_info,
+            #"solidset_vehicle_info": solidset_vehicle_info,
         }
         
         # Vincular herramientas al LLM
@@ -1069,27 +1071,29 @@ class MachiningAgent:
         """
         Maneja saludos simples con contexto personalizado.
         """
+
+        print(f"👋 Procesando saludo para user_id={user_id}")
+
         if not user_id:
             return "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"
         
         try:
-            contexto_obj = self.sistema_aprendizaje.obtener_contexto_usuario(user_id)
+            contexto_obj = self.sistema_aprendizaje.obtener_contexto_usuario(user_id)            
             if contexto_obj:
                 nombre = contexto_obj.usuario.nombre or "operario"
                 rol = contexto_obj.usuario.rol or "técnico"
                 canales = len(contexto_obj.canales_acceso)
                 
-                return f"""👋 ¡Hola {nombre}! Soy tu asistente de mecanizado.
+                return f"""👋 ¡Hola {nombre}! Soy tu asistente.
 
-📋 Veo que eres **{rol}** y tienes acceso a **{canales} canales** de trabajo.
+                    📋 Veo que eres **{rol}** y tienes acceso a **{canales} canales** de trabajo.
+                    ¿En qué área necesitas asistencia hoy?
+                    - 🔧 Diagnóstico de máquinas
+                    - 📊 Consulta de datos de producción
+                    - 📚 Documentación técnica
+                    - ⚙️ Recomendaciones de mantenimiento
 
-¿En qué área necesitas asistencia hoy?
-- 🔧 Diagnóstico de máquinas
-- 📊 Consulta de datos de producción
-- 📚 Documentación técnica
-- ⚙️ Recomendaciones de mantenimiento
-
-¡Dime qué necesitas!"""
+                    ¡Dime qué necesitas!"""
             else:
                 return "👋 ¡Hola! Soy tu asistente de SolidSET. ¿En qué puedo ayudarte hoy?"
         except Exception as e:

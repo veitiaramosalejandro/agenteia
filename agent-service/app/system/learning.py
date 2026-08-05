@@ -1065,14 +1065,16 @@ class SistemaAprendizaje:
     
     def _search_aprendizaje(self, query_vector: List[float], 
                        query_filter: Optional[Dict[str, Any]] = None, 
-                       limit: int = 10) -> List[Dict]:
+                       limit: int = 10,
+                       timeout: int = 30) -> List[Dict]:
         """
-        Busca en Qdrant utilizando un filtro opcional.
+        Busca en Qdrant utilizando un filtro opcional y con timeout.
         
         Args:
             query_vector: Vector de consulta
             query_filter: Filtro opcional (ej: {"categoria": "torno"})
             limit: Número máximo de resultados
+            timeout: Segundos de espera para la respuesta del servidor.
         
         Returns:
             Lista de resultados con payload
@@ -1127,6 +1129,7 @@ class SistemaAprendizaje:
                         with_payload=True,
                         with_vectors=False,
                         score_threshold=0.0,
+                        timeout=timeout,
                     )
                 except TypeError:
                     # Algunas versiones no exponen todos los kwargs opcionales.
@@ -1151,6 +1154,7 @@ class SistemaAprendizaje:
                         with_payload=True,
                         with_vectors=False,
                         score_threshold=0.0,
+                        timeout=timeout,
                     )
                 except TypeError:
                     # Fallback para firmas antiguas sin kwargs extra.
@@ -1184,8 +1188,11 @@ class SistemaAprendizaje:
             return []
             
         except Exception as e:
-            print(f"❌ Error en búsqueda de aprendizaje: {e}")
-            print(f"   Tipo: {type(e).__name__}")
+            if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+                print(f"⏳ Timeout en búsqueda de aprendizaje: la base de datos de vectores no respondió a tiempo (límite: {timeout}s).")
+            else:
+                print(f"❌ Error en búsqueda de aprendizaje: {e}")
+                print(f"   Tipo: {type(e).__name__}")
             return []
 
     def _get_version(self):
