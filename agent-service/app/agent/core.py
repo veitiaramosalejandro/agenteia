@@ -607,6 +607,45 @@ class MachiningAgent:
         
         return True, ""
 
+    def _response_needs_web_fallback(self, response_text: str, tools_used: List[str]) -> bool:
+        """Detecta cuando el LLM admite que no dispone de la información solicitada."""
+        if not settings.WEB_SEARCH_ENABLED or "google_web_search" in tools_used:
+            return False
+        text = " ".join((response_text or "").lower().split())
+        patterns = [
+            r"no tengo (?:informaci[oó]n|datos|conocimiento)",
+            r"no (?:dispongo|cuento) con (?:informaci[oó]n|datos)",
+            r"no (?:puedo|he podido) (?:encontrar|confirmar)",
+            r"no hay (?:informaci[oó]n|datos) (?:espec[ií]fica|disponible)",
+            r"no conozco (?:ese|este|el|la)",
+            r"i (?:do not|don't) have (?:specific )?(?:information|data)",
+            r"i (?:could not|couldn't) (?:find|confirm)",
+            r"n[aã]o tenho (?:informa[cç][aã]o|dados|conhecimento)",
+            r"n[aã]o (?:consegui|posso) (?:encontrar|confirmar)",
+        ]
+        return bool(text) and any(re.search(pattern, text) for pattern in patterns)
+
+    def _answer_with_web_fallback(self, user_text: str, messages: list) -> Optional[str]:
+        """Busca en la web y pide al LLM una respuesta basada únicamente en esos resultados."""
+        try:
+            web_result = google_web_search.invoke({"query": user_text})
+            if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
+                return None
+            web_messages = list(messages)
+            web_messages.append(SystemMessage(content=(
+                "RESULTADOS DE BÚSQUEDA WEB EXTERNA (no verificados):\n"
+                f"{web_result}\n\n"
+                "Responde la consulta original usando estos resultados. Indica que la información "
+                "procede de Internet, cita las URL, no inventes datos y expresa la incertidumbre."
+            )))
+            web_messages.append(HumanMessage(content=f"Responde de nuevo a mi consulta original: {user_text}"))
+            web_response = self.llm.invoke(web_messages)
+            answer = web_response.content if hasattr(web_response, "content") else str(web_response)
+            return answer.strip() or None
+        except Exception as exc:
+            print(f"⚠️ Falló la búsqueda web automática: {exc}")
+            return None
+
     # ============================================================
     # 4. REGISTRO DE ACTIVIDADES PARA APRENDIZAJE
     # ============================================================
@@ -1014,6 +1053,13 @@ class MachiningAgent:
                 response_text = f"Basado en la información obtenida: {str(last_tool_result)[:500]}"
             else:
                 response_text = "Lo siento, no pude generar una respuesta. ¿Podrías reformular tu consulta?"
+
+        # Respaldo determinista: no depender únicamente de que el LLM decida usar la tool.
+        if self._response_needs_web_fallback(response_text, herramientas_usadas):
+            web_answer = self._answer_with_web_fallback(user_text, messages)
+            if web_answer:
+                response_text = web_answer
+                herramientas_usadas.append("google_web_search")
         
         if iteration >= self.max_iterations:
             response_text += "\n\n⚠️ Se alcanzó el límite de iteraciones. Si necesitas más información, por favor sé más específico."

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.agent.tools import google_web_search
+from app.agent.core import MachiningAgent
 
 
 class FakeDDGS:
@@ -41,6 +42,19 @@ class TestWebSearch(unittest.TestCase):
     def test_empty_query_is_rejected(self):
         response = google_web_search.invoke({"query": "   "})
         self.assertIn("no puede estar vacía", response)
+
+
+    def test_missing_knowledge_response_triggers_fallback(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertTrue(agent._response_needs_web_fallback(
+            "No tengo información específica sobre el modelo Kimi-K3.", []
+        ))
+
+    def test_fallback_is_not_repeated_after_web_search(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertFalse(agent._response_needs_web_fallback(
+            "No tengo información suficiente.", ["google_web_search"]
+        ))
 
 
 if __name__ == "__main__":
