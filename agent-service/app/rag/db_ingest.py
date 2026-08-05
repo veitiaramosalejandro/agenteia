@@ -701,7 +701,7 @@ def ingest_from_database():
     else:
         rows_per_table = max(1, int(raw_rows_per_table))
     max_tables = max(0, int(os.getenv("SQL_SERVER_INGEST_MAX_TABLES", "0")))
-    batch_size = max(1, int(os.getenv("SQL_SERVER_INGEST_BATCH_SIZE", "1000")))
+    batch_size = max(1, int(os.getenv("SQL_SERVER_INGEST_BATCH_SIZE", "100")))
     schema_name = (os.getenv("SQL_SERVER_INGEST_SCHEMA", "").strip() or None)
     raw_excluded = os.getenv("SQL_SERVER_INGEST_EXCLUDE_TABLES", "").strip()
     exclude_tables = [part.strip() for part in raw_excluded.split(",") if part.strip()]
