@@ -944,8 +944,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def receive_framework_notification(message: FrameworkMessageDTO):
     """Recibe desde Notification un FrameworkMessage ya capturado y lo aprende en Qdrant."""
 
-    print(f"📩 Recibido FrameworkMessage para indexación en Qdrant: {message}")
-
     payload = (
         message.model_dump(mode="json")
         if hasattr(message, "model_dump")
