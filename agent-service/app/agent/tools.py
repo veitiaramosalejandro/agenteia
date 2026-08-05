@@ -731,12 +731,13 @@ def fetch_external_api(endpoint_url: str, method: str = "GET", payload: Optional
 
 @tool
 def solidset_send_chat_message(
-    canal_id: str,
+    canal_id: Optional[str],
     mensaje: str,
     importance: int = 1,
     kind: int = 60,
     visibility_level: int = 1,
     confirm: bool = False,
+    recurso_id: Optional[str] = None,
 ) -> str:
     """
     ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
@@ -759,19 +760,23 @@ def solidset_send_chat_message(
         )
 
     channel = (canal_id or "").strip()
+    resource = (recurso_id or "").strip()
     text = (mensaje or "").strip()
-    if not channel:
-        return "Error: canal_id es obligatorio."
+    if not channel and not resource:
+        return "Error: canal_id o recurso_id es obligatorio."
     if not text:
         return "Error: mensaje está vacío."
 
     params = {
         "Importance": int(importance),
         "Kind": int(kind),
-        "Destiny.WorkRoom": channel,
         "VisibilityLevel": int(visibility_level),
         "RawMessage": text,
     }
+    if channel:
+        params["Destiny.WorkRoom"] = channel
+    if resource:
+        params["Destiny.Resource"] = resource
     response, base, error = _solidset_request_authenticated(
         method="POST",
         endpoint="/Chat/SendMessageForm",
@@ -782,7 +787,7 @@ def solidset_send_chat_message(
     if response.status_code >= 400:
         return f"Error enviando mensaje a SOLIDSET: HTTP {response.status_code} -> {response.text[:220]}"
     return (
-        f"✅ Mensaje enviado a canal {channel}. "
+        f"✅ Mensaje enviado a {'canal ' + channel if channel else 'chat del recurso ' + resource}. "
         f"Endpoint: {base}/Chat/SendMessageForm"
     )
 

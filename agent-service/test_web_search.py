@@ -65,6 +65,18 @@ class TestWebSearch(unittest.TestCase):
         self.assertNotIn("Según", answer)
         self.assertIn("Kimi K3 destaca en programación", answer)
 
+    def test_web_answer_removes_source_only_lists(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        answer = agent._clean_web_answer(
+            "Basado en la información obtenida, hoy habrá 24 grados.\n\n"
+            "Puedes consultar más detalles en los siguientes links:\n"
+            "- [Pronóstico local](https://example.com/weather)"
+        )
+        self.assertNotIn("http", answer)
+        self.assertNotIn("Pronóstico local", answer)
+        self.assertNotIn("información obtenida", answer)
+        self.assertEqual(answer, "hoy habrá 24 grados.")
+
 
 if __name__ == "__main__":
     unittest.main()

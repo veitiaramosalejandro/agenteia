@@ -652,9 +652,16 @@ class MachiningAgent:
     def _clean_web_answer(self, answer: str) -> str:
         """Oculta enlaces y atribuciones genéricas; la procedencia queda guardada internamente."""
         text = str(answer or "")
+        # Elimina líneas cuyo único propósito es enumerar una fuente enlazada.
+        text = re.sub(
+            r"(?im)^\s*[-*]\s*\[[^\]]+\]\(https?://[^)]+\)\s*$",
+            "",
+            text,
+        )
         text = re.sub(r"\[([^\]]+)\]\(https?://[^)]+\)", r"\1", text, flags=re.IGNORECASE)
         text = re.sub(r"https?://\S+", "", text, flags=re.IGNORECASE)
         attribution_patterns = [
+            r"\bbasado en la informaci[oó]n obtenida\s*,?\s*",
             r"\bseg[uú]n\s+(?:este|esta|el|la)\s+(?:art[ií]culo|an[aá]lisis|fuente|sitio|publicaci[oó]n)\s*,?\s*",
             r"\b(?:este|esta|el|la)\s+(?:art[ií]culo|an[aá]lisis|fuente|sitio|publicaci[oó]n)\s+(?:indica|menciona|señala|destaca|explica)\s+que\s+",
             r"\baccording to (?:this|the) (?:article|analysis|source|site|publication)\s*,?\s*",
@@ -662,6 +669,12 @@ class MachiningAgent:
         ]
         for pattern in attribution_patterns:
             text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"(?im)^\s*(?:puedes|puede) consultar (?:m[aá]s )?detalles[^\n]*(?:links?|enlaces?|fuentes?)\s*:\s*$",
+            "",
+            text,
+        )
+        text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r"[ \t]+\n", "\n", text)
         text = re.sub(r" {2,}", " ", text)
         return text.strip()
@@ -747,7 +760,9 @@ class MachiningAgent:
         session_id: str, 
         user_text: str, 
         user_id: Optional[str] = None,
-        canal_id: Optional[str] = None
+        canal_id: Optional[str] = None,
+        tool_allowlist: Optional[set[str]] = None,
+        auto_reply_mode: bool = False,
     ) -> str:
         """
         Procesa la consulta del usuario con contexto completo.
@@ -911,6 +926,16 @@ class MachiningAgent:
         
         # System Prompt con contexto del usuario
         system_prompt = SYSTEM_PROMPT
+
+        if auto_reply_mode:
+            system_prompt += (
+                "\n\n=== MODO AUTORRESPUESTA SOLIDSET ===\n"
+                "Responde exclusivamente al mensaje entrante con una respuesta breve, natural y útil. "
+                "No consultes mensajes anteriores, no reacciones al chat y no ejecutes acciones de SolidSET. "
+                "No muestres resultados técnicos de herramientas, estados HTTP, JSON ni trazas internas. "
+                "Si falta un dato imprescindible (por ejemplo, la ciudad para consultar el tiempo), "
+                "pide únicamente ese dato en vez de buscar o inventarlo."
+            )
         
         if contexto_usuario:
             system_prompt += f"\n\n=== CONTEXTO DEL USUARIO ({user_id}) ===\n{contexto_usuario}"
@@ -971,10 +996,17 @@ class MachiningAgent:
         response_text = ""
         herramientas_usadas = []
         last_tool_result = None
+        llm_for_request = self.llm_with_tools
+        if tool_allowlist is not None:
+            allowed_tools = [
+                tool for name, tool in self.tools_map.items()
+                if name in tool_allowlist
+            ]
+            llm_for_request = self.llm.bind_tools(allowed_tools) if allowed_tools else self.llm
         
         while iteration < self.max_iterations:
             try:
-                response = self.llm_with_tools.invoke(messages)
+                response = llm_for_request.invoke(messages)
             except Exception as e:
                 print(f"❌ Error invocando LLM: {e}")
                 if self._is_llm_connection_error(e):
@@ -1083,6 +1115,11 @@ class MachiningAgent:
         
         if iteration >= self.max_iterations:
             response_text += "\n\n⚠️ Se alcanzó el límite de iteraciones. Si necesitas más información, por favor sé más específico."
+
+        # Aplicar la misma política de presentación tanto a la búsqueda solicitada
+        # por el modelo como al respaldo web automático.
+        if "google_web_search" in herramientas_usadas:
+            response_text = self._clean_web_answer(response_text)
 
         # --- 9. PERSISTIR CONVERSACIÓN ---
         if history:

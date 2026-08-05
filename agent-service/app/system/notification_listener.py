@@ -608,6 +608,8 @@ class NotificationApiListener:
             and own_resource
             and destiny_resource.lower() == own_resource.lower()
         )
+        zero_guid = "00000000-0000-0000-0000-000000000000"
+        is_direct = addressed_to_agent and str(channel_id or "").strip().lower() in {"", zero_guid}
 
         candidate = {
             "fingerprint": fingerprint,
@@ -624,6 +626,8 @@ class NotificationApiListener:
             "message": raw_message.strip(),
             "destiny_resource": destiny_resource,
             "addressed_to_agent": addressed_to_agent,
+            "is_direct": is_direct,
+            "reply_resource": str(sender_resource or "").strip(),
             "payload": data,
         }
 

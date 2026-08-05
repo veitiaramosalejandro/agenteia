@@ -108,11 +108,13 @@ def _sanitize_auto_reply_input(raw_text: str) -> str:
     text = (raw_text or "").strip()
     if not text:
         return ""
-    mention_token = (settings.SOLIDSET_AUTO_REPLY_MENTION_TOKEN or "").strip()
-    if mention_token:
-        text = text.replace(mention_token, " ")
-        text = text.replace(mention_token.lower(), " ")
-        text = text.replace(mention_token.upper(), " ")
+    mention_tokens = {
+        (settings.SOLIDSET_AUTO_REPLY_MENTION_TOKEN or "").strip(),
+        "@agente", "@asistente", "@agent", "@assistant",
+    }
+    for mention_token in (token for token in mention_tokens if token):
+        text = re.sub(re.escape(mention_token), " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*(?:agente|asistente|agent|assistant)\s*[,;:\-]?\s*", "", text, flags=re.IGNORECASE)
     text = " ".join(text.split())
     max_len = max(80, settings.SOLIDSET_AUTO_REPLY_MAX_INPUT_CHARS)
     return text[:max_len].strip()
@@ -134,6 +136,50 @@ def _looks_like_question_or_request(raw_text: str) -> bool:
     return text.startswith(starters)
 
 
+def _message_mentions_agent(raw_text: str) -> bool:
+    text = (raw_text or "").strip()
+    if not text:
+        return False
+    configured = (settings.SOLIDSET_AUTO_REPLY_MENTION_TOKEN or "").strip()
+    if configured and configured.lower() in text.lower():
+        return True
+    if re.search(r"(?<!\w)@(?:agente|asistente|agent|assistant)(?!\w)", text, flags=re.IGNORECASE):
+        return True
+    return bool(re.match(r"^\s*(?:agente|asistente|agent|assistant)\s*[,;:\-]", text, flags=re.IGNORECASE))
+
+
+def _is_safe_auto_reply_output(response_text: str) -> bool:
+    """Impide publicar en SolidSET trazas, errores o resultados crudos de herramientas."""
+    text = (response_text or "").strip().lower()
+    if not text:
+        return False
+    forbidden = (
+        "basado en la información obtenida: status=",
+        "se alcanzó el límite de iteraciones",
+        "validation error",
+        "error al ejecutar la herramienta",
+        "traceback (most recent call last)",
+        "pydantic.dev",
+    )
+    return not any(marker in text for marker in forbidden)
+
+
+def _weather_location_prompt(raw_text: str) -> Optional[str]:
+    """Devuelve una aclaración si se pide el tiempo sin indicar ubicación."""
+    text = " ".join((raw_text or "").strip().lower().split())
+    weather_terms = ("tiempo", "clima", "weather", "forecast", "meteorologia", "previsão", "previsao")
+    if not any(term in text for term in weather_terms):
+        return None
+    has_location = bool(re.search(r"\b(?:en|para|in|at|for|em)\s+[\wáéíóúüñãõç-]{2,}", text, flags=re.IGNORECASE))
+    if has_location:
+        return None
+    if any(term in text for term in ("weather", "forecast", "today")):
+        return "Which city or location would you like the weather forecast for?"
+    if any(term in text for term in ("previsão", "previsao", "meteorologia", "hoje")):
+        return "Para qual cidade ou localidade você quer consultar o tempo?"
+    return "¿De qué ciudad o localidad quieres conocer el tiempo?"
+
+
 def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     fingerprint = (candidate.get("fingerprint") or "").strip()
     if not fingerprint or _auto_reply_seen(fingerprint):
@@ -143,16 +189,17 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     message = (candidate.get("message") or "").strip()
     sender_resource = str(candidate.get("sender_resource") or "")
     sender_name = str(candidate.get("sender_name") or "")
-    if not channel_id or not message:
+    can_reply_direct = bool(candidate.get("is_direct") and candidate.get("reply_resource"))
+    if (not channel_id and not can_reply_direct) or not message:
         return False
-    if not _looks_like_question_or_request(message):
+    mentioned = _message_mentions_agent(message)
+    if not mentioned and not _looks_like_question_or_request(message):
         return False
     if (not settings.SOLIDSET_AUTO_REPLY_ALLOW_SELF) and _is_self_sender(sender_resource=sender_resource, sender_name=sender_name):
         return False
 
-    if settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION and not candidate.get("addressed_to_agent"):
-        token = (settings.SOLIDSET_AUTO_REPLY_MENTION_TOKEN or "").strip().lower()
-        if token and token not in message.lower():
+    if settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION:
+        if not candidate.get("addressed_to_agent") and not mentioned:
             return False
 
     return True
@@ -182,10 +229,13 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
 
         incoming_text = _sanitize_auto_reply_input(str(candidate.get("message") or ""))
         channel_id = (candidate.get("channel_id") or "").strip()
-        if not incoming_text or not channel_id:
+        is_direct = bool(candidate.get("is_direct"))
+        reply_resource = str(candidate.get("reply_resource") or "").strip()
+        if not incoming_text or (not channel_id and not reply_resource):
             continue
 
-        session_id = f"solidset_auto_{channel_id[:8]}"
+        conversation_scope = reply_resource if is_direct else channel_id
+        session_id = f"solidset_auto_{conversation_scope[:8]}"
         user_id = str(
             candidate.get("sender_resource")
             or candidate.get("sender_name")
@@ -193,29 +243,37 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             or "solidset.agent"
         ).strip()
 
-        try:
-            response_text = await asyncio.to_thread(
-                agent.analyze_event_with_dialogue,
-                session_id=session_id,
-                user_text=incoming_text,
-                user_id=user_id,
-                canal_id=channel_id,
-            )
-        except Exception as exc:
-            print(f"⚠️ Error generando auto-respuesta para canal {channel_id}: {exc}")
-            continue
+        response_text = _weather_location_prompt(incoming_text)
+        if response_text is None:
+            try:
+                response_text = await asyncio.to_thread(
+                    agent.analyze_event_with_dialogue,
+                    session_id=session_id,
+                    user_text=incoming_text,
+                    user_id=user_id,
+                    canal_id=None if is_direct else channel_id,
+                    tool_allowlist={"google_web_search"},
+                    auto_reply_mode=True,
+                )
+            except Exception as exc:
+                print(f"⚠️ Error generando auto-respuesta para canal {channel_id}: {exc}")
+                continue
 
         response_text = (response_text or "").strip()
-        if not response_text:
-            continue
+        if not _is_safe_auto_reply_output(response_text):
+            response_text = (
+                "No pude procesar correctamente tu mensaje en este momento. "
+                "Por favor, inténtalo de nuevo en unos instantes."
+            )
 
         try:
             send_result = await asyncio.to_thread(
                 solidset_send_chat_message.invoke,
                 {
-                    "canal_id": channel_id,
+                    "canal_id": None if is_direct else channel_id,
                     "mensaje": response_text,
                     "confirm": True,
+                    "recurso_id": reply_resource if is_direct else None,
                 },
             )
             send_result_text = str(send_result)
