@@ -570,7 +570,9 @@ def query_sql_server(query: str) -> str:
     
     ADVERTENCIA DE SEGURIDAD:
     - Siempre usa filtros WHERE para evitar consultas masivas
-    - Si el usuario no especifica filtros, pregunta antes de ejecutar
+    - Deriva el filtro desde la petición del usuario cuando mencione un nombre, alias, estado o patrón.
+    - No preguntes qué tabla usar si el esquema conocido ya identifica la tabla y columnas.
+    - Los agregados COUNT con WHERE son consultas acotadas y no requieren confirmación.
     """
     server = settings.SQL_SERVER_HOST
     user = settings.SQL_SERVER_USER

@@ -37,6 +37,23 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         )
         self.assertEqual(query, "cual es pronóstico del tiempo en Leiria?")
 
+    def test_extracts_resource_filter_for_direct_sql_count(self):
+        term = self.agent._extract_resource_count_term(
+            "Cuantos recurso Dev existe en el sistema SOLIDSET?"
+        )
+        self.assertEqual(term, "Dev")
+
+    def test_non_count_query_does_not_trigger_direct_resource_query(self):
+        term = self.agent._extract_resource_count_term("Explica qué es un recurso Dev")
+        self.assertIsNone(term)
+
+    def test_channel_names_question_uses_direct_sql_route(self):
+        self.assertTrue(
+            self.agent._is_channel_names_intent(
+                "Dime los nombre de los canales existente en el sistema SOLIDSET?"
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

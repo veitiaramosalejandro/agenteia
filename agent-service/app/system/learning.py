@@ -360,6 +360,29 @@ class SistemaAprendizaje:
         )
         return cursor.fetchall() or []
 
+    def obtener_canales_usuario(self, user_id: str) -> List[Dict[str, Any]]:
+        """Lista canales accesibles para el usuario autenticado respetando membresía."""
+        identity = self._resolve_user_identity(user_id)
+        if not (user_id or "").strip():
+            return []
+        try:
+            with self._connect_sql_with_retry(context="user_channels") as conn:
+                with conn.cursor(as_dict=True) as cursor:
+                    rows = self._get_user_channels_from_db(cursor, identity)
+            return [
+                {
+                    "channel_id": str(row.get("IDWorkRoom") or ""),
+                    "name": str(row.get("Name") or "").strip(),
+                    "description": str(row.get("Description") or "").strip(),
+                    "kind": row.get("Kind"),
+                }
+                for row in rows
+                if str(row.get("Name") or "").strip()
+            ]
+        except Exception as exc:
+            print(f"⚠️ Error obteniendo canales accesibles del usuario: {exc}")
+            return []
+
     def _get_user_activities_from_db(self, cursor: pymssql.Cursor, identity: Dict) -> List[Dict]:
         try:
             # Usar una fecha límite para limitar los resultados
@@ -800,7 +823,7 @@ class SistemaAprendizaje:
                 c.IDWorkRoom AS IDChannel,
                 wr.Name AS ChannelName,
                 c.IDSenderResource AS SenderResourceId,
-                COALESCE(sr.DisplayName, sl.FullName, sl.Username, 'Sin nombre') AS SenderDisplayName,
+                COALESCE(sl.FullName, sl.Username, 'Sin usuario asociado') AS SenderDisplayName,
                 COALESCE(sl.FullName, '') AS SenderFullName,
                 COALESCE(sl.Username, '') AS SenderUsername
             FROM dbo.SysChat c WITH (NOLOCK)

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 from urllib import error as urlerror
 from urllib.request import urlopen
@@ -350,15 +351,33 @@ class MachiningAgent:
         channel_name = rows[0].get("channel_name") or "Canal sin nombre"
         formatted = []
         for idx, row in enumerate(rows, start=1):
-            display_name = row.get("display_name") or "Sin nombre"
-            resource_id = row.get("resource_id") or "sin_resource_id"
-            username = row.get("username")
-            username_text = f" | user: {username}" if username else ""
-            formatted.append(f"{idx}. {display_name} ({resource_id}){username_text}")
+            username = (row.get("username") or "").strip()
+            full_name = (row.get("full_name") or "").strip()
+            if not username and not full_name:
+                continue
+            user_label = full_name or username
+            username_text = f" (@{username})" if username and username != user_label else ""
+            formatted.append(f"{idx}. {user_label}{username_text}")
 
         return (
             f"Usuarios recurso del canal '{channel_name}' (base de datos):\n"
             + "\n".join(formatted)
+        )
+
+    def _is_channel_names_intent(self, user_text: str) -> bool:
+        text = self._normalize_context_query(user_text).lower()
+        has_channel = any(term in text for term in ("canal", "canales", "channel", "workroom", "sala"))
+        asks_names = any(term in text for term in ("nombre", "nombres", "lista", "listar", "cuales", "cuáles", "dime"))
+        return has_channel and asks_names
+
+    def _resolve_channel_names_from_db(self, user_id: str) -> str:
+        rows = self.sistema_aprendizaje.obtener_canales_usuario(user_id)
+        if not rows:
+            return "No encontré canales accesibles para tu usuario en SQL Server."
+        names = [row["name"] for row in rows]
+        return (
+            f"Tienes acceso a **{len(names)} canales** en SOLIDSET:\n"
+            + "\n".join(f"- {name}" for name in names)
         )
 
     def _resolve_last_chat_message_from_db(self, user_id: str, canal_id: Optional[str], user_text: str) -> Optional[str]:
@@ -646,6 +665,58 @@ class MachiningAgent:
             "muestra", "buscar", "busca", "consulta", "dime", "cuales", "cuáles",
         )
         return any(term in text for term in data_terms) and any(term in text for term in query_terms)
+
+    def _extract_resource_count_term(self, user_text: str) -> Optional[str]:
+        """Extrae el nombre/prefijo pedido en preguntas como 'cuántos recursos Dev'."""
+        text = self._normalize_context_query(user_text)
+        if not re.search(r"\bcu[aá]nt(?:o|os|a|as)\b", text, flags=re.IGNORECASE):
+            return None
+        match = re.search(
+            r"\brecursos?\s+(.+?)(?=\s+(?:existen?|hay|en\s+el|en\s+la|del\s+sistema)\b|[?¿.,]|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return ""
+        term = " ".join(match.group(1).strip().split())
+        return term[:80]
+
+    def _resolve_resource_count_from_db(self, user_text: str) -> Optional[str]:
+        """Resuelve directamente conteos de recursos usando el esquema conocido."""
+        term = self._extract_resource_count_term(user_text)
+        if term is None:
+            return None
+        escaped = term.replace("'", "''")
+        if escaped:
+            where_clause = (
+                "WHERE UPPER(CONCAT(COALESCE(sl.Username, ''), ' ', "
+                "COALESCE(sl.FullName, ''), ' ', COALESCE(sr.DisplayName, ''))) "
+                f"LIKE UPPER('%{escaped}%')"
+            )
+        else:
+            where_clause = "WHERE sl.IDLogin IS NOT NULL"
+        sql = (
+            "SELECT COUNT_BIG(DISTINCT sl.IDLogin) AS Total "
+            "FROM dbo.SysResources sr WITH (NOLOCK) "
+            "INNER JOIN dbo.SysLogin sl WITH (NOLOCK) "
+            "ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource "
+            f"{where_clause};"
+        )
+        print(f"🗄️ Resolviendo conteo de recursos desde SQL Server; filtro={term!r}")
+        result = str(query_sql_server.invoke({"query": sql}))
+        try:
+            rows = json.loads(result)
+            total = int(rows[0]["Total"])
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError):
+            if result.lower().startswith(("error", "la consulta")):
+                return (
+                    "No pude consultar el conteo de recursos en SQL Server en este momento. "
+                    "La estructura usada fue dbo.SysResources.DisplayName."
+                )
+            return None
+        if term:
+            return f"En SOLIDSET existen **{total} usuarios asociados a recursos** que coinciden con “{term}”."
+        return f"En SOLIDSET existen **{total} usuarios asociados a recursos** registrados."
 
     def _normalize_tool_args(
         self,
@@ -977,7 +1048,29 @@ class MachiningAgent:
 
             return response_text
 
-        # --- 3.1 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
+        # --- 3.1 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
+        if user_id and self._is_channel_names_intent(user_text):
+            channel_names_response = self._resolve_channel_names_from_db(user_id)
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(channel_names_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando listado de canales en Redis: {e}")
+            return channel_names_response
+
+        # --- 3.2 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
+        resource_count_response = self._resolve_resource_count_from_db(user_text)
+        if resource_count_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(resource_count_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando conteo de recursos en Redis: {e}")
+            return resource_count_response
+
+        # --- 3.3 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if user_id and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:
@@ -1111,6 +1204,12 @@ class MachiningAgent:
             else:
                 messages.extend(all_history[-self.max_history_messages:])
         
+        # El historial aporta contexto, pero nunca debe reemplazar el tema actual.
+        messages.append(SystemMessage(content=(
+            "La siguiente consulta es el turno actual y tiene prioridad absoluta. "
+            "No continúes temas anteriores salvo que el usuario los mencione explícitamente."
+        )))
+
         # Añadir mensaje del usuario
         messages.append(HumanMessage(content=user_text))
 
@@ -1255,7 +1354,10 @@ class MachiningAgent:
             )
 
         # Respaldo determinista: no depender únicamente de que el LLM decida usar la tool.
-        if self._response_needs_web_fallback(response_text, herramientas_usadas):
+        if (
+            not self._is_sql_business_query(user_text)
+            and self._response_needs_web_fallback(response_text, herramientas_usadas)
+        ):
             web_answer = self._answer_with_web_fallback(user_text, messages)
             if web_answer:
                 response_text = web_answer
