@@ -370,6 +370,47 @@ class MachiningAgent:
         asks_names = any(term in text for term in ("nombre", "nombres", "lista", "listar", "cuales", "cuáles", "dime"))
         return has_channel and asks_names
 
+    def _is_channel_summary_intent(self, user_text: str) -> bool:
+        text = self._normalize_context_query(user_text).lower()
+        has_summary = any(term in text for term in ("resumen", "resumir", "summary", "síntesis", "sintesis"))
+        has_scope = any(term in text for term in ("canal", "conversacion", "conversación", "mensajes", "contexto"))
+        return has_summary and has_scope
+
+    def _resolve_channel_summary_from_db(
+        self,
+        user_id: str,
+        canal_id: Optional[str],
+        user_text: str,
+    ) -> str:
+        effective_channel = (canal_id or "").strip()
+        if not effective_channel:
+            return "No recibí el identificador del canal actual y no puedo consultar sus conversaciones."
+        context = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
+            user_id=user_id,
+            canal_id=effective_channel,
+            limit=30,
+        )
+        if not context or context.startswith("No hay historial"):
+            return "No encontré conversaciones recientes accesibles en el canal actual."
+        try:
+            response = self.llm.invoke([
+                SystemMessage(content=(
+                    "Resume exclusivamente las conversaciones proporcionadas del canal actual. "
+                    "Identifica temas principales, decisiones, solicitudes y asuntos pendientes. "
+                    "No pidas el ID del canal: ya fue validado. No inventes información ni muestres UUIDs. "
+                    "Responde en español, de forma clara y breve."
+                )),
+                HumanMessage(content=(
+                    f"Petición actual: {user_text}\n\n"
+                    f"Conversaciones recientes del canal:\n{context}"
+                )),
+            ])
+            answer = response.content if hasattr(response, "content") else str(response)
+            return str(answer or "").strip() or "No pude generar el resumen del canal."
+        except Exception as exc:
+            print(f"⚠️ Error generando resumen directo del canal: {exc}")
+            return "No pude generar el resumen del canal en este momento."
+
     def _resolve_channel_names_from_db(self, user_id: str) -> str:
         rows = self.sistema_aprendizaje.obtener_canales_usuario(user_id)
         if not rows:
@@ -1048,7 +1089,22 @@ class MachiningAgent:
 
             return response_text
 
-        # --- 3.1 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
+        # --- 3.1 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
+        if user_id and self._is_channel_summary_intent(user_text):
+            channel_summary_response = self._resolve_channel_summary_from_db(
+                user_id=user_id,
+                canal_id=canal_id,
+                user_text=user_text,
+            )
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(channel_summary_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando resumen del canal en Redis: {e}")
+            return channel_summary_response
+
+        # --- 3.2 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
         if user_id and self._is_channel_names_intent(user_text):
             channel_names_response = self._resolve_channel_names_from_db(user_id)
             if history:
@@ -1059,7 +1115,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando listado de canales en Redis: {e}")
             return channel_names_response
 
-        # --- 3.2 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
+        # --- 3.3 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
         resource_count_response = self._resolve_resource_count_from_db(user_text)
         if resource_count_response is not None:
             if history:
@@ -1070,7 +1126,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando conteo de recursos en Redis: {e}")
             return resource_count_response
 
-        # --- 3.3 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
+        # --- 3.4 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if user_id and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:

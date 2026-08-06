@@ -74,6 +74,7 @@ _auto_reply_lock = threading.Lock()
 _auto_reply_seen_fingerprints: "OrderedDict[str, float]" = OrderedDict()
 _auto_reply_max_seen = 2000
 _auto_reply_background_tasks: set[asyncio.Task] = set()
+_auto_reply_followups: dict[str, float] = {}
 
 
 def _auto_reply_seen(fingerprint: str) -> bool:
@@ -93,6 +94,36 @@ def _remember_auto_reply_fingerprint(fingerprint: str) -> None:
         _auto_reply_seen_fingerprints.move_to_end(key)
         while len(_auto_reply_seen_fingerprints) > _auto_reply_max_seen:
             _auto_reply_seen_fingerprints.popitem(last=False)
+
+
+def _auto_reply_followup_key(candidate: dict) -> str:
+    scope = str(candidate.get("reply_resource") or candidate.get("channel_id") or "").strip().lower()
+    sender = str(candidate.get("sender_resource") or candidate.get("sender_name") or "").strip().lower()
+    digest = hashlib.sha256(f"{scope}|{sender}".encode("utf-8")).hexdigest()
+    return f"machining:auto-reply:followup:{digest}"
+
+
+def _has_active_auto_reply_followup(candidate: dict) -> bool:
+    key = _auto_reply_followup_key(candidate)
+    try:
+        return bool(_dialogue_redis.exists(key))
+    except redis.RedisError:
+        with _auto_reply_lock:
+            expires_at = _auto_reply_followups.get(key, 0.0)
+            if expires_at <= time():
+                _auto_reply_followups.pop(key, None)
+                return False
+            return True
+
+
+def _remember_auto_reply_followup(candidate: dict) -> None:
+    key = _auto_reply_followup_key(candidate)
+    ttl = max(30, settings.SOLIDSET_AUTO_REPLY_FOLLOWUP_TTL_SECONDS)
+    try:
+        _dialogue_redis.setex(key, ttl, "1")
+    except redis.RedisError:
+        with _auto_reply_lock:
+            _auto_reply_followups[key] = time() + ttl
 
 
 def _is_self_sender(sender_resource: str, sender_name: str) -> bool:
@@ -241,13 +272,18 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     if (not channel_id and not can_reply_direct) or not message:
         return False
     mentioned = _message_mentions_agent(message)
-    if not mentioned and not _looks_like_question_or_request(message):
+    active_followup = _has_active_auto_reply_followup(candidate)
+    if not mentioned and not _looks_like_question_or_request(message) and not active_followup:
         return False
     if (not settings.SOLIDSET_AUTO_REPLY_ALLOW_SELF) and _is_self_sender(sender_resource=sender_resource, sender_name=sender_name):
         return False
 
     if settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION:
-        if not candidate.get("addressed_to_agent") and not mentioned:
+        if (
+            not candidate.get("addressed_to_agent")
+            and not mentioned
+            and not active_followup
+        ):
             return False
 
     return True
@@ -345,6 +381,7 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             if send_result_text.startswith("✅"):
                 sent += 1
                 _remember_auto_reply_fingerprint(fingerprint)
+                _remember_auto_reply_followup(candidate)
                 print(
                     f"🤖 Auto-reply enviado channel={channel_id} "
                     f"sender={candidate.get('sender_name', 'desconocido')}"

@@ -54,6 +54,13 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
             )
         )
 
+    def test_channel_summary_followup_uses_direct_summary_route(self):
+        self.assertTrue(
+            self.agent._is_channel_summary_intent(
+                "Si, necesito un resumen del contexto de la conversación del canal actual"
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
