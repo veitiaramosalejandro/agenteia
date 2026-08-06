@@ -762,7 +762,7 @@ class SistemaAprendizaje:
         return permisos_base + permisos_rol.get(rol.lower(), [])
 
     def obtener_recurso_id_por_nombre(self, nombre: str) -> Optional[str]:
-        """Busca el ID de recurso por nombre visible en SysResources."""
+        """Busca el recurso asociado usando nombre completo, username o nombre de recurso."""
         nombre = (nombre or "").strip()
         if not nombre:
             return None
@@ -773,11 +773,19 @@ class SistemaAprendizaje:
                     self._execute_with_retry(
                         cursor,
                         query="""
-                            SELECT TOP 1 ResourceId, DisplayName FROM dbo.SysResources
-                            WHERE DisplayName LIKE %s
-                            ORDER BY CASE WHEN DisplayName = %s THEN 0 ELSE 1 END, DisplayName
+                            SELECT TOP 1 sr.ResourceId, sr.DisplayName, sl.FullName, sl.Username
+                            FROM dbo.SysResources sr WITH (NOLOCK)
+                            LEFT JOIN dbo.SysLogin sl WITH (NOLOCK)
+                              ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
+                            WHERE sl.FullName LIKE %s OR sl.Username LIKE %s OR sr.DisplayName LIKE %s
+                            ORDER BY CASE
+                                WHEN sl.FullName = %s THEN 0
+                                WHEN sl.Username = %s THEN 1
+                                WHEN sr.DisplayName = %s THEN 2
+                                ELSE 3 END,
+                                sl.FullName, sl.Username, sr.DisplayName
                         """,
-                        params=(f"%{nombre}%", nombre),
+                        params=(f"%{nombre}%", f"%{nombre}%", f"%{nombre}%", nombre, nombre, nombre),
                         context="resource_by_name_query"
                     )
                     row = cursor.fetchone()
@@ -804,7 +812,9 @@ class SistemaAprendizaje:
         if not username:
             return []
 
-        safe_limit = max(1, min(limit, 30))
+        # Las consultas ordinarias conservan su límite solicitado; los resúmenes
+        # extensos pueden revisar hasta 500 mensajes recientes del canal.
+        safe_limit = max(1, min(limit, 500))
         safe_offset = max(0, offset)
         
         query_parts = [

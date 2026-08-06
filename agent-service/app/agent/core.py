@@ -376,6 +376,82 @@ class MachiningAgent:
         has_scope = any(term in text for term in ("canal", "conversacion", "conversación", "mensajes", "contexto"))
         return has_summary and has_scope
 
+    def _extract_channel_participant_frequency_name(self, user_text: str) -> Optional[str]:
+        text = self._normalize_context_query(user_text)
+        has_frequency = any(
+            term in text.lower()
+            for term in ("frecuencia", "frecuenta", "cada cuanto", "cada cuánto", "intervencion", "intervención", "participa")
+        )
+        if not has_frequency or "canal" not in text.lower():
+            return None
+        match = re.search(
+            r"\b(?:sr\.?|señor|senor|sra\.?|señora|senora)\s+(.+?)"
+            r"(?=\s+(?:como|con\s+qu[eé]|en\s+el\s+canal|participa|interviene)|[,?])",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return " ".join(match.group(1).strip().split())[:120]
+
+    def _resolve_channel_participant_frequency(
+        self,
+        user_id: str,
+        canal_id: Optional[str],
+        user_text: str,
+    ) -> Optional[str]:
+        person_name = self._extract_channel_participant_frequency_name(user_text)
+        if not person_name:
+            return None
+        effective_channel = (canal_id or "").strip()
+        if not effective_channel:
+            return "No recibí el canal actual y no puedo calcular la frecuencia de participación."
+        resource_id = self.sistema_aprendizaje.obtener_recurso_id_por_nombre(person_name)
+        if not resource_id:
+            return f"No encontré un usuario asociado a “{person_name}” en SQL Server."
+        channel_messages = self.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
+            user_id=user_id,
+            canal_id=effective_channel,
+            limit=500,
+        )
+        person_messages = [
+            row for row in channel_messages
+            if str(row.get("sender_resource_id") or "").lower() == resource_id.lower()
+        ]
+        if not person_messages:
+            return (
+                f"No encontré intervenciones recientes de **{person_name}** entre los "
+                f"**{len(channel_messages)} mensajes** revisados del canal."
+            )
+        timestamps = sorted(
+            row.get("timestamp") for row in person_messages if isinstance(row.get("timestamp"), datetime)
+        )
+        if not timestamps:
+            return f"Encontré **{len(person_messages)} intervenciones** de **{person_name}**, pero sin fechas válidas."
+        first, last = timestamps[0], timestamps[-1]
+        channel_timestamps = sorted(
+            row.get("timestamp") for row in channel_messages if isinstance(row.get("timestamp"), datetime)
+        )
+        observation_first = channel_timestamps[0] if channel_timestamps else first
+        observation_last = channel_timestamps[-1] if channel_timestamps else last
+        observed_days = max(1, (observation_last - observation_first).days + 1)
+        active_days = len({stamp.date() for stamp in timestamps})
+        per_week = len(person_messages) * 7 / observed_days
+        share = (len(person_messages) * 100 / len(channel_messages)) if channel_messages else 0.0
+        return (
+            f"Revisé **{len(channel_messages)} mensajes recientes** del canal. **{person_name}** realizó "
+            f"**{len(person_messages)} intervenciones** entre {first:%d/%m/%Y} y {last:%d/%m/%Y}, "
+            f"distribuidas en **{active_days} días activos**. Su frecuencia observada es de aproximadamente "
+            f"**{per_week:.1f} intervenciones por semana** durante los **{observed_days} días** cubiertos por "
+            f"la muestra, y representa **{share:.1f}%** de los mensajes revisados."
+        )
+
+    def _channel_summary_limit(self, user_text: str) -> int:
+        """Usa el número pedido o el valor configurado, siempre entre 30 y 500."""
+        match = re.search(r"\b(\d{1,3})\s+mensajes?\b", user_text or "", flags=re.IGNORECASE)
+        requested = int(match.group(1)) if match else settings.CHANNEL_SUMMARY_DEFAULT_MESSAGE_LIMIT
+        return max(30, min(requested, 500))
+
     def _resolve_channel_summary_from_db(
         self,
         user_id: str,
@@ -385,28 +461,57 @@ class MachiningAgent:
         effective_channel = (canal_id or "").strip()
         if not effective_channel:
             return "No recibí el identificador del canal actual y no puedo consultar sus conversaciones."
-        context = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
+        requested_limit = self._channel_summary_limit(user_text)
+        rows = self.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
             user_id=user_id,
             canal_id=effective_channel,
-            limit=30,
+            limit=requested_limit,
         )
-        if not context or context.startswith("No hay historial"):
+        if not rows:
             return "No encontré conversaciones recientes accesibles en el canal actual."
         try:
-            response = self.llm.invoke([
-                SystemMessage(content=(
-                    "Resume exclusivamente las conversaciones proporcionadas del canal actual. "
-                    "Identifica temas principales, decisiones, solicitudes y asuntos pendientes. "
-                    "No pidas el ID del canal: ya fue validado. No inventes información ni muestres UUIDs. "
-                    "Responde en español, de forma clara y breve."
-                )),
-                HumanMessage(content=(
-                    f"Petición actual: {user_text}\n\n"
-                    f"Conversaciones recientes del canal:\n{context}"
-                )),
-            ])
-            answer = response.content if hasattr(response, "content") else str(response)
-            return str(answer or "").strip() or "No pude generar el resumen del canal."
+            # SQL devuelve los más recientes primero; se invierte para resumir en orden temporal.
+            chronological_rows = list(reversed(rows))
+            lines = []
+            for row in chronological_rows:
+                stamp = row.get("timestamp")
+                stamp_text = stamp.strftime("%Y-%m-%d %H:%M") if hasattr(stamp, "strftime") else "fecha desconocida"
+                sender = row.get("sender_full_name") or row.get("sender_username") or "Usuario"
+                message = " ".join(str(row.get("message") or "").split())[:300]
+                if message:
+                    lines.append(f"[{stamp_text}] {sender}: {message}")
+
+            partial_summaries = []
+            batch_size = 50
+            for start in range(0, len(lines), batch_size):
+                batch = lines[start:start + batch_size]
+                response = self.llm.invoke([
+                    SystemMessage(content=(
+                        "Resume este bloque de conversaciones del mismo canal. Extrae temas, decisiones, "
+                        "solicitudes, incidencias y pendientes. Conserva nombres de usuarios cuando sean "
+                        "relevantes. No inventes datos ni muestres identificadores técnicos."
+                    )),
+                    HumanMessage(content="\n".join(batch)),
+                ])
+                partial = response.content if hasattr(response, "content") else str(response)
+                if str(partial or "").strip():
+                    partial_summaries.append(str(partial).strip())
+
+            if not partial_summaries:
+                return "No pude generar el resumen del canal."
+            if len(partial_summaries) == 1:
+                final_answer = partial_summaries[0]
+            else:
+                consolidation = self.llm.invoke([
+                    SystemMessage(content=(
+                        "Consolida los resúmenes parciales del canal en una síntesis única, clara y sin "
+                        "repeticiones. Organiza: temas principales, decisiones, solicitudes y pendientes. "
+                        "No inventes información ni menciones que trabajaste por bloques."
+                    )),
+                    HumanMessage(content="\n\n".join(partial_summaries)),
+                ])
+                final_answer = consolidation.content if hasattr(consolidation, "content") else str(consolidation)
+            return f"Resumen basado en **{len(lines)} mensajes recientes** del canal:\n\n{str(final_answer).strip()}"
         except Exception as exc:
             print(f"⚠️ Error generando resumen directo del canal: {exc}")
             return "No pude generar el resumen del canal en este momento."
@@ -1089,7 +1194,22 @@ class MachiningAgent:
 
             return response_text
 
-        # --- 3.1 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
+        # --- 3.1 FRECUENCIA DE PARTICIPACIÓN EN EL CANAL DESDE SQL SERVER ---
+        participant_frequency_response = self._resolve_channel_participant_frequency(
+            user_id=user_id or "",
+            canal_id=canal_id,
+            user_text=user_text,
+        )
+        if participant_frequency_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(participant_frequency_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando frecuencia de participación en Redis: {e}")
+            return participant_frequency_response
+
+        # --- 3.2 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
         if user_id and self._is_channel_summary_intent(user_text):
             channel_summary_response = self._resolve_channel_summary_from_db(
                 user_id=user_id,
@@ -1104,7 +1224,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando resumen del canal en Redis: {e}")
             return channel_summary_response
 
-        # --- 3.2 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
+        # --- 3.3 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
         if user_id and self._is_channel_names_intent(user_text):
             channel_names_response = self._resolve_channel_names_from_db(user_id)
             if history:
@@ -1115,7 +1235,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando listado de canales en Redis: {e}")
             return channel_names_response
 
-        # --- 3.3 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
+        # --- 3.4 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
         resource_count_response = self._resolve_resource_count_from_db(user_text)
         if resource_count_response is not None:
             if history:
@@ -1126,7 +1246,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando conteo de recursos en Redis: {e}")
             return resource_count_response
 
-        # --- 3.4 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
+        # --- 3.5 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if user_id and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:

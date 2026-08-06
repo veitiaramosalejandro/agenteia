@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE: int = int(os.getenv("SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE", "1"))
     SOLIDSET_AUTO_REPLY_MAX_INPUT_CHARS: int = int(os.getenv("SOLIDSET_AUTO_REPLY_MAX_INPUT_CHARS", "700"))
     SOLIDSET_AUTO_REPLY_FOLLOWUP_TTL_SECONDS: int = int(os.getenv("SOLIDSET_AUTO_REPLY_FOLLOWUP_TTL_SECONDS", "300"))
+    CHANNEL_SUMMARY_DEFAULT_MESSAGE_LIMIT: int = max(
+        30, min(int(os.getenv("CHANNEL_SUMMARY_DEFAULT_MESSAGE_LIMIT", "30")), 500)
+    )
     
     # Audio
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_samples")

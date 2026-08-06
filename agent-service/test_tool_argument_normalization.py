@@ -61,6 +61,17 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
             )
         )
 
+    def test_channel_summary_message_limit_is_clamped(self):
+        self.assertEqual(self.agent._channel_summary_limit("resume 10 mensajes del canal"), 30)
+        self.assertEqual(self.agent._channel_summary_limit("resume 500 mensajes del canal"), 500)
+        self.assertEqual(self.agent._channel_summary_limit("resume 900 mensajes del canal"), 500)
+
+    def test_extracts_participant_for_channel_frequency(self):
+        name = self.agent._extract_channel_participant_frequency_name(
+            "Agente, el Sr. Paulo Ferreira como actual en el canal, con que frecuenta realiza intervenciones?"
+        )
+        self.assertEqual(name, "Paulo Ferreira")
+
 
 if __name__ == "__main__":
     unittest.main()
