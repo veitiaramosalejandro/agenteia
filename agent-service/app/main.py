@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -6,6 +7,7 @@ import socket
 import ssl
 import threading
 import httpx
+import redis
 from contextlib import suppress
 from collections import OrderedDict
 from datetime import datetime
@@ -57,6 +59,7 @@ _active_dialogues_lock = threading.Lock()
 _dialogue_slots = threading.BoundedSemaphore(value=max(1, settings.DIALOGUE_MAX_CONCURRENT))
 _dialogue_cache_lock = threading.Lock()
 _dialogue_response_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+_dialogue_redis = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 _dialogue_metrics_lock = threading.Lock()
 _dialogue_metrics = {
@@ -70,6 +73,7 @@ _dialogue_metrics = {
 _auto_reply_lock = threading.Lock()
 _auto_reply_seen_fingerprints: "OrderedDict[str, float]" = OrderedDict()
 _auto_reply_max_seen = 2000
+_auto_reply_background_tasks: set[asyncio.Task] = set()
 
 
 def _auto_reply_seen(fingerprint: str) -> bool:
@@ -145,7 +149,33 @@ def _message_mentions_agent(raw_text: str) -> bool:
         return True
     if re.search(r"(?<!\w)@(?:agente|asistente|agent|assistant)(?!\w)", text, flags=re.IGNORECASE):
         return True
-    return bool(re.match(r"^\s*(?:agente|asistente|agent|assistant)\s*[,;:\-]", text, flags=re.IGNORECASE))
+    return bool(
+        re.match(
+            r"^\s*(?:agente|asistente|agent|assistant)(?:\s*[,;:\-]\s*|\s+)(?=\S)",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _schedule_auto_replies(candidates: list[dict]) -> None:
+    """Mantiene una referencia fuerte y registra fallos de la tarea en background."""
+    if not candidates:
+        return
+    task = asyncio.create_task(_process_auto_replies(candidates))
+    _auto_reply_background_tasks.add(task)
+
+    def _completed(done: asyncio.Task) -> None:
+        _auto_reply_background_tasks.discard(done)
+        try:
+            sent = done.result()
+            print(f"🤖 Procesamiento de auto-respuesta finalizado; enviadas={sent}")
+        except asyncio.CancelledError:
+            print("⚠️ Procesamiento de auto-respuesta cancelado")
+        except Exception as exc:
+            print(f"❌ Error no controlado procesando auto-respuesta: {exc}")
+
+    task.add_done_callback(_completed)
 
 
 def _is_safe_auto_reply_output(response_text: str) -> bool:
@@ -225,6 +255,11 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         local_seen.add(fingerprint)
 
         if not _candidate_qualifies_for_auto_reply(candidate):
+            print(
+                "ℹ️ Candidato de auto-respuesta descartado por filtros "
+                f"sender={candidate.get('sender_name', 'desconocido')} "
+                f"message={str(candidate.get('message') or '')[:120]!r}"
+            )
             continue
 
         incoming_text = _sanitize_auto_reply_input(str(candidate.get("message") or ""))
@@ -246,6 +281,10 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         response_text = _weather_location_prompt(incoming_text)
         if response_text is None:
             try:
+                print(
+                    f"🤖 Generando auto-respuesta con LLM channel={channel_id} "
+                    f"ollama={settings.OLLAMA_BASE_URL}"
+                )
                 response_text = await asyncio.to_thread(
                     agent.analyze_event_with_dialogue,
                     session_id=session_id,
@@ -556,6 +595,18 @@ def _get_cached_dialogue_response(cache_key: str) -> Optional[str]:
     if not settings.DIALOGUE_DUPLICATE_CACHE_ENABLED:
         return None
 
+    redis_key = (
+        f"{settings.DIALOGUE_REDIS_CACHE_PREFIX}:"
+        f"{hashlib.sha256(cache_key.encode('utf-8')).hexdigest()}"
+    )
+    try:
+        cached = _dialogue_redis.get(redis_key)
+        if cached:
+            return cached
+    except redis.RedisError as exc:
+        # Redis no debe impedir responder; queda una cache local de contingencia.
+        print(f"⚠️ Cache Redis no disponible; usando cache local: {exc}")
+
     now = time()
     ttl = max(1, settings.DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS)
     with _dialogue_cache_lock:
@@ -575,6 +626,17 @@ def _get_cached_dialogue_response(cache_key: str) -> Optional[str]:
 def _store_cached_dialogue_response(cache_key: str, response_text: str) -> None:
     if not settings.DIALOGUE_DUPLICATE_CACHE_ENABLED or not response_text:
         return
+
+    redis_key = (
+        f"{settings.DIALOGUE_REDIS_CACHE_PREFIX}:"
+        f"{hashlib.sha256(cache_key.encode('utf-8')).hexdigest()}"
+    )
+    ttl = max(1, settings.DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS)
+    try:
+        _dialogue_redis.setex(redis_key, ttl, response_text)
+        return
+    except redis.RedisError as exc:
+        print(f"⚠️ No se pudo escribir cache Redis; usando cache local: {exc}")
 
     now = time()
     max_items = max(50, settings.DIALOGUE_DUPLICATE_CACHE_MAX_ITEMS)
@@ -1010,7 +1072,7 @@ async def receive_framework_notification(message: FrameworkMessageDTO):
     capture = notification_listener.capture_realtime_payload(payload)
     candidates = capture.get("auto_reply_candidates") or []
     if candidates:
-        asyncio.create_task(_process_auto_replies(candidates))
+        _schedule_auto_replies(candidates)
     if capture["errors"]:
         return SendMessageResultDTO(
             Result=2,  # UnexpectedException

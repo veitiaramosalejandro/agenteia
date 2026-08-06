@@ -6,12 +6,19 @@ services:
     restart: always
     user: root  # Añadir esta línea
     ports:
-      - 11435:11434
+      - 11434:11434
     volumes:
       # Este volumen guarda los modelos descargados localmente:
       - ./ollama_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_KEEP_ALIVE=30m
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     # Si cuentas con GPU Nvidia, descomenta estas líneas para aceleración hardware:
     deploy:
       resources:
@@ -56,11 +63,25 @@ services:
     image: redis:alpine
     container_name: machining_redis
     restart: always
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
     ports:
       - 6379:6379
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - machining-network
 
 networks:
   machining-network:
     driver: bridge
+  network-db01:
+    name: network-db01    
+    external: true
+
+volumes:
+  redis_data:

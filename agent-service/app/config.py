@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     
     # Ollama Local Configuration
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11435")
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11434")
     MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:7b")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     
@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     DIALOGUE_DUPLICATE_CACHE_ENABLED: bool = _env_bool("DIALOGUE_DUPLICATE_CACHE_ENABLED", "true")
     DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS: int = int(os.getenv("DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS", "15"))
     DIALOGUE_DUPLICATE_CACHE_MAX_ITEMS: int = int(os.getenv("DIALOGUE_DUPLICATE_CACHE_MAX_ITEMS", "400"))
+    DIALOGUE_REDIS_CACHE_PREFIX: str = os.getenv("DIALOGUE_REDIS_CACHE_PREFIX", "machining:dialogue:v1")
+    EMBEDDING_CACHE_ENABLED: bool = _env_bool("EMBEDDING_CACHE_ENABLED", "true")
+    EMBEDDING_CACHE_TTL_SECONDS: int = int(os.getenv("EMBEDDING_CACHE_TTL_SECONDS", "86400"))
+    EMBEDDING_REDIS_CACHE_PREFIX: str = os.getenv("EMBEDDING_REDIS_CACHE_PREFIX", "machining:embedding:v1")
     DIALOGUE_SLOW_LOG_SECONDS: float = float(os.getenv("DIALOGUE_SLOW_LOG_SECONDS", "8"))
 
     # Notification API listener (SolidSET Communicator)

@@ -1,7 +1,9 @@
 import uuid
 import hashlib
+import json
 import re
 import time
+import redis
 from collections import Counter
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -23,12 +25,14 @@ class SistemaAprendizaje:
     
     def __init__(self):
         embedding_model = (settings.EMBEDDING_MODEL_NAME or "").strip() or "nomic-embed-text"
+        self.embedding_model = embedding_model
         self.embeddings = OllamaEmbeddings(
             base_url=settings.OLLAMA_BASE_URL,
             model=embedding_model
         )
         self._embeddings_enabled = True
         self._embeddings_disabled_reason = None
+        self.redis_cache = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
         self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL)
         self.collection = settings.VECTOR_COLLECTION_NAME
         self.sql_retry_stats = {
@@ -44,8 +48,32 @@ class SistemaAprendizaje:
         """Genera embedding con protección para evitar bloqueos repetidos si Ollama falla."""
         if not self._embeddings_enabled:
             return None
+        normalized = " ".join((text or "").strip().split())
+        cache_key = (
+            f"{settings.EMBEDDING_REDIS_CACHE_PREFIX}:"
+            f"{getattr(self, 'embedding_model', settings.EMBEDDING_MODEL_NAME)}:"
+            f"{hashlib.sha256(normalized.encode('utf-8')).hexdigest()}"
+        )
+        cache = getattr(self, "redis_cache", None)
+        if settings.EMBEDDING_CACHE_ENABLED and cache is not None:
+            try:
+                cached = cache.get(cache_key)
+                if cached:
+                    return [float(value) for value in json.loads(cached)]
+            except (redis.RedisError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                print(f"⚠️ Cache de embeddings Redis no disponible ({context}): {exc}")
         try:
-            return self.embeddings.embed_query(text)
+            vector = self.embeddings.embed_query(normalized)
+            if settings.EMBEDDING_CACHE_ENABLED and cache is not None:
+                try:
+                    cache.setex(
+                        cache_key,
+                        max(1, settings.EMBEDDING_CACHE_TTL_SECONDS),
+                        json.dumps(vector, separators=(",", ":")),
+                    )
+                except redis.RedisError as exc:
+                    print(f"⚠️ No se pudo guardar embedding en Redis ({context}): {exc}")
+            return vector
         except Exception as e:
             self._embeddings_enabled = False
             self._embeddings_disabled_reason = str(e)
