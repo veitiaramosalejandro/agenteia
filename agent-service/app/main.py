@@ -26,6 +26,7 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 from app.config import settings
 
 from app.agent.core import MachiningAgent
+from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.speech import text_to_speech
 from app.agent.tools import solidset_send_chat_message
 from app.system.ingest import ingestar_sistema_completo
@@ -52,6 +53,7 @@ app.add_middleware(
 
 # Instancia del agente
 agent = MachiningAgent()
+orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
 
 _active_dialogues = 0
@@ -347,14 +349,13 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     f"{'external_web' if external_query else 'work_sql_rag'}"
                 )
                 response_text = await asyncio.to_thread(
-                    agent.analyze_event_with_dialogue,
+                    orchestrator.invoke,
                     session_id=session_id,
                     user_text=incoming_text,
                     user_id=user_id,
                     canal_id=None if is_direct else channel_id,
                     tool_allowlist=allowed_tools,
                     auto_reply_mode=True,
-                    external_query_mode=external_query,
                 )
             except Exception as exc:
                 print(f"⚠️ Error generando auto-respuesta para canal {channel_id}: {exc}")
@@ -1319,7 +1320,7 @@ def handle_dialogue(req: ChatConversationRequest):
 
         def _run_agent_dialogue() -> None:
             try:
-                response_holder["text"] = agent.analyze_event_with_dialogue(
+                response_holder["text"] = orchestrator.invoke(
                     session_id=req.session_id,
                     user_text=req.message,
                     user_id=req.user_id,

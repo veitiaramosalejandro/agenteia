@@ -6,6 +6,7 @@ qdrant-client==1.10.0
 langchain
 langchain-community
 langchain-ollama
+langgraph>=1.0,<2.0
 python-dotenv
 gTTS
 ddgs
