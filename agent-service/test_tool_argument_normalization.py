@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from app.agent.core import MachiningAgent
 
@@ -61,10 +62,35 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
             )
         )
 
+    def test_latest_message_list_without_channel_word_uses_direct_sql_route(self):
+        self.assertTrue(
+            self.agent._is_last_chat_message_intent(
+                "Dame los 5 últimos mensajes que no sean respuestas o preguntas para el agente"
+            )
+        )
+
+    def test_detects_agent_dialogue_exclusion(self):
+        self.assertTrue(
+            self.agent._requests_excluding_agent_dialogue(
+                "Dame los 5 últimos mensajes que no sean respuestas o preguntas para el agente"
+            )
+        )
+
+    def test_agent_dialogue_filter_uses_sender_and_message_addressing(self):
+        with patch("app.agent.core.settings.SOLIDSET_LOGIN_RESOURCE_ID", "agent-resource"):
+            self.assertTrue(self.agent._is_agent_dialogue_message({"sender_resource_id": "agent-resource"}))
+            self.assertTrue(self.agent._is_agent_dialogue_message({"message": "Agente, necesito ayuda"}))
+            self.assertFalse(self.agent._is_agent_dialogue_message({"message": "Os 3 pontinhos ficaram muito bem"}))
+
     def test_channel_summary_message_limit_is_clamped(self):
+        self.assertEqual(self.agent._channel_summary_limit("resume el canal"), 30)
         self.assertEqual(self.agent._channel_summary_limit("resume 10 mensajes del canal"), 30)
         self.assertEqual(self.agent._channel_summary_limit("resume 500 mensajes del canal"), 500)
         self.assertEqual(self.agent._channel_summary_limit("resume 900 mensajes del canal"), 500)
+        self.assertEqual(self.agent._channel_summary_limit("resume 80 mensagens do canal"), 80)
+        self.assertEqual(self.agent._channel_summary_limit("summarize 100 messages from the channel"), 100)
+        with patch("app.agent.core.settings.CHANNEL_SUMMARY_MAX_MESSAGE_LIMIT", 100):
+            self.assertEqual(self.agent._channel_summary_limit("resume 500 mensajes del canal"), 100)
 
     def test_extracts_participant_for_channel_frequency(self):
         name = self.agent._extract_channel_participant_frequency_name(

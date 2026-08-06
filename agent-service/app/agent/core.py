@@ -62,7 +62,9 @@ class MachiningAgent:
             base_url=settings.OLLAMA_BASE_URL,
             model=model_name,
             temperature=0.5,
-            num_predict=8192,  # Máximo de tokens a generar
+            # Evita que una respuesta ordinaria monopolice el runner durante
+            # varios minutos. Puede ampliarse puntualmente desde el entorno.
+            num_predict=settings.LLM_MAX_OUTPUT_TOKENS,
             top_p=0.9,
             repeat_penalty=1.2,
         )
@@ -167,9 +169,49 @@ class MachiningAgent:
                 "last message",
                 "last messages",
             ]
-        ) or ("ultimo" in text or "último" in text or "ultimos" in text or "últimos" in text)
+        ) or any(term in text for term in ("ultimo", "último", "ultimos", "últimos", "last"))
         has_chat_scope = any(k in text for k in ["chat", "canal", "contexto de la base de datos", "base de datos"])
-        return has_last and has_chat_scope
+        # "los N últimos mensajes" ya expresa por sí mismo una recuperación de
+        # historial cuando la conversación tiene canal_id; no debe caer al LLM.
+        has_explicit_message_list = bool(
+            re.search(
+                r"\b(?:(?:los\s+|os\s+)?\d{1,2}\s+(?:ultimos|últimos)\s+(?:mensajes|mensagens)"
+                r"|(?:the\s+)?last\s+\d{1,2}\s+messages)\b",
+                text,
+            )
+        )
+        return has_last and (has_chat_scope or has_explicit_message_list)
+
+    def _requests_excluding_agent_dialogue(self, user_text: str) -> bool:
+        """Detecta que deben excluirse preguntas/respuestas dirigidas al agente."""
+        text = self._normalize_context_query(user_text).lower()
+        mentions_agent = any(term in text for term in ("agente", "asistente", "assistant"))
+        excludes = any(
+            term in text
+            for term in (
+                "no sean", "que no sean", "excepto", "excluye", "excluir",
+                "não sejam", "exceto", "excluir", "not be", "exclude", "excluding",
+            )
+        )
+        return mentions_agent and excludes
+
+    def _is_agent_dialogue_message(self, row: dict[str, Any]) -> bool:
+        """Identifica mensajes emitidos por el agente o dirigidos explícitamente a él."""
+        sender_resource = str(row.get("sender_resource_id") or "").strip().lower()
+        agent_resource = str(settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip().lower()
+        if agent_resource and sender_resource == agent_resource:
+            return True
+
+        sender_identity = " ".join(
+            str(row.get(key) or "")
+            for key in ("sender_display_name", "sender_full_name", "sender_username")
+        ).lower()
+        configured_username = str(settings.SOLIDSET_LOGIN_USERNAME or "").strip().lower()
+        if configured_username and configured_username in sender_identity:
+            return True
+
+        message = str(row.get("message") or "").strip().lower()
+        return bool(re.search(r"(?:^|\s|[@,])(?:agente|asistente\s+virtual|assistant)(?:\s|[,:?!.]|$)", message))
 
     def _extract_last_messages_limit(self, user_text: str) -> int:
         """Extrae la cantidad solicitada de últimos mensajes; por defecto 1 y máximo 20."""
@@ -432,7 +474,11 @@ class MachiningAgent:
             return None
         language = self._detect_user_language(user_text)
         language_name = {"es": "español", "pt": "português", "en": "English"}[language]
-        print(f"🗄️ Análisis directo de intervenciones; participante={person_name!r} límite_canal=500")
+        message_limit = self._channel_summary_limit(user_text)
+        print(
+            f"🗄️ Análisis directo de intervenciones; participante={person_name!r} "
+            f"límite_canal={message_limit}"
+        )
         effective_channel = (canal_id or "").strip()
         if not effective_channel:
             return self._localized(
@@ -447,7 +493,7 @@ class MachiningAgent:
         channel_messages = self.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
             user_id=user_id,
             canal_id=effective_channel,
-            limit=500,
+            limit=message_limit,
         )
         if not channel_messages:
             return "Não consegui consultar mensagens recentes do canal no SQL Server neste momento."
@@ -520,10 +566,11 @@ class MachiningAgent:
         resource_id = self.sistema_aprendizaje.obtener_recurso_id_por_nombre(person_name)
         if not resource_id:
             return f"No encontré un usuario asociado a “{person_name}” en SQL Server."
+        message_limit = self._channel_summary_limit(user_text)
         channel_messages = self.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
             user_id=user_id,
             canal_id=effective_channel,
-            limit=500,
+            limit=message_limit,
         )
         person_messages = [
             row for row in channel_messages
@@ -566,10 +613,14 @@ class MachiningAgent:
         )
 
     def _channel_summary_limit(self, user_text: str) -> int:
-        """Usa el número pedido o el valor configurado, siempre entre 30 y 500."""
-        match = re.search(r"\b(\d{1,3})\s+mensajes?\b", user_text or "", flags=re.IGNORECASE)
+        """Usa el número pedido o el predeterminado, respetando el máximo configurado."""
+        match = re.search(
+            r"\b(\d{1,3})\s+(?:mensajes?|mensagens?|messages?)\b",
+            user_text or "",
+            flags=re.IGNORECASE,
+        )
         requested = int(match.group(1)) if match else settings.CHANNEL_SUMMARY_DEFAULT_MESSAGE_LIMIT
-        return max(30, min(requested, 500))
+        return max(30, min(requested, settings.CHANNEL_SUMMARY_MAX_MESSAGE_LIMIT))
 
     def _resolve_channel_summary_from_db(
         self,
@@ -669,6 +720,7 @@ class MachiningAgent:
         try:
             requested_limit = self._extract_last_messages_limit(user_text)
             requested_offset = self._extract_last_messages_offset(user_text)
+            exclude_agent_dialogue = self._requests_excluding_agent_dialogue(user_text)
             missing_canal_scope = not bool((canal_id or "").strip())
             target_user_id = user_id
             target_person = self._extract_target_person_name(user_text)
@@ -680,16 +732,24 @@ class MachiningAgent:
             rows = self.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
                 user_id=user_id,
                 canal_id=canal_id,
-                limit=max(20, requested_limit + requested_offset),
+                # Al filtrar conversaciones con el agente se recupera una ventana
+                # mayor para poder encontrar N mensajes reales que sí sean válidos.
+                limit=min(
+                    settings.CHANNEL_SUMMARY_MAX_MESSAGE_LIMIT,
+                    max(20, (requested_limit + requested_offset) * (6 if exclude_agent_dialogue else 1)),
+                ),
                 offset=0,
                 sender_resource_id=target_user_id if target_person else None,
             )
             if not rows:
                 return None
 
+            if exclude_agent_dialogue:
+                rows = [row for row in rows if not self._is_agent_dialogue_message(row)]
+
             selected = rows[requested_offset:requested_offset + requested_limit]
             if not selected:
-                return "No encontré suficientes mensajes en el canal para esa posición solicitada."
+                return "No encontré mensajes del canal que cumplan los filtros solicitados."
 
             formatted = []
             for row in selected:
@@ -728,9 +788,14 @@ class MachiningAgent:
                     f"{joined}"
                 )
 
+            filter_note = " que no pertenecen al diálogo con el agente" if exclude_agent_dialogue else ""
+            availability_note = (
+                f"\nSolo encontré {len(selected)} de los {requested_limit} mensajes solicitados que cumplen el filtro."
+                if len(selected) < requested_limit else ""
+            )
             return (
-                f"{scope_note}Últimos {len(selected)} mensajes del canal en base de datos:\n"
-                f"{joined}"
+                f"{scope_note}Últimos {len(selected)} mensajes reales del canal{filter_note} (base de datos):\n"
+                f"{joined}{availability_note}"
             )
         except Exception:
             return None

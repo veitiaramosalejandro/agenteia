@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11434")
     MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:7b")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
+    LLM_MAX_OUTPUT_TOKENS: int = max(128, int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1024")))
     
     # Vector Database (Qdrant)
     VECTOR_DB_URL: str = os.getenv("VECTOR_DB_URL", "http://vector-db:6333")
@@ -100,8 +101,15 @@ class Settings(BaseSettings):
     SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE: int = int(os.getenv("SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE", "1"))
     SOLIDSET_AUTO_REPLY_MAX_INPUT_CHARS: int = int(os.getenv("SOLIDSET_AUTO_REPLY_MAX_INPUT_CHARS", "700"))
     SOLIDSET_AUTO_REPLY_FOLLOWUP_TTL_SECONDS: int = int(os.getenv("SOLIDSET_AUTO_REPLY_FOLLOWUP_TTL_SECONDS", "300"))
+    CHANNEL_SUMMARY_MAX_MESSAGE_LIMIT: int = max(
+        30, int(os.getenv("CHANNEL_SUMMARY_MAX_MESSAGE_LIMIT", "500"))
+    )
     CHANNEL_SUMMARY_DEFAULT_MESSAGE_LIMIT: int = max(
-        30, min(int(os.getenv("CHANNEL_SUMMARY_DEFAULT_MESSAGE_LIMIT", "30")), 500)
+        30,
+        min(
+            int(os.getenv("CHANNEL_SUMMARY_DEFAULT_MESSAGE_LIMIT", "30")),
+            CHANNEL_SUMMARY_MAX_MESSAGE_LIMIT,
+        ),
     )
     
     # Audio

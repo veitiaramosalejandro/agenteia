@@ -818,9 +818,9 @@ class SistemaAprendizaje:
         if not username:
             return []
 
-        # Las consultas ordinarias conservan su límite solicitado; los resúmenes
-        # extensos pueden revisar hasta 500 mensajes recientes del canal.
-        safe_limit = max(1, min(limit, 500))
+        # Las consultas ordinarias conservan su límite solicitado; las lecturas
+        # extensas respetan el máximo operativo configurado para mensajes de canal.
+        safe_limit = max(1, min(limit, settings.CHANNEL_SUMMARY_MAX_MESSAGE_LIMIT))
         safe_offset = max(0, offset)
         
         query_parts = [
