@@ -15,6 +15,10 @@ class FakeAgent:
     def _looks_like_raw_tool_response(text):
         return "status=" in text.lower()
 
+    @staticmethod
+    def _detect_user_language(text):
+        return "es"
+
     def analyze_event_with_dialogue(self, **kwargs):
         self.calls.append(kwargs)
         return "respuesta"

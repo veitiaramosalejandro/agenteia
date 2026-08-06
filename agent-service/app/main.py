@@ -237,7 +237,7 @@ def _is_safe_auto_reply_output(response_text: str) -> bool:
 def _weather_location_prompt(raw_text: str) -> Optional[str]:
     """Devuelve una aclaración si se pide el tiempo sin indicar ubicación."""
     text = " ".join((raw_text or "").strip().lower().split())
-    weather_terms = ("tiempo", "clima", "weather", "forecast", "meteorologia", "previsão", "previsao")
+    weather_terms = ("tiempo", "tempo", "clima", "weather", "forecast", "meteorologia", "previsão", "previsao")
     if not any(term in text for term in weather_terms):
         return None
     has_location = bool(re.search(r"\b(?:en|para|in|at|for|em)\s+[\wáéíóúüñãõç-]{2,}", text, flags=re.IGNORECASE))
@@ -254,7 +254,7 @@ def _is_external_information_query(raw_text: str) -> bool:
     """Separa consultas externas actuales de conocimiento operativo de trabajo."""
     text = " ".join((raw_text or "").strip().lower().split())
     external_terms = (
-        "tiempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
+        "tiempo", "tempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
         "weather", "forecast", "previsão", "previsao", "noticias", "news",
         "resultado deportivo", "precio actual", "cotizacion", "cotización",
     )

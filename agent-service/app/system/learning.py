@@ -151,6 +151,7 @@ class SistemaAprendizaje:
     def _connect_sql_with_retry(self, **kwargs):
         """Conexión robusta a SQL Server con reintentos para fallos transitorios."""
         last_error = None
+        timeout = kwargs.get("timeout", settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS)
         for attempt in range(1, kwargs.get("retries", 3) + 1):
             try:
                 return pymssql.connect(
@@ -158,7 +159,8 @@ class SistemaAprendizaje:
                     user=settings.SQL_SERVER_USER,
                     password=settings.SQL_SERVER_PASSWORD,
                     database=settings.SQL_SERVER_DB,
-                    timeout=kwargs.get("timeout", 10),
+                    timeout=timeout,
+                    login_timeout=timeout,
                 )
             except Exception as e:
                 last_error = e
@@ -178,6 +180,10 @@ class SistemaAprendizaje:
                 return
             except Exception as e:
                 last_error = e
+                error_text = str(e).lower()
+                # Un cursor muerto requiere una conexión nueva; repetirlo aquí sólo añade espera.
+                if "dbprocess is dead" in error_text or "not connected" in error_text:
+                    break
                 if attempt < kwargs.get("retries", 2):
                     self._increment_retry_metric("query_retries", kwargs.get("context", "sql_query"))
                     delay = kwargs.get("base_delay_seconds", 1) * attempt

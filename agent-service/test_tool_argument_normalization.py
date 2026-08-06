@@ -72,6 +72,26 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         )
         self.assertEqual(name, "Paulo Ferreira")
 
+    def test_extracts_portuguese_participant_analysis(self):
+        name = self.agent._extract_channel_participant_analysis_name(
+            "Agente, por favor, faça um resumo das intervenções de Paulo Ferreira no canal "
+            "e forneça uma análise com base nas suas respostas."
+        )
+        self.assertEqual(name, "Paulo Ferreira")
+
+    def test_detects_supported_languages(self):
+        self.assertEqual(self.agent._detect_user_language("¿Qué usuarios existen en el canal?"), "es")
+        self.assertEqual(self.agent._detect_user_language("Faça um resumo das intervenções no canal"), "pt")
+        self.assertEqual(self.agent._detect_user_language("Please summarize the channel messages"), "en")
+
+    def test_multilingual_channel_name_intent(self):
+        self.assertTrue(self.agent._is_channel_names_intent("Quais são os nomes dos canais?"))
+        self.assertTrue(self.agent._is_channel_names_intent("List the channel names"))
+
+    def test_multilingual_resource_count_intent(self):
+        self.assertEqual(self.agent._extract_resource_count_term("Quantos recursos Dev existem?"), "Dev")
+        self.assertEqual(self.agent._extract_resource_count_term("How many Dev users are in the system?"), "Dev")
+
 
 if __name__ == "__main__":
     unittest.main()

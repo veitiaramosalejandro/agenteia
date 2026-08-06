@@ -366,14 +366,20 @@ class MachiningAgent:
 
     def _is_channel_names_intent(self, user_text: str) -> bool:
         text = self._normalize_context_query(user_text).lower()
-        has_channel = any(term in text for term in ("canal", "canales", "channel", "workroom", "sala"))
-        asks_names = any(term in text for term in ("nombre", "nombres", "lista", "listar", "cuales", "cuáles", "dime"))
+        has_channel = any(term in text for term in ("canal", "canales", "canais", "channel", "channels", "workroom", "sala"))
+        asks_names = any(term in text for term in (
+            "nombre", "nombres", "lista", "listar", "cuales", "cuáles", "dime",
+            "nome", "nomes", "quais", "names", "list", "which",
+        ))
         return has_channel and asks_names
 
     def _is_channel_summary_intent(self, user_text: str) -> bool:
         text = self._normalize_context_query(user_text).lower()
         has_summary = any(term in text for term in ("resumen", "resumir", "summary", "síntesis", "sintesis"))
-        has_scope = any(term in text for term in ("canal", "conversacion", "conversación", "mensajes", "contexto"))
+        has_scope = any(term in text for term in (
+            "canal", "conversacion", "conversación", "mensajes", "contexto",
+            "conversa", "conversação", "mensagens", "conversation", "messages", "channel",
+        ))
         return has_summary and has_scope
 
     def _extract_channel_participant_frequency_name(self, user_text: str) -> Optional[str]:
@@ -393,6 +399,111 @@ class MachiningAgent:
         if not match:
             return None
         return " ".join(match.group(1).strip().split())[:120]
+
+    def _extract_channel_participant_analysis_name(self, user_text: str) -> Optional[str]:
+        """Detecta resúmenes/análisis de intervenciones de una persona en ES/PT/EN."""
+        text = self._normalize_context_query(user_text)
+        lowered = text.lower()
+        has_summary = any(term in lowered for term in ("resumen", "resumo", "summary", "análisis", "analise", "análise"))
+        has_activity = any(
+            term in lowered
+            for term in ("intervencion", "intervención", "intervenção", "intervenções", "respuestas", "respostas")
+        )
+        if not has_summary or not has_activity or "canal" not in lowered:
+            return None
+        patterns = (
+            r"\b(?:de|do|da)\s+(.+?)(?=\s+(?:no|na|en\s+el)\s+canal|[,?])",
+            r"\b(?:sr\.?|señor|senor|sra\.?)\s+(.+?)(?=\s+(?:no|na|en\s+el)\s+canal|[,?])",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return " ".join(match.group(1).strip().split())[:120]
+        return None
+
+    def _resolve_channel_participant_analysis(
+        self,
+        user_id: str,
+        canal_id: Optional[str],
+        user_text: str,
+    ) -> Optional[str]:
+        person_name = self._extract_channel_participant_analysis_name(user_text)
+        if not person_name:
+            return None
+        language = self._detect_user_language(user_text)
+        language_name = {"es": "español", "pt": "português", "en": "English"}[language]
+        print(f"🗄️ Análisis directo de intervenciones; participante={person_name!r} límite_canal=500")
+        effective_channel = (canal_id or "").strip()
+        if not effective_channel:
+            return self._localized(
+                user_text,
+                es="No recibí el canal actual y no puedo analizar las intervenciones.",
+                pt="Não recebi o canal atual e não consigo analisar as intervenções.",
+                en="I did not receive the current channel and cannot analyze the interventions.",
+            )
+        resource_id = self.sistema_aprendizaje.obtener_recurso_id_por_nombre(person_name)
+        if not resource_id:
+            return f"Não encontrei um utilizador associado a **{person_name}** no SQL Server."
+        channel_messages = self.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
+            user_id=user_id,
+            canal_id=effective_channel,
+            limit=500,
+        )
+        if not channel_messages:
+            return "Não consegui consultar mensagens recentes do canal no SQL Server neste momento."
+        person_messages = [
+            row for row in reversed(channel_messages)
+            if str(row.get("sender_resource_id") or "").lower() == resource_id.lower()
+        ]
+        if not person_messages:
+            return (
+                f"Não encontrei intervenções de **{person_name}** entre as "
+                f"**{len(channel_messages)} mensagens recentes** analisadas no canal."
+            )
+        try:
+            lines = []
+            for row in person_messages:
+                stamp = row.get("timestamp")
+                stamp_text = stamp.strftime("%d/%m/%Y %H:%M") if hasattr(stamp, "strftime") else "sem data"
+                message = " ".join(str(row.get("message") or "").split())[:500]
+                if message:
+                    lines.append(f"[{stamp_text}] {message}")
+            partials = []
+            for start in range(0, len(lines), 40):
+                response = self.llm.invoke([
+                    SystemMessage(content=(
+                        "Analisa apenas estas intervenções de uma pessoa num canal. Resume temas, tipo de "
+                        "contribuição, tom, padrões de resposta, decisões e pendências. Não inventes dados."
+                        f" Responde em {language_name}."
+                    )),
+                    HumanMessage(content="\n".join(lines[start:start + 40])),
+                ])
+                partial = response.content if hasattr(response, "content") else str(response)
+                if str(partial or "").strip():
+                    partials.append(str(partial).strip())
+            if not partials:
+                return "Não consegui produzir uma análise das intervenções encontradas."
+            if len(partials) == 1:
+                final = partials[0]
+            else:
+                response = self.llm.invoke([
+                    SystemMessage(content=(
+                        "Consolida estas análises parciais numa resposta única em português. Organiza em: "
+                        "resumo, padrões observados, contribuições e assuntos pendentes. Não repitas conteúdo."
+                    )),
+                    HumanMessage(content="\n\n".join(partials)),
+                ])
+                final = response.content if hasattr(response, "content") else str(response)
+            heading = self._localized(
+                user_text,
+                es=f"Análisis basado en **{len(person_messages)} intervenciones de {person_name}**, localizadas entre **{len(channel_messages)} mensajes recientes** del canal:",
+                pt=f"Análise baseada em **{len(person_messages)} intervenções de {person_name}**, localizadas entre **{len(channel_messages)} mensagens recentes** do canal:",
+                en=f"Analysis based on **{len(person_messages)} interventions by {person_name}**, found among **{len(channel_messages)} recent channel messages**:",
+            )
+            return f"{heading}\n\n{str(final).strip()}"
+        except Exception as exc:
+            print(f"⚠️ Error analizando intervenciones del participante: {exc}")
+            return "Encontrei as intervenções, mas não consegui concluir a análise neste momento."
 
     def _resolve_channel_participant_frequency(
         self,
@@ -438,12 +549,20 @@ class MachiningAgent:
         active_days = len({stamp.date() for stamp in timestamps})
         per_week = len(person_messages) * 7 / observed_days
         share = (len(person_messages) * 100 / len(channel_messages)) if channel_messages else 0.0
-        return (
-            f"Revisé **{len(channel_messages)} mensajes recientes** del canal. **{person_name}** realizó "
-            f"**{len(person_messages)} intervenciones** entre {first:%d/%m/%Y} y {last:%d/%m/%Y}, "
-            f"distribuidas en **{active_days} días activos**. Su frecuencia observada es de aproximadamente "
-            f"**{per_week:.1f} intervenciones por semana** durante los **{observed_days} días** cubiertos por "
-            f"la muestra, y representa **{share:.1f}%** de los mensajes revisados."
+        return self._localized(
+            user_text,
+            es=(f"Revisé **{len(channel_messages)} mensajes recientes** del canal. **{person_name}** realizó "
+                f"**{len(person_messages)} intervenciones** entre {first:%d/%m/%Y} y {last:%d/%m/%Y}, en "
+                f"**{active_days} días activos**. La frecuencia es **{per_week:.1f} por semana** durante "
+                f"**{observed_days} días** y representa **{share:.1f}%** de la muestra."),
+            pt=(f"Analisei **{len(channel_messages)} mensagens recentes** do canal. **{person_name}** realizou "
+                f"**{len(person_messages)} intervenções** entre {first:%d/%m/%Y} e {last:%d/%m/%Y}, em "
+                f"**{active_days} dias ativos**. A frequência é **{per_week:.1f} por semana** durante "
+                f"**{observed_days} dias** e representa **{share:.1f}%** da amostra."),
+            en=(f"I reviewed **{len(channel_messages)} recent channel messages**. **{person_name}** made "
+                f"**{len(person_messages)} interventions** between {first:%d/%m/%Y} and {last:%d/%m/%Y}, "
+                f"across **{active_days} active days**. The observed frequency is **{per_week:.1f} per week** "
+                f"over **{observed_days} days**, representing **{share:.1f}%** of the sample."),
         )
 
     def _channel_summary_limit(self, user_text: str) -> int:
@@ -470,6 +589,9 @@ class MachiningAgent:
         if not rows:
             return "No encontré conversaciones recientes accesibles en el canal actual."
         try:
+            language_name = {"es": "español", "pt": "português", "en": "English"}[
+                self._detect_user_language(user_text)
+            ]
             # SQL devuelve los más recientes primero; se invierte para resumir en orden temporal.
             chronological_rows = list(reversed(rows))
             lines = []
@@ -489,7 +611,8 @@ class MachiningAgent:
                     SystemMessage(content=(
                         "Resume este bloque de conversaciones del mismo canal. Extrae temas, decisiones, "
                         "solicitudes, incidencias y pendientes. Conserva nombres de usuarios cuando sean "
-                        "relevantes. No inventes datos ni muestres identificadores técnicos."
+                        "relevantes. No inventes datos ni muestres identificadores técnicos. "
+                        f"Responde en {language_name}."
                     )),
                     HumanMessage(content="\n".join(batch)),
                 ])
@@ -506,25 +629,40 @@ class MachiningAgent:
                     SystemMessage(content=(
                         "Consolida los resúmenes parciales del canal en una síntesis única, clara y sin "
                         "repeticiones. Organiza: temas principales, decisiones, solicitudes y pendientes. "
-                        "No inventes información ni menciones que trabajaste por bloques."
+                        "No inventes información ni menciones que trabajaste por bloques. "
+                        f"Responde en {language_name}."
                     )),
                     HumanMessage(content="\n\n".join(partial_summaries)),
                 ])
                 final_answer = consolidation.content if hasattr(consolidation, "content") else str(consolidation)
-            return f"Resumen basado en **{len(lines)} mensajes recientes** del canal:\n\n{str(final_answer).strip()}"
+            heading = self._localized(
+                user_text,
+                es=f"Resumen basado en **{len(lines)} mensajes recientes** del canal:",
+                pt=f"Resumo baseado em **{len(lines)} mensagens recentes** do canal:",
+                en=f"Summary based on **{len(lines)} recent channel messages**:",
+            )
+            return f"{heading}\n\n{str(final_answer).strip()}"
         except Exception as exc:
             print(f"⚠️ Error generando resumen directo del canal: {exc}")
             return "No pude generar el resumen del canal en este momento."
 
-    def _resolve_channel_names_from_db(self, user_id: str) -> str:
+    def _resolve_channel_names_from_db(self, user_id: str, user_text: str) -> str:
         rows = self.sistema_aprendizaje.obtener_canales_usuario(user_id)
         if not rows:
-            return "No encontré canales accesibles para tu usuario en SQL Server."
+            return self._localized(
+                user_text,
+                es="No encontré canales accesibles para tu usuario en SQL Server.",
+                pt="Não encontrei canais acessíveis para o seu utilizador no SQL Server.",
+                en="I could not find any channels accessible to your user in SQL Server.",
+            )
         names = [row["name"] for row in rows]
-        return (
-            f"Tienes acceso a **{len(names)} canales** en SOLIDSET:\n"
-            + "\n".join(f"- {name}" for name in names)
+        heading = self._localized(
+            user_text,
+            es=f"Tienes acceso a **{len(names)} canales** en SOLIDSET:",
+            pt=f"Tem acesso a **{len(names)} canais** no SOLIDSET:",
+            en=f"You have access to **{len(names)} channels** in SOLIDSET:",
         )
+        return heading + "\n" + "\n".join(f"- {name}" for name in names)
 
     def _resolve_last_chat_message_from_db(self, user_id: str, canal_id: Optional[str], user_text: str) -> Optional[str]:
         """Resuelve de forma directa mensajes recientes del canal desde la BD del sistema."""
@@ -789,10 +927,28 @@ class MachiningAgent:
         )
         return text.strip() or (user_text or "").strip()
 
+    def _detect_user_language(self, user_text: str) -> str:
+        """Detección ligera y determinista para ES/PT/EN; español es el fallback."""
+        text = f" {self._normalize_context_query(user_text).lower()} "
+        scores = {"es": 0, "pt": 0, "en": 0}
+        markers = {
+            "pt": (" você ", " voces ", " faça ", " forneça ", " intervenções ", " resumo ", " utilizador ", " não ", " suas ", " olá ", " obrigado "),
+            "en": (" the ", " please ", " what ", " how ", " channel ", " messages ", " summary ", " user ", " hello ", " thanks ", " show me "),
+            "es": (" qué ", " cual ", " cuál ", " como ", " cómo ", " necesito ", " resumen ", " canal ", " usuario ", " mensajes ", " hola ", " gracias "),
+        }
+        for language, words in markers.items():
+            scores[language] = sum(1 for word in words if word in text)
+        if any(char in text for char in ("ã", "õ", "ç")):
+            scores["pt"] += 2
+        return max(scores, key=scores.get) if max(scores.values()) > 0 else "es"
+
+    def _localized(self, user_text: str, *, es: str, pt: str, en: str) -> str:
+        return {"es": es, "pt": pt, "en": en}[self._detect_user_language(user_text)]
+
     def _is_external_information_query(self, user_text: str) -> bool:
         text = self._normalize_context_query(user_text).lower()
         terms = (
-            "tiempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
+            "tiempo", "tempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
             "weather", "forecast", "previsão", "previsao", "noticias", "news",
             "resultado deportivo", "precio actual", "cotizacion", "cotización",
         )
@@ -805,23 +961,30 @@ class MachiningAgent:
             "recurso", "recursos", "usuario", "usuarios", "canal", "canales",
             "mensaje", "mensajes", "tarea", "tareas", "actividad", "actividades",
             "cliente", "clientes", "cuenta", "cuentas", "solidset", "sistema",
+            "utilizador", "utilizadores", "usuário", "usuários", "canais", "mensagens",
+            "user", "users", "channel", "channels", "message", "messages", "task", "tasks",
         )
         query_terms = (
             "cuanto", "cuánt", "cuant", "existe", "hay ", "lista", "listar",
             "muestra", "buscar", "busca", "consulta", "dime", "cuales", "cuáles",
+            "quantos", "quantas", "existem", "mostra", "nomes", "quais",
+            "how many", "list", "show", "which", "what are",
         )
         return any(term in text for term in data_terms) and any(term in text for term in query_terms)
 
     def _extract_resource_count_term(self, user_text: str) -> Optional[str]:
         """Extrae el nombre/prefijo pedido en preguntas como 'cuántos recursos Dev'."""
         text = self._normalize_context_query(user_text)
-        if not re.search(r"\bcu[aá]nt(?:o|os|a|as)\b", text, flags=re.IGNORECASE):
+        if not re.search(r"\b(?:cu[aá]nt(?:o|os|a|as)|quant(?:o|os|a|as)|how\s+many)\b", text, flags=re.IGNORECASE):
             return None
         match = re.search(
-            r"\brecursos?\s+(.+?)(?=\s+(?:existen?|hay|en\s+el|en\s+la|del\s+sistema)\b|[?¿.,]|$)",
+            r"\b(?:recursos?|users?|utilizadores?|usuários?)\s+(.+?)"
+            r"(?=\s+(?:existen?|existem|hay|are|in|no|na|en\s+el|en\s+la|del\s+sistema)\b|[?¿.,]|$)",
             text,
             flags=re.IGNORECASE,
         )
+        if not match:
+            match = re.search(r"\bhow\s+many\s+(.+?)\s+users?\b", text, flags=re.IGNORECASE)
         if not match:
             return ""
         term = " ".join(match.group(1).strip().split())
@@ -855,14 +1018,26 @@ class MachiningAgent:
             total = int(rows[0]["Total"])
         except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError):
             if result.lower().startswith(("error", "la consulta")):
-                return (
-                    "No pude consultar el conteo de recursos en SQL Server en este momento. "
-                    "La estructura usada fue dbo.SysResources.DisplayName."
+                return self._localized(
+                    user_text,
+                    es="No pude consultar el conteo de usuarios asociados a recursos en SQL Server.",
+                    pt="Não consegui consultar a contagem de utilizadores associados a recursos no SQL Server.",
+                    en="I could not query the count of users associated with resources in SQL Server.",
                 )
             return None
         if term:
-            return f"En SOLIDSET existen **{total} usuarios asociados a recursos** que coinciden con “{term}”."
-        return f"En SOLIDSET existen **{total} usuarios asociados a recursos** registrados."
+            return self._localized(
+                user_text,
+                es=f"En SOLIDSET existen **{total} usuarios asociados a recursos** que coinciden con “{term}”.",
+                pt=f"No SOLIDSET existem **{total} utilizadores associados a recursos** que correspondem a “{term}”.",
+                en=f"SOLIDSET has **{total} users associated with resources** matching “{term}”.",
+            )
+        return self._localized(
+            user_text,
+            es=f"En SOLIDSET existen **{total} usuarios asociados a recursos** registrados.",
+            pt=f"No SOLIDSET existem **{total} utilizadores associados a recursos** registados.",
+            en=f"SOLIDSET has **{total} registered users associated with resources**.",
+        )
 
     def _normalize_tool_args(
         self,
@@ -1165,10 +1340,14 @@ class MachiningAgent:
 
         # --- 3. DETECTAR SALUDOS ---
         clean_text = user_text.strip().lower()
-        saludos = ["hola", "hola!", "buenos dias", "buenas tardes", "ola", "hello", "hi", "hey", "buenas"]
+        saludos = [
+            "hola", "hola!", "buenos dias", "buenos días", "buenas tardes", "buenas",
+            "ola", "olá", "bom dia", "boa tarde", "boa noite",
+            "hello", "hello!", "hi", "hey", "good morning", "good afternoon", "good evening",
+        ]
         
         if clean_text in saludos:
-            response_text = self._handle_greeting(user_id)
+            response_text = self._handle_greeting(user_id, user_text)
 
             # Persistir también saludos para mantener trazabilidad conversacional.
             if history:
@@ -1194,7 +1373,22 @@ class MachiningAgent:
 
             return response_text
 
-        # --- 3.1 FRECUENCIA DE PARTICIPACIÓN EN EL CANAL DESDE SQL SERVER ---
+        # --- 3.1 ANÁLISIS DE INTERVENCIONES DE UNA PERSONA DESDE SQL SERVER ---
+        participant_analysis_response = self._resolve_channel_participant_analysis(
+            user_id=user_id or "",
+            canal_id=canal_id,
+            user_text=user_text,
+        )
+        if participant_analysis_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(participant_analysis_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando análisis de intervenciones en Redis: {e}")
+            return participant_analysis_response
+
+        # --- 3.2 FRECUENCIA DE PARTICIPACIÓN EN EL CANAL DESDE SQL SERVER ---
         participant_frequency_response = self._resolve_channel_participant_frequency(
             user_id=user_id or "",
             canal_id=canal_id,
@@ -1209,7 +1403,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando frecuencia de participación en Redis: {e}")
             return participant_frequency_response
 
-        # --- 3.2 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
+        # --- 3.3 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
         if user_id and self._is_channel_summary_intent(user_text):
             channel_summary_response = self._resolve_channel_summary_from_db(
                 user_id=user_id,
@@ -1224,9 +1418,9 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando resumen del canal en Redis: {e}")
             return channel_summary_response
 
-        # --- 3.3 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
+        # --- 3.4 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
         if user_id and self._is_channel_names_intent(user_text):
-            channel_names_response = self._resolve_channel_names_from_db(user_id)
+            channel_names_response = self._resolve_channel_names_from_db(user_id, user_text)
             if history:
                 try:
                     history.add_user_message(user_text)
@@ -1235,7 +1429,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando listado de canales en Redis: {e}")
             return channel_names_response
 
-        # --- 3.4 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
+        # --- 3.5 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
         resource_count_response = self._resolve_resource_count_from_db(user_text)
         if resource_count_response is not None:
             if history:
@@ -1246,7 +1440,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando conteo de recursos en Redis: {e}")
             return resource_count_response
 
-        # --- 3.5 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
+        # --- 3.6 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if user_id and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:
@@ -1603,7 +1797,7 @@ class MachiningAgent:
     # 6. MANEJADOR DE SALUDOS
     # ============================================================
     
-    def _handle_greeting(self, user_id: Optional[str] = None) -> str:
+    def _handle_greeting(self, user_id: Optional[str] = None, user_text: str = "") -> str:
         """
         Maneja saludos simples con contexto personalizado.
         """
@@ -1611,7 +1805,12 @@ class MachiningAgent:
         print(f"👋 Procesando saludo para user_id={user_id}")
 
         if not user_id:
-            return "👋 ¡Hola! Soy tu asistente virtual de SolidSET Communicator. ¿En qué puedo ayudarte?"
+            return self._localized(
+                user_text,
+                es="👋 ¡Hola! Soy tu asistente virtual de SolidSET Communicator. ¿En qué puedo ayudarte?",
+                pt="👋 Olá! Sou o seu assistente virtual do SolidSET Communicator. Como posso ajudar?",
+                en="👋 Hello! I am your SolidSET Communicator virtual assistant. How can I help?",
+            )
         
         try:
             contexto_obj = self.sistema_aprendizaje.obtener_contexto_usuario(user_id)            
@@ -1621,22 +1820,27 @@ class MachiningAgent:
                 canales = len(contexto_obj.canales_acceso)
                 canal_texto = "canal" if canales == 1 else "canales"
 
-                return f"""👋 ¡Hola, {nombre}! Soy tu asistente virtual de **SolidSET Communicator**.
-
-                    He identificado tu perfil como **{rol}** y tienes acceso a **{canales} {canal_texto}**.
-
-                    Puedo ayudarte a:
-                    - 💬 Consultar mensajes y conversaciones
-                    - 👥 Localizar canales, usuarios y recursos
-                    - ✅ Revisar tareas y actividades
-                    - 📚 Resolver dudas sobre SolidSET Communicator
-
-                    ¿Qué necesitas hacer?"""
+                return self._localized(
+                    user_text,
+                    es=f"👋 ¡Hola, {nombre}! Tu perfil es **{rol}** y tienes acceso a **{canales} {canal_texto}**. ¿En qué puedo ayudarte?",
+                    pt=f"👋 Olá, {nombre}! O seu perfil é **{rol}** e tem acesso a **{canales} canais**. Como posso ajudar?",
+                    en=f"👋 Hello, {nombre}! Your profile is **{rol}** and you have access to **{canales} channels**. How can I help?",
+                )
             else:
-                return "👋 ¡Hola! Soy tu asistente virtual de SolidSET Communicator. ¿En qué puedo ayudarte?"
+                return self._localized(
+                    user_text,
+                    es="👋 ¡Hola! ¿En qué puedo ayudarte?",
+                    pt="👋 Olá! Como posso ajudar?",
+                    en="👋 Hello! How can I help?",
+                )
         except Exception as e:
             print(f"⚠️ Error en saludo personalizado: {e}")
-            return "👋 ¡Hola! Soy tu asistente virtual de SolidSET Communicator. ¿En qué puedo ayudarte?"
+            return self._localized(
+                user_text,
+                es="👋 ¡Hola! ¿En qué puedo ayudarte?",
+                pt="👋 Olá! Como posso ajudar?",
+                en="👋 Hello! How can I help?",
+            )
 
     # ============================================================
     # 7. MÉTODO DE UTILIDAD PARA DEPURACIÓN

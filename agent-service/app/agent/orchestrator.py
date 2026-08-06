@@ -4,6 +4,7 @@ from time import perf_counter
 from typing import Any, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langchain_core.messages import HumanMessage, SystemMessage
 
 
 class AgentGraphState(TypedDict, total=False):
@@ -94,10 +95,32 @@ class SolidSETOrchestrator:
                 "No pude presentar de forma segura los datos obtenidos. "
                 "Inténtalo nuevamente en unos instantes."
             )
+        response = self._ensure_response_language(state.get("user_text", ""), response)
         started_at = state.get("started_at") or perf_counter()
         elapsed = perf_counter() - started_at
         print(f"✅ LangGraph completed route={state.get('route')} elapsed={elapsed:.2f}s")
         return {"response": response, "elapsed_seconds": elapsed}
+
+    def _ensure_response_language(self, user_text: str, response: str) -> str:
+        """Garantiza ES/PT/EN también para respuestas deterministas construidas por código."""
+        expected = self.agent._detect_user_language(user_text)
+        detected = self.agent._detect_user_language(response)
+        if expected == detected or len(response) < 8:
+            return response
+        target = {"es": "español", "pt": "português", "en": "English"}[expected]
+        try:
+            translated = self.agent.llm.invoke([
+                SystemMessage(content=(
+                    f"Translate the response to {target}. Preserve names, figures, dates, Markdown and "
+                    "technical identifiers exactly. Return only the translated response."
+                )),
+                HumanMessage(content=response),
+            ])
+            text = translated.content if hasattr(translated, "content") else str(translated)
+            return str(text or "").strip() or response
+        except Exception as exc:
+            print(f"⚠️ LangGraph language normalization failed: {exc}")
+            return response
 
     def invoke(
         self,
