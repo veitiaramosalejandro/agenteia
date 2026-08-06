@@ -188,6 +188,13 @@ def _is_safe_auto_reply_output(response_text: str) -> bool:
         "se alcanzó el límite de iteraciones",
         "validation error",
         "error al ejecutar la herramienta",
+        "status=200",
+        "method=get",
+        "method=post",
+        "body={",
+        "body=[",
+        "http://localhost",
+        "https://localhost",
         "traceback (most recent call last)",
         "pydantic.dev",
     )
@@ -208,6 +215,17 @@ def _weather_location_prompt(raw_text: str) -> Optional[str]:
     if any(term in text for term in ("previsão", "previsao", "meteorologia", "hoje")):
         return "Para qual cidade ou localidade você quer consultar o tempo?"
     return "¿De qué ciudad o localidad quieres conocer el tiempo?"
+
+
+def _is_external_information_query(raw_text: str) -> bool:
+    """Separa consultas externas actuales de conocimiento operativo de trabajo."""
+    text = " ".join((raw_text or "").strip().lower().split())
+    external_terms = (
+        "tiempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
+        "weather", "forecast", "previsão", "previsao", "noticias", "news",
+        "resultado deportivo", "precio actual", "cotizacion", "cotización",
+    )
+    return any(term in text for term in external_terms)
 
 
 def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
@@ -281,9 +299,16 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         response_text = _weather_location_prompt(incoming_text)
         if response_text is None:
             try:
+                external_query = _is_external_information_query(incoming_text)
+                allowed_tools = (
+                    {"google_web_search"}
+                    if external_query
+                    else {"query_sql_server", "get_db_schema"}
+                )
                 print(
                     f"🤖 Generando auto-respuesta con LLM channel={channel_id} "
-                    f"ollama={settings.OLLAMA_BASE_URL}"
+                    f"ollama={settings.OLLAMA_BASE_URL} route="
+                    f"{'external_web' if external_query else 'work_sql_rag'}"
                 )
                 response_text = await asyncio.to_thread(
                     agent.analyze_event_with_dialogue,
@@ -291,8 +316,9 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     user_text=incoming_text,
                     user_id=user_id,
                     canal_id=None if is_direct else channel_id,
-                    tool_allowlist={"google_web_search"},
+                    tool_allowlist=allowed_tools,
                     auto_reply_mode=True,
+                    external_query_mode=external_query,
                 )
             except Exception as exc:
                 print(f"⚠️ Error generando auto-respuesta para canal {channel_id}: {exc}")

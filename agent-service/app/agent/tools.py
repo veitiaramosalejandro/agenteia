@@ -2,7 +2,7 @@ import json
 import os
 import re
 import threading
-from time import time
+from time import perf_counter, time
 from typing import Any, Optional, Union
 import uuid
 import hashlib
@@ -19,6 +19,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams
 
 from app.config import settings
+
 from app.rag.audio_processor import extract_audio_features
 from app.rag.retriever import get_rag_context
 
@@ -476,9 +477,24 @@ def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bo
     return True
 
 
+def _schedule_web_search_learning(query: str, results: list[dict[str, str]]) -> None:
+    """Difiere la indexación para que embeddings y chat no compitan en Ollama."""
+    def _learn() -> None:
+        try:
+            _store_web_search_knowledge(query, results)
+            print(f"🧠 Resultados web indexados en background; query={query[:80]!r}")
+        except Exception as exc:
+            print(f"⚠️ No se pudieron indexar resultados web en background: {exc}")
+
+    timer = threading.Timer(120.0, _learn)
+    timer.daemon = True
+    timer.start()
+
+
 @tool
 def google_web_search(query: str) -> str:
     """Search the public web and persist results with source provenance for later retrieval."""
+    started_at = perf_counter()
     try:
         clean_query = " ".join((query or "").split())
         if not clean_query:
@@ -512,22 +528,26 @@ def google_web_search(query: str) -> str:
             return f"No se encontraron resultados web para '{clean_query}'."
 
         learned = False
-        learning_error = ""
+        learning_scheduled = False
         if settings.WEB_SEARCH_AUTO_LEARN:
-            try:
-                learned = _store_web_search_knowledge(clean_query, results)
-            except Exception as exc:
-                learning_error = str(exc)[:200]
+            # Indexar puede requerir varios embeddings de Ollama. Se desacopla de la
+            # respuesta para no añadir minutos de espera al usuario.
+            _schedule_web_search_learning(clean_query, results)
+            learning_scheduled = True
 
         payload = {
             "query": clean_query,
             "source_type": "web_search",
             "external_unverified": True,
             "learned": learned,
+            "learning_scheduled": learning_scheduled,
             "results": results,
         }
-        if learning_error:
-            payload["learning_warning"] = learning_error
+        elapsed = perf_counter() - started_at
+        print(
+            f"🌐 Búsqueda web completada en {elapsed:.2f}s; "
+            f"resultados={len(results)} aprendizaje_background={learning_scheduled}"
+        )
         return json.dumps(payload, ensure_ascii=False)
     except Exception as exc:
         return f"Error durante la búsqueda web: {str(exc)[:300]}"

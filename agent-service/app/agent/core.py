@@ -624,6 +624,29 @@ class MachiningAgent:
         )
         return text.strip() or (user_text or "").strip()
 
+    def _is_external_information_query(self, user_text: str) -> bool:
+        text = self._normalize_context_query(user_text).lower()
+        terms = (
+            "tiempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
+            "weather", "forecast", "previsão", "previsao", "noticias", "news",
+            "resultado deportivo", "precio actual", "cotizacion", "cotización",
+        )
+        return any(term in text for term in terms)
+
+    def _is_sql_business_query(self, user_text: str) -> bool:
+        """Detecta preguntas de datos operativos que deben resolverse desde SQL Server."""
+        text = self._normalize_context_query(user_text).lower()
+        data_terms = (
+            "recurso", "recursos", "usuario", "usuarios", "canal", "canales",
+            "mensaje", "mensajes", "tarea", "tareas", "actividad", "actividades",
+            "cliente", "clientes", "cuenta", "cuentas", "solidset", "sistema",
+        )
+        query_terms = (
+            "cuanto", "cuánt", "cuant", "existe", "hay ", "lista", "listar",
+            "muestra", "buscar", "busca", "consulta", "dime", "cuales", "cuáles",
+        )
+        return any(term in text for term in data_terms) and any(term in text for term in query_terms)
+
     def _normalize_tool_args(
         self,
         tool_name: str,
@@ -736,6 +759,34 @@ class MachiningAgent:
         text = re.sub(r" {2,}", " ", text)
         return text.strip()
 
+    def _looks_like_raw_tool_response(self, response_text: str) -> bool:
+        text = " ".join((response_text or "").lower().split())
+        markers = (
+            "status=", "method=get", "method=post", "body={", "body=[",
+            "endpoint:", "http://localhost", "https://localhost", "validation error",
+        )
+        return any(marker in text for marker in markers)
+
+    def _synthesize_tool_response(self, messages: list, user_text: str) -> Optional[str]:
+        """Convierte resultados técnicos de tools en una respuesta segura de negocio."""
+        try:
+            synthesis_messages = list(messages)
+            synthesis_messages.append(SystemMessage(content=(
+                "Redacta ahora la respuesta final a la consulta del usuario. Usa los resultados "
+                "de herramientas anteriores como datos, pero nunca muestres status HTTP, método, "
+                "endpoint, URL interna, JSON, UUID ni payload crudo. Resume el resultado en lenguaje "
+                "natural y responde exactamente lo preguntado. Si los datos no permiten responder, "
+                "indícalo brevemente sin copiar el contenido técnico."
+            )))
+            synthesis_messages.append(HumanMessage(content=f"Consulta original: {user_text}"))
+            response = self.llm.invoke(synthesis_messages)
+            answer = response.content if hasattr(response, "content") else str(response)
+            answer = str(answer or "").strip()
+            return answer if answer and not self._looks_like_raw_tool_response(answer) else None
+        except Exception as exc:
+            print(f"⚠️ No se pudo sintetizar la salida de herramienta: {exc}")
+            return None
+
     # ============================================================
     # 4. REGISTRO DE ACTIVIDADES PARA APRENDIZAJE
     # ============================================================
@@ -820,6 +871,7 @@ class MachiningAgent:
         canal_id: Optional[str] = None,
         tool_allowlist: Optional[set[str]] = None,
         auto_reply_mode: bool = False,
+        external_query_mode: bool = False,
     ) -> str:
         """
         Procesa la consulta del usuario con contexto completo.
@@ -841,12 +893,22 @@ class MachiningAgent:
         if not session_id:
             session_id = f"session_{hashlib.md5(user_text.encode()).hexdigest()[:8]}"
 
+        # En diálogo normal también aplicamos el enrutado por intención. Esto evita
+        # usar endpoints SOLIDSET para preguntas que pertenecen a SQL Server.
+        if self._is_external_information_query(user_text):
+            external_query_mode = True
+            if tool_allowlist is None:
+                tool_allowlist = {"google_web_search"}
+        elif tool_allowlist is None and self._is_sql_business_query(user_text):
+            tool_allowlist = {"query_sql_server", "get_db_schema"}
+
         # --- 2. INICIALIZAR MEMORIA ---
-        try:
-            history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
-        except Exception as e:
-            print(f"❌ Error conectando a Redis: {e}")
-            history = None
+        history = None
+        if not auto_reply_mode:
+            try:
+                history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
+            except Exception as e:
+                print(f"❌ Error conectando a Redis: {e}")
 
         previous_user_text = None
         if history:
@@ -950,16 +1012,18 @@ class MachiningAgent:
         
         # 4.1 Contexto del usuario (canales, rol, permisos)
         contexto_usuario = ""
-        if user_id:
+        if user_id and not external_query_mode:
             contexto_usuario = self._get_user_context(user_id)
         
         # 4.2 Contexto RAG (documentos técnicos)
         context_query = self._normalize_context_query(user_text)
-        rag_context = self.sistema_aprendizaje.consultar_documentacion(context_query)
+        rag_context = ""
+        if not external_query_mode:
+            rag_context = self.sistema_aprendizaje.consultar_documentacion(context_query)
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
         chat_context_bd = ""
-        if user_id:
+        if user_id and not external_query_mode:
             chat_context_bd = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
                 user_id=user_id,
                 canal_id=canal_id,
@@ -968,7 +1032,7 @@ class MachiningAgent:
 
         # 4.3.1 Resumen operativo vivo del canal actual
         canal_operativo_context = ""
-        if user_id:
+        if user_id and not external_query_mode:
             canal_operativo_context = self.sistema_aprendizaje.obtener_resumen_operativo_canal(
                 user_id=user_id,
                 canal_id=canal_id,
@@ -977,7 +1041,7 @@ class MachiningAgent:
         
         # 4.4 Aprendizaje relevante (actividades pasadas similares)
         aprendizaje_relevante = ""
-        if user_id:
+        if user_id and not external_query_mode:
             aprendizaje_relevante = self._get_aprendizaje_relevante(context_query, user_id)
 
         # --- 5. CONSTRUIR MENSAJES ---
@@ -1025,10 +1089,11 @@ class MachiningAgent:
             messages.append(aprendizaje_msg)
 
         # Mensaje de contexto RAG
-        rag_msg = HumanMessage(
-            content=f"📚 DOCUMENTACIÓN TÉCNICA RELEVANTE:\n{rag_context if rag_context else 'No hay documentación específica para esta consulta.'}"
-        )
-        messages.append(rag_msg)
+        if not external_query_mode:
+            rag_msg = HumanMessage(
+                content=f"📚 DOCUMENTACIÓN TÉCNICA RELEVANTE:\n{rag_context if rag_context else 'No hay documentación específica para esta consulta.'}"
+            )
+            messages.append(rag_msg)
 
         # --- 6. CARGAR HISTORIAL CON RESUMEN ---
         if history:
@@ -1139,6 +1204,16 @@ class MachiningAgent:
                             )
                             last_tool_result = tool_result
                             herramientas_usadas.append(tool_name)
+                            # Una búsqueda es suficiente. La siguiente llamada debe sintetizar
+                            # el resultado sin poder solicitar la misma herramienta otra vez.
+                            if tool_name == "google_web_search" and not argument_error:
+                                llm_for_request = self.llm
+                                messages.append(SystemMessage(content=(
+                                    "La búsqueda web ya terminó. No vuelvas a buscar. Responde ahora "
+                                    "en el idioma del usuario, de forma breve y directa, resumiendo los "
+                                    "datos concretos que contestan su pregunta. No enumeres sitios, títulos, "
+                                    "URLs ni resultados de búsqueda y no digas que has buscado en Internet."
+                                )))
                         except Exception as err:
                             error_msg = f"Error al ejecutar la herramienta {tool_name}: {str(err)}"
                             print(f"❌ {error_msg}")
@@ -1166,9 +1241,18 @@ class MachiningAgent:
         # --- 8. MANEJO DE CASOS LÍMITE ---
         if not response_text or response_text.strip() == "":
             if last_tool_result:
-                response_text = f"Basado en la información obtenida: {str(last_tool_result)[:500]}"
+                response_text = self._synthesize_tool_response(messages, user_text) or (
+                    "Obtuve datos técnicos, pero no pude convertirlos en una respuesta fiable. "
+                    "Inténtalo nuevamente en unos instantes."
+                )
             else:
                 response_text = "Lo siento, no pude generar una respuesta. ¿Podrías reformular tu consulta?"
+
+        if self._looks_like_raw_tool_response(response_text):
+            response_text = self._synthesize_tool_response(messages, user_text) or (
+                "No pude presentar de forma segura los datos obtenidos. "
+                "Inténtalo nuevamente en unos instantes."
+            )
 
         # Respaldo determinista: no depender únicamente de que el LLM decida usar la tool.
         if self._response_needs_web_fallback(response_text, herramientas_usadas):
@@ -1199,7 +1283,9 @@ class MachiningAgent:
                 print(f"⚠️ Error guardando en Redis: {e}")
 
         # --- 10. REGISTRAR PARA APRENDIZAJE ---
-        if user_id and len(response_text) > 10:
+        # Los FrameworkMessage ya se capturan antes de la autorrespuesta. Evita
+        # duplicar aquí SQL/Qdrant/embeddings en el camino crítico de respuesta.
+        if user_id and len(response_text) > 10 and not auto_reply_mode:
             try:
                 self._registrar_interaccion(
                     user_id=user_id,
