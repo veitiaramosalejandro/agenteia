@@ -789,20 +789,23 @@ def solidset_send_chat_message(
     if not text:
         return "Error: mensaje está vacío."
 
-    params = {
+    form_payload = {
         "Importance": int(importance),
         "Kind": int(kind),
         "VisibilityLevel": int(visibility_level),
         "RawMessage": text,
     }
     if channel:
-        params["Destiny.WorkRoom"] = channel
+        form_payload["Destiny.WorkRoom"] = channel
     if resource:
-        params["Destiny.Resource"] = resource
+        form_payload["Destiny.Resource"] = resource
     response, base, error = _solidset_request_authenticated(
         method="POST",
         endpoint="/Chat/SendMessageForm",
-        params=params,
+        # SendMessageForm espera datos de formulario. Usar ``params`` colocaba
+        # RawMessage en la URL y hacía que IIS devolviera 404.15 para respuestas
+        # extensas (por ejemplo, análisis construidos desde cientos de mensajes).
+        form_payload=form_payload,
     )
     if response is None:
         return f"Error enviando mensaje a SOLIDSET: {error or 'sin detalle'}"
