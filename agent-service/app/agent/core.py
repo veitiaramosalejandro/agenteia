@@ -607,6 +607,63 @@ class MachiningAgent:
         
         return True, ""
 
+    def _normalize_context_query(self, user_text: str) -> str:
+        """Quita la invocacion al asistente sin perder la intencion de busqueda."""
+        text = " ".join((user_text or "").strip().split())
+        text = re.sub(
+            r"^\s*(?:@?(?:agente|asistente|agent|assistant))\s*[,;:\-]?\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"^(?:podr[ií]a(?:s)?\s+(?:decirme|decirnos)|puede(?:s)?\s+(?:decirme|decirnos))\s+",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return text.strip() or (user_text or "").strip()
+
+    def _normalize_tool_args(
+        self,
+        tool_name: str,
+        tool_args: Any,
+        *,
+        user_text: str,
+        user_id: Optional[str],
+        canal_id: Optional[str],
+    ) -> tuple[dict[str, Any], Optional[str]]:
+        """Adapta argumentos del LLM antes de la validacion Pydantic de LangChain."""
+        args = dict(tool_args) if isinstance(tool_args, dict) else {}
+
+        if tool_name == "google_web_search":
+            query = str(args.get("query") or "").strip()
+            args["query"] = query or self._normalize_context_query(user_text)
+
+        elif tool_name == "solidset_chat_get_messages":
+            if args.get("id_login_current") is not None:
+                args["id_login_current"] = str(args["id_login_current"]).strip()
+            if not args.get("id_login_current") and user_id:
+                args["id_login_current"] = str(user_id)
+            selected_rooms = args.get("selected_workrooms_json")
+            if canal_id and selected_rooms in (None, "", "[]", []):
+                args["selected_workrooms_json"] = [str(canal_id)]
+
+        elif tool_name == "solidset_chat_get_tasks_for_channel":
+            if not str(args.get("id_workroom") or "").strip() and canal_id:
+                args["id_workroom"] = str(canal_id)
+
+        elif tool_name == "solidset_update_reaction":
+            reaction = str(args.get("reaction") or "").strip()
+            if not reaction:
+                return args, (
+                    "No se ejecuto la reaccion: falta el emoji o tipo de reaccion solicitado "
+                    "explicitamente por el usuario. No inventes una reaccion."
+                )
+            args["reaction"] = reaction
+
+        return args, None
+
     def _response_needs_web_fallback(self, response_text: str, tools_used: List[str]) -> bool:
         """Detecta cuando el LLM admite que no dispone de la información solicitada."""
         if not settings.WEB_SEARCH_ENABLED or "google_web_search" in tools_used:
@@ -628,7 +685,7 @@ class MachiningAgent:
     def _answer_with_web_fallback(self, user_text: str, messages: list) -> Optional[str]:
         """Busca en la web y pide al LLM una respuesta basada únicamente en esos resultados."""
         try:
-            web_result = google_web_search.invoke({"query": user_text})
+            web_result = google_web_search.invoke({"query": self._normalize_context_query(user_text)})
             if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
                 return None
             web_messages = list(messages)
@@ -897,7 +954,8 @@ class MachiningAgent:
             contexto_usuario = self._get_user_context(user_id)
         
         # 4.2 Contexto RAG (documentos técnicos)
-        rag_context = self.sistema_aprendizaje.consultar_documentacion(user_text)
+        context_query = self._normalize_context_query(user_text)
+        rag_context = self.sistema_aprendizaje.consultar_documentacion(context_query)
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
         chat_context_bd = ""
@@ -920,7 +978,7 @@ class MachiningAgent:
         # 4.4 Aprendizaje relevante (actividades pasadas similares)
         aprendizaje_relevante = ""
         if user_id:
-            aprendizaje_relevante = self._get_aprendizaje_relevante(user_text, user_id)
+            aprendizaje_relevante = self._get_aprendizaje_relevante(context_query, user_id)
 
         # --- 5. CONSTRUIR MENSAJES ---
         
@@ -1020,6 +1078,28 @@ class MachiningAgent:
                 for tool_call in response.tool_calls:
                     tool_name = tool_call.get("name", "")
                     tool_args = tool_call.get("args", {})
+
+                    # Algunos modelos pueden devolver una tool conocida aunque no estuviera
+                    # ofrecida en esta peticion. La allowlist tambien se aplica al ejecutar.
+                    if tool_allowlist is not None and tool_name not in tool_allowlist:
+                        messages.append(
+                            ToolMessage(
+                                content=(
+                                    f"Herramienta '{tool_name}' no permitida para esta consulta. "
+                                    "Responde usando solo las herramientas habilitadas."
+                                ),
+                                tool_call_id=tool_call.get("id", f"call_{iteration}"),
+                            )
+                        )
+                        continue
+
+                    tool_args, argument_error = self._normalize_tool_args(
+                        tool_name,
+                        tool_args,
+                        user_text=user_text,
+                        user_id=user_id,
+                        canal_id=canal_id,
+                    )
                     
                     print(f"🔧 Ejecutando herramienta: {tool_name} con args: {tool_args}")
                     
@@ -1050,23 +1130,7 @@ class MachiningAgent:
                     # Otras herramientas
                     elif tool_name in self.tools_map:
                         try:
-                            if isinstance(tool_args, dict):
-                                # Corrige argumentos incompletos frecuentes del LLM usando contexto actual.
-                                if tool_name == "solidset_chat_get_messages":
-                                    selected_rooms = tool_args.get("selected_workrooms_json")
-                                    if canal_id and selected_rooms in (None, "", "[]", []):
-                                        tool_args["selected_workrooms_json"] = [canal_id]
-
-                                    login_candidate = str(tool_args.get("id_login_current") or "").strip().lower()
-                                    if login_candidate in {"", "current_user_id", "current-user-id", "user_id"} and user_id:
-                                        tool_args["id_login_current"] = user_id
-
-                                if tool_name == "solidset_chat_get_tasks_for_channel":
-                                    room_candidate = str(tool_args.get("id_workroom") or "").strip()
-                                    if not room_candidate and canal_id:
-                                        tool_args["id_workroom"] = canal_id
-
-                            tool_result = self.tools_map[tool_name].invoke(tool_args)
+                            tool_result = argument_error or self.tools_map[tool_name].invoke(tool_args)
                             messages.append(
                                 ToolMessage(
                                     content=str(tool_result),
@@ -1114,7 +1178,12 @@ class MachiningAgent:
                 herramientas_usadas.append("google_web_search")
         
         if iteration >= self.max_iterations:
-            response_text += "\n\n⚠️ Se alcanzó el límite de iteraciones. Si necesitas más información, por favor sé más específico."
+            # Es un limite tecnico interno, no un problema de formulacion del usuario.
+            # No se lo atribuimos al usuario ni contaminamos una respuesta util obtenida por tool.
+            print(
+                f"⚠️ Limite interno de {self.max_iterations} iteraciones alcanzado "
+                f"(session_id={session_id}, tools={herramientas_usadas})"
+            )
 
         # Aplicar la misma política de presentación tanto a la búsqueda solicitada
         # por el modelo como al respaldo web automático.
