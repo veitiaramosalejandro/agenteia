@@ -245,6 +245,20 @@ def _weather_location_prompt(raw_text: str) -> Optional[str]:
     return "¿De qué ciudad o localidad quieres conocer el tiempo?"
 
 
+def _direct_courtesy_response(raw_text: str) -> Optional[str]:
+    """Responde cumplidos/agradecimientos directos sin ocupar SQL, RAG u Ollama."""
+    text = " ".join((raw_text or "").strip().lower().split())
+    if not text or _looks_like_question_or_request(text):
+        return None
+    if any(term in text for term in ("obrigado", "obrigada", "boa explicação", "boa explicacao", "muito bom")):
+        return "Muito obrigado. Fico satisfeito por a explicação ter sido útil."
+    if any(term in text for term in ("thank you", "thanks", "good explanation", "great explanation", "well explained")):
+        return "Thank you. I am glad the explanation was helpful."
+    if any(term in text for term in ("gracias", "buena explicación", "buena explicacion", "muy buena", "bien explicado")):
+        return "Muchas gracias. Me alegra que la explicación haya sido útil."
+    return None
+
+
 def _is_external_information_query(raw_text: str) -> bool:
     """Separa consultas externas actuales de conocimiento operativo de trabajo."""
     text = " ".join((raw_text or "").strip().lower().split())
@@ -283,6 +297,14 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "destino_no_incluye_agente"
     mentioned = _message_mentions_agent(message)
     active_followup = _has_active_auto_reply_followup(candidate)
+    kind_is_conversational = bool(candidate.get("kind_reply_eligible", True))
+    if (
+        not kind_is_conversational
+        and not _looks_like_question_or_request(message)
+        and not mentioned
+        and not active_followup
+    ):
+        return f"evento_sin_peticion:{candidate.get('message_kind') or 'desconocido'}"
     if (
         not candidate.get("addressed_to_agent")
         and not mentioned
@@ -348,6 +370,14 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         visibility_level = int(candidate.get("visibility_level", 1))
         meeting_id = str(candidate.get("meeting_id") or "").strip()
         meeting_code = str(candidate.get("meeting_code") or "").strip()
+        message_kind = str(candidate.get("message_kind") or "ChatMessage")
+        message_category = str(candidate.get("message_category") or "chat")
+        importance = int(candidate.get("importance", 0))
+        message_metadata = {
+            "chat_id": candidate.get("chat_id"),
+            "recipient_count": int(candidate.get("recipient_count", 0)),
+            "importance": importance,
+        }
         if not incoming_text or (not channel_id and not reply_resource):
             continue
 
@@ -360,7 +390,9 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             or "solidset.agent"
         ).strip()
 
-        response_text = _weather_location_prompt(incoming_text)
+        response_text = _direct_courtesy_response(incoming_text) if is_direct else None
+        if response_text is None:
+            response_text = _weather_location_prompt(incoming_text)
         if response_text is None:
             try:
                 external_query = _is_external_information_query(incoming_text)
@@ -385,6 +417,9 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     canal_id=channel_id,
                     meeting_id=meeting_id or None,
                     meeting_code=meeting_code or None,
+                    message_kind=message_kind,
+                    message_category=message_category,
+                    message_metadata=message_metadata,
                     tool_allowlist=allowed_tools,
                     auto_reply_mode=True,
                 )
@@ -409,6 +444,8 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     "recurso_id": reply_resource if is_direct else None,
                     "recurso_login_id": reply_login if is_direct else None,
                     "visibility_level": visibility_level,
+                    "kind": 7,
+                    "importance": importance,
                     "meeting_id": meeting_id or None,
                     "meeting_code": meeting_code or None,
                     "meeting_mirror_general": bool(candidate.get("meeting_active")),
@@ -422,7 +459,9 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                 print(
                     f"🤖 Auto-reply enviado channel={channel_id} "
                     f"visibility={visibility_level} "
+                    f"importance={importance} "
                     f"meeting={meeting_code or '-'} "
+                    f"source_kind={message_kind} reply_kind=ChatMessage(7) "
                     f"sender={candidate.get('sender_name', 'desconocido')}"
                 )
             else:
@@ -1032,7 +1071,7 @@ class FrameworkMessageDTO(BaseModel):
     IDNotification: Optional[str] = None
     RawMessage: Optional[str] = None
     RawMessageHtml: Optional[str] = None
-    Importance: int = 0
+    Importance: Any = None
     Priority: int = 0
     Modifiers: int = 0
     VisibilityLevel: Any = None

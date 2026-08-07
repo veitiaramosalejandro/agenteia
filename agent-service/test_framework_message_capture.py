@@ -87,6 +87,7 @@ class TestFrameworkMessageCapture(unittest.TestCase):
             "channel_id": "room-1",
             "data": {
                 "RawMessage": "Preciso do relatório, por favor.",
+                "FrameworkKind": "ChatMessage",
                 "VisibilityLevel": "Confidential",
                 "Info": {
                     "meeting_mirror_general": "1",
@@ -96,6 +97,7 @@ class TestFrameworkMessageCapture(unittest.TestCase):
                 "IDWorkRoom": "room-1",
                 "IDSenderResource": "sender-resource",
                 "IDSenderLogin": "sender-login",
+                "Importance": "High",
                 "FrameworkDestiny": {
                     "workRoom": "room-1",
                     "dests": [{"login": "agent-login", "resource": "agent-resource"}],
@@ -109,11 +111,15 @@ class TestFrameworkMessageCapture(unittest.TestCase):
         self.assertTrue(candidate["is_direct"])
         self.assertEqual(candidate["reply_resource"], "sender-resource")
         self.assertEqual(candidate["sender_login"], "sender-login")
+        self.assertEqual(candidate["recipient_count"], 1)
+        self.assertEqual(candidate["importance"], 2)
         self.assertEqual(candidate["scope"], "directo")
         self.assertEqual(candidate["visibility_level"], 2)
         self.assertTrue(candidate["meeting_active"])
         self.assertEqual(candidate["meeting_id"], "meeting-123")
         self.assertEqual(candidate["meeting_code"], "M8")
+        self.assertTrue(candidate["kind_reply_eligible"])
+        self.assertEqual(candidate["message_kind_value"], 7)
 
     def test_normalizes_all_visibility_level_values(self):
         listener = NotificationApiListener.__new__(NotificationApiListener)
@@ -124,6 +130,16 @@ class TestFrameworkMessageCapture(unittest.TestCase):
         self.assertEqual(listener._normalize_visibility_level(0), 0)
         self.assertEqual(listener._normalize_visibility_level("3"), 3)
         self.assertEqual(listener._normalize_visibility_level("invalid"), 1)
+
+    def test_normalizes_all_chat_importance_values(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        self.assertEqual(listener._normalize_chat_importance("Low"), 0)
+        self.assertEqual(listener._normalize_chat_importance("Normal"), 1)
+        self.assertEqual(listener._normalize_chat_importance("High"), 2)
+        self.assertEqual(listener._normalize_chat_importance("Urgent"), 3)
+        self.assertEqual(listener._normalize_chat_importance(0), 0)
+        self.assertEqual(listener._normalize_chat_importance("3"), 3)
+        self.assertEqual(listener._normalize_chat_importance("invalid"), 1)
 
     def test_meeting_context_requires_active_mirror_flag(self):
         listener = NotificationApiListener.__new__(NotificationApiListener)
@@ -137,6 +153,17 @@ class TestFrameworkMessageCapture(unittest.TestCase):
         self.assertEqual(active["meeting_id"], "meeting-1")
         self.assertFalse(inactive["active"])
         self.assertEqual(inactive["meeting_id"], "")
+
+    def test_classifies_chat_kind_and_technical_events(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        self.assertTrue(listener._normalize_message_kind("ChatMessage")["conversational"])
+        self.assertTrue(listener._normalize_message_kind(7)["conversational"])
+        self.assertTrue(listener._normalize_message_kind("ChatMessageMeetingComment")["conversational"])
+        self.assertEqual(listener._normalize_message_kind("ChatMessageMeetingComment")["category"], "meeting")
+        self.assertEqual(listener._normalize_message_kind("ChatMessageTaskUpdate")["category"], "task")
+        self.assertFalse(listener._normalize_message_kind("ChatMessageRead")["conversational"])
+        self.assertFalse(listener._normalize_message_kind("ReactionCodeUpdate")["conversational"])
+        self.assertFalse(listener._normalize_message_kind(146)["conversational"])
 
     def test_duplicate_capture_does_not_create_second_candidate(self):
         listener = NotificationApiListener.__new__(NotificationApiListener)

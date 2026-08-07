@@ -755,8 +755,8 @@ def fetch_external_api(endpoint_url: str, method: str = "GET", payload: Optional
 def solidset_send_chat_message(
     canal_id: Optional[str],
     mensaje: str,
-    importance: int = 1,
-    kind: int = 60,
+    importance: Union[int, str] = 1,
+    kind: int = 7,
     visibility_level: Union[int, str] = 1,
     confirm: bool = False,
     recurso_id: Optional[str] = None,
@@ -809,8 +809,23 @@ def solidset_send_chat_message(
     if visibility_normalized not in {0, 1, 2, 3}:
         visibility_normalized = 1
 
+    importance_names = {
+        "low": 0,
+        "normal": 1,
+        "high": 2,
+        "urgent": 3,
+    }
+    if isinstance(importance, str):
+        importance_normalized = importance_names.get(importance.strip().lower())
+        if importance_normalized is None and importance.strip().isdigit():
+            importance_normalized = int(importance.strip())
+    else:
+        importance_normalized = int(importance)
+    if importance_normalized not in {0, 1, 2, 3}:
+        importance_normalized = 1
+
     form_payload = {
-        "Importance": int(importance),
+        "Importance": importance_normalized,
         "Kind": int(kind),
         "VisibilityLevel": visibility_normalized,
         "RawMessage": text,

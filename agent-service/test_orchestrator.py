@@ -61,10 +61,16 @@ class OrchestratorTests(unittest.TestCase):
             user_text="Resume esta conversación",
             meeting_id="meeting-123",
             meeting_code="M8",
+            message_kind="ChatMessageMeetingComment",
+            message_category="meeting",
+            message_metadata={"chat_id": 1819689, "recipient_count": 2, "importance": 1},
         )
 
         self.assertEqual(agent.calls[0]["meeting_id"], "meeting-123")
         self.assertEqual(agent.calls[0]["meeting_code"], "M8")
+        self.assertEqual(agent.calls[0]["message_kind"], "ChatMessageMeetingComment")
+        self.assertEqual(agent.calls[0]["message_category"], "meeting")
+        self.assertEqual(agent.calls[0]["message_metadata"]["chat_id"], 1819689)
 
     def test_validation_blocks_raw_tool_payload(self):
         agent = FakeAgent()

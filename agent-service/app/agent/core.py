@@ -1328,6 +1328,9 @@ class MachiningAgent:
         canal_id: Optional[str] = None,
         meeting_id: Optional[str] = None,
         meeting_code: Optional[str] = None,
+        message_kind: Optional[str] = None,
+        message_category: Optional[str] = None,
+        message_metadata: Optional[dict[str, Any]] = None,
         tool_allowlist: Optional[set[str]] = None,
         auto_reply_mode: bool = False,
         external_query_mode: bool = False,
@@ -1601,6 +1604,23 @@ class MachiningAgent:
                 f"Meeting ID: {meeting_id or 'no disponible'}\n"
                 f"Meeting code: {meeting_code or 'no disponible'}\n"
                 "La conversación pertenece a esta reunión; utiliza este contexto sin inventar otros datos."
+            )
+
+        if message_kind:
+            system_prompt += (
+                "\n\n=== TIPO DEL MENSAJE ACTUAL ===\n"
+                f"Kind: {message_kind}\n"
+                f"Categoría: {message_category or 'sin clasificar'}\n"
+                "Usa el tipo como contexto funcional. Decide la respuesta según la petición real del usuario; "
+                "no confundas una notificación técnica con una solicitud, pero responde si contiene una petición "
+                "explícita dirigida al agente."
+            )
+        if message_metadata:
+            system_prompt += (
+                "\nMetadatos del mensaje: "
+                f"chat_id={message_metadata.get('chat_id') or 'no disponible'}, "
+                f"destinatarios={message_metadata.get('recipient_count', 0)}, "
+                f"importance={message_metadata.get('importance', 0)}."
             )
         
         system_msg = SystemMessage(content=system_prompt)

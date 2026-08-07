@@ -533,6 +533,25 @@ class NotificationApiListener:
         return 1
 
     @staticmethod
+    def _normalize_chat_importance(value: Any) -> int:
+        """Normaliza ChatImportance recibido como nombre de enum o entero."""
+        importance_by_name = {
+            "low": 0,
+            "normal": 1,
+            "high": 2,
+            "urgent": 3,
+        }
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in importance_by_name:
+                return importance_by_name[normalized]
+            if normalized.isdigit():
+                value = int(normalized)
+        if isinstance(value, int) and not isinstance(value, bool) and value in {0, 1, 2, 3}:
+            return value
+        return 1
+
+    @staticmethod
     def _extract_meeting_context(info: Any) -> Dict[str, Any]:
         """Extrae el contexto de reunión cuando meeting_mirror_general está activo."""
         if not isinstance(info, dict):
@@ -546,6 +565,75 @@ class NotificationApiListener:
             "active": True,
             "meeting_id": str(lowered.get("meeting_id") or "").strip(),
             "meeting_code": str(lowered.get("meeting_code") or "").strip(),
+        }
+
+    @staticmethod
+    def _normalize_message_kind(value: Any) -> Dict[str, Any]:
+        """Normaliza KindMessage y aporta una categoría semántica al agente."""
+        conversational_names = {
+            "chatmessage",
+            "chatmessagetaskcomment",
+            "chatmessageactivitycomment",
+            "chatmessagevideocallcomment",
+            "chatmessagevideocallwrcomment",
+            "chatmessageagreementitemcomment",
+            "chatmessagedocumentcomment",
+            "chatmessageleadcomment",
+            "chatmessagetimecomment",
+            "chatmessageserverfilecomment",
+            "chatmessageemailcomment",
+            "chatmessagecompanycomment",
+            "chatmessagefupcomment",
+            "chatmessagemeetingcomment",
+            "chatmessagecomment",
+        }
+        if value is None or value == "":
+            # Compatibilidad con fuentes antiguas que no incluían Kind.
+            return {"raw": value, "name": "", "value": None, "conversational": True, "category": "chat"}
+        if isinstance(value, str):
+            text = value.strip()
+            if text.lstrip("-").isdigit():
+                numeric = int(text)
+                return {
+                    "raw": value,
+                    "name": "ChatMessage" if numeric == 7 else "",
+                    "value": numeric,
+                    "conversational": numeric == 7,
+                    "category": "chat" if numeric == 7 else "event",
+                }
+            compact = re.sub(r"[^a-z0-9]", "", text.lower())
+            if "meeting" in compact:
+                category = "meeting"
+            elif "task" in compact:
+                category = "task"
+            elif "activity" in compact:
+                category = "activity"
+            elif "videocall" in compact or "livekitcall" in compact or "callmessage" in compact:
+                category = "call"
+            elif "email" in compact:
+                category = "email"
+            elif "chatmessage" in compact:
+                category = "chat"
+            else:
+                category = "system_event"
+            return {
+                "raw": value,
+                "name": text,
+                "value": 7 if compact == "chatmessage" else None,
+                "conversational": compact in conversational_names,
+                "category": category,
+            }
+        if isinstance(value, int) and not isinstance(value, bool):
+            return {
+                "raw": value,
+                "name": "ChatMessage" if value == 7 else "",
+                "value": value,
+                "conversational": value == 7,
+                "category": "chat" if value == 7 else "event",
+            }
+        return {
+            "raw": value, "name": "", "value": None,
+            "conversational": False, "category": "event",
         }
 
     def _normalize_entries(self, source: str, endpoint: str, payload: Any, channel_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -679,8 +767,10 @@ class NotificationApiListener:
         destiny = data.get("FrameworkDestiny") if isinstance(data.get("FrameworkDestiny"), dict) else {}
         destiny_lower = {str(key).lower(): value for key, value in destiny.items()}
         destiny_resource = str(destiny_lower.get("resource") or destiny_lower.get("idresource") or "").strip()
+        destiny_dests = destiny_lower.get("dests") if isinstance(destiny_lower.get("dests"), list) else []
         addressed_to_agent = self._destiny_addresses_agent(destiny)
         meeting = self._extract_meeting_context(data.get("Info"))
+        message_kind = self._normalize_message_kind(data.get("FrameworkKind", data.get("Kind")))
         # Un destinatario explícito prevalece sobre workRoom: se responde al Sender.resource.
         is_direct = addressed_to_agent
         channel_id_text = str(channel_id or "").strip()
@@ -698,12 +788,18 @@ class NotificationApiListener:
             "sender_login": str(sender_login or "").strip(),
             "sender_name": str(sender_name),
             "chat_id": chat_id,
+            "recipient_count": len([item for item in destiny_dests if isinstance(item, dict)]),
+            "importance": self._normalize_chat_importance(data.get("Importance")),
             "is_public": is_public,
             "scope": "directo" if is_direct else ("canal" if is_public else "chat"),
             "visibility_level": self._normalize_visibility_level(data.get("VisibilityLevel")),
             "meeting_active": meeting["active"],
             "meeting_id": meeting["meeting_id"],
             "meeting_code": meeting["meeting_code"],
+            "message_kind": message_kind["name"] or str(message_kind["raw"] or ""),
+            "message_kind_value": message_kind["value"],
+            "kind_reply_eligible": message_kind["conversational"],
+            "message_category": message_kind["category"],
             "message": raw_message.strip(),
             "destiny_resource": destiny_resource,
             "addressed_to_agent": addressed_to_agent,

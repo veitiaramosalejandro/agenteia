@@ -14,6 +14,9 @@ class AgentGraphState(TypedDict, total=False):
     canal_id: Optional[str]
     meeting_id: Optional[str]
     meeting_code: Optional[str]
+    message_kind: Optional[str]
+    message_category: Optional[str]
+    message_metadata: Optional[dict[str, Any]]
     auto_reply_mode: bool
     tool_allowlist: Optional[set[str]]
     route: str
@@ -72,6 +75,9 @@ class SolidSETOrchestrator:
             canal_id=state.get("canal_id"),
             meeting_id=state.get("meeting_id"),
             meeting_code=state.get("meeting_code"),
+            message_kind=state.get("message_kind"),
+            message_category=state.get("message_category"),
+            message_metadata=state.get("message_metadata"),
             tool_allowlist={"google_web_search"},
             auto_reply_mode=bool(state.get("auto_reply_mode")),
             external_query_mode=True,
@@ -86,6 +92,9 @@ class SolidSETOrchestrator:
             canal_id=state.get("canal_id"),
             meeting_id=state.get("meeting_id"),
             meeting_code=state.get("meeting_code"),
+            message_kind=state.get("message_kind"),
+            message_category=state.get("message_category"),
+            message_metadata=state.get("message_metadata"),
             tool_allowlist=state.get("tool_allowlist"),
             auto_reply_mode=bool(state.get("auto_reply_mode")),
             external_query_mode=False,
@@ -137,6 +146,9 @@ class SolidSETOrchestrator:
         canal_id: Optional[str] = None,
         meeting_id: Optional[str] = None,
         meeting_code: Optional[str] = None,
+        message_kind: Optional[str] = None,
+        message_category: Optional[str] = None,
+        message_metadata: Optional[dict[str, Any]] = None,
         tool_allowlist: Optional[set[str]] = None,
         auto_reply_mode: bool = False,
     ) -> str:
@@ -147,6 +159,9 @@ class SolidSETOrchestrator:
             "canal_id": canal_id,
             "meeting_id": meeting_id,
             "meeting_code": meeting_code,
+            "message_kind": message_kind,
+            "message_category": message_category,
+            "message_metadata": message_metadata,
             "tool_allowlist": tool_allowlist,
             "auto_reply_mode": auto_reply_mode,
             "started_at": perf_counter(),

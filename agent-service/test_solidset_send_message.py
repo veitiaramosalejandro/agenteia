@@ -49,6 +49,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
                 "recurso_id": "sender-resource",
                 "recurso_login_id": "sender-login",
                 "visibility_level": "Private",
+                "importance": "Urgent",
                 "meeting_mirror_general": True,
                 "meeting_id": "meeting-123",
                 "meeting_code": "M8",
@@ -63,9 +64,11 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self.assertEqual(form["Destiny.Dests[0].Resource"], "sender-resource")
         self.assertEqual(form["Destiny.Dests[0].Kind"], 2)
         self.assertEqual(form["VisibilityLevel"], 3)
+        self.assertEqual(form["Importance"], 3)
         self.assertEqual(form["Info[meeting_mirror_general]"], "1")
         self.assertEqual(form["Info[meeting_id]"], "meeting-123")
         self.assertEqual(form["Info[meeting_code]"], "M8")
+        self.assertEqual(form["Kind"], 7)
         self.assertNotIn("Destiny.Resource", form)
 
 
