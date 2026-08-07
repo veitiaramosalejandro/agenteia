@@ -1326,6 +1326,8 @@ class MachiningAgent:
         user_text: str, 
         user_id: Optional[str] = None,
         canal_id: Optional[str] = None,
+        meeting_id: Optional[str] = None,
+        meeting_code: Optional[str] = None,
         tool_allowlist: Optional[set[str]] = None,
         auto_reply_mode: bool = False,
         external_query_mode: bool = False,
@@ -1592,6 +1594,14 @@ class MachiningAgent:
         
         if canal_id:
             system_prompt += f"\n\n=== CANAL ACTUAL ===\nID: {canal_id}\nEnfoca tus respuestas en el contexto de este canal."
+
+        if meeting_id or meeting_code:
+            system_prompt += (
+                "\n\n=== REUNIÓN ACTUAL ===\n"
+                f"Meeting ID: {meeting_id or 'no disponible'}\n"
+                f"Meeting code: {meeting_code or 'no disponible'}\n"
+                "La conversación pertenece a esta reunión; utiliza este contexto sin inventar otros datos."
+            )
         
         system_msg = SystemMessage(content=system_prompt)
         

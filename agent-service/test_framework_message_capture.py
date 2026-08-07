@@ -1,6 +1,6 @@
 import unittest
 import threading
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app.system.notification_listener import NotificationApiListener
 
@@ -87,8 +87,15 @@ class TestFrameworkMessageCapture(unittest.TestCase):
             "channel_id": "room-1",
             "data": {
                 "RawMessage": "Preciso do relatório, por favor.",
+                "VisibilityLevel": "Confidential",
+                "Info": {
+                    "meeting_mirror_general": "1",
+                    "meeting_id": "meeting-123",
+                    "meeting_code": "M8",
+                },
                 "IDWorkRoom": "room-1",
                 "IDSenderResource": "sender-resource",
+                "IDSenderLogin": "sender-login",
                 "FrameworkDestiny": {
                     "workRoom": "room-1",
                     "dests": [{"login": "agent-login", "resource": "agent-resource"}],
@@ -101,7 +108,64 @@ class TestFrameworkMessageCapture(unittest.TestCase):
         self.assertTrue(candidate["addressed_to_agent"])
         self.assertTrue(candidate["is_direct"])
         self.assertEqual(candidate["reply_resource"], "sender-resource")
+        self.assertEqual(candidate["sender_login"], "sender-login")
         self.assertEqual(candidate["scope"], "directo")
+        self.assertEqual(candidate["visibility_level"], 2)
+        self.assertTrue(candidate["meeting_active"])
+        self.assertEqual(candidate["meeting_id"], "meeting-123")
+        self.assertEqual(candidate["meeting_code"], "M8")
+
+    def test_normalizes_all_visibility_level_values(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        self.assertEqual(listener._normalize_visibility_level("Public"), 0)
+        self.assertEqual(listener._normalize_visibility_level("Normal"), 1)
+        self.assertEqual(listener._normalize_visibility_level("Confidential"), 2)
+        self.assertEqual(listener._normalize_visibility_level("Private"), 3)
+        self.assertEqual(listener._normalize_visibility_level(0), 0)
+        self.assertEqual(listener._normalize_visibility_level("3"), 3)
+        self.assertEqual(listener._normalize_visibility_level("invalid"), 1)
+
+    def test_meeting_context_requires_active_mirror_flag(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        active = listener._extract_meeting_context({
+            "meeting_mirror_general": "1", "meeting_id": "meeting-1", "meeting_code": "M8"
+        })
+        inactive = listener._extract_meeting_context({
+            "meeting_mirror_general": "0", "meeting_id": "meeting-1", "meeting_code": "M8"
+        })
+        self.assertTrue(active["active"])
+        self.assertEqual(active["meeting_id"], "meeting-1")
+        self.assertFalse(inactive["active"])
+        self.assertEqual(inactive["meeting_id"], "")
+
+    def test_duplicate_capture_does_not_create_second_candidate(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        listener.current_login_id = "agent-login"
+        listener.current_resource_id = "agent-resource"
+        listener.metrics_lock = threading.Lock()
+        listener.recent_auto_reply_candidates = []
+        listener.max_recent_auto_reply_candidates = 10
+        listener.recent_captured_messages = []
+        listener.max_recent_captured_messages = 10
+        listener.seen_fingerprints = []
+        listener.max_seen = 100
+        listener.sistema = Mock()
+        listener.sistema.aprender_actividad.return_value = True
+        entry_payload = {
+            "RawMessage": "Pode indicar o recurso de Alejandro?",
+            "Sender": {"resource": "sender-resource", "login": "sender-login"},
+            "Destiny": {
+                "workRoom": "room-1",
+                "dests": [{"login": "agent-login", "resource": "agent-resource"}],
+            },
+        }
+
+        first = listener.capture_realtime_payload(entry_payload)
+        second = listener.capture_realtime_payload(entry_payload)
+
+        self.assertEqual(len(first["auto_reply_candidates"]), 1)
+        self.assertEqual(len(second["auto_reply_candidates"]), 0)
+        self.assertEqual(second["skipped"], 1)
 
 
 if __name__ == "__main__":

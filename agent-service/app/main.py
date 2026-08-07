@@ -130,15 +130,10 @@ def _remember_auto_reply_followup(candidate: dict) -> None:
 
 def _is_self_sender(sender_resource: str, sender_name: str) -> bool:
     own_resource = (settings.SOLIDSET_RESOURCE_ID or "").strip().lower()
-    own_username = (settings.SOLIDSET_LOGIN_USERNAME or "").strip().lower()
     sender_resource_norm = (sender_resource or "").strip().lower()
-    sender_name_norm = (sender_name or "").strip().lower()
-
-    if own_resource and sender_resource_norm and own_resource == sender_resource_norm:
-        return True
-    if own_username and sender_name_norm and own_username == sender_name_norm:
-        return True
-    return False
+    # Sender.resource es la identidad canónica. El nombre/login puede coincidir
+    # con alias visibles o venir incompleto y no debe descartar usuarios reales.
+    return bool(own_resource and sender_resource_norm and own_resource == sender_resource_norm)
 
 
 def _sanitize_auto_reply_input(raw_text: str) -> str:
@@ -261,18 +256,22 @@ def _is_external_information_query(raw_text: str) -> bool:
     return any(term in text for term in external_terms)
 
 
-def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
+def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     fingerprint = (candidate.get("fingerprint") or "").strip()
-    if not fingerprint or _auto_reply_seen(fingerprint):
-        return False
+    if not fingerprint:
+        return "sin_fingerprint"
+    if _auto_reply_seen(fingerprint):
+        return "fingerprint_ya_respondido"
 
     channel_id = (candidate.get("channel_id") or "").strip()
     message = (candidate.get("message") or "").strip()
     sender_resource = str(candidate.get("sender_resource") or "")
     sender_name = str(candidate.get("sender_name") or "")
     can_reply_direct = bool(candidate.get("is_direct") and candidate.get("reply_resource"))
-    if (not channel_id and not can_reply_direct) or not message:
-        return False
+    if not message:
+        return "mensaje_vacio"
+    if not channel_id and not can_reply_direct:
+        return "sin_destino_para_responder"
 
     # Con identidad explícita configurada, Destiny es la fuente de verdad. Así
     # una mención textual dentro de un canal ajeno no provoca una respuesta.
@@ -281,7 +280,7 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
         or (settings.SOLIDSET_RESOURCE_ID or "").strip()
     )
     if has_configured_recipient_identity and not candidate.get("addressed_to_agent"):
-        return False
+        return "destino_no_incluye_agente"
     mentioned = _message_mentions_agent(message)
     active_followup = _has_active_auto_reply_followup(candidate)
     if (
@@ -290,9 +289,9 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
         and not _looks_like_question_or_request(message)
         and not active_followup
     ):
-        return False
+        return "no_es_pregunta_peticion_o_continuacion"
     if (not settings.SOLIDSET_AUTO_REPLY_ALLOW_SELF) and _is_self_sender(sender_resource=sender_resource, sender_name=sender_name):
-        return False
+        return "remitente_es_recurso_del_agente"
 
     if settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION:
         if (
@@ -300,9 +299,13 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
             and not mentioned
             and not active_followup
         ):
-            return False
+            return "mencion_o_destino_directo_requerido"
 
-    return True
+    return None
+
+
+def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
+    return _auto_reply_rejection_reason(candidate) is None
 
 
 async def _process_auto_replies(candidates: list[dict]) -> int:
@@ -324,9 +327,14 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             continue
         local_seen.add(fingerprint)
 
-        if not _candidate_qualifies_for_auto_reply(candidate):
+        rejection_reason = _auto_reply_rejection_reason(candidate)
+        if rejection_reason is not None:
             print(
                 "ℹ️ Candidato de auto-respuesta descartado por filtros "
+                f"reason={rejection_reason} "
+                f"addressed={bool(candidate.get('addressed_to_agent'))} "
+                f"direct={bool(candidate.get('is_direct'))} "
+                f"sender_resource={candidate.get('sender_resource', '-')} "
                 f"sender={candidate.get('sender_name', 'desconocido')} "
                 f"message={str(candidate.get('message') or '')[:120]!r}"
             )
@@ -336,6 +344,10 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         channel_id = (candidate.get("channel_id") or "").strip()
         is_direct = bool(candidate.get("is_direct"))
         reply_resource = str(candidate.get("reply_resource") or "").strip()
+        reply_login = str(candidate.get("sender_login") or "").strip()
+        visibility_level = int(candidate.get("visibility_level", 1))
+        meeting_id = str(candidate.get("meeting_id") or "").strip()
+        meeting_code = str(candidate.get("meeting_code") or "").strip()
         if not incoming_text or (not channel_id and not reply_resource):
             continue
 
@@ -368,7 +380,11 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     session_id=session_id,
                     user_text=incoming_text,
                     user_id=user_id,
-                    canal_id=None if is_direct else channel_id,
+                    # Aunque la respuesta sea dirigida, el workRoom sigue siendo
+                    # el contexto funcional donde nació la conversación.
+                    canal_id=channel_id,
+                    meeting_id=meeting_id or None,
+                    meeting_code=meeting_code or None,
                     tool_allowlist=allowed_tools,
                     auto_reply_mode=True,
                 )
@@ -387,10 +403,15 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             send_result = await asyncio.to_thread(
                 solidset_send_chat_message.invoke,
                 {
-                    "canal_id": None if is_direct else channel_id,
+                    "canal_id": channel_id,
                     "mensaje": response_text,
                     "confirm": True,
                     "recurso_id": reply_resource if is_direct else None,
+                    "recurso_login_id": reply_login if is_direct else None,
+                    "visibility_level": visibility_level,
+                    "meeting_id": meeting_id or None,
+                    "meeting_code": meeting_code or None,
+                    "meeting_mirror_general": bool(candidate.get("meeting_active")),
                 },
             )
             send_result_text = str(send_result)
@@ -400,6 +421,8 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                 _remember_auto_reply_followup(candidate)
                 print(
                     f"🤖 Auto-reply enviado channel={channel_id} "
+                    f"visibility={visibility_level} "
+                    f"meeting={meeting_code or '-'} "
                     f"sender={candidate.get('sender_name', 'desconocido')}"
                 )
             else:
@@ -1207,10 +1230,25 @@ async def capture_and_forward_framework_message(request: Request):
             "capture": capture,
         }) from exc
 
+    # Este proxy es con frecuencia la primera entrada del mensaje. Debe programar
+    # aquí la respuesta porque la notificación posterior tendrá la misma huella y
+    # será correctamente descartada como duplicada. Solo se responde si SolidSET
+    # aceptó primero el mensaje original.
+    candidates = capture.get("auto_reply_candidates") or []
+    if upstream.status_code < 400 and candidates:
+        _schedule_auto_replies(candidates)
+        print(
+            f"📥 FrameworkHub reenviado status={upstream.status_code} "
+            f"respuestas_programadas={len(candidates)}"
+        )
+
     response_headers = {}
     if upstream.headers.get("content-type"):
         response_headers["content-type"] = upstream.headers["content-type"]
     response_headers["X-Agent-Capture-Learned"] = str(capture["learned"])
+    response_headers["X-Agent-Replies-Scheduled"] = str(
+        len(candidates) if upstream.status_code < 400 else 0
+    )
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,

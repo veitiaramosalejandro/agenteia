@@ -757,9 +757,13 @@ def solidset_send_chat_message(
     mensaje: str,
     importance: int = 1,
     kind: int = 60,
-    visibility_level: int = 1,
+    visibility_level: Union[int, str] = 1,
     confirm: bool = False,
     recurso_id: Optional[str] = None,
+    recurso_login_id: Optional[str] = None,
+    meeting_id: Optional[str] = None,
+    meeting_code: Optional[str] = None,
+    meeting_mirror_general: bool = False,
 ) -> str:
     """
     ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
@@ -783,22 +787,53 @@ def solidset_send_chat_message(
 
     channel = (canal_id or "").strip()
     resource = (recurso_id or "").strip()
+    resource_login = (recurso_login_id or "").strip()
     text = (mensaje or "").strip()
     if not channel and not resource:
         return "Error: canal_id o recurso_id es obligatorio."
     if not text:
         return "Error: mensaje está vacío."
 
+    visibility_names = {
+        "public": 0,
+        "normal": 1,
+        "confidential": 2,
+        "private": 3,
+    }
+    if isinstance(visibility_level, str):
+        visibility_normalized = visibility_names.get(visibility_level.strip().lower())
+        if visibility_normalized is None and visibility_level.strip().isdigit():
+            visibility_normalized = int(visibility_level.strip())
+    else:
+        visibility_normalized = int(visibility_level)
+    if visibility_normalized not in {0, 1, 2, 3}:
+        visibility_normalized = 1
+
     form_payload = {
         "Importance": int(importance),
         "Kind": int(kind),
-        "VisibilityLevel": int(visibility_level),
+        "VisibilityLevel": visibility_normalized,
         "RawMessage": text,
     }
     if channel:
         form_payload["Destiny.WorkRoom"] = channel
-    if resource:
+    if channel and resource:
+        # Mensaje dirigido dentro de un canal: reproducir AddressSpec.Dests
+        # del FrameworkMessage original para que aparezca en ese workRoom.
+        if resource_login:
+            form_payload["Destiny.Dests[0].Login"] = resource_login
+        form_payload["Destiny.Dests[0].Resource"] = resource
+        form_payload["Destiny.Dests[0].Kind"] = 2
+    elif resource:
         form_payload["Destiny.Resource"] = resource
+        if resource_login:
+            form_payload["Destiny.Login"] = resource_login
+    if meeting_mirror_general:
+        form_payload["Info[meeting_mirror_general]"] = "1"
+        if meeting_id:
+            form_payload["Info[meeting_id]"] = str(meeting_id).strip()
+        if meeting_code:
+            form_payload["Info[meeting_code]"] = str(meeting_code).strip()
     response, base, error = _solidset_request_authenticated(
         method="POST",
         endpoint="/Chat/SendMessageForm",
@@ -811,8 +846,22 @@ def solidset_send_chat_message(
         return f"Error enviando mensaje a SOLIDSET: {error or 'sin detalle'}"
     if response.status_code >= 400:
         return f"Error enviando mensaje a SOLIDSET: HTTP {response.status_code} -> {response.text[:220]}"
+    try:
+        result_payload = response.json()
+    except Exception:
+        result_payload = None
+    if isinstance(result_payload, dict):
+        success = result_payload.get("Success", result_payload.get("success"))
+        result_code = result_payload.get("Result", result_payload.get("result"))
+        api_error = result_payload.get("Error", result_payload.get("error"))
+        if success is False or (isinstance(result_code, int) and result_code != 0) or api_error:
+            return (
+                "Error enviando mensaje a SOLIDSET: rechazo funcional "
+                f"HTTP {response.status_code} -> {str(result_payload)[:220]}"
+            )
     return (
-        f"✅ Mensaje enviado a {'canal ' + channel if channel else 'chat del recurso ' + resource}. "
+        f"✅ Mensaje enviado a "
+        f"{'recurso ' + resource + ' dentro del canal ' + channel if channel and resource else ('canal ' + channel if channel else 'chat del recurso ' + resource)}. "
         f"Endpoint: {base}/Chat/SendMessageForm"
     )
 

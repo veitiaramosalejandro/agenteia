@@ -12,6 +12,8 @@ class AgentGraphState(TypedDict, total=False):
     user_text: str
     user_id: Optional[str]
     canal_id: Optional[str]
+    meeting_id: Optional[str]
+    meeting_code: Optional[str]
     auto_reply_mode: bool
     tool_allowlist: Optional[set[str]]
     route: str
@@ -68,6 +70,8 @@ class SolidSETOrchestrator:
             user_text=state.get("user_text", ""),
             user_id=state.get("user_id"),
             canal_id=state.get("canal_id"),
+            meeting_id=state.get("meeting_id"),
+            meeting_code=state.get("meeting_code"),
             tool_allowlist={"google_web_search"},
             auto_reply_mode=bool(state.get("auto_reply_mode")),
             external_query_mode=True,
@@ -80,6 +84,8 @@ class SolidSETOrchestrator:
             user_text=state.get("user_text", ""),
             user_id=state.get("user_id"),
             canal_id=state.get("canal_id"),
+            meeting_id=state.get("meeting_id"),
+            meeting_code=state.get("meeting_code"),
             tool_allowlist=state.get("tool_allowlist"),
             auto_reply_mode=bool(state.get("auto_reply_mode")),
             external_query_mode=False,
@@ -129,6 +135,8 @@ class SolidSETOrchestrator:
         user_text: str,
         user_id: Optional[str] = None,
         canal_id: Optional[str] = None,
+        meeting_id: Optional[str] = None,
+        meeting_code: Optional[str] = None,
         tool_allowlist: Optional[set[str]] = None,
         auto_reply_mode: bool = False,
     ) -> str:
@@ -137,6 +145,8 @@ class SolidSETOrchestrator:
             "user_text": user_text,
             "user_id": user_id,
             "canal_id": canal_id,
+            "meeting_id": meeting_id,
+            "meeting_code": meeting_code,
             "tool_allowlist": tool_allowlist,
             "auto_reply_mode": auto_reply_mode,
             "started_at": perf_counter(),

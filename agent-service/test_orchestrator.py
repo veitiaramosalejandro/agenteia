@@ -52,6 +52,20 @@ class OrchestratorTests(unittest.TestCase):
         )
         self.assertFalse(agent.calls[0]["external_query_mode"])
 
+    def test_meeting_context_is_forwarded_to_agent(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+
+        orchestrator.invoke(
+            session_id="meeting-session",
+            user_text="Resume esta conversación",
+            meeting_id="meeting-123",
+            meeting_code="M8",
+        )
+
+        self.assertEqual(agent.calls[0]["meeting_id"], "meeting-123")
+        self.assertEqual(agent.calls[0]["meeting_code"], "M8")
+
     def test_validation_blocks_raw_tool_payload(self):
         agent = FakeAgent()
         agent.analyze_event_with_dialogue = lambda **kwargs: "status=200; body={...}"

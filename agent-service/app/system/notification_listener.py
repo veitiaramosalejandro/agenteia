@@ -412,7 +412,7 @@ class NotificationApiListener:
         top_level_names = [
             "Stamp", "Sender", "Destiny", "Kind", "IDNotification", "RawMessage",
             "RawMessageHtml", "Args", "Chat", "ChatData", "WorkRoomData",
-            "Importance", "Priority", "Modifiers", "VisibilityLevel", "MaskMessage",
+            "Importance", "Priority", "Modifiers", "VisibilityLevel", "MaskMessage", "Info",
         ]
         payload_lower = {str(key).lower(): value for key, value in payload.items()}
         for field_name in top_level_names:
@@ -512,6 +512,41 @@ class NotificationApiListener:
             if (login and login in own_logins) or (resource and resource in own_resources):
                 return True
         return False
+
+    @staticmethod
+    def _normalize_visibility_level(value: Any) -> int:
+        """Normaliza VisibilityLevel recibido como nombre de enum o entero."""
+        visibility_by_name = {
+            "public": 0,
+            "normal": 1,
+            "confidential": 2,
+            "private": 3,
+        }
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in visibility_by_name:
+                return visibility_by_name[normalized]
+            if normalized.isdigit():
+                value = int(normalized)
+        if isinstance(value, int) and not isinstance(value, bool) and value in {0, 1, 2, 3}:
+            return value
+        return 1
+
+    @staticmethod
+    def _extract_meeting_context(info: Any) -> Dict[str, Any]:
+        """Extrae el contexto de reunión cuando meeting_mirror_general está activo."""
+        if not isinstance(info, dict):
+            return {"active": False, "meeting_id": "", "meeting_code": ""}
+        lowered = {str(key).lower(): value for key, value in info.items()}
+        active_value = str(lowered.get("meeting_mirror_general") or "").strip().lower()
+        active = active_value in {"1", "true", "yes", "on"}
+        if not active:
+            return {"active": False, "meeting_id": "", "meeting_code": ""}
+        return {
+            "active": True,
+            "meeting_id": str(lowered.get("meeting_id") or "").strip(),
+            "meeting_code": str(lowered.get("meeting_code") or "").strip(),
+        }
 
     def _normalize_entries(self, source: str, endpoint: str, payload: Any, channel_id: Optional[str] = None) -> List[Dict[str, Any]]:
         if endpoint.lower().rstrip("/").endswith("frameworkhub/sendmessage"):
@@ -631,6 +666,7 @@ class NotificationApiListener:
             or entry.get("channel_id")
         )
         sender_resource = data.get("IDSenderResource")
+        sender_login = data.get("IDSenderLogin")
         sender_name = (
             data.get("SenderFullName")
             or data.get("DisplayName")
@@ -644,6 +680,7 @@ class NotificationApiListener:
         destiny_lower = {str(key).lower(): value for key, value in destiny.items()}
         destiny_resource = str(destiny_lower.get("resource") or destiny_lower.get("idresource") or "").strip()
         addressed_to_agent = self._destiny_addresses_agent(destiny)
+        meeting = self._extract_meeting_context(data.get("Info"))
         # Un destinatario explícito prevalece sobre workRoom: se responde al Sender.resource.
         is_direct = addressed_to_agent
         channel_id_text = str(channel_id or "").strip()
@@ -658,10 +695,15 @@ class NotificationApiListener:
             "channel_id": channel_id_text,
             "channel_name": data.get("ChannelName") or data.get("OriginChannelName") or channel_id_text,
             "sender_resource": str(sender_resource or "").strip(),
+            "sender_login": str(sender_login or "").strip(),
             "sender_name": str(sender_name),
             "chat_id": chat_id,
             "is_public": is_public,
             "scope": "directo" if is_direct else ("canal" if is_public else "chat"),
+            "visibility_level": self._normalize_visibility_level(data.get("VisibilityLevel")),
+            "meeting_active": meeting["active"],
+            "meeting_id": meeting["meeting_id"],
+            "meeting_code": meeting["meeting_code"],
             "message": raw_message.strip(),
             "destiny_resource": destiny_resource,
             "addressed_to_agent": addressed_to_agent,
@@ -882,6 +924,7 @@ class NotificationApiListener:
         is_public = payload.get("IsPublic") if payload else None
         resource_table = payload.get("ResourceTable") if payload else None
         destiny = payload.get("Destiny") if payload else None
+        meeting = self._extract_meeting_context(payload.get("Info") if payload else None)
         framework_stamp = payload.get("FrameworkStamp") or payload.get("Stamp") if payload else None
         event_timestamp = datetime.utcnow()
         if isinstance(framework_stamp, str) and framework_stamp.strip():
@@ -934,6 +977,9 @@ class NotificationApiListener:
                 "priority": payload.get("Priority"),
                 "modifiers": payload.get("Modifiers"),
                 "visibility_level": payload.get("VisibilityLevel"),
+                "meeting_active": meeting["active"],
+                "meeting_id": meeting["meeting_id"],
+                "meeting_code": meeting["meeting_code"],
                 "mask_message": payload.get("MaskMessage"),
                 "fingerprint": fingerprint,
                 "captured_at": datetime.utcnow().isoformat(),
@@ -948,7 +994,7 @@ class NotificationApiListener:
         endpoint: str = "/frameworkHub/SendMessage",
     ) -> Dict[str, Any]:
 
-        #print(f"📡 Capturando payload en tiempo real desde {payload}...")
+        print(f"📡 Capturando payload en tiempo real desde {payload}...")
 
         """Indexa inmediatamente un mensaje recibido por el proxy del hub."""
         entries = self._normalize_entries(
