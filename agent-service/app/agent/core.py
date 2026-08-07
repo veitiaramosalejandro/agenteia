@@ -198,7 +198,7 @@ class MachiningAgent:
     def _is_agent_dialogue_message(self, row: dict[str, Any]) -> bool:
         """Identifica mensajes emitidos por el agente o dirigidos explícitamente a él."""
         sender_resource = str(row.get("sender_resource_id") or "").strip().lower()
-        agent_resource = str(settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip().lower()
+        agent_resource = str(settings.SOLIDSET_RESOURCE_ID or "").strip().lower()
         if agent_resource and sender_resource == agent_resource:
             return True
 
@@ -1580,7 +1580,7 @@ class MachiningAgent:
         if auto_reply_mode:
             system_prompt += (
                 "\n\n=== MODO AUTORRESPUESTA SOLIDSET ===\n"
-                "Responde exclusivamente al mensaje entrante con una respuesta breve, natural y útil. "
+                "Responde exclusivamente al mensaje entrante con una respuesta breve, formal, profesional y útil. "
                 "No consultes mensajes anteriores, no reacciones al chat y no ejecutes acciones de SolidSET. "
                 "No muestres resultados técnicos de herramientas, estados HTTP, JSON ni trazas internas. "
                 "Si falta un dato imprescindible (por ejemplo, la ciudad para consultar el tiempo), "

@@ -440,6 +440,10 @@ class NotificationApiListener:
             normalized.get("IDSenderResource"),
             nested(sender, "IDResource", "IdResource", "ResourceID", "resource"),
         )
+        normalized["IDSenderLogin"] = first(
+            normalized.get("IDSenderLogin"),
+            nested(sender, "IDLogin", "IdLogin", "LoginID", "login"),
+        )
         normalized["SenderFullName"] = first(
             normalized.get("SenderFullName"),
             nested(sender, "FullName", "DisplayName", "Name", "Username", "login"),
@@ -468,6 +472,46 @@ class NotificationApiListener:
         normalized["FrameworkSender"] = sender
         normalized["FrameworkDestiny"] = destiny
         return normalized
+
+    def _destiny_addresses_agent(self, destiny: Dict[str, Any]) -> bool:
+        """Comprueba el destino directo y cada entrada de Destiny.dests."""
+        if not isinstance(destiny, dict):
+            return False
+
+        zero_guid = "00000000-0000-0000-0000-000000000000"
+
+        def clean(value: Any) -> str:
+            normalized = str(value or "").strip().lower()
+            return "" if normalized == zero_guid else normalized
+
+        own_logins = {
+            value for value in (
+                clean(settings.SOLIDSET_LOGIN_RESOURCE_ID),
+                clean(getattr(self, "current_login_id", "")),
+            ) if value
+        }
+        own_resources = {
+            value for value in (
+                clean(settings.SOLIDSET_RESOURCE_ID),
+                clean(getattr(self, "current_resource_id", "")),
+            ) if value
+        }
+        if not own_logins and not own_resources:
+            return False
+
+        lowered = {str(key).lower(): value for key, value in destiny.items()}
+        destinations: List[Dict[str, Any]] = [lowered]
+        raw_dests = lowered.get("dests")
+        if isinstance(raw_dests, list):
+            destinations.extend(item for item in raw_dests if isinstance(item, dict))
+
+        for destination in destinations:
+            item = {str(key).lower(): value for key, value in destination.items()}
+            login = clean(item.get("login") or item.get("idlogin"))
+            resource = clean(item.get("resource") or item.get("idresource"))
+            if (login and login in own_logins) or (resource and resource in own_resources):
+                return True
+        return False
 
     def _normalize_entries(self, source: str, endpoint: str, payload: Any, channel_id: Optional[str] = None) -> List[Dict[str, Any]]:
         if endpoint.lower().rstrip("/").endswith("frameworkhub/sendmessage"):
@@ -586,9 +630,6 @@ class NotificationApiListener:
             or data.get("BookMarkedIDChannel")
             or entry.get("channel_id")
         )
-        if not isinstance(channel_id, str) or not channel_id.strip():
-            return None
-
         sender_resource = data.get("IDSenderResource")
         sender_name = (
             data.get("SenderFullName")
@@ -602,27 +643,25 @@ class NotificationApiListener:
         destiny = data.get("FrameworkDestiny") if isinstance(data.get("FrameworkDestiny"), dict) else {}
         destiny_lower = {str(key).lower(): value for key, value in destiny.items()}
         destiny_resource = str(destiny_lower.get("resource") or destiny_lower.get("idresource") or "").strip()
-        own_resource = str(self.current_resource_id or settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip()
-        addressed_to_agent = bool(
-            destiny_resource
-            and own_resource
-            and destiny_resource.lower() == own_resource.lower()
-        )
-        zero_guid = "00000000-0000-0000-0000-000000000000"
-        is_direct = addressed_to_agent and str(channel_id or "").strip().lower() in {"", zero_guid}
+        addressed_to_agent = self._destiny_addresses_agent(destiny)
+        # Un destinatario explícito prevalece sobre workRoom: se responde al Sender.resource.
+        is_direct = addressed_to_agent
+        channel_id_text = str(channel_id or "").strip()
+        if not channel_id_text and not (is_direct and str(sender_resource or "").strip()):
+            return None
 
         candidate = {
             "fingerprint": fingerprint,
             "timestamp": datetime.utcnow().isoformat(),
             "source": entry.get("source", "notification_api"),
             "endpoint": entry.get("endpoint", ""),
-            "channel_id": channel_id.strip(),
-            "channel_name": data.get("ChannelName") or data.get("OriginChannelName") or channel_id.strip(),
+            "channel_id": channel_id_text,
+            "channel_name": data.get("ChannelName") or data.get("OriginChannelName") or channel_id_text,
             "sender_resource": str(sender_resource or "").strip(),
             "sender_name": str(sender_name),
             "chat_id": chat_id,
             "is_public": is_public,
-            "scope": "canal" if is_public else "chat",
+            "scope": "directo" if is_direct else ("canal" if is_public else "chat"),
             "message": raw_message.strip(),
             "destiny_resource": destiny_resource,
             "addressed_to_agent": addressed_to_agent,
@@ -908,6 +947,9 @@ class NotificationApiListener:
         payload: Any,
         endpoint: str = "/frameworkHub/SendMessage",
     ) -> Dict[str, Any]:
+
+        #print(f"📡 Capturando payload en tiempo real desde {payload}...")
+
         """Indexa inmediatamente un mensaje recibido por el proxy del hub."""
         entries = self._normalize_entries(
             source="framework_hub_realtime",

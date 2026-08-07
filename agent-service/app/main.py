@@ -129,7 +129,7 @@ def _remember_auto_reply_followup(candidate: dict) -> None:
 
 
 def _is_self_sender(sender_resource: str, sender_name: str) -> bool:
-    own_resource = (settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip().lower()
+    own_resource = (settings.SOLIDSET_RESOURCE_ID or "").strip().lower()
     own_username = (settings.SOLIDSET_LOGIN_USERNAME or "").strip().lower()
     sender_resource_norm = (sender_resource or "").strip().lower()
     sender_name_norm = (sender_name or "").strip().lower()
@@ -273,9 +273,23 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     can_reply_direct = bool(candidate.get("is_direct") and candidate.get("reply_resource"))
     if (not channel_id and not can_reply_direct) or not message:
         return False
+
+    # Con identidad explícita configurada, Destiny es la fuente de verdad. Así
+    # una mención textual dentro de un canal ajeno no provoca una respuesta.
+    has_configured_recipient_identity = bool(
+        (settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip()
+        or (settings.SOLIDSET_RESOURCE_ID or "").strip()
+    )
+    if has_configured_recipient_identity and not candidate.get("addressed_to_agent"):
+        return False
     mentioned = _message_mentions_agent(message)
     active_followup = _has_active_auto_reply_followup(candidate)
-    if not mentioned and not _looks_like_question_or_request(message) and not active_followup:
+    if (
+        not candidate.get("addressed_to_agent")
+        and not mentioned
+        and not _looks_like_question_or_request(message)
+        and not active_followup
+    ):
         return False
     if (not settings.SOLIDSET_AUTO_REPLY_ALLOW_SELF) and _is_self_sender(sender_resource=sender_resource, sender_name=sender_name):
         return False
@@ -345,6 +359,7 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                 )
                 print(
                     f"🤖 Generando auto-respuesta con LLM channel={channel_id} "
+                    f"target={'direct:' + reply_resource if is_direct else 'channel:' + channel_id} "
                     f"ollama={settings.OLLAMA_BASE_URL} route="
                     f"{'external_web' if external_query else 'work_sql_rag'}"
                 )

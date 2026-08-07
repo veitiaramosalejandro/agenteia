@@ -84,7 +84,9 @@ class Settings(BaseSettings):
     SOLIDSET_LOGIN_USERNAME: str = os.getenv("SOLIDSET_LOGIN_USERNAME", "")
     SOLIDSET_LOGIN_PASSWORD: str = os.getenv("SOLIDSET_LOGIN_PASSWORD", "")
     SOLIDSET_LOGIN_HASHPASS: str = os.getenv("SOLIDSET_LOGIN_HASHPASS", "")
+    # Identidad del agente en el DTO FrameworkMessage: login y recurso son GUID distintos.
     SOLIDSET_LOGIN_RESOURCE_ID: str = os.getenv("SOLIDSET_LOGIN_RESOURCE_ID", "")
+    SOLIDSET_RESOURCE_ID: str = os.getenv("SOLIDSET_RESOURCE_ID", "")
     SOLIDSET_TIMEZONE_ID: str = os.getenv("SOLIDSET_TIMEZONE_ID", "GMT Standard Time")
     SOLIDSET_WORKSTATION_ID: str = os.getenv("SOLIDSET_WORKSTATION_ID", "1")
     SOLIDSET_WORKSTATION_NAME: str = os.getenv("SOLIDSET_WORKSTATION_NAME", "Android.1")

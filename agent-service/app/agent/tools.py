@@ -203,8 +203,8 @@ def _solidset_login(client: httpx.Client, base_url: str) -> tuple[bool, str, str
         "accessKey": True,
         "generateAccessKey": False,
     }
-    if settings.SOLIDSET_LOGIN_RESOURCE_ID:
-        payload["resource"] = settings.SOLIDSET_LOGIN_RESOURCE_ID
+    if settings.SOLIDSET_RESOURCE_ID:
+        payload["resource"] = settings.SOLIDSET_RESOURCE_ID
 
     for endpoint in ["/api/User/LoginRaw", "/api/User/Login"]:
         try:
