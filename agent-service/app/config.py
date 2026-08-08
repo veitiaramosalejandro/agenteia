@@ -94,7 +94,8 @@ class Settings(BaseSettings):
     SOLIDSET_APPLICATION_ID: str = os.getenv("SOLIDSET_APPLICATION_ID", "")
     SOLIDSET_USER_ACTIONS_ENABLED: bool = _env_bool("SOLIDSET_USER_ACTIONS_ENABLED", "false")
     SOLIDSET_LISTEN_CHAT_MESSAGES: bool = _env_bool("SOLIDSET_LISTEN_CHAT_MESSAGES", "true")
-    SOLIDSET_CHAT_MAX_CHANNELS: int = int(os.getenv("SOLIDSET_CHAT_MAX_CHANNELS", "15"))
+    # 0 = todos los canales detectados; un valor positivo aplica un límite operativo.
+    SOLIDSET_CHAT_MAX_CHANNELS: int = max(0, int(os.getenv("SOLIDSET_CHAT_MAX_CHANNELS", "0")))
     SOLIDSET_CHAT_PAGE_SIZE: int = int(os.getenv("SOLIDSET_CHAT_PAGE_SIZE", "20"))
     SOLIDSET_AUTO_REPLY_ENABLED: bool = _env_bool("SOLIDSET_AUTO_REPLY_ENABLED", "false")
     SOLIDSET_AUTO_REPLY_REQUIRE_MENTION: bool = _env_bool("SOLIDSET_AUTO_REPLY_REQUIRE_MENTION", "true")

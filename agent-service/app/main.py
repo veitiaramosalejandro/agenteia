@@ -1123,6 +1123,58 @@ class SendMessageResultDTO(BaseModel):
     Message: FrameworkMessageDTO
     Error: Optional[str] = None
 
+
+def _get_payload_value(payload: Optional[dict[str, Any]], *keys: str) -> Any:
+    """Obtiene un valor de un objeto FrameworkMessage sin depender del casing."""
+    if not isinstance(payload, dict):
+        return None
+    for key in keys:
+        if key in payload and payload[key] not in (None, ""):
+            return payload[key]
+    lowered = {str(key).lower(): value for key, value in payload.items()}
+    for key in keys:
+        value = lowered.get(key.lower())
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _valid_framework_identifier(value: Any) -> Optional[str]:
+    """Descarta identificadores vacíos que SolidSET usa como valor nulo."""
+    normalized = str(value or "").strip()
+    if not normalized or normalized == "00000000-0000-0000-0000-000000000000":
+        return None
+    return normalized
+
+
+def _framework_message_to_dialogue(message: FrameworkMessageDTO) -> ChatConversationRequest:
+    """Normaliza el contrato de Notification al contrato interno del diálogo."""
+    sender = message.Sender or {}
+    destiny = message.Destiny or {}
+    user_id = _valid_framework_identifier(
+        _get_payload_value(sender, "login", "IDLogin")
+    ) or _valid_framework_identifier(
+        _get_payload_value(sender, "resource", "IDResource")
+    )
+    canal_id = _valid_framework_identifier(
+        _get_payload_value(destiny, "workRoom", "IDWorkRoom", "room", "IDRoom")
+    )
+    session_id = (
+        _valid_framework_identifier(_get_payload_value(sender, "session", "IDSession"))
+        or _valid_framework_identifier(_get_payload_value(destiny, "session", "IDSession"))
+        or canal_id
+        or _valid_framework_identifier(message.IDNotification)
+        or user_id
+        or "framework-dialogue"
+    )
+    return ChatConversationRequest(
+        session_id=session_id,
+        message=message.RawMessage or "",
+        user_id=user_id or "framework-user",
+        canal_id=canal_id,
+        generate_audio=False,
+    )
+
 # ============================================================
 # SEGURIDAD: FILTROS CONTRA PROMPT INJECTION
 # ============================================================
@@ -1295,15 +1347,23 @@ async def capture_and_forward_framework_message(request: Request):
     )
 
 @app.post("/api/v1/agent/dialogue", response_model=ChatConversationResponse)
-def handle_dialogue(req: ChatConversationRequest):
+def handle_dialogue(message: FrameworkMessageDTO):
     """
-    Procesa un diálogo con el agente.
+    Procesa un FrameworkMessage como diálogo con el agente.
     
+    - Normaliza RawMessage, Sender y Destiny al contexto interno del diálogo
     - Valida la seguridad del mensaje
     - Obtiene el contexto del usuario (sistema de aprendizaje)
     - Procesa la consulta con el agente
-    - Genera audio si se solicita
     """
+    if message.RawMessage is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="RawMessage es obligatorio para procesar un FrameworkMessage en /dialogue.",
+        )
+
+    req = _framework_message_to_dialogue(message)
+
     dialogue_started = False
     slot_acquired = False
     request_started_at = perf_counter()

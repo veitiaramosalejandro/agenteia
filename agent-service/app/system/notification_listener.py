@@ -1090,7 +1090,7 @@ class NotificationApiListener:
         endpoint: str = "/frameworkHub/SendMessage",
     ) -> Dict[str, Any]:
 
-        print(f"📡 Capturando payload en tiempo real desde {payload}...")
+        #print(f"📡 Capturando payload en tiempo real desde {payload}...")
 
         """Indexa inmediatamente un mensaje recibido por el proxy del hub."""
         entries = self._normalize_entries(
@@ -1585,13 +1585,19 @@ class NotificationApiListener:
                     seen.add(key)
                     unique_channels.append(cid)
                 channels_detected = len(unique_channels)
+                configured_max = settings.SOLIDSET_CHAT_MAX_CHANNELS
+                selected_channels = (
+                    unique_channels
+                    if configured_max == 0
+                    else unique_channels[:configured_max]
+                )
                 self._audit_log(
                     f"🔎 AUDIT channels detected={channels_detected} "
-                    f"selected={min(channels_detected, max(1, settings.SOLIDSET_CHAT_MAX_CHANNELS))}"
+                    f"selected={len(selected_channels)} "
+                    f"mode={'all' if configured_max == 0 else 'limited'}"
                 )
 
-                max_channels = max(1, settings.SOLIDSET_CHAT_MAX_CHANNELS)
-                for channel_id in unique_channels[:max_channels]:
+                for channel_id in selected_channels:
                     msg_result = await self._pull_channel_messages(client, channel_id)
                     learned += msg_result["learned"]
                     skipped += msg_result["skipped"]
