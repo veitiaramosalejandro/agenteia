@@ -104,6 +104,19 @@ class TestWebSearch(unittest.TestCase):
         self.assertNotIn("información obtenida", answer)
         self.assertEqual(answer, "hoy habrá 24 grados.")
 
+    def test_web_results_have_useful_fallback_without_llm(self):
+        payload = json.dumps({
+            "results": [{
+                "title": "Plantilla Real Madrid",
+                "snippet": "Listado actualizado de jugadores para la temporada.",
+                "url": "https://example.com/squad",
+            }]
+        })
+        answer = MachiningAgent._web_results_without_llm(payload, "plantilla")
+        self.assertIn("Plantilla Real Madrid", answer)
+        self.assertIn("Listado actualizado", answer)
+        self.assertNotIn("https://", answer)
+
 
 if __name__ == "__main__":
     unittest.main()

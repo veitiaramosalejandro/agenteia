@@ -1629,7 +1629,7 @@ def get_chat_history(
     limit: int = Query(
         10,
         ge=1,
-        le=50,
+        le=100,
         description="Cantidad maxima de mensajes a devolver por pagina."
     ),
 ):

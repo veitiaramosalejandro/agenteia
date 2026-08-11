@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     EMBEDDING_VECTOR_SIZE: int = max(0, int(os.getenv("EMBEDDING_VECTOR_SIZE", "0")))
     LLM_MAX_OUTPUT_TOKENS: int = max(128, int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1024")))
+    LLM_REQUEST_TIMEOUT_SECONDS: int = max(10, int(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "60")))
     
     # Vector Database (Qdrant)
     VECTOR_DB_URL: str = os.getenv("VECTOR_DB_URL", "http://vector-db:6333")
