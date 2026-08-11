@@ -117,6 +117,13 @@ class TestWebSearch(unittest.TestCase):
         self.assertIn("Listado actualizado", answer)
         self.assertNotIn("https://", answer)
 
+    def test_web_knowledge_is_available_immediately_after_search(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        agent.web_knowledge_cache = {}
+        query = "plantilla Real Madrid temporada 2026-2027"
+        agent._cache_web_knowledge(query, '{"results": [{"title": "Plantilla"}]}')
+        self.assertIn("Plantilla", agent._get_cached_web_knowledge(query))
+
 
 if __name__ == "__main__":
     unittest.main()

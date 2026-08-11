@@ -1064,6 +1064,37 @@ class SistemaAprendizaje:
         
         return "\n---\n".join(formatted_results)
 
+    def consultar_investigacion_web_reciente(self, query: str, limit: int = 5) -> str:
+        """Recupera únicamente búsquedas web aprendidas, relevantes y aún vigentes."""
+        query_vector = self._embed_query_safe(query, context="consultar_memoria_web")
+        if query_vector is None:
+            return ""
+        resultados = self._search_aprendizaje(
+            query_vector,
+            query_filter={"category": "web_research"},
+            limit=limit,
+        )
+        now = datetime.now().astimezone()
+        useful = []
+        for hit in resultados:
+            if float(hit.get("score") or 0.0) < settings.WEB_MEMORY_MIN_SCORE:
+                continue
+            payload = hit.get("payload") or {}
+            learned_at = str(payload.get("learned_at") or "")
+            try:
+                learned_dt = datetime.fromisoformat(learned_at)
+                if learned_dt.tzinfo is None:
+                    learned_dt = learned_dt.astimezone()
+                age_hours = (now - learned_dt).total_seconds() / 3600
+            except (TypeError, ValueError):
+                continue
+            if age_hours > settings.WEB_MEMORY_MAX_AGE_HOURS:
+                continue
+            content = str(payload.get("page_content") or "").strip()
+            if content:
+                useful.append(content[:1600])
+        return "\n---\n".join(useful)
+
     # ============================================================
     # 4. APRENDER DE LAS ACTIVIDADES (RAG)
     # ============================================================

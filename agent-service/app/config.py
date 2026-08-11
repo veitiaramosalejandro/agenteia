@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     WEB_SEARCH_REGION: str = os.getenv("WEB_SEARCH_REGION", "wt-wt")
     WEB_SEARCH_SAFESEARCH: str = os.getenv("WEB_SEARCH_SAFESEARCH", "moderate")
     WEB_SEARCH_AUTO_LEARN: bool = _env_bool("WEB_SEARCH_AUTO_LEARN", "true")
+    WEB_MEMORY_MAX_AGE_HOURS: int = max(1, int(os.getenv("WEB_MEMORY_MAX_AGE_HOURS", "24")))
+    WEB_MEMORY_MIN_SCORE: float = max(0.0, min(float(os.getenv("WEB_MEMORY_MIN_SCORE", "0.55")), 1.0))
 
     # Redis Cache / Memory
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")

@@ -117,6 +117,7 @@ class MachiningAgent:
         # Cache de contextos de usuario (para evitar consultas repetidas)
         self.user_context_cache = {}
         self.cache_ttl = 300  # 5 minutos
+        self.web_knowledge_cache: Dict[str, tuple[datetime, str]] = {}
 
     def _is_llm_connection_error(self, exc: Exception) -> bool:
         """Detecta fallos típicos de conexión al endpoint del LLM/Ollama."""
@@ -1114,6 +1115,24 @@ class MachiningAgent:
             return f"{previous} {current}".strip()
         return current
 
+    def _get_cached_web_knowledge(self, query: str) -> str:
+        key = " ".join((query or "").lower().split())
+        cached = self.web_knowledge_cache.get(key)
+        if not cached:
+            return ""
+        stored_at, content = cached
+        age_hours = (datetime.now().astimezone() - stored_at).total_seconds() / 3600
+        if age_hours > settings.WEB_MEMORY_MAX_AGE_HOURS:
+            self.web_knowledge_cache.pop(key, None)
+            return ""
+        return content
+
+    def _cache_web_knowledge(self, query: str, content: Any) -> None:
+        key = " ".join((query or "").lower().split())
+        value = str(content or "").strip()
+        if key and value:
+            self.web_knowledge_cache[key] = (datetime.now().astimezone(), value)
+
     def _is_sql_business_query(self, user_text: str) -> bool:
         """Detecta preguntas de datos operativos que deben resolverse desde SQL Server."""
         text = self._normalize_context_query(user_text).lower()
@@ -1732,6 +1751,22 @@ class MachiningAgent:
         if valid_user_guid and not external_query_mode and not general_conversation_mode:
             aprendizaje_relevante = self._get_aprendizaje_relevante(context_query, user_id)
 
+        memoria_web_reciente = ""
+        if external_query_mode:
+            memoria_query = self._contextual_web_query(
+                user_text,
+                previous_user_texts or previous_user_text,
+            )
+            memoria_web_reciente = self._get_cached_web_knowledge(memoria_query)
+            try:
+                if not memoria_web_reciente:
+                    memoria_web_reciente = self.sistema_aprendizaje.consultar_investigacion_web_reciente(
+                        memoria_query,
+                        limit=settings.WEB_SEARCH_MAX_RESULTS,
+                    )
+            except Exception as exc:
+                print(f"⚠️ No se pudo consultar la memoria web: {exc}")
+
         # --- 5. CONSTRUIR MENSAJES ---
         
         # System Prompt con contexto del usuario
@@ -1867,21 +1902,33 @@ class MachiningAgent:
                 user_text,
                 previous_user_texts or previous_user_text,
             )
-            try:
-                prefetched_web_result = google_web_search.invoke({"query": search_query})
-                if prefetched_web_result and not str(prefetched_web_result).startswith(
-                    ("Error", "La búsqueda", "No se encontraron")
-                ):
-                    last_tool_result = prefetched_web_result
-                    herramientas_usadas.append("google_web_search")
-                    messages.append(SystemMessage(content=(
-                        "RESULTADOS WEB PARA RESPONDER EL TURNO ACTUAL:\n"
-                        f"{prefetched_web_result}\n\n"
-                        "Sintetiza ahora la respuesta. No solicites otra búsqueda."
-                    )))
-                    llm_for_request = self.llm
-            except Exception as exc:
-                print(f"⚠️ Falló la búsqueda web previa: {exc}")
+            if memoria_web_reciente:
+                last_tool_result = memoria_web_reciente
+                herramientas_usadas.append("web_memory")
+                messages.append(SystemMessage(content=(
+                    "CONOCIMIENTO WEB RECIENTE RECUPERADO DE LA MEMORIA VECTORIAL:\n"
+                    f"{memoria_web_reciente}\n\n"
+                    "Responde con este conocimiento. No busques de nuevo salvo que sea insuficiente."
+                )))
+                llm_for_request = self.llm
+                print(f"🧠 Reutilizando memoria web reciente; query={search_query[:80]!r}")
+            else:
+                try:
+                    prefetched_web_result = google_web_search.invoke({"query": search_query})
+                    if prefetched_web_result and not str(prefetched_web_result).startswith(
+                        ("Error", "La búsqueda", "No se encontraron")
+                    ):
+                        last_tool_result = prefetched_web_result
+                        herramientas_usadas.append("google_web_search")
+                        self._cache_web_knowledge(search_query, prefetched_web_result)
+                        messages.append(SystemMessage(content=(
+                            "RESULTADOS WEB PARA RESPONDER EL TURNO ACTUAL:\n"
+                            f"{prefetched_web_result}\n\n"
+                            "Sintetiza ahora la respuesta. No solicites otra búsqueda."
+                        )))
+                        llm_for_request = self.llm
+                except Exception as exc:
+                    print(f"⚠️ Falló la búsqueda web previa: {exc}")
         
         while iteration < self.max_iterations:
             try:
@@ -2020,7 +2067,7 @@ class MachiningAgent:
                 external_query_mode
                 or self._response_needs_web_fallback(response_text, herramientas_usadas)
             )
-            and "google_web_search" not in herramientas_usadas
+            and not {"google_web_search", "web_memory"}.intersection(herramientas_usadas)
         ):
             search_query = self._contextual_web_query(
                 user_text,
@@ -2045,7 +2092,7 @@ class MachiningAgent:
 
         # Aplicar la misma política de presentación tanto a la búsqueda solicitada
         # por el modelo como al respaldo web automático.
-        if "google_web_search" in herramientas_usadas:
+        if {"google_web_search", "web_memory"}.intersection(herramientas_usadas):
             response_text = self._clean_web_answer(response_text)
 
         # --- 9. PERSISTIR CONVERSACIÓN ---
