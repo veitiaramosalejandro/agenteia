@@ -19,6 +19,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams
 
 from app.config import settings
+from app.rag.vector_store import ensure_vector_collection
 
 from app.rag.audio_processor import extract_audio_features
 from app.rag.retriever import get_rag_context
@@ -1507,12 +1508,7 @@ def learn_new_fact(fact_description: str, category: str = "general") -> str:
             model=settings.EMBEDDING_MODEL_NAME,
         )
 
-        collections = [c.name for c in client.get_collections().collections]
-        if settings.VECTOR_COLLECTION_NAME not in collections:
-            client.create_collection(
-                collection_name=settings.VECTOR_COLLECTION_NAME,
-                vectors_config=VectorParams(size=768, distance=Distance.COSINE),
-            )
+        ensure_vector_collection(client, settings.VECTOR_COLLECTION_NAME, embeddings)
 
         vector = embeddings.embed_query(fact_description)
 

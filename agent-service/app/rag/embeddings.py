@@ -5,6 +5,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from langchain_ollama import OllamaEmbeddings
 from app.config import settings
+from app.rag.vector_store import ensure_vector_collection
 from app.rag.audio_processor import extract_audio_features
 
 def ingestar_audios_a_qdrant(audio_dir: str = "/app/audio"):
@@ -21,12 +22,7 @@ def ingestar_audios_a_qdrant(audio_dir: str = "/app/audio"):
         return
 
     # Verificar si la colección existe
-    collections = [c.name for c in client.get_collections().collections]
-    if settings.VECTOR_COLLECTION_NAME not in collections:
-        client.create_collection(
-            collection_name=settings.VECTOR_COLLECTION_NAME,
-            vectors_config=VectorParams(size=768, distance=Distance.COSINE)
-        )
+    ensure_vector_collection(client, settings.VECTOR_COLLECTION_NAME, embeddings)
 
     points = []
     nuevos = 0

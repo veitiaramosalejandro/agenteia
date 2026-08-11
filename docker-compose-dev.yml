@@ -12,7 +12,8 @@ services:
       - ./ollama_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-      # Ajustado para una RTX A3000 de 6 GB y qwen2.5:7b + nomic-embed-text.
+      # Ajustado para una RTX A3000 de 6 GB: chat y embeddings grandes se cargan
+      # de uno en uno para evitar agotar VRAM/RAM.
       - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
       - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-2}
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}

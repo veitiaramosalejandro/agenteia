@@ -1,4 +1,5 @@
 import inspect
+import uuid
 import unittest
 
 from fastapi import HTTPException
@@ -51,6 +52,17 @@ class TestDialogueFrameworkPayload(unittest.TestCase):
         self.assertEqual(dialogue.user_id, "resource-1")
         self.assertEqual(dialogue.session_id, "room-2")
         self.assertEqual(dialogue.canal_id, "room-2")
+
+    def test_missing_sender_gets_isolated_session_and_anonymous_user(self):
+        first = _framework_message_to_dialogue(FrameworkMessageDTO(RawMessage="Hola"))
+        second = _framework_message_to_dialogue(FrameworkMessageDTO(RawMessage="Hola"))
+
+        self.assertTrue(first.session_id.startswith("framework-dialogue-"))
+        self.assertTrue(first.user_id.startswith("framework-user-"))
+        self.assertNotEqual(first.session_id, second.session_id)
+        self.assertNotEqual(first.user_id, second.user_id)
+        uuid.UUID(first.session_id.removeprefix("framework-dialogue-"))
+        uuid.UUID(first.user_id.removeprefix("framework-user-"))
 
 
 if __name__ == "__main__":

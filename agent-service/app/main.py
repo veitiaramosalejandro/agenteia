@@ -6,6 +6,7 @@ import re
 import socket
 import ssl
 import threading
+import uuid
 import httpx
 import redis
 from contextlib import suppress
@@ -1165,12 +1166,13 @@ def _framework_message_to_dialogue(message: FrameworkMessageDTO) -> ChatConversa
         or canal_id
         or _valid_framework_identifier(message.IDNotification)
         or user_id
-        or "framework-dialogue"
+        or f"framework-dialogue-{uuid.uuid4()}"
     )
+    anonymous_user_id = f"framework-user-{uuid.uuid4()}"
     return ChatConversationRequest(
         session_id=session_id,
         message=message.RawMessage or "",
-        user_id=user_id or "framework-user",
+        user_id=user_id or anonymous_user_id,
         canal_id=canal_id,
         generate_audio=False,
     )

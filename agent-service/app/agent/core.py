@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import uuid
 from urllib import error as urlerror
 from urllib.request import urlopen
 from typing import Optional, List, Dict, Any
@@ -11,6 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AI
 from langchain_ollama import ChatOllama
 
 from app.agent.prompts import SYSTEM_PROMPT
+from app.agent.identity import AgentIdentityService
 from app.agent.tools import (
     fetch_external_api,
     google_web_search,
@@ -104,6 +106,7 @@ class MachiningAgent:
         
         # Sistema de aprendizaje contextual
         self.sistema_aprendizaje = SistemaAprendizaje()
+        self.identity_service = AgentIdentityService()
         
         # Configuración de memoria
         self.max_history_messages = 12  # Máximo de mensajes a mantener sin resumir
@@ -127,6 +130,29 @@ class MachiningAgent:
             "nenhuma ligação pôde ser feita",
         ]
         return any(hint in text for hint in connection_hints)
+
+    @staticmethod
+    def _is_valid_guid(value: Optional[str]) -> bool:
+        """Indica si un identificador puede enviarse a columnas uniqueidentifier."""
+        try:
+            return bool(value) and uuid.UUID(str(value)).int != 0
+        except (ValueError, TypeError, AttributeError):
+            return False
+
+    @staticmethod
+    def _is_general_conversation(user_text: str) -> bool:
+        """Detecta saludos, identidad social y preferencias conversacionales."""
+        text = " ".join((user_text or "").strip().lower().split())
+        if not text:
+            return False
+        social_patterns = (
+            r"^(?:hola|buen(?:os d[ií]as|as tardes|as noches)|buenas|ola|ol[aá]|bom dia|boa tarde|boa noite|hello|hi|hey)(?:[ ,!¿]+agente)?(?:[ ,!¿]+(?:c[oó]mo est[aá]s?|qu[eé] tal))?[?!. ]*$",
+            r"\b(?:c[oó]mo te (?:gustar[ií]a|gusta) que te llam(?:e|ara)|qu[eé] nombre .{0,30}(?:tienes|pondr[ií]as|pusieras|gustar[ií]a|prefieres))\b",
+            r"\b(?:prefiero|quiero|voy a) llamar(?:te)?\b",
+            r"\b(?:te llamar[eé]|puedo llamarte|tu nombre (?:es|ser[aá]))\b",
+            r"\b(?:gracias|muchas gracias|de nada|hasta luego|adi[oó]s)\b",
+        )
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in social_patterns)
 
     def _probe_ollama_tags(self, timeout_seconds: float = 2.0) -> str:
         """Realiza una comprobación corta al endpoint /api/tags para diagnóstico."""
@@ -284,10 +310,10 @@ class MachiningAgent:
 
     def _build_identity_response(self, user_id: Optional[str], canal_id: Optional[str]) -> str:
         """Construye respuesta de identidad usando user_id de sesión y contexto opcional desde BD."""
-        if not user_id:
+        if not self._is_valid_guid(user_id):
             return (
-                "⚠️ No recibí un user_id en esta sesión. "
-                "Si compartes tu usuario, puedo identificarte correctamente."
+                "⚠️ No recibí una identidad válida en esta sesión. "
+                "Vuelve a abrir la conversación desde tu sesión de SolidSET para que pueda identificarte."
             )
 
         display_name = user_id
@@ -1334,6 +1360,7 @@ class MachiningAgent:
         tool_allowlist: Optional[set[str]] = None,
         auto_reply_mode: bool = False,
         external_query_mode: bool = False,
+        general_conversation_mode: bool = False,
     ) -> str:
         """
         Procesa la consulta del usuario con contexto completo.
@@ -1355,9 +1382,23 @@ class MachiningAgent:
         if not session_id:
             session_id = f"session_{hashlib.md5(user_text.encode()).hexdigest()[:8]}"
 
+        identity_snapshot = self.identity_service.observe_user_message(
+            session_id=session_id,
+            user_id=user_id,
+            user_text=user_text,
+        )
+
+        general_conversation_mode = (
+            general_conversation_mode or self._is_general_conversation(user_text)
+        )
+        valid_user_guid = self._is_valid_guid(user_id)
+        valid_channel_guid = self._is_valid_guid(canal_id)
+
         # En diálogo normal también aplicamos el enrutado por intención. Esto evita
         # usar endpoints SOLIDSET para preguntas que pertenecen a SQL Server.
-        if self._is_external_information_query(user_text):
+        if general_conversation_mode:
+            tool_allowlist = set()
+        elif self._is_external_information_query(user_text):
             external_query_mode = True
             if tool_allowlist is None:
                 tool_allowlist = {"google_web_search"}
@@ -1444,11 +1485,13 @@ class MachiningAgent:
             return response_text
 
         # --- 3.1 ANÁLISIS DE INTERVENCIONES DE UNA PERSONA DESDE SQL SERVER ---
-        participant_analysis_response = self._resolve_channel_participant_analysis(
-            user_id=user_id or "",
-            canal_id=canal_id,
-            user_text=user_text,
-        )
+        participant_analysis_response = None
+        if valid_user_guid and valid_channel_guid:
+            participant_analysis_response = self._resolve_channel_participant_analysis(
+                user_id=user_id or "",
+                canal_id=canal_id,
+                user_text=user_text,
+            )
         if participant_analysis_response is not None:
             if history:
                 try:
@@ -1459,11 +1502,13 @@ class MachiningAgent:
             return participant_analysis_response
 
         # --- 3.2 FRECUENCIA DE PARTICIPACIÓN EN EL CANAL DESDE SQL SERVER ---
-        participant_frequency_response = self._resolve_channel_participant_frequency(
-            user_id=user_id or "",
-            canal_id=canal_id,
-            user_text=user_text,
-        )
+        participant_frequency_response = None
+        if valid_user_guid and valid_channel_guid:
+            participant_frequency_response = self._resolve_channel_participant_frequency(
+                user_id=user_id or "",
+                canal_id=canal_id,
+                user_text=user_text,
+            )
         if participant_frequency_response is not None:
             if history:
                 try:
@@ -1474,7 +1519,7 @@ class MachiningAgent:
             return participant_frequency_response
 
         # --- 3.3 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
-        if user_id and self._is_channel_summary_intent(user_text):
+        if valid_user_guid and valid_channel_guid and self._is_channel_summary_intent(user_text):
             channel_summary_response = self._resolve_channel_summary_from_db(
                 user_id=user_id,
                 canal_id=canal_id,
@@ -1489,7 +1534,7 @@ class MachiningAgent:
             return channel_summary_response
 
         # --- 3.4 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
-        if user_id and self._is_channel_names_intent(user_text):
+        if valid_user_guid and self._is_channel_names_intent(user_text):
             channel_names_response = self._resolve_channel_names_from_db(user_id, user_text)
             if history:
                 try:
@@ -1511,7 +1556,7 @@ class MachiningAgent:
             return resource_count_response
 
         # --- 3.6 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
-        if user_id and self._is_last_chat_message_intent(user_text):
+        if valid_user_guid and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:
                 if history:
@@ -1545,27 +1590,32 @@ class MachiningAgent:
         
         # 4.1 Contexto del usuario (canales, rol, permisos)
         contexto_usuario = ""
-        if user_id and not external_query_mode:
+        if valid_user_guid and not external_query_mode and not general_conversation_mode:
             contexto_usuario = self._get_user_context(user_id)
         
         # 4.2 Contexto RAG (documentos técnicos)
         context_query = self._normalize_context_query(user_text)
         rag_context = ""
-        if not external_query_mode:
+        if not external_query_mode and not general_conversation_mode:
             rag_context = self.sistema_aprendizaje.consultar_documentacion(context_query)
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
         chat_context_bd = ""
-        if user_id and not external_query_mode:
+        if valid_user_guid and not external_query_mode and not general_conversation_mode:
             chat_context_bd = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
                 user_id=user_id,
-                canal_id=canal_id,
+                canal_id=canal_id if valid_channel_guid else None,
                 limit=8,
             )
 
         # 4.3.1 Resumen operativo vivo del canal actual
         canal_operativo_context = ""
-        if user_id and not external_query_mode:
+        if (
+            valid_user_guid
+            and valid_channel_guid
+            and not external_query_mode
+            and not general_conversation_mode
+        ):
             canal_operativo_context = self.sistema_aprendizaje.obtener_resumen_operativo_canal(
                 user_id=user_id,
                 canal_id=canal_id,
@@ -1574,13 +1624,17 @@ class MachiningAgent:
         
         # 4.4 Aprendizaje relevante (actividades pasadas similares)
         aprendizaje_relevante = ""
-        if user_id and not external_query_mode:
+        if valid_user_guid and not external_query_mode and not general_conversation_mode:
             aprendizaje_relevante = self._get_aprendizaje_relevante(context_query, user_id)
 
         # --- 5. CONSTRUIR MENSAJES ---
         
         # System Prompt con contexto del usuario
-        system_prompt = SYSTEM_PROMPT
+        system_prompt = (
+            SYSTEM_PROMPT
+            + "\n\n"
+            + self.identity_service.build_prompt_context(identity_snapshot)
+        )
 
         if auto_reply_mode:
             system_prompt += (
@@ -1899,7 +1953,7 @@ class MachiningAgent:
 
         print(f"👋 Procesando saludo para user_id={user_id}")
 
-        if not user_id:
+        if not self._is_valid_guid(user_id):
             return self._localized(
                 user_text,
                 es="👋 ¡Hola! Soy tu asistente virtual de SolidSET Communicator. ¿En qué puedo ayudarte?",

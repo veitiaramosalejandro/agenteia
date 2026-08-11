@@ -19,6 +19,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from app.config import settings
+from app.rag.vector_store import ensure_vector_collection
 
 
 class SolidSetApiIngestor:
@@ -34,12 +35,7 @@ class SolidSetApiIngestor:
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
-        collections = [c.name for c in self.client.get_collections().collections]
-        if self.collection not in collections:
-            self.client.create_collection(
-                collection_name=self.collection,
-                vectors_config=VectorParams(size=768, distance=Distance.COSINE),
-            )
+        ensure_vector_collection(self.client, self.collection, self.embeddings)
 
     def _flatten_items(self, items: list[dict[str, Any]], prefix: str = "") -> list[dict[str, Any]]:
         flat: list[dict[str, Any]] = []

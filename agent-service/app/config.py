@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11434")
     MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:7b")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
+    EMBEDDING_VECTOR_SIZE: int = max(0, int(os.getenv("EMBEDDING_VECTOR_SIZE", "0")))
     LLM_MAX_OUTPUT_TOKENS: int = max(128, int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1024")))
     
     # Vector Database (Qdrant)
@@ -32,6 +33,12 @@ class Settings(BaseSettings):
 
     # Redis Cache / Memory
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")
+    AGENT_TEMPORAL_STATE_TTL_SECONDS: int = max(
+        300, int(os.getenv("AGENT_TEMPORAL_STATE_TTL_SECONDS", "3600"))
+    )
+    AGENT_USER_MEMORY_MAX_ITEMS: int = max(
+        5, int(os.getenv("AGENT_USER_MEMORY_MAX_ITEMS", "30"))
+    )
     
     # PostgreSQL / TimescaleDB
     POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "timescaledb")
@@ -123,6 +130,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 settings = Settings()
 

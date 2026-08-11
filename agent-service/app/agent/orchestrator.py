@@ -36,6 +36,7 @@ class SolidSETOrchestrator:
     def _build_graph(self):
         workflow = StateGraph(AgentGraphState)
         workflow.add_node("classify", self._classify)
+        workflow.add_node("general_conversation", self._execute_general)
         workflow.add_node("external_web", self._execute_external)
         workflow.add_node("work_sql_rag", self._execute_work)
         workflow.add_node("validate", self._validate)
@@ -44,10 +45,12 @@ class SolidSETOrchestrator:
             "classify",
             self._route_after_classification,
             {
+                "general_conversation": "general_conversation",
                 "external_web": "external_web",
                 "work_sql_rag": "work_sql_rag",
             },
         )
+        workflow.add_edge("general_conversation", "validate")
         workflow.add_edge("external_web", "validate")
         workflow.add_edge("work_sql_rag", "validate")
         workflow.add_edge("validate", END)
@@ -55,11 +58,13 @@ class SolidSETOrchestrator:
 
     def _classify(self, state: AgentGraphState) -> AgentGraphState:
         user_text = state.get("user_text", "")
-        route = (
-            "external_web"
-            if self.agent._is_external_information_query(user_text)
-            else "work_sql_rag"
-        )
+        is_general = getattr(self.agent, "_is_general_conversation", lambda _text: False)
+        if is_general(user_text):
+            route = "general_conversation"
+        elif self.agent._is_external_information_query(user_text):
+            route = "external_web"
+        else:
+            route = "work_sql_rag"
         print(f"🧭 LangGraph route={route} session={state.get('session_id', '')}")
         return {"route": route, "started_at": state.get("started_at") or perf_counter()}
 
@@ -81,6 +86,23 @@ class SolidSETOrchestrator:
             tool_allowlist={"google_web_search"},
             auto_reply_mode=bool(state.get("auto_reply_mode")),
             external_query_mode=True,
+        )
+        return {"response": response}
+
+    def _execute_general(self, state: AgentGraphState) -> AgentGraphState:
+        response = self.agent.analyze_event_with_dialogue(
+            session_id=state.get("session_id", ""),
+            user_text=state.get("user_text", ""),
+            user_id=state.get("user_id"),
+            canal_id=state.get("canal_id"),
+            meeting_id=state.get("meeting_id"),
+            meeting_code=state.get("meeting_code"),
+            message_kind=state.get("message_kind"),
+            message_category=state.get("message_category"),
+            message_metadata=state.get("message_metadata"),
+            tool_allowlist=set(),
+            auto_reply_mode=bool(state.get("auto_reply_mode")),
+            general_conversation_mode=True,
         )
         return {"response": response}
 
@@ -166,4 +188,17 @@ class SolidSETOrchestrator:
             "auto_reply_mode": auto_reply_mode,
             "started_at": perf_counter(),
         })
-        return str(result.get("response") or "").strip()
+        response = str(result.get("response") or "").strip()
+        identity_service = getattr(self.agent, "identity_service", None)
+        try:
+            if identity_service is not None:
+                identity_service.remember_turn(
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_text=user_text,
+                    agent_response=response,
+                )
+        except Exception as exc:
+            # La identidad enriquece el diálogo, pero nunca debe impedir responder.
+            print(f"⚠️ No se pudo actualizar la memoria de identidad: {exc}")
+        return response

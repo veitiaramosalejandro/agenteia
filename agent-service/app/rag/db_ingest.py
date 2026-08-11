@@ -13,6 +13,7 @@ from qdrant_client.models import PointStruct
 from langchain_ollama import OllamaEmbeddings
 
 from app.config import settings
+from app.rag.vector_store import ensure_vector_collection
 
 
 class DatabaseIngestor:
@@ -34,21 +35,7 @@ class DatabaseIngestor:
     def _ensure_collection(self):
         """Asegura que la colección existe en Qdrant."""
         try:
-            from qdrant_client.models import Distance, VectorParams
-            
-            collections = self.qdrant.get_collections()
-            collection_names = [c.name for c in collections.collections]
-            
-            if self.collection not in collection_names:
-                print(f"📦 Creando colección: {self.collection}")
-                self.qdrant.create_collection(
-                    collection_name=self.collection,
-                    vectors_config=VectorParams(
-                        size=768,
-                        distance=Distance.COSINE
-                    )
-                )
-                print(f"✅ Colección {self.collection} creada")
+            ensure_vector_collection(self.qdrant, self.collection, self.embeddings)
         except Exception as e:
             print(f"⚠️ Error verificando colección: {e}")
     

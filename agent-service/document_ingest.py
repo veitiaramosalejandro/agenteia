@@ -23,6 +23,7 @@ except ImportError:
     from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from app.config import settings
+from app.rag.vector_store import ensure_vector_collection
 
 
 class DocumentIngestor:
@@ -51,21 +52,7 @@ class DocumentIngestor:
     def _ensure_collection(self):
         """Asegura que la colección existe en Qdrant."""
         try:
-            from qdrant_client.models import Distance, VectorParams
-            
-            collections = self.qdrant.get_collections()
-            collection_names = [c.name for c in collections.collections]
-            
-            if self.collection not in collection_names:
-                print(f"📦 Creando colección: {self.collection}")
-                self.qdrant.create_collection(
-                    collection_name=self.collection,
-                    vectors_config=VectorParams(
-                        size=768,  # Tamaño del embedding de nomic-embed-text
-                        distance=Distance.COSINE
-                    )
-                )
-                print(f"✅ Colección {self.collection} creada")
+            ensure_vector_collection(self.qdrant, self.collection, self.embeddings)
         except Exception as e:
             print(f"⚠️ Error verificando colección: {e}")
     

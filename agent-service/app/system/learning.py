@@ -13,6 +13,7 @@ from qdrant_client.models import PointStruct, Distance, VectorParams
 from langchain_ollama import OllamaEmbeddings
 
 from app.config import settings
+from app.rag.vector_store import ensure_vector_collection
 from app.system.schema import (
     RecursoHumano, RecursoMaterial, Canal, Actividad, ContextoUsuario
 )
@@ -100,14 +101,7 @@ class SistemaAprendizaje:
     def _ensure_collection(self):
         """Asegura que la colección de aprendizaje exista en Qdrant."""
         try:
-            collections = self.qdrant.get_collections().collections
-            collection_names = [c.name for c in collections]
-            if self.collection not in collection_names:
-                self.qdrant.create_collection(
-                    collection_name=self.collection,
-                    vectors_config=VectorParams(size=768, distance=Distance.COSINE)
-                )
-                print(f"✅ Colección de aprendizaje creada: {self.collection}")
+            ensure_vector_collection(self.qdrant, self.collection, self.embeddings)
         except Exception as e:
             print(f"⚠️ Error asegurando colección '{self.collection}': {e}")
 
