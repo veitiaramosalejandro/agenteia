@@ -56,6 +56,33 @@ class TestWebSearch(unittest.TestCase):
             "No tengo información suficiente.", ["google_web_search"]
         ))
 
+    def test_sports_schedule_is_external_information(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertTrue(agent._is_external_information_query(
+            "¿Cuál es el primer partido del Real Madrid en la temporada 2026-2027?"
+        ))
+
+    def test_search_authorization_is_external_information(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertTrue(agent._is_external_information_query(
+            "Sí, necesito que busques por favor"
+        ))
+
+    def test_domain_only_turn_is_external_and_keeps_previous_topic(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertTrue(agent._is_external_information_query("www.marca.com"))
+        query = agent._contextual_web_query(
+            "www.marca.com",
+            [
+                "primer partido del Real Madrid temporada 2026-2027",
+                "Sí necesito que busques por favor",
+            ],
+        )
+        self.assertEqual(
+            query,
+            "primer partido del Real Madrid temporada 2026-2027 site:www.marca.com",
+        )
+
     def test_web_answer_hides_links_and_generic_attribution(self):
         agent = MachiningAgent.__new__(MachiningAgent)
         answer = agent._clean_web_answer(

@@ -1042,8 +1042,75 @@ class MachiningAgent:
             "tiempo", "tempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
             "weather", "forecast", "previsão", "previsao", "noticias", "news",
             "resultado deportivo", "precio actual", "cotizacion", "cotización",
+            "partido", "partidos", "juega", "juegan", "calendario", "temporada",
+            "fixture", "fútbol", "futbol", "liga", "champions", "copa",
+            "real madrid", "barcelona", "buscar", "busca", "busques", "búsqueda",
+            "search", "pesquisar", "procura",
         )
-        return any(term in text for term in terms)
+        looks_like_url = bool(re.search(
+            r"(?:https?://|www\.)[^\s]+|\b[a-z0-9-]+\.(?:com|net|org|es|pt|io)\b",
+            text,
+            flags=re.IGNORECASE,
+        ))
+        return looks_like_url or any(term in text for term in terms)
+
+    def _is_internal_domain_query(self, user_text: str) -> bool:
+        """Reconoce el dominio de trabajo; lo informativo restante puede resolverse en web."""
+        text = self._normalize_context_query(user_text).lower()
+        internal_terms = (
+            "solidset", "communicator", "cnc", "máquina", "maquina", "mecanizado",
+            "telemetría", "telemetria", "alarma", "alarmas", "herramienta", "herramientas",
+            "programa cnc", "g-code", "código g", "codigo g", "husillo", "spindle",
+            "recurso", "recursos", "usuario", "usuarios", "canal", "canales",
+            "mensaje", "mensajes", "tarea", "tareas", "actividad", "actividades",
+            "cliente", "clientes", "cuenta", "cuentas", "base de datos", "sql",
+            "workroom", "chat", "point", "feature flag", "vehicle", "scheduler",
+            "endpoint", "api solidset",
+        )
+        return self._is_sql_business_query(user_text) or any(term in text for term in internal_terms)
+
+    @staticmethod
+    def _contextual_web_query(user_text: str, previous_user_text: Any) -> str:
+        """Conserva el tema cuando el turno actual solo confirma o aporta una fuente."""
+        current = " ".join((user_text or "").split()).strip()
+        candidates = (
+            list(previous_user_text)
+            if isinstance(previous_user_text, (list, tuple))
+            else [previous_user_text]
+        )
+        previous = ""
+        for candidate in reversed(candidates):
+            candidate = " ".join((candidate or "").split()).strip()
+            normalized_candidate = candidate.lower().strip(" ¿?¡!.,")
+            is_search_confirmation = bool(re.fullmatch(
+                r"(?:s[ií]|claro|ok|vale|de acuerdo)?[ ,]*(?:necesito que )?"
+                r"(?:busca|busques|buscar|haz la b[uú]squeda)(?: por favor)?",
+                normalized_candidate,
+                flags=re.IGNORECASE,
+            ))
+            if len(candidate.split()) > 3 and not is_search_confirmation:
+                previous = candidate
+                break
+        if not previous:
+            return current
+
+        normalized = current.lower().strip(" ¿?¡!.,")
+        is_confirmation = bool(re.fullmatch(
+            r"(?:s[ií]|si por favor|claro|de acuerdo|ok|vale)(?:\s+.*)?",
+            normalized,
+            flags=re.IGNORECASE,
+        ))
+        is_source_only = bool(re.fullmatch(
+            r"(?:https?://)?(?:www\.)?[a-z0-9-]+\.[a-z]{2,}(?:/\S*)?",
+            normalized,
+            flags=re.IGNORECASE,
+        ))
+        if is_source_only:
+            domain = re.sub(r"^https?://", "", normalized).split("/")[0]
+            return f"{previous} site:{domain}"
+        if is_confirmation or len(current.split()) <= 3:
+            return f"{previous} {current}".strip()
+        return current
 
     def _is_sql_business_query(self, user_text: str) -> bool:
         """Detecta preguntas de datos operativos que deben resolverse desde SQL Server."""
@@ -1188,10 +1255,17 @@ class MachiningAgent:
         ]
         return bool(text) and any(re.search(pattern, text) for pattern in patterns)
 
-    def _answer_with_web_fallback(self, user_text: str, messages: list) -> Optional[str]:
+    def _answer_with_web_fallback(
+        self,
+        user_text: str,
+        messages: list,
+        search_query: Optional[str] = None,
+    ) -> Optional[str]:
         """Busca en la web y pide al LLM una respuesta basada únicamente en esos resultados."""
         try:
-            web_result = google_web_search.invoke({"query": self._normalize_context_query(user_text)})
+            web_result = google_web_search.invoke({
+                "query": search_query or self._normalize_context_query(user_text)
+            })
             if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
                 return None
             web_messages = list(messages)
@@ -1398,7 +1472,10 @@ class MachiningAgent:
         # usar endpoints SOLIDSET para preguntas que pertenecen a SQL Server.
         if general_conversation_mode:
             tool_allowlist = set()
-        elif self._is_external_information_query(user_text):
+        elif (
+            self._is_external_information_query(user_text)
+            or not self._is_internal_domain_query(user_text)
+        ):
             external_query_mode = True
             if tool_allowlist is None:
                 tool_allowlist = {"google_web_search"}
@@ -1414,12 +1491,17 @@ class MachiningAgent:
                 print(f"❌ Error conectando a Redis: {e}")
 
         previous_user_text = None
+        previous_user_texts = []
         if history:
             try:
                 for msg in reversed(list(history.messages)):
                     if isinstance(msg, HumanMessage):
                         previous_user_text = msg.content
                         break
+                previous_user_texts = [
+                    msg.content for msg in list(history.messages)[-self.max_history_messages:]
+                    if isinstance(msg, HumanMessage)
+                ]
             except Exception as e:
                 print(f"⚠️ Error leyendo historial previo: {e}")
 
@@ -1725,8 +1807,9 @@ class MachiningAgent:
         
         # El historial aporta contexto, pero nunca debe reemplazar el tema actual.
         messages.append(SystemMessage(content=(
-            "La siguiente consulta es el turno actual y tiene prioridad absoluta. "
-            "No continúes temas anteriores salvo que el usuario los mencione explícitamente."
+            "La siguiente consulta es el turno actual y tiene prioridad. Usa el historial para resolver "
+            "referencias, elipsis y continuaciones (por ejemplo: 'sí', 'la temporada actual' o una URL). "
+            "No cambies de tema salvo que el usuario introduzca claramente uno nuevo."
         )))
 
         # Añadir mensaje del usuario
@@ -1875,9 +1958,21 @@ class MachiningAgent:
         # Respaldo determinista: no depender únicamente de que el LLM decida usar la tool.
         if (
             not self._is_sql_business_query(user_text)
-            and self._response_needs_web_fallback(response_text, herramientas_usadas)
+            and (
+                external_query_mode
+                or self._response_needs_web_fallback(response_text, herramientas_usadas)
+            )
+            and "google_web_search" not in herramientas_usadas
         ):
-            web_answer = self._answer_with_web_fallback(user_text, messages)
+            search_query = self._contextual_web_query(
+                user_text,
+                previous_user_texts or previous_user_text,
+            )
+            web_answer = self._answer_with_web_fallback(
+                user_text,
+                messages,
+                search_query=search_query,
+            )
             if web_answer:
                 response_text = web_answer
                 herramientas_usadas.append("google_web_search")

@@ -12,6 +12,10 @@ class FakeAgent:
         return "tiempo" in text.lower()
 
     @staticmethod
+    def _is_internal_domain_query(text):
+        return any(term in text.lower() for term in ("canal", "conversación", "consulta interna"))
+
+    @staticmethod
     def _looks_like_raw_tool_response(text):
         return "status=" in text.lower()
 
@@ -33,6 +37,16 @@ class OrchestratorTests(unittest.TestCase):
             user_text="¿Qué tiempo hará en Leiria?",
         )
         self.assertEqual(response, "respuesta")
+        self.assertEqual(agent.calls[0]["tool_allowlist"], {"google_web_search"})
+        self.assertTrue(agent.calls[0]["external_query_mode"])
+
+    def test_unknown_informational_topic_defaults_to_web(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+        orchestrator.invoke(
+            session_id="s-general",
+            user_text="Explícame los últimos avances en baterías de estado sólido",
+        )
         self.assertEqual(agent.calls[0]["tool_allowlist"], {"google_web_search"})
         self.assertTrue(agent.calls[0]["external_query_mode"])
 

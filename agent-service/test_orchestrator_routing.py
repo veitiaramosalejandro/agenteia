@@ -24,6 +24,17 @@ class TestConversationRouting(unittest.TestCase):
             )
         )
 
+    def test_unseen_general_topic_is_not_internal_work(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertFalse(agent._is_internal_domain_query(
+            "¿Qué avances recientes existen en baterías de estado sólido?"
+        ))
+
+    def test_cnc_and_solidset_remain_internal_work(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertTrue(agent._is_internal_domain_query("¿Qué significa esta alarma CNC?"))
+        self.assertTrue(agent._is_internal_domain_query("Resume los mensajes del canal SolidSET"))
+
     def test_guid_validation_rejects_fallback_identifiers(self):
         self.assertFalse(MachiningAgent._is_valid_guid("framework-user"))
         self.assertFalse(MachiningAgent._is_valid_guid("framework-dialogue"))

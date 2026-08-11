@@ -61,7 +61,10 @@ class SolidSETOrchestrator:
         is_general = getattr(self.agent, "_is_general_conversation", lambda _text: False)
         if is_general(user_text):
             route = "general_conversation"
-        elif self.agent._is_external_information_query(user_text):
+        elif (
+            self.agent._is_external_information_query(user_text)
+            or not self.agent._is_internal_domain_query(user_text)
+        ):
             route = "external_web"
         else:
             route = "work_sql_rag"
