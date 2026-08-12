@@ -1018,6 +1018,8 @@ class ChatConversationRequest(BaseModel):
     session_id: str = Field(..., description="ID de la sesión de conversación")
     message: str = Field(..., description="Mensaje enviado por el usuario")
     user_id: str = Field(..., description="Username del usuario que está consultando en el sistema")
+    resource_id: Optional[str] = Field(None, description="IDResource canónico del interlocutor")
+    login_id: Optional[str] = Field(None, description="IDLogin de la sesión activa")
     canal_id: Optional[str] = Field(None, description="ID del canal actual (opcional)")
     generate_audio: bool = Field(False, description="Si se debe generar audio de la respuesta")
 
@@ -1153,10 +1155,12 @@ def _framework_message_to_dialogue(message: FrameworkMessageDTO) -> ChatConversa
     sender = message.Sender or {}
     destiny = message.Destiny or {}
     chat = message.Chat if isinstance(message.Chat, dict) else {}
+    # La identidad funcional del interlocutor en SolidSET es IDResource. IDLogin
+    # sirve para autenticar, pero no debe sustituir al recurso cuando ambos llegan.
     user_id = _valid_framework_identifier(
-        _get_payload_value(sender, "login", "IDLogin")
-    ) or _valid_framework_identifier(
         _get_payload_value(sender, "resource", "IDResource")
+    ) or _valid_framework_identifier(
+        _get_payload_value(sender, "login", "IDLogin")
     )
     resource_id = _valid_framework_identifier(
         _get_payload_value(sender, "resource", "IDResource")
@@ -1186,6 +1190,8 @@ def _framework_message_to_dialogue(message: FrameworkMessageDTO) -> ChatConversa
         session_id=session_id,
         message=str(raw_message or ""),
         user_id=user_id or anonymous_user_id,
+        resource_id=resource_id,
+        login_id=_valid_framework_identifier(_get_payload_value(sender, "login", "IDLogin")),
         canal_id=canal_id,
         generate_audio=False,
     )
@@ -1364,6 +1370,8 @@ async def capture_and_forward_framework_message(request: Request):
 @app.post("/api/v1/agent/dialogue", response_model=ChatConversationResponse)
 def handle_dialogue(message: FrameworkMessageDTO):
 
+    print(message.model_dump_json(indent=2))
+
     """
     Procesa un FrameworkMessage como diálogo con el agente.
     
@@ -1494,6 +1502,11 @@ def handle_dialogue(message: FrameworkMessageDTO):
                     user_text=req.message,
                     user_id=req.user_id,
                     canal_id=effective_canal_id,
+                    message_metadata={
+                        "resource_id": req.resource_id or req.user_id,
+                        "login_id": req.login_id,
+                        "workroom_id": effective_canal_id,
+                    },
                 )
             except Exception as exc:
                 error_holder["error"] = exc

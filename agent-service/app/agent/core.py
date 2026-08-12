@@ -294,6 +294,10 @@ class MachiningAgent:
             r"con\s+qu[ií]en\s+est[aá]s\s+hablando",
             r"qui[eé]n\s+soy",
             r"mi\s+usuario",
+            r"cu[aá]l\s+es\s+mi\s+recurso",
+            r"qu[eé]\s+recurso\s+(?:tengo|soy|est[aá])",
+            r"mi\s+recurso\s+asociado",
+            r"recurso\s+(?:asociado|vinculado)\s+(?:a\s+)?(?:m[ií]|mi\s+sesi[oó]n)",
             r"which\s+user\s+is\s+talking",
             r"who\s+is\s+talking\s+to\s+you",
             r"qual\s+usu[aá]rio\s+est[aá]\s+falando",
@@ -311,7 +315,12 @@ class MachiningAgent:
                 return match.group(1)
         return None
 
-    def _build_identity_response(self, user_id: Optional[str], canal_id: Optional[str]) -> str:
+    def _build_identity_response(
+        self,
+        user_id: Optional[str],
+        canal_id: Optional[str],
+        authenticated_identity: Optional[dict[str, Any]] = None,
+    ) -> str:
         """Construye respuesta de identidad usando user_id de sesión y contexto opcional desde BD."""
         if not self._is_valid_guid(user_id):
             return (
@@ -327,8 +336,20 @@ class MachiningAgent:
         resource_alias = ""
 
         try:
-            identity = self.sistema_aprendizaje._resolve_user_identity(user_id)
+            identity = authenticated_identity or self.sistema_aprendizaje._resolve_user_identity(user_id)
             resource_guid = (identity.get("resource_id") or "").strip()
+            display_name = next(
+                (
+                    str(value).strip()
+                    for value in (
+                        identity.get("full_name"),
+                        identity.get("display_name"),
+                        identity.get("username"),
+                    )
+                    if str(value or "").strip()
+                ),
+                display_name,
+            )
             resource_alias = self._extract_resource_alias(
                 identity.get("display_name"),
                 identity.get("full_name"),
@@ -350,31 +371,14 @@ class MachiningAgent:
         except Exception as e:
             print(f"⚠️ Error resolviendo identidad de usuario '{user_id}': {e}")
 
-        if canal_id:
-            channel_note = f"\nCanal actual: {canal_id}"
-
-        resource_parts = []
+        # Los identificadores técnicos se usan internamente para resolver contexto y
+        # permisos, pero no se exponen en una respuesta conversacional normal.
         if resource_alias:
-            resource_parts.append(f"alias recurso: {resource_alias}")
-        if resource_model_id:
-            resource_parts.append(f"resource_id modelo: {resource_model_id}")
-        if resource_guid:
-            resource_parts.append(f"resource_guid: {resource_guid}")
-
-        resource_note = ""
-        if resource_parts:
-            resource_note = "\n" + " | ".join(resource_parts)
-
-        if role_name:
             return (
-                f"Estás hablando conmigo como usuario **{user_id}** "
-                f"({display_name}, rol: {role_name}).{resource_note}{channel_note}"
+                f"Te identifico correctamente como **{display_name}**, asociado al "
+                f"recurso **{resource_alias}**. ¿En qué puedo ayudarte?"
             )
-
-        return (
-            f"Estás hablando conmigo como usuario **{user_id}** "
-            f"({display_name}).{resource_note}{channel_note}"
-        )
+        return f"Te identifico correctamente como **{display_name}**. ¿En qué puedo ayudarte?"
 
     def _is_channel_members_intent(self, user_text: str) -> bool:
         """Detecta solicitudes de listar usuarios/recurso pertenecientes al canal."""
@@ -1498,10 +1502,23 @@ class MachiningAgent:
         if not session_id:
             session_id = f"session_{hashlib.md5(user_text.encode()).hexdigest()[:8]}"
 
+        authenticated_identity = None
+        metadata_identity = message_metadata or {}
+        resource_id = str(metadata_identity.get("resource_id") or user_id or "").strip()
+        login_id = str(metadata_identity.get("login_id") or "").strip()
+        workroom_id = str(metadata_identity.get("workroom_id") or canal_id or "").strip()
+        if self._is_valid_guid(resource_id):
+            authenticated_identity = self.sistema_aprendizaje.resolve_conversation_identity(
+                resource_id=resource_id,
+                login_id=login_id or None,
+                workroom_id=workroom_id or None,
+            )
+
         identity_snapshot = self.identity_service.observe_user_message(
             session_id=session_id,
             user_id=user_id,
             user_text=user_text,
+            conversation_identity=authenticated_identity,
         )
 
         general_conversation_mode = (
@@ -1549,7 +1566,11 @@ class MachiningAgent:
 
         # --- 2.5 RESPUESTA DIRECTA DE IDENTIDAD DE SESIÓN ---
         if self._is_identity_intent(user_text):
-            identity_response = self._build_identity_response(user_id=user_id, canal_id=canal_id)
+            identity_response = self._build_identity_response(
+                user_id=user_id,
+                canal_id=canal_id,
+                authenticated_identity=authenticated_identity,
+            )
 
             if history:
                 try:

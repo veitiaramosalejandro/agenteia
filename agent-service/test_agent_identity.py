@@ -107,6 +107,30 @@ class TestAgentIdentityService(unittest.TestCase):
         self.assertIn("estado es una señal operativa simulada", prompt)
         self.assertIn("No afirmar conciencia", prompt)
 
+    def test_authenticated_conversation_identity_is_persisted_and_prioritized(self):
+        authenticated = {
+            "resource_id": "resource-guid",
+            "login_id": "login-guid",
+            "full_name": "Alejandro Veitia",
+            "workroom_id": "room-guid",
+            "workroom_name": "Testes",
+        }
+        snapshot = self.service.observe_user_message(
+            session_id="resource-guid",
+            user_id="resource-guid",
+            user_text="Mi recurso no es Dev17",
+            conversation_identity=authenticated,
+        )
+
+        self.assertEqual(
+            self.service.get_temporal_state("resource-guid")["conversation_identity"],
+            authenticated,
+        )
+        prompt = self.service.build_prompt_context(snapshot)
+        self.assertIn("IDResource: resource-guid", prompt)
+        self.assertIn("IDLogin: login-guid", prompt)
+        self.assertIn("prevalecen sobre el historial", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

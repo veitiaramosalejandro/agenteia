@@ -33,7 +33,9 @@ class TestDialogueFrameworkPayload(unittest.TestCase):
         dialogue = _framework_message_to_dialogue(payload)
 
         self.assertEqual(dialogue.message, "Necesito ayuda con la máquina")
-        self.assertEqual(dialogue.user_id, "user-login")
+        self.assertEqual(dialogue.user_id, "user-resource")
+        self.assertEqual(dialogue.resource_id, "user-resource")
+        self.assertEqual(dialogue.login_id, "user-login")
         self.assertEqual(dialogue.session_id, "user-resource")
         self.assertEqual(dialogue.canal_id, "room-1")
 
@@ -95,7 +97,9 @@ class TestDialogueFrameworkPayload(unittest.TestCase):
         dialogue = _framework_message_to_dialogue(payload)
 
         self.assertEqual(dialogue.message, "Hola como estas?")
-        self.assertEqual(dialogue.user_id, "1790fc78-023d-4506-a7e8-5c030e9386d1")
+        self.assertEqual(dialogue.user_id, "ce0e837a-fe28-47ae-9ba0-8841fe042ca8")
+        self.assertEqual(dialogue.resource_id, "ce0e837a-fe28-47ae-9ba0-8841fe042ca8")
+        self.assertEqual(dialogue.login_id, "1790fc78-023d-4506-a7e8-5c030e9386d1")
         self.assertEqual(dialogue.session_id, "ce0e837a-fe28-47ae-9ba0-8841fe042ca8")
         self.assertEqual(dialogue.canal_id, "45d1a3a4-752b-478b-b9f2-1b0771084172")
 

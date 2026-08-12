@@ -246,6 +246,83 @@ class SistemaAprendizaje:
             print(f"⚠️ No se pudo resolver identidad de usuario '{raw_user}': {e}")
         return identity
 
+    def resolve_conversation_identity(
+        self, *, resource_id: str, login_id: Optional[str], workroom_id: Optional[str]
+    ) -> Dict[str, Optional[str]]:
+        """Resuelve y cachea la identidad autenticada recibida por /dialogue."""
+        resource_id = (resource_id or "").strip()
+        login_id = (login_id or "").strip() or None
+        workroom_id = (workroom_id or "").strip() or None
+        cache_key = f"solidset:conversation_identity:v1:{resource_id}:{login_id or '-'}:{workroom_id or '-'}"
+        try:
+            cached = self.redis_cache.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except (redis.RedisError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+
+        identity = self._resolve_user_identity(resource_id)
+        result = {
+            "resource_id": identity.get("resource_id") or resource_id,
+            "login_id": identity.get("login_id") or login_id,
+            "username": identity.get("username"),
+            "full_name": identity.get("full_name"),
+            "display_name": identity.get("display_name"),
+            "workroom_id": workroom_id,
+            "workroom_name": None,
+            "source": "sql_server",
+        }
+        if workroom_id:
+            try:
+                row = self._fetch_one_with_fresh_connection_retry(
+                    query="""
+                        SELECT TOP 1 wr.Name AS WorkRoomName
+                        FROM dbo.SysWorkRoom wr WITH (NOLOCK)
+                        INNER JOIN dbo.SysWorkRoomResource wrr WITH (NOLOCK)
+                            ON wrr.IDWorkRoom = wr.IDWorkRoom
+                        WHERE wr.IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s)
+                          AND wrr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                    """,
+                    params=(workroom_id, result["resource_id"]),
+                    context="resolve_conversation_workroom",
+                    retries=2,
+                )
+                if row:
+                    result["workroom_name"] = str(row.get("WorkRoomName") or "").strip() or None
+            except Exception as exc:
+                print(f"⚠️ No se pudo validar canal de identidad: {exc}")
+
+        try:
+            self.redis_cache.setex(cache_key, 3600, json.dumps(result, ensure_ascii=False))
+        except redis.RedisError as exc:
+            print(f"⚠️ No se pudo cachear identidad de conversación: {exc}")
+        self._index_conversation_identity(result)
+        return result
+
+    def _index_conversation_identity(self, identity: Dict[str, Optional[str]]) -> bool:
+        """Persiste en Qdrant un perfil estable, separado de recuerdos conversacionales."""
+        text = (
+            f"Identidad SolidSET: IDResource {identity.get('resource_id')}; "
+            f"IDLogin {identity.get('login_id')}; usuario {identity.get('username')}; "
+            f"nombre {identity.get('full_name') or identity.get('display_name')}; "
+            f"canal {identity.get('workroom_id')} ({identity.get('workroom_name')})."
+        )
+        vector = self._embed_query_safe(text, context="index_conversation_identity")
+        if vector is None:
+            return False
+        point_seed = f"identity:{identity.get('resource_id')}:{identity.get('workroom_id')}"
+        point_id = str(uuid.UUID(hashlib.md5(point_seed.encode()).hexdigest()))
+        try:
+            self.qdrant.upsert(collection_name=self.collection, points=[PointStruct(
+                id=point_id,
+                vector=vector,
+                payload={**identity, "page_content": text, "source": "authenticated_identity"},
+            )])
+            return True
+        except Exception as exc:
+            print(f"⚠️ No se pudo indexar identidad de conversación: {exc}")
+            return False
+
     def _get_user_details_from_db(self, cursor: pymssql.Cursor, identity: Dict) -> Optional[Dict]:
         self._execute_with_retry(
             cursor,
