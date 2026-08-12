@@ -1152,26 +1152,39 @@ def _framework_message_to_dialogue(message: FrameworkMessageDTO) -> ChatConversa
     """Normaliza el contrato de Notification al contrato interno del diálogo."""
     sender = message.Sender or {}
     destiny = message.Destiny or {}
+    chat = message.Chat if isinstance(message.Chat, dict) else {}
     user_id = _valid_framework_identifier(
         _get_payload_value(sender, "login", "IDLogin")
     ) or _valid_framework_identifier(
         _get_payload_value(sender, "resource", "IDResource")
     )
+    resource_id = _valid_framework_identifier(
+        _get_payload_value(sender, "resource", "IDResource")
+    )
     canal_id = _valid_framework_identifier(
         _get_payload_value(destiny, "workRoom", "IDWorkRoom", "room", "IDRoom")
+    ) or _valid_framework_identifier(
+        _get_payload_value(chat, "idWorkRoom", "IDWorkRoom")
     )
     session_id = (
-        _valid_framework_identifier(_get_payload_value(sender, "session", "IDSession"))
+        resource_id
+        or _valid_framework_identifier(_get_payload_value(sender, "session", "IDSession"))
         or _valid_framework_identifier(_get_payload_value(destiny, "session", "IDSession"))
+        or _valid_framework_identifier(_get_payload_value(chat, "idChat2", "IDChat2"))
+        or _valid_framework_identifier(_get_payload_value(sender, "conversationId", "IDConversation"))
+        or _valid_framework_identifier(_get_payload_value(destiny, "conversationId", "IDConversation"))
         or canal_id
         or _valid_framework_identifier(message.IDNotification)
         or user_id
         or f"framework-dialogue-{uuid.uuid4()}"
     )
+    raw_message = message.RawMessage
+    if raw_message is None:
+        raw_message = _get_payload_value(chat, "rawMessage", "RawMessage")
     anonymous_user_id = f"framework-user-{uuid.uuid4()}"
     return ChatConversationRequest(
         session_id=session_id,
-        message=message.RawMessage or "",
+        message=str(raw_message or ""),
         user_id=user_id or anonymous_user_id,
         canal_id=canal_id,
         generate_audio=False,
@@ -1350,6 +1363,7 @@ async def capture_and_forward_framework_message(request: Request):
 
 @app.post("/api/v1/agent/dialogue", response_model=ChatConversationResponse)
 def handle_dialogue(message: FrameworkMessageDTO):
+
     """
     Procesa un FrameworkMessage como diálogo con el agente.
     
@@ -1358,10 +1372,11 @@ def handle_dialogue(message: FrameworkMessageDTO):
     - Obtiene el contexto del usuario (sistema de aprendizaje)
     - Procesa la consulta con el agente
     """
-    if message.RawMessage is None:
+    chat_payload = message.Chat if isinstance(message.Chat, dict) else {}
+    if message.RawMessage is None and _get_payload_value(chat_payload, "rawMessage", "RawMessage") is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="RawMessage es obligatorio para procesar un FrameworkMessage en /dialogue.",
+            detail="RawMessage o Chat.rawMessage es obligatorio para procesar un FrameworkMessage en /dialogue.",
         )
 
     req = _framework_message_to_dialogue(message)
