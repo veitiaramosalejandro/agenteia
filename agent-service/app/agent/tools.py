@@ -765,6 +765,8 @@ def solidset_send_chat_message(
     meeting_id: Optional[str] = None,
     meeting_code: Optional[str] = None,
     meeting_mirror_general: bool = False,
+    generated_by_ia: bool = False,
+    agent_resource_id: Optional[str] = None,
 ) -> str:
     """
     ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
@@ -850,6 +852,10 @@ def solidset_send_chat_message(
             form_payload["Info[meeting_id]"] = str(meeting_id).strip()
         if meeting_code:
             form_payload["Info[meeting_code]"] = str(meeting_code).strip()
+    if generated_by_ia:
+        form_payload["Info[generated_by_ia]"] = "1"
+        if agent_resource_id:
+            form_payload["Info[agent_resource_id]"] = str(agent_resource_id).strip()
     response, base, error = _solidset_request_authenticated(
         method="POST",
         endpoint="/Chat/SendMessageForm",

@@ -47,7 +47,7 @@ class SistemaAprendizaje:
 
     def _embed_query_safe(self, text: str, context: str) -> Optional[List[float]]:
         """Genera embedding con protección para evitar bloqueos repetidos si Ollama falla."""
-        if not self._embeddings_enabled:
+        if not getattr(self, "_embeddings_enabled", True):
             return None
         normalized = " ".join((text or "").strip().split())
         cache_key = (
@@ -1099,7 +1099,13 @@ class SistemaAprendizaje:
     # 4. CONSULTAR DOCUMENTACIÓN TÉCNICA (RAG)
     # ============================================================
 
-    def consultar_documentacion(self, query: str, limit: int = 3) -> str:
+    def consultar_documentacion(
+        self,
+        query: str,
+        limit: int = 3,
+        agent_resource_id: Optional[str] = None,
+        canal_id: Optional[str] = None,
+    ) -> str:
         """
         Busca en la base de conocimiento (Qdrant) documentos técnicos relevantes.
         Esta función es el núcleo del sistema RAG para documentación.
@@ -1113,7 +1119,7 @@ class SistemaAprendizaje:
         resultados = self._search_aprendizaje(
             query_vector,
             query_filter=None,
-            limit=limit
+            limit=limit * 5 if agent_resource_id else limit,
         )
 
         if not resultados:
@@ -1123,12 +1129,24 @@ class SistemaAprendizaje:
         seen_ids = set()
         formatted_results = []
         for hit in resultados:
+            payload = hit.get('payload') or {}
+            metadata = payload.get('metadatos') if isinstance(payload.get('metadatos'), dict) else {}
+            payload_agent = str(
+                payload.get('agent_resource_id')
+                or metadata.get('agent_resource_id')
+                or ''
+            ).strip()
+            payload_channel = str(payload.get('canal_id') or metadata.get('canal_id') or '').strip()
+            if agent_resource_id and payload_agent and payload_agent != str(agent_resource_id):
+                continue
+            if canal_id and payload_channel and payload_channel != str(canal_id):
+                continue
             # Evitar duplicados si la búsqueda devuelve el mismo item
             if hit['id'] not in seen_ids:
-                content = hit['payload'].get('page_content', '')
-                source = hit['payload'].get('source', 'desconocido')
-                source_url = hit['payload'].get('source_url', '')
-                learned_at = hit['payload'].get('learned_at', '')
+                content = payload.get('page_content', '')
+                source = payload.get('source', 'desconocido')
+                source_url = payload.get('source_url', '')
+                learned_at = payload.get('learned_at', '')
                 provenance = f"Fuente: {source}"
                 if source_url:
                     provenance += f"\nURL original: {source_url}"
@@ -1350,9 +1368,9 @@ class SistemaAprendizaje:
             formatted_results = []
             for result in results:
                 formatted_results.append({
-                    'id': result.id,
-                    'score': result.score,
-                    'payload': result.payload
+                    'id': getattr(result, 'id', None),
+                    'score': getattr(result, 'score', 0.0),
+                    'payload': getattr(result, 'payload', {}) or {},
                 })
             
             return formatted_results
@@ -1379,7 +1397,13 @@ class SistemaAprendizaje:
         except Exception:
             return "desconocida"
 
-    def consultar_aprendizaje(self, query: str, canal_id: Optional[str] = None, limit: int = 3) -> str:
+    def consultar_aprendizaje(
+        self,
+        query: str,
+        canal_id: Optional[str] = None,
+        limit: int = 3,
+        agent_resource_id: Optional[str] = None,
+    ) -> str:
         """Consulta el conocimiento aprendido, opcionalmente filtrado por canal."""
         query_vector = self._embed_query_safe(query, context="consultar_aprendizaje")
         if query_vector is None: 
@@ -1391,14 +1415,16 @@ class SistemaAprendizaje:
         if canal_id:
             # ✅ Crear el filtro correctamente para v1.18.0
             from qdrant_client.http import models
-            filtro = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="canal_id",
-                        match=models.MatchValue(value=canal_id)
-                    )
-                ]
-            )
+            conditions = [models.FieldCondition(
+                key="canal_id",
+                match=models.MatchValue(value=canal_id)
+            )]
+            if agent_resource_id:
+                conditions.append(models.FieldCondition(
+                    key="metadatos.agent_resource_id",
+                    match=models.MatchValue(value=agent_resource_id),
+                ))
+            filtro = models.Filter(must=conditions)
             resultados.extend(
                 self._search_aprendizaje(
                     query_vector, 
@@ -1408,7 +1434,7 @@ class SistemaAprendizaje:
             )
         
         # Búsqueda sin filtro (si no hay resultados con filtro o siempre)
-        if not resultados or len(resultados) < limit:
+        if (not agent_resource_id) and (not resultados or len(resultados) < limit):
             resultados.extend(
                 self._search_aprendizaje(
                     query_vector, 

@@ -568,6 +568,14 @@ class NotificationApiListener:
         }
 
     @staticmethod
+    def _is_generated_by_ia(info: Any) -> bool:
+        if not isinstance(info, dict):
+            return False
+        lowered = {str(key).lower(): value for key, value in info.items()}
+        value = str(lowered.get("generated_by_ia") or "").strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    @staticmethod
     def _normalize_message_kind(value: Any) -> Dict[str, Any]:
         """Normaliza KindMessage y aporta una categoría semántica al agente."""
         conversational_names = {
@@ -796,6 +804,7 @@ class NotificationApiListener:
             "meeting_active": meeting["active"],
             "meeting_id": meeting["meeting_id"],
             "meeting_code": meeting["meeting_code"],
+            "generated_by_ia": self._is_generated_by_ia(data.get("Info")),
             "message_kind": message_kind["name"] or str(message_kind["raw"] or ""),
             "message_kind_value": message_kind["value"],
             "kind_reply_eligible": message_kind["conversational"],

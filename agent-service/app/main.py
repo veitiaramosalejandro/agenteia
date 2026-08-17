@@ -32,10 +32,11 @@ from app.agent.core import MachiningAgent
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.speech import text_to_speech
 from app.agent.tools import solidset_send_chat_message
-from app.connectors.db_client import save_sys_resource_ia
+from app.connectors.db_client import get_active_agents_for_workroom, save_sys_resource_ia
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
 from app.system.resource_ingest import ingest_solidset_chat_resources, ingest_solidset_resources
+from app.system.schema import Actividad
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
@@ -281,6 +282,8 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "sin_fingerprint"
     if _auto_reply_seen(fingerprint):
         return "fingerprint_ya_respondido"
+    if candidate.get("generated_by_ia"):
+        return "mensaje_generado_por_ia"
 
     channel_id = (candidate.get("channel_id") or "").strip()
     message = (candidate.get("message") or "").strip()
@@ -298,7 +301,11 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         (settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip()
         or (settings.SOLIDSET_RESOURCE_ID or "").strip()
     )
-    if has_configured_recipient_identity and not candidate.get("addressed_to_agent"):
+    if (
+        has_configured_recipient_identity
+        and not candidate.get("agent_resource_id")
+        and not candidate.get("addressed_to_agent")
+    ):
         return "destino_no_incluye_agente"
     mentioned = _message_mentions_agent(message)
     active_followup = _has_active_auto_reply_followup(candidate)
@@ -331,6 +338,89 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     return None
 
 
+def _selected_agent_resource_ids(candidate: dict) -> list[str]:
+    """Extrae exclusivamente los agentes seleccionados por SolidSET."""
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    selected: list[str] = []
+    for key in ("SelectedAgentResourceIds", "selectedAgentResourceIds", "AgentResourceIds"):
+        values = payload.get(key)
+        if isinstance(values, list):
+            selected.extend(str(value).strip() for value in values if value)
+    destiny = payload.get("FrameworkDestiny")
+    if isinstance(destiny, dict):
+        destinations = destiny.get("Dests", destiny.get("dests", []))
+        if isinstance(destinations, list):
+            for destination in destinations:
+                if isinstance(destination, dict):
+                    lowered = {str(key).lower(): value for key, value in destination.items()}
+                    value = lowered.get("resource") or lowered.get("idresource")
+                    if value:
+                        selected.append(str(value).strip())
+    destiny_resource = str(candidate.get("destiny_resource") or "").strip()
+    if destiny_resource:
+        selected.append(destiny_resource)
+    return list(dict.fromkeys(value for value in selected if value))
+
+
+def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
+    """Genera una ejecución por agente activo, seleccionado y asignado al canal."""
+    routed: list[dict] = []
+    for candidate in candidates:
+        if candidate.get("generated_by_ia"):
+            continue
+        channel_id = str(candidate.get("channel_id") or "").strip()
+        selected = _selected_agent_resource_ids(candidate)
+        if not channel_id or not selected:
+            continue
+        try:
+            configured_agents = get_active_agents_for_workroom(channel_id, selected)
+        except (ValueError, psycopg.Error) as exc:
+            print(f"⚠️ No se pudo resolver agentes seleccionados para {channel_id}: {exc}")
+            continue
+        sender_resource = str(candidate.get("sender_resource") or "").strip().lower()
+        for configured_agent in configured_agents:
+            agent_resource_id = str(configured_agent["IDResource"])
+            if sender_resource == agent_resource_id.lower():
+                continue
+            routed_candidate = dict(candidate)
+            routed_candidate.update({
+                "fingerprint": f"{candidate.get('fingerprint')}:{agent_resource_id}",
+                "agent_resource_id": agent_resource_id,
+                "agent_name": configured_agent.get("Name") or agent_resource_id,
+                "agent_session_id": str(configured_agent.get("IDSession") or ""),
+                "addressed_to_agent": True,
+            })
+            routed.append(routed_candidate)
+    return routed
+
+
+def _learn_agent_interaction(
+    *,
+    agent_resource_id: str,
+    channel_id: str,
+    session_id: str,
+    user_text: str,
+    response_text: str,
+) -> None:
+    """Guarda aprendizaje etiquetado; nunca queda visible para otro agente."""
+    digest = hashlib.sha256(
+        f"{agent_resource_id}|{channel_id}|{session_id}|{user_text}|{response_text}".encode("utf-8")
+    ).hexdigest()[:32]
+    agent.sistema_aprendizaje.aprender_actividad(Actividad(
+        id=f"agent_turn_{digest}",
+        recurso_humano_id=agent_resource_id,
+        canal_id=channel_id,
+        tipo="agent_interaction",
+        descripcion=f"Consulta: {user_text}\nRespuesta: {response_text}",
+        timestamp=datetime.now(),
+        metadatos={
+            "agent_resource_id": agent_resource_id,
+            "session_id": session_id,
+            "source": "solidset_multi_agent",
+        },
+    ))
+
+
 def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     return _auto_reply_rejection_reason(candidate) is None
 
@@ -342,7 +432,13 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         print("⚠️ Auto-reply SOLIDSET activo en config, pero SOLIDSET_USER_ACTIONS_ENABLED=false. No se enviarán respuestas.")
         return 0
 
-    max_replies = max(1, settings.SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE)
+    candidates = _route_candidates_to_selected_agents(candidates)
+    # Una selección explícita de SolidSET prevalece sobre el límite histórico
+    # de una sola autorrespuesta, manteniendo un techo defensivo por mensaje.
+    max_replies = min(
+        10,
+        max(1, settings.SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE, len(candidates)),
+    )
     sent = 0
     local_seen = set()
 
@@ -382,12 +478,25 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             "chat_id": candidate.get("chat_id"),
             "recipient_count": int(candidate.get("recipient_count", 0)),
             "importance": importance,
+            "agent_resource_id": candidate.get("agent_resource_id"),
+            "agent_name": candidate.get("agent_name"),
+            "workroom_id": channel_id,
         }
         if not incoming_text or (not channel_id and not reply_resource):
             continue
 
         conversation_scope = reply_resource if is_direct else channel_id
-        session_id = f"solidset_auto_{conversation_scope[:8]}"
+        agent_resource_id = str(candidate.get("agent_resource_id") or "").strip()
+        agent_name = str(candidate.get("agent_name") or agent_resource_id).strip()
+        conversation_id = str(
+            candidate.get("chat_id")
+            or candidate.get("agent_session_id")
+            or conversation_scope
+        )
+        session_id = (
+            f"solidset:agent:{agent_resource_id}:room:{channel_id}:"
+            f"conversation:{conversation_id}"
+        )
         user_id = str(
             candidate.get("sender_resource")
             or candidate.get("sender_name")
@@ -439,12 +548,21 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                 "Por favor, inténtalo de nuevo en unos instantes."
             )
 
+        await asyncio.to_thread(
+            _learn_agent_interaction,
+            agent_resource_id=agent_resource_id,
+            channel_id=channel_id,
+            session_id=session_id,
+            user_text=incoming_text,
+            response_text=response_text,
+        )
+
         try:
             send_result = await asyncio.to_thread(
                 solidset_send_chat_message.invoke,
                 {
                     "canal_id": channel_id,
-                    "mensaje": response_text,
+                    "mensaje": f"{agent_name}: {response_text}",
                     "confirm": True,
                     "recurso_id": reply_resource if is_direct else None,
                     "recurso_login_id": reply_login if is_direct else None,
@@ -454,6 +572,8 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     "meeting_id": meeting_id or None,
                     "meeting_code": meeting_code or None,
                     "meeting_mirror_general": bool(candidate.get("meeting_active")),
+                    "generated_by_ia": True,
+                    "agent_resource_id": agent_resource_id,
                 },
             )
             send_result_text = str(send_result)
@@ -1093,6 +1213,32 @@ class SysChatIAResourceIngestResponse(BaseModel):
     skipped: int
 
 
+class MultiAgentDialogueRequest(BaseModel):
+    IDWorkRoom: uuid.UUID
+    IDSession: Optional[str] = None
+    RawMessage: str = Field(..., min_length=1, max_length=5000)
+    SelectedAgentResourceIds: list[uuid.UUID]
+    SenderResourceId: Optional[uuid.UUID] = None
+    SendToSolidSET: bool = False
+
+    class Config:
+        extra = "forbid"
+
+
+class MultiAgentAnswer(BaseModel):
+    IDAgentResource: uuid.UUID
+    AgentName: str
+    response: str
+    sent: bool = False
+    sendDetail: Optional[str] = None
+
+
+class MultiAgentDialogueResponse(BaseModel):
+    IDSession: str
+    IDWorkRoom: uuid.UUID
+    responses: list[MultiAgentAnswer]
+
+
 def _to_camel_alias(field_name: str) -> str:
     """Convierte PascalCase a camelCase respetando prefijos como ID."""
     acronym = re.match(r"^[A-Z]+(?=[A-Z][a-z]|$)", field_name)
@@ -1311,6 +1457,92 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 # ENDPOINTS PRINCIPALES
 # ============================================================
+
+@app.post(
+    "/api/v1/agent/solidset/multi-agent/dialogue",
+    response_model=MultiAgentDialogueResponse,
+)
+async def handle_multi_agent_dialogue(
+    request: MultiAgentDialogueRequest,
+) -> MultiAgentDialogueResponse:
+    """Ejecuta de forma independiente los agentes seleccionados por SolidSET."""
+    selected = list(dict.fromkeys(request.SelectedAgentResourceIds))
+    if not selected:
+        raise HTTPException(status_code=422, detail="Selecciona al menos un agente.")
+    if len(selected) > 10:
+        raise HTTPException(status_code=422, detail="Se permiten como máximo 10 agentes por mensaje.")
+
+    configured_agents = get_active_agents_for_workroom(request.IDWorkRoom, selected)
+    sender_resource = str(request.SenderResourceId or "").lower()
+    configured_agents = [
+        item for item in configured_agents
+        if str(item["IDResource"]).lower() != sender_resource
+    ]
+    if not configured_agents:
+        raise HTTPException(
+            status_code=404,
+            detail="Ningún agente seleccionado está activo y asignado al canal.",
+        )
+
+    conversation_id = request.IDSession or str(uuid.uuid4())
+
+    async def execute_one(configured_agent: dict[str, Any]) -> MultiAgentAnswer:
+        agent_resource_id = str(configured_agent["IDResource"])
+        agent_name = str(configured_agent.get("Name") or agent_resource_id)
+        isolated_session = (
+            f"solidset:agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
+            f"conversation:{conversation_id}"
+        )
+        response_text = await asyncio.to_thread(
+            orchestrator.invoke,
+            session_id=isolated_session,
+            user_text=request.RawMessage.strip(),
+            user_id=str(request.SenderResourceId or "solidset-user"),
+            canal_id=str(request.IDWorkRoom),
+            message_metadata={
+                "agent_resource_id": agent_resource_id,
+                "agent_name": agent_name,
+                "workroom_id": str(request.IDWorkRoom),
+                "source": "solidset_multi_agent",
+            },
+            auto_reply_mode=True,
+        )
+        await asyncio.to_thread(
+            _learn_agent_interaction,
+            agent_resource_id=agent_resource_id,
+            channel_id=str(request.IDWorkRoom),
+            session_id=isolated_session,
+            user_text=request.RawMessage.strip(),
+            response_text=response_text,
+        )
+        sent = False
+        send_detail = None
+        if request.SendToSolidSET:
+            send_detail = str(await asyncio.to_thread(
+                solidset_send_chat_message.invoke,
+                {
+                    "canal_id": str(request.IDWorkRoom),
+                    "mensaje": f"{agent_name}: {response_text}",
+                    "confirm": True,
+                    "generated_by_ia": True,
+                    "agent_resource_id": agent_resource_id,
+                },
+            ))
+            sent = send_detail.startswith("✅")
+        return MultiAgentAnswer(
+            IDAgentResource=uuid.UUID(agent_resource_id),
+            AgentName=agent_name,
+            response=response_text,
+            sent=sent,
+            sendDetail=send_detail,
+        )
+
+    responses = await asyncio.gather(*(execute_one(item) for item in configured_agents))
+    return MultiAgentDialogueResponse(
+        IDSession=conversation_id,
+        IDWorkRoom=request.IDWorkRoom,
+        responses=list(responses),
+    )
 
 @app.post(
     "/api/v1/agent/solidset/chat-workroom/sync",

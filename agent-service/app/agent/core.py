@@ -1504,6 +1504,8 @@ class MachiningAgent:
 
         authenticated_identity = None
         metadata_identity = message_metadata or {}
+        agent_resource_id = str(metadata_identity.get("agent_resource_id") or "").strip()
+        agent_name = str(metadata_identity.get("agent_name") or agent_resource_id).strip()
         resource_id = str(metadata_identity.get("resource_id") or user_id or "").strip()
         login_id = str(metadata_identity.get("login_id") or "").strip()
         workroom_id = str(metadata_identity.get("workroom_id") or canal_id or "").strip()
@@ -1543,11 +1545,10 @@ class MachiningAgent:
 
         # --- 2. INICIALIZAR MEMORIA ---
         history = None
-        if not auto_reply_mode:
-            try:
-                history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
-            except Exception as e:
-                print(f"❌ Error conectando a Redis: {e}")
+        try:
+            history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
+        except Exception as e:
+            print(f"❌ Error conectando a Redis: {e}")
 
         previous_user_text = None
         previous_user_texts = []
@@ -1742,7 +1743,11 @@ class MachiningAgent:
         context_query = self._normalize_context_query(user_text)
         rag_context = ""
         if not external_query_mode and not general_conversation_mode:
-            rag_context = self.sistema_aprendizaje.consultar_documentacion(context_query)
+            rag_context = self.sistema_aprendizaje.consultar_documentacion(
+                context_query,
+                agent_resource_id=agent_resource_id or None,
+                canal_id=canal_id,
+            )
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
         chat_context_bd = ""
@@ -1769,7 +1774,14 @@ class MachiningAgent:
         
         # 4.4 Aprendizaje relevante (actividades pasadas similares)
         aprendizaje_relevante = ""
-        if valid_user_guid and not external_query_mode and not general_conversation_mode:
+        if agent_resource_id and not external_query_mode and not general_conversation_mode:
+            aprendizaje_relevante = self.sistema_aprendizaje.consultar_aprendizaje(
+                context_query,
+                canal_id=canal_id,
+                limit=3,
+                agent_resource_id=agent_resource_id,
+            )
+        elif valid_user_guid and not external_query_mode and not general_conversation_mode:
             aprendizaje_relevante = self._get_aprendizaje_relevante(context_query, user_id)
 
         memoria_web_reciente = ""
@@ -1810,10 +1822,20 @@ class MachiningAgent:
             system_prompt += (
                 "\n\n=== MODO AUTORRESPUESTA SOLIDSET ===\n"
                 "Responde exclusivamente al mensaje entrante con una respuesta breve, formal, profesional y útil. "
-                "No consultes mensajes anteriores, no reacciones al chat y no ejecutes acciones de SolidSET. "
+                "Usa solamente el historial aislado de esta identidad y conversación; no reacciones al chat "
+                "ni ejecutes acciones de SolidSET. "
                 "No muestres resultados técnicos de herramientas, estados HTTP, JSON ni trazas internas. "
                 "Si falta un dato imprescindible (por ejemplo, la ciudad para consultar el tiempo), "
                 "pide únicamente ese dato en vez de buscar o inventarlo."
+            )
+
+        if agent_resource_id:
+            system_prompt += (
+                "\n\n=== IDENTIDAD DEL AGENTE SELECCIONADO ===\n"
+                f"Nombre: {agent_name or 'Agente IA'}\n"
+                f"IDResource: {agent_resource_id}\n"
+                "Responde únicamente desde esta identidad. No mezcles tu memoria con otros agentes "
+                "y no atribuyas como propio conocimiento perteneciente a otra identidad."
             )
         
         if contexto_usuario:

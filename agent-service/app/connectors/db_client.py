@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
+from uuid import UUID
 import psycopg
 from psycopg.rows import dict_row
 
@@ -20,7 +21,7 @@ def _postgres_connection() -> psycopg.Connection:
 
 
 def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
-    """Inserta una configuración y deja que PostgreSQL genere su UUID."""
+    """Crea o actualiza la configuración canónica de un agente por IDResource."""
     values = (
         configuration.get("Name"),
         configuration.get("Stamp"),
@@ -36,6 +37,10 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
                     "Name", "Stamp", "IDResource", active
                 )
                 VALUES (%s, %s, %s, %s)
+                ON CONFLICT ("IDResource") DO UPDATE SET
+                    "Name" = EXCLUDED."Name",
+                    "Stamp" = EXCLUDED."Stamp",
+                    active = EXCLUDED.active
                 RETURNING *
                 ''',
                 values,
@@ -45,3 +50,30 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
     if saved is None:
         raise RuntimeError("PostgreSQL no devolvió la configuración guardada.")
     return dict(saved)
+
+
+def get_active_agents_for_workroom(
+    workroom_id: UUID | str,
+    selected_resource_ids: Iterable[UUID | str],
+) -> list[dict[str, Any]]:
+    """Devuelve únicamente agentes activos, seleccionados y asignados al canal."""
+    selected = list(dict.fromkeys(UUID(str(value)) for value in selected_resource_ids))
+    if not selected:
+        return []
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT r."ID", r."Name", r."IDResource", r.active,
+                       c."IDWorkRoom", c."IDSession"
+                FROM public."SysResourceIA" r
+                INNER JOIN public."SysChatIAResource" c
+                    ON c."IDResource" = r."IDResource"
+                WHERE c."IDWorkRoom" = %s
+                  AND r.active = true
+                  AND r."IDResource" = ANY(%s)
+                ORDER BY r."Name" ASC, r."IDResource" ASC
+                ''',
+                (UUID(str(workroom_id)), selected),
+            )
+            return [dict(row) for row in cursor.fetchall()]
