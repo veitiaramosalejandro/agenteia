@@ -1276,6 +1276,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     response_model=SendMessageResultDTO,
 )
 async def receive_framework_notification(message: FrameworkMessageDTO):
+    print(message.model_dump_json(indent=2))
+
     """Recibe desde Notification un FrameworkMessage ya capturado y lo aprende en Qdrant."""
 
     payload = (
@@ -1301,6 +1303,7 @@ async def receive_framework_notification(message: FrameworkMessageDTO):
 
 @app.post("/api/v1/agent/notification/frameworkHub/SendMessage")
 async def capture_and_forward_framework_message(request: Request):
+    print(request)
     """Captura el mensaje en Qdrant antes de reenviarlo al endpoint real de SolidSET."""
     raw_body = await request.body()
     try:
