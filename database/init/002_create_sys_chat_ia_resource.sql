@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS public."SysChatIAResource" (
     "IDResource" uuid NOT NULL,
     "IDWorkRoom" uuid NOT NULL,
     "IDSession" uuid,
+    active boolean NOT NULL DEFAULT true,
+    response_order integer NOT NULL DEFAULT 0,
     CONSTRAINT "PK_SysChatIAResource"
         PRIMARY KEY ("IDResource", "IDWorkRoom"),
     CONSTRAINT "FK_SysChatIAResource_SysResourceIA_IDResource"
@@ -27,6 +29,10 @@ CREATE TABLE IF NOT EXISTS public."SysChatIAResource" (
         ON UPDATE CASCADE
         ON DELETE CASCADE
 );
+
+ALTER TABLE public."SysChatIAResource"
+    ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true,
+    ADD COLUMN IF NOT EXISTS response_order integer NOT NULL DEFAULT 0;
 
 DO $$
 BEGIN

@@ -32,7 +32,13 @@ from app.agent.core import MachiningAgent
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.speech import text_to_speech
 from app.agent.tools import solidset_send_chat_message
-from app.connectors.db_client import get_active_agents_for_workroom, save_sys_resource_ia
+from app.connectors.db_client import (
+    configure_agent_workroom,
+    get_active_agents_for_workroom,
+    get_agent_knowledge,
+    save_agent_knowledge,
+    save_sys_resource_ia,
+)
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
 from app.system.resource_ingest import ingest_solidset_chat_resources, ingest_solidset_resources
@@ -383,11 +389,17 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             if sender_resource == agent_resource_id.lower():
                 continue
             routed_candidate = dict(candidate)
+            try:
+                private_knowledge = get_agent_knowledge(agent_resource_id, channel_id)
+            except (ValueError, psycopg.Error) as exc:
+                print(f"⚠️ Conocimiento privado no disponible para {agent_resource_id}: {exc}")
+                private_knowledge = ""
             routed_candidate.update({
                 "fingerprint": f"{candidate.get('fingerprint')}:{agent_resource_id}",
                 "agent_resource_id": agent_resource_id,
                 "agent_name": configured_agent.get("Name") or agent_resource_id,
                 "agent_session_id": str(configured_agent.get("IDSession") or ""),
+                "agent_knowledge": private_knowledge,
                 "addressed_to_agent": True,
             })
             routed.append(routed_candidate)
@@ -480,6 +492,7 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             "importance": importance,
             "agent_resource_id": candidate.get("agent_resource_id"),
             "agent_name": candidate.get("agent_name"),
+            "agent_knowledge": candidate.get("agent_knowledge"),
             "workroom_id": channel_id,
         }
         if not incoming_text or (not channel_id and not reply_resource):
@@ -1239,6 +1252,45 @@ class MultiAgentDialogueResponse(BaseModel):
     responses: list[MultiAgentAnswer]
 
 
+class AgentKnowledgeRequest(BaseModel):
+    IDWorkRoom: Optional[uuid.UUID] = None
+    Title: Optional[str] = Field(None, max_length=255)
+    KnowledgeText: str = Field(..., min_length=1, max_length=50000)
+    Source: str = Field("manual", min_length=1, max_length=100)
+    active: bool = True
+
+    class Config:
+        extra = "forbid"
+
+
+class AgentKnowledgeResponse(BaseModel):
+    ID: uuid.UUID
+    IDResource: uuid.UUID
+    IDWorkRoom: Optional[uuid.UUID] = None
+    Title: Optional[str] = None
+    KnowledgeText: str
+    Source: str
+    Stamp: datetime
+    active: bool
+    indexed: bool
+
+
+class AgentWorkRoomConfiguration(BaseModel):
+    active: bool = True
+    response_order: int = Field(0, ge=0, le=1000)
+
+    class Config:
+        extra = "forbid"
+
+
+class AgentWorkRoomConfigurationResponse(BaseModel):
+    IDResource: uuid.UUID
+    IDWorkRoom: uuid.UUID
+    IDSession: Optional[uuid.UUID] = None
+    active: bool
+    response_order: int
+
+
 def _to_camel_alias(field_name: str) -> str:
     """Convierte PascalCase a camelCase respetando prefijos como ID."""
     acronym = re.match(r"^[A-Z]+(?=[A-Z][a-z]|$)", field_name)
@@ -1459,6 +1511,54 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 
 @app.post(
+    "/api/v1/agent/solidset/agents/{agent_resource_id}/knowledge",
+    response_model=AgentKnowledgeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_agent_knowledge(
+    agent_resource_id: uuid.UUID,
+    request: AgentKnowledgeRequest,
+) -> AgentKnowledgeResponse:
+    """Persiste e indexa conocimiento exclusivo de un agente IA."""
+    payload = (
+        request.model_dump()
+        if hasattr(request, "model_dump")
+        else request.dict()
+    )
+    payload["IDResource"] = agent_resource_id
+    try:
+        saved = await asyncio.to_thread(save_agent_knowledge, payload)
+    except psycopg.errors.ForeignKeyViolation as exc:
+        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No se pudo guardar el conocimiento.") from exc
+    indexed = await asyncio.to_thread(agent.sistema_aprendizaje.aprender_conocimiento_agente, saved)
+    return AgentKnowledgeResponse(**saved, indexed=indexed)
+
+
+@app.put(
+    "/api/v1/agent/solidset/agents/{agent_resource_id}/workrooms/{workroom_id}",
+    response_model=AgentWorkRoomConfigurationResponse,
+)
+async def set_agent_workroom_configuration(
+    agent_resource_id: uuid.UUID,
+    workroom_id: uuid.UUID,
+    request: AgentWorkRoomConfiguration,
+) -> AgentWorkRoomConfigurationResponse:
+    """Activa, desactiva u ordena un agente dentro de un canal."""
+    try:
+        saved = await asyncio.to_thread(
+            configure_agent_workroom,
+            agent_resource_id,
+            workroom_id,
+            active=request.active,
+            response_order=request.response_order,
+        )
+    except psycopg.errors.ForeignKeyViolation as exc:
+        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+    return AgentWorkRoomConfigurationResponse(**saved)
+
+@app.post(
     "/api/v1/agent/solidset/multi-agent/dialogue",
     response_model=MultiAgentDialogueResponse,
 )
@@ -1493,6 +1593,11 @@ async def handle_multi_agent_dialogue(
             f"solidset:agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
             f"conversation:{conversation_id}"
         )
+        private_knowledge = await asyncio.to_thread(
+            get_agent_knowledge,
+            agent_resource_id,
+            request.IDWorkRoom,
+        )
         response_text = await asyncio.to_thread(
             orchestrator.invoke,
             session_id=isolated_session,
@@ -1502,6 +1607,7 @@ async def handle_multi_agent_dialogue(
             message_metadata={
                 "agent_resource_id": agent_resource_id,
                 "agent_name": agent_name,
+                "agent_knowledge": private_knowledge,
                 "workroom_id": str(request.IDWorkRoom),
                 "source": "solidset_multi_agent",
             },

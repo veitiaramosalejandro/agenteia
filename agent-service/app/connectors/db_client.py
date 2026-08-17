@@ -65,15 +65,88 @@ def get_active_agents_for_workroom(
             cursor.execute(
                 '''
                 SELECT r."ID", r."Name", r."IDResource", r.active,
-                       c."IDWorkRoom", c."IDSession"
+                       c."IDWorkRoom", c."IDSession", c.response_order
                 FROM public."SysResourceIA" r
                 INNER JOIN public."SysChatIAResource" c
                     ON c."IDResource" = r."IDResource"
                 WHERE c."IDWorkRoom" = %s
                   AND r.active = true
+                  AND c.active = true
                   AND r."IDResource" = ANY(%s)
-                ORDER BY r."Name" ASC, r."IDResource" ASC
+                ORDER BY c.response_order ASC, r."Name" ASC, r."IDResource" ASC
                 ''',
                 (UUID(str(workroom_id)), selected),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+
+def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                INSERT INTO public."SysResourceIAKnowledge" (
+                    "IDResource", "IDWorkRoom", "Title", "KnowledgeText", "Source", active
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING *
+                ''',
+                (
+                    knowledge["IDResource"], knowledge.get("IDWorkRoom"),
+                    knowledge.get("Title"), knowledge["KnowledgeText"],
+                    knowledge.get("Source", "manual"), knowledge.get("active", True),
+                ),
+            )
+            saved = cursor.fetchone()
+    if saved is None:
+        raise RuntimeError("PostgreSQL no devolvió el conocimiento guardado.")
+    return dict(saved)
+
+
+def get_agent_knowledge(resource_id: UUID | str, workroom_id: UUID | str) -> str:
+    """Obtiene conocimiento privado del agente y el específico del canal actual."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT "Title", "KnowledgeText", "Source"
+                FROM public."SysResourceIAKnowledge"
+                WHERE "IDResource" = %s
+                  AND active = true
+                  AND ("IDWorkRoom" IS NULL OR "IDWorkRoom" = %s)
+                ORDER BY "IDWorkRoom" NULLS FIRST, "Stamp" DESC
+                LIMIT 30
+                ''',
+                (UUID(str(resource_id)), UUID(str(workroom_id))),
+            )
+            rows = cursor.fetchall()
+    return "\n\n".join(
+        f"[{row.get('Title') or row.get('Source') or 'Conocimiento'}]\n{row['KnowledgeText']}"
+        for row in rows
+    )[:20000]
+
+
+def configure_agent_workroom(
+    resource_id: UUID | str,
+    workroom_id: UUID | str,
+    *,
+    active: bool,
+    response_order: int,
+) -> dict[str, Any]:
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                INSERT INTO public."SysChatIAResource" (
+                    "IDResource", "IDWorkRoom", active, response_order
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT ("IDResource", "IDWorkRoom") DO UPDATE SET
+                    active = EXCLUDED.active,
+                    response_order = EXCLUDED.response_order
+                RETURNING *
+                ''',
+                (UUID(str(resource_id)), UUID(str(workroom_id)), active, response_order),
+            )
+            saved = cursor.fetchone()
+    if saved is None:
+        raise RuntimeError("PostgreSQL no devolvió la asignación guardada.")
+    return dict(saved)

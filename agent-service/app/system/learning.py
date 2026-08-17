@@ -1235,6 +1235,41 @@ class SistemaAprendizaje:
         except Exception as e:
             print(f"❌ Error aprendiendo actividad: {e}")
             return False
+
+    def aprender_conocimiento_agente(self, knowledge: Dict[str, Any]) -> bool:
+        """Indexa conocimiento persistido conservando el aislamiento del agente."""
+        try:
+            text = str(knowledge.get("KnowledgeText") or "").strip()
+            if not text:
+                return False
+            title = str(knowledge.get("Title") or "Conocimiento del agente").strip()
+            vector = self._embed_query_safe(
+                f"{title}\n{text}",
+                context="aprender_conocimiento_agente",
+            )
+            if vector is None:
+                return False
+            self.qdrant.upsert(
+                collection_name=self.collection,
+                points=[PointStruct(
+                    id=str(knowledge["ID"]),
+                    vector=vector,
+                    payload={
+                        "page_content": text,
+                        "title": title,
+                        "source": knowledge.get("Source") or "manual",
+                        "learned_at": str(knowledge.get("Stamp") or datetime.now()),
+                        "agent_resource_id": str(knowledge["IDResource"]),
+                        "canal_id": str(knowledge.get("IDWorkRoom") or ""),
+                        "scope": "agent",
+                        "knowledge_id": str(knowledge["ID"]),
+                    },
+                )],
+            )
+            return True
+        except Exception as exc:
+            print(f"❌ Error indexando conocimiento del agente: {exc}")
+            return False
     
     def aprender_canal(self, canal: Canal) -> bool:
         """Aprende la estructura de un canal y la indexa en Qdrant."""

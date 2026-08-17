@@ -24,7 +24,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             {"IDResource": first, "Name": "Agente A", "IDSession": None},
             {"IDResource": second, "Name": "Agente B", "IDSession": None},
         ]
-        with patch("app.main.get_active_agents_for_workroom", return_value=configured):
+        with (
+            patch("app.main.get_active_agents_for_workroom", return_value=configured),
+            patch("app.main.get_agent_knowledge", return_value="Conocimiento privado"),
+        ):
             routed = _route_candidates_to_selected_agents([candidate])
 
         self.assertEqual(2, len(routed))
@@ -53,6 +56,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch("app.main.get_active_agents_for_workroom", return_value=configured),
+            patch("app.main.get_agent_knowledge", return_value="Conocimiento privado"),
             patch("app.main.orchestrator.invoke", side_effect=invoke),
             patch("app.main._learn_agent_interaction"),
         ):

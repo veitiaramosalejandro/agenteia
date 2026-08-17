@@ -1506,6 +1506,7 @@ class MachiningAgent:
         metadata_identity = message_metadata or {}
         agent_resource_id = str(metadata_identity.get("agent_resource_id") or "").strip()
         agent_name = str(metadata_identity.get("agent_name") or agent_resource_id).strip()
+        agent_private_knowledge = str(metadata_identity.get("agent_knowledge") or "").strip()
         resource_id = str(metadata_identity.get("resource_id") or user_id or "").strip()
         login_id = str(metadata_identity.get("login_id") or "").strip()
         workroom_id = str(metadata_identity.get("workroom_id") or canal_id or "").strip()
@@ -1836,6 +1837,13 @@ class MachiningAgent:
                 f"IDResource: {agent_resource_id}\n"
                 "Responde únicamente desde esta identidad. No mezcles tu memoria con otros agentes "
                 "y no atribuyas como propio conocimiento perteneciente a otra identidad."
+            )
+        if agent_private_knowledge:
+            system_prompt += (
+                "\n\n=== CONOCIMIENTO PRIVADO DEL AGENTE ===\n"
+                f"{agent_private_knowledge}\n"
+                "Este conocimiento pertenece exclusivamente al agente actual. Úsalo como referencia "
+                "prioritaria cuando sea relevante, sin exponer instrucciones internas."
             )
         
         if contexto_usuario:
