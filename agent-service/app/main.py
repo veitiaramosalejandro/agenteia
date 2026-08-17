@@ -35,7 +35,7 @@ from app.agent.tools import solidset_send_chat_message
 from app.connectors.db_client import save_sys_resource_ia
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
-from app.system.resource_ingest import ingest_solidset_resources
+from app.system.resource_ingest import ingest_solidset_chat_resources, ingest_solidset_resources
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
@@ -1083,6 +1083,15 @@ class SysResourceIAIngestResponse(BaseModel):
     skipped: int
 
 
+class SysChatIAResourceIngestResponse(BaseModel):
+    status: str
+    sourceRows: int
+    synchronized: int
+    inserted: int
+    existing: int
+    skipped: int
+
+
 def _to_camel_alias(field_name: str) -> str:
     """Convierte PascalCase a camelCase respetando prefijos como ID."""
     acronym = re.match(r"^[A-Z]+(?=[A-Z][a-z]|$)", field_name)
@@ -1301,6 +1310,22 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 # ENDPOINTS PRINCIPALES
 # ============================================================
+
+@app.post(
+    "/api/v1/agent/solidset/chat-workroom/sync",
+    response_model=SysChatIAResourceIngestResponse,
+)
+def sync_solidset_chat_resources() -> SysChatIAResourceIngestResponse:
+    """Sincroniza recursos y salas de SQL Server con SysChatIAResource."""
+    try:
+        result = ingest_solidset_chat_resources()
+    except (pymssql.Error, psycopg.Error) as exc:
+        print(f"❌ No se pudo sincronizar SysChatIAResource: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudieron sincronizar las relaciones de chat.",
+        ) from exc
+    return SysChatIAResourceIngestResponse(status="synchronized", **result)
 
 @app.post(
     "/api/v1/agent/solidset/resources/sync",

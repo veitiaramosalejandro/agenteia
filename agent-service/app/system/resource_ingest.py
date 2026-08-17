@@ -21,6 +21,25 @@ RESOURCE_QUERY = """
 """
 
 
+CHAT_RESOURCE_QUERY = """
+    SELECT
+        SysResources.DisplayName,
+        SysResources.ResourceId,
+        SysLogin.FullName,
+        SysWorkRoom.Code,
+        SysWorkRoom.Name,
+        SysWorkRoom.IDWorkRoom
+    FROM dbo.SysResources
+    INNER JOIN dbo.SysLogin
+        ON SysLogin.ActiveIDLogin2Resource = SysResources.ActiveIDLogin2Resource
+    INNER JOIN dbo.SysWorkRoomResource
+        ON SysWorkRoomResource.IDResource = SysResources.ResourceId
+    INNER JOIN dbo.SysWorkRoom
+        ON SysWorkRoom.IDWorkRoom = SysWorkRoomResource.IDWorkRoom
+    ORDER BY SysResources.DisplayName ASC
+"""
+
+
 def ingest_solidset_resources() -> dict[str, int]:
     """Sincroniza los recursos de SolidSET desde SQL Server hacia PostgreSQL."""
     with pymssql.connect(
@@ -83,5 +102,81 @@ def ingest_solidset_resources() -> dict[str, int]:
         "synchronized": len(resources),
         "inserted": inserted,
         "updated": updated,
+        "skipped": skipped,
+    }
+
+
+def ingest_solidset_chat_resources() -> dict[str, int]:
+    """Sincroniza las relaciones recurso-sala desde SolidSET."""
+    with pymssql.connect(
+        server=settings.SQL_SERVER_HOST,
+        user=settings.SQL_SERVER_USER,
+        password=settings.SQL_SERVER_PASSWORD,
+        database=settings.SQL_SERVER_DB,
+        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+    ) as source_connection:
+        source_cursor = source_connection.cursor(as_dict=True)
+        source_cursor.execute(CHAT_RESOURCE_QUERY)
+        source_rows = source_cursor.fetchall() or []
+
+    relations: dict[tuple[UUID, UUID], str | None] = {}
+    skipped = 0
+    for row in source_rows:
+        try:
+            resource_id = UUID(str(row.get("ResourceId")))
+            workroom_id = UUID(str(row.get("IDWorkRoom")))
+        except (TypeError, ValueError, AttributeError):
+            skipped += 1
+            continue
+        display_name = row.get("DisplayName")
+        relations[(resource_id, workroom_id)] = (
+            str(display_name).strip() if display_name is not None else None
+        )
+
+    relation_keys = list(relations)
+    with _postgres_connection() as target_connection:
+        with target_connection.cursor() as target_cursor:
+            # Garantiza la clave padre incluso si esta ingesta se ejecuta sola.
+            target_cursor.executemany(
+                '''
+                INSERT INTO public."SysResourceIA" ("Name", "Stamp", "IDResource")
+                VALUES (%s, CURRENT_TIMESTAMP, %s)
+                ON CONFLICT ("IDResource") DO UPDATE SET
+                    "Name" = EXCLUDED."Name",
+                    "Stamp" = EXCLUDED."Stamp"
+                ''',
+                [
+                    (display_name, resource_id)
+                    for (resource_id, _), display_name in relations.items()
+                ],
+            )
+
+            existing_keys: set[tuple[UUID, UUID]] = set()
+            if relation_keys:
+                target_cursor.execute(
+                    'SELECT "IDResource", "IDWorkRoom" '
+                    'FROM public."SysChatIAResource"'
+                )
+                requested = set(relation_keys)
+                existing_keys = {
+                    (row["IDResource"], row["IDWorkRoom"])
+                    for row in target_cursor.fetchall()
+                    if (row["IDResource"], row["IDWorkRoom"]) in requested
+                }
+                target_cursor.executemany(
+                    '''
+                    INSERT INTO public."SysChatIAResource" ("IDResource", "IDWorkRoom")
+                    VALUES (%s, %s)
+                    ON CONFLICT ("IDResource", "IDWorkRoom") DO NOTHING
+                    ''',
+                    relation_keys,
+                )
+
+    return {
+        "sourceRows": len(source_rows),
+        "synchronized": len(relations),
+        "inserted": len(set(relation_keys) - existing_keys),
+        "existing": len(existing_keys),
         "skipped": skipped,
     }

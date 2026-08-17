@@ -18,15 +18,35 @@ $$;
 CREATE TABLE IF NOT EXISTS public."SysChatIAResource" (
     "IDResource" uuid NOT NULL,
     "IDWorkRoom" uuid NOT NULL,
-    "IDSession" uuid NOT NULL,
+    "IDSession" uuid,
     CONSTRAINT "PK_SysChatIAResource"
-        PRIMARY KEY ("IDResource", "IDWorkRoom", "IDSession"),
+        PRIMARY KEY ("IDResource", "IDWorkRoom"),
     CONSTRAINT "FK_SysChatIAResource_SysResourceIA_IDResource"
         FOREIGN KEY ("IDResource")
         REFERENCES public."SysResourceIA" ("IDResource")
         ON UPDATE CASCADE
         ON DELETE CASCADE
 );
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'public."SysChatIAResource"'::regclass
+          AND conname = 'PK_SysChatIAResource'
+          AND pg_get_constraintdef(oid) LIKE '%"IDSession"%'
+    ) THEN
+        ALTER TABLE public."SysChatIAResource"
+            DROP CONSTRAINT "PK_SysChatIAResource";
+        ALTER TABLE public."SysChatIAResource"
+            ALTER COLUMN "IDSession" DROP NOT NULL;
+        ALTER TABLE public."SysChatIAResource"
+            ADD CONSTRAINT "PK_SysChatIAResource"
+            PRIMARY KEY ("IDResource", "IDWorkRoom");
+    END IF;
+END
+$$;
 
 COMMENT ON TABLE public."SysChatIAResource" IS
     'Sesiones y salas asociadas a cada recurso de IA de SolidSET.';
