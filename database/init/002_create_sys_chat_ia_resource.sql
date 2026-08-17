@@ -18,7 +18,6 @@ $$;
 CREATE TABLE IF NOT EXISTS public."SysChatIAResource" (
     "IDResource" uuid NOT NULL,
     "IDWorkRoom" uuid NOT NULL,
-    "IDSession" uuid,
     active boolean NOT NULL DEFAULT true,
     response_order integer NOT NULL DEFAULT 0,
     CONSTRAINT "PK_SysChatIAResource"
@@ -53,6 +52,9 @@ BEGIN
     END IF;
 END
 $$;
+
+ALTER TABLE public."SysChatIAResource"
+    DROP COLUMN IF EXISTS "IDSession";
 
 COMMENT ON TABLE public."SysChatIAResource" IS
     'Sesiones y salas asociadas a cada recurso de IA de SolidSET.';

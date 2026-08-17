@@ -21,8 +21,8 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "payload": {"SelectedAgentResourceIds": [str(first), str(second)]},
         }
         configured = [
-            {"IDResource": first, "Name": "Agente A", "IDSession": None},
-            {"IDResource": second, "Name": "Agente B", "IDSession": None},
+            {"IDResource": first, "Name": "Agente A"},
+            {"IDResource": second, "Name": "Agente B"},
         ]
         with (
             patch("app.main.get_active_agents_for_workroom", return_value=configured),
@@ -38,9 +38,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         room_id = uuid4()
         first = uuid4()
         second = uuid4()
+        conversation_id = uuid4()
         configured = [
-            {"IDResource": first, "Name": "Agente A", "IDSession": None},
-            {"IDResource": second, "Name": "Agente B", "IDSession": None},
+            {"IDResource": first, "Name": "Agente A"},
+            {"IDResource": second, "Name": "Agente B"},
         ]
         sessions = []
 
@@ -50,13 +51,14 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
 
         request = MultiAgentDialogueRequest(
             IDWorkRoom=room_id,
-            IDSession="conversation-1",
+            IDSession=conversation_id,
             RawMessage="Diagnostica la alarma",
             SelectedAgentResourceIds=[first, second],
         )
         with (
             patch("app.main.get_active_agents_for_workroom", return_value=configured),
             patch("app.main.get_agent_knowledge", return_value="Conocimiento privado"),
+            patch("app.main.touch_agent_session"),
             patch("app.main.orchestrator.invoke", side_effect=invoke),
             patch("app.main._learn_agent_interaction"),
         ):
@@ -64,7 +66,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(2, len(result.responses))
         self.assertEqual(2, len(set(sessions)))
-        self.assertTrue(all("conversation:conversation-1" in value for value in sessions))
+        self.assertTrue(all(f"conversation:{conversation_id}" in value for value in sessions))
 
 
 if __name__ == "__main__":

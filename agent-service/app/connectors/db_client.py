@@ -65,7 +65,7 @@ def get_active_agents_for_workroom(
             cursor.execute(
                 '''
                 SELECT r."ID", r."Name", r."IDResource", r.active,
-                       c."IDWorkRoom", c."IDSession", c.response_order
+                       c."IDWorkRoom", c.response_order
                 FROM public."SysResourceIA" r
                 INNER JOIN public."SysChatIAResource" c
                     ON c."IDResource" = r."IDResource"
@@ -149,4 +149,36 @@ def configure_agent_workroom(
             saved = cursor.fetchone()
     if saved is None:
         raise RuntimeError("PostgreSQL no devolvió la asignación guardada.")
+    return dict(saved)
+
+
+def touch_agent_session(
+    session_id: UUID | str,
+    resource_id: UUID | str,
+    workroom_id: UUID | str,
+    *,
+    status: str = "active",
+) -> dict[str, Any]:
+    """Crea la sesión lógica del agente o actualiza su última actividad."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                INSERT INTO public."SysAgentIASession" (
+                    "IDSession", "IDResource", "IDWorkRoom", "Status"
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT ("IDSession", "IDResource") DO UPDATE SET
+                    "IDWorkRoom" = EXCLUDED."IDWorkRoom",
+                    "LastActivityAt" = CURRENT_TIMESTAMP,
+                    "Status" = EXCLUDED."Status"
+                RETURNING *
+                ''',
+                (
+                    UUID(str(session_id)), UUID(str(resource_id)),
+                    UUID(str(workroom_id)), status,
+                ),
+            )
+            saved = cursor.fetchone()
+    if saved is None:
+        raise RuntimeError("PostgreSQL no devolvió la sesión guardada.")
     return dict(saved)

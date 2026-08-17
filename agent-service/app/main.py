@@ -38,6 +38,7 @@ from app.connectors.db_client import (
     get_agent_knowledge,
     save_agent_knowledge,
     save_sys_resource_ia,
+    touch_agent_session,
 )
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
@@ -368,6 +369,26 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     return list(dict.fromkeys(value for value in selected if value))
 
 
+def _candidate_session_id(candidate: dict) -> uuid.UUID:
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    sender = payload.get("FrameworkSender") if isinstance(payload.get("FrameworkSender"), dict) else {}
+    candidates = (
+        payload.get("IDSession"),
+        sender.get("Session"), sender.get("session"), sender.get("IDSession"),
+        candidate.get("chat_id"),
+    )
+    for value in candidates:
+        try:
+            return uuid.UUID(str(value))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    stable_scope = (
+        f"{candidate.get('channel_id')}|{candidate.get('sender_resource')}|"
+        f"{candidate.get('reply_resource')}"
+    )
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"solidset-agent-session:{stable_scope}")
+
+
 def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
     """Genera una ejecución por agente activo, seleccionado y asignado al canal."""
     routed: list[dict] = []
@@ -398,7 +419,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 "fingerprint": f"{candidate.get('fingerprint')}:{agent_resource_id}",
                 "agent_resource_id": agent_resource_id,
                 "agent_name": configured_agent.get("Name") or agent_resource_id,
-                "agent_session_id": str(configured_agent.get("IDSession") or ""),
+                "agent_session_id": str(_candidate_session_id(candidate)),
                 "agent_knowledge": private_knowledge,
                 "addressed_to_agent": True,
             })
@@ -509,6 +530,12 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         session_id = (
             f"solidset:agent:{agent_resource_id}:room:{channel_id}:"
             f"conversation:{conversation_id}"
+        )
+        await asyncio.to_thread(
+            touch_agent_session,
+            candidate.get("agent_session_id"),
+            agent_resource_id,
+            channel_id,
         )
         user_id = str(
             candidate.get("sender_resource")
@@ -1228,7 +1255,7 @@ class SysChatIAResourceIngestResponse(BaseModel):
 
 class MultiAgentDialogueRequest(BaseModel):
     IDWorkRoom: uuid.UUID
-    IDSession: Optional[str] = None
+    IDSession: Optional[uuid.UUID] = None
     RawMessage: str = Field(..., min_length=1, max_length=5000)
     SelectedAgentResourceIds: list[uuid.UUID]
     SenderResourceId: Optional[uuid.UUID] = None
@@ -1247,7 +1274,7 @@ class MultiAgentAnswer(BaseModel):
 
 
 class MultiAgentDialogueResponse(BaseModel):
-    IDSession: str
+    IDSession: uuid.UUID
     IDWorkRoom: uuid.UUID
     responses: list[MultiAgentAnswer]
 
@@ -1286,7 +1313,6 @@ class AgentWorkRoomConfiguration(BaseModel):
 class AgentWorkRoomConfigurationResponse(BaseModel):
     IDResource: uuid.UUID
     IDWorkRoom: uuid.UUID
-    IDSession: Optional[uuid.UUID] = None
     active: bool
     response_order: int
 
@@ -1584,7 +1610,7 @@ async def handle_multi_agent_dialogue(
             detail="Ningún agente seleccionado está activo y asignado al canal.",
         )
 
-    conversation_id = request.IDSession or str(uuid.uuid4())
+    conversation_id = request.IDSession or uuid.uuid4()
 
     async def execute_one(configured_agent: dict[str, Any]) -> MultiAgentAnswer:
         agent_resource_id = str(configured_agent["IDResource"])
@@ -1595,6 +1621,12 @@ async def handle_multi_agent_dialogue(
         )
         private_knowledge = await asyncio.to_thread(
             get_agent_knowledge,
+            agent_resource_id,
+            request.IDWorkRoom,
+        )
+        await asyncio.to_thread(
+            touch_agent_session,
+            conversation_id,
             agent_resource_id,
             request.IDWorkRoom,
         )
