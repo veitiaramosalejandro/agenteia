@@ -42,7 +42,11 @@ from app.connectors.db_client import (
 )
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
-from app.system.resource_ingest import ingest_solidset_chat_resources, ingest_solidset_resources
+from app.system.resource_ingest import (
+    ingest_solidset_chat_resources,
+    ingest_solidset_resources,
+    ingest_solidset_workrooms,
+)
 from app.system.schema import Actividad
 
 # ============================================================
@@ -1253,6 +1257,15 @@ class SysChatIAResourceIngestResponse(BaseModel):
     skipped: int
 
 
+class SysWorkRoomIngestResponse(BaseModel):
+    status: str
+    sourceRows: int
+    synchronized: int
+    inserted: int
+    updated: int
+    skipped: int
+
+
 class MultiAgentDialogueRequest(BaseModel):
     IDWorkRoom: uuid.UUID
     IDSession: Optional[uuid.UUID] = None
@@ -1535,6 +1548,22 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 # ENDPOINTS PRINCIPALES
 # ============================================================
+
+@app.post(
+    "/api/v1/agent/solidset/workrooms/sync",
+    response_model=SysWorkRoomIngestResponse,
+)
+def sync_solidset_workrooms() -> SysWorkRoomIngestResponse:
+    """Sincroniza dbo.SysWorkRoom de SQL Server con PostgreSQL."""
+    try:
+        result = ingest_solidset_workrooms()
+    except (pymssql.Error, psycopg.Error) as exc:
+        print(f"❌ No se pudo sincronizar SysWorkRoom: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudieron sincronizar los canales de SolidSET.",
+        ) from exc
+    return SysWorkRoomIngestResponse(status="synchronized", **result)
 
 @app.post(
     "/api/v1/agent/solidset/agents/{agent_resource_id}/knowledge",

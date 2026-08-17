@@ -40,6 +40,12 @@ CHAT_RESOURCE_QUERY = """
 """
 
 
+WORKROOM_QUERY = """
+    SELECT Code, Name, Description, IDWorkRoom
+    FROM dbo.SysWorkRoom
+"""
+
+
 def ingest_solidset_resources() -> dict[str, int]:
     """Sincroniza los recursos de SolidSET desde SQL Server hacia PostgreSQL."""
     with pymssql.connect(
@@ -178,5 +184,76 @@ def ingest_solidset_chat_resources() -> dict[str, int]:
         "synchronized": len(relations),
         "inserted": len(set(relation_keys) - existing_keys),
         "existing": len(existing_keys),
+        "skipped": skipped,
+    }
+
+
+def ingest_solidset_workrooms() -> dict[str, int]:
+    """Sincroniza el catálogo de canales de SolidSET hacia PostgreSQL."""
+    with pymssql.connect(
+        server=settings.SQL_SERVER_HOST,
+        user=settings.SQL_SERVER_USER,
+        password=settings.SQL_SERVER_PASSWORD,
+        database=settings.SQL_SERVER_DB,
+        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+    ) as source_connection:
+        source_cursor = source_connection.cursor(as_dict=True)
+        source_cursor.execute(WORKROOM_QUERY)
+        source_rows = source_cursor.fetchall() or []
+
+    workrooms: dict[UUID, tuple[str | None, str | None, str | None]] = {}
+    skipped = 0
+    for row in source_rows:
+        try:
+            workroom_id = UUID(str(row.get("IDWorkRoom")))
+        except (TypeError, ValueError, AttributeError):
+            skipped += 1
+            continue
+
+        def clean(value: object) -> str | None:
+            if value is None:
+                return None
+            normalized = str(value).strip()
+            return normalized or None
+
+        workrooms[workroom_id] = (
+            clean(row.get("Code")),
+            clean(row.get("Name")),
+            clean(row.get("Description")),
+        )
+
+    workroom_ids = list(workrooms)
+    with _postgres_connection() as target_connection:
+        with target_connection.cursor() as target_cursor:
+            existing_ids: set[UUID] = set()
+            if workroom_ids:
+                target_cursor.execute(
+                    'SELECT "IDWorkRoom" FROM public."SysWorkRoom" '
+                    'WHERE "IDWorkRoom" = ANY(%s)',
+                    (workroom_ids,),
+                )
+                existing_ids = {row["IDWorkRoom"] for row in target_cursor.fetchall()}
+                target_cursor.executemany(
+                    '''
+                    INSERT INTO public."SysWorkRoom" (
+                        "IDWorkRoom", "Code", "Name", "Description"
+                    ) VALUES (%s, %s, %s, %s)
+                    ON CONFLICT ("IDWorkRoom") DO UPDATE SET
+                        "Code" = EXCLUDED."Code",
+                        "Name" = EXCLUDED."Name",
+                        "Description" = EXCLUDED."Description"
+                    ''',
+                    [
+                        (workroom_id, code, name, description)
+                        for workroom_id, (code, name, description) in workrooms.items()
+                    ],
+                )
+
+    return {
+        "sourceRows": len(source_rows),
+        "synchronized": len(workrooms),
+        "inserted": len(set(workroom_ids) - existing_ids),
+        "updated": len(existing_ids),
         "skipped": skipped,
     }
