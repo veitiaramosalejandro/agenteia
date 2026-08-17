@@ -8,6 +8,7 @@ import ssl
 import threading
 import uuid
 import httpx
+import psycopg
 import redis
 from contextlib import suppress
 from collections import OrderedDict
@@ -30,6 +31,7 @@ from app.agent.core import MachiningAgent
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.speech import text_to_speech
 from app.agent.tools import solidset_send_chat_message
+from app.connectors.db_client import save_sys_resource_ia
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
 
@@ -1052,6 +1054,24 @@ class UserFeedbackResponse(BaseModel):
     topics: list[str] = []
 
 
+class SysResourceIAConfiguration(BaseModel):
+    Name: Optional[str] = Field(None, max_length=255)
+    Stamp: Optional[datetime] = None
+    IDResource: Optional[uuid.UUID] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class SysResourceIAConfigurationStored(SysResourceIAConfiguration):
+    ID: uuid.UUID
+
+
+class SysResourceIAConfigurationResponse(BaseModel):
+    status: str
+    configuration: SysResourceIAConfigurationStored
+
+
 def _to_camel_alias(field_name: str) -> str:
     """Convierte PascalCase a camelCase respetando prefijos como ID."""
     acronym = re.match(r"^[A-Z]+(?=[A-Z][a-z]|$)", field_name)
@@ -1270,6 +1290,34 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 # ENDPOINTS PRINCIPALES
 # ============================================================
+
+@app.post(
+    "/api/v1/agent/solidset/chat-configuration",
+    response_model=SysResourceIAConfigurationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def save_solidset_chat_configuration(
+    configuration: SysResourceIAConfiguration,
+) -> SysResourceIAConfigurationResponse:
+    """Guarda en PostgreSQL la configuración de chat IA recibida de SolidSET."""
+    payload = (
+        configuration.model_dump()
+        if hasattr(configuration, "model_dump")
+        else configuration.dict()
+    )
+    try:
+        saved = save_sys_resource_ia(payload)
+    except psycopg.Error as exc:
+        print(f"❌ No se pudo guardar la configuración SysResourceIA: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo guardar la configuración en PostgreSQL.",
+        ) from exc
+
+    return SysResourceIAConfigurationResponse(
+        status="saved",
+        configuration=SysResourceIAConfigurationStored(**saved),
+    )
 
 @app.post(
     "/api/v1/agent/notification/framework-message",
