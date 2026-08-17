@@ -19,6 +19,7 @@ streamlit
 requests
 pyodbc
 pymssql
+psycopg[binary]>=3.2,<4.0
 
 pandas 
 openpyxl
