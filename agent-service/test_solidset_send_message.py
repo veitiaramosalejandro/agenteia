@@ -3,10 +3,26 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from app.agent.tools import _solidset_request_as_agent, solidset_send_chat_message
+from app.agent.tools import _solidset_login, _solidset_request_as_agent, solidset_send_chat_message
 
 
 class SolidsetSendChatMessageTests(unittest.TestCase):
+    @patch("app.agent.tools.get_solidset_login_for_active_agent")
+    def test_login_rejects_resource_without_active_agent(self, login_lookup):
+        login_lookup.return_value = None
+        client = MagicMock()
+
+        authenticated, endpoint, access_key = _solidset_login(
+            client,
+            "http://solidset.local",
+            agent_resource_id="ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+        )
+
+        self.assertFalse(authenticated)
+        self.assertEqual(endpoint, "")
+        self.assertEqual(access_key, "")
+        client.post.assert_not_called()
+
     @patch("app.agent.tools._solidset_get_all_base_candidates")
     @patch("app.agent.tools.get_solidset_login_for_active_agent")
     @patch("app.agent.tools.httpx.Client")
@@ -43,6 +59,11 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self.assertEqual(login_call.args[0], "http://solidset.local/User/LoginJson")
         self.assertEqual(login_call.kwargs["data"]["UserName"], "agent.user")
         self.assertEqual(login_call.kwargs["data"]["Password"], "secret-value")
+        self.assertEqual(login_call.kwargs["data"]["PasswordEncrypted"], "true")
+        self.assertEqual(
+            login_call.kwargs["data"]["Resources[0]"],
+            "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+        )
 
     @patch("app.agent.tools.settings.SOLIDSET_USER_ACTIONS_ENABLED", True)
     @patch("app.agent.tools._solidset_request_authenticated")

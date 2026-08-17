@@ -312,7 +312,19 @@ FROM dbo.SysLogin;
 
 Guarda los datos en PostgreSQL `SysLogin` mediante un `UPSERT` por `IDLogin`. `LastIDResource` permite localizar la cuenta correspondiente al `IDResource` de un agente activo.
 
-Al enviar una respuesta automática o multiagente, la API usa el `agent_resource_id` para buscar una cuenta cuyo `SysLogin.LastIDResource` coincida con `SysResourceIA.IDResource`. Solo se admite si el agente continúa con `active=true`. La API inicia una sesión independiente con `POST /User/LoginJson`, enviando `UserName`, `Password` y `TimezoneID`, y después publica el mensaje con las cookies de esa misma sesión. Si no existe una cuenta válida o `LoginJson` rechaza el acceso, el envío falla explícitamente y no utiliza la identidad global configurada en `.env`.
+Al enviar una respuesta automática o multiagente, el router entrega el `agent_resource_id` seleccionado al método `_solidset_login`. Este método busca una cuenta cuyo `SysLogin.LastIDResource` coincida con `SysResourceIA.IDResource` y, antes de autenticar, exige que `SysResourceIA.active=true`. Después inicia una sesión independiente con `POST /User/LoginJson` y publica el mensaje con las cookies de esa misma sesión.
+
+La autenticación del agente envía internamente:
+
+```text
+UserName          = SysLogin.Username
+Password          = SysLogin.Password
+PasswordEncrypted = true
+TimezoneID        = SOLIDSET_TIMEZONE_ID
+Resources[0]      = SysResourceIA.IDResource
+```
+
+`SysLogin.Password` es el HMAC ya generado por SolidSET, no una contraseña reversible. `PasswordEncrypted=true` hace que el método de SolidSET omita `GenerateHMAC` y compare directamente ese valor. `Resources[0]` obliga a registrar la sesión con el recurso agente solicitado cuando el login dispone de varios recursos. Si el recurso no es un agente activo, no tiene una cuenta válida o `LoginJson` rechaza el acceso, el envío falla explícitamente y no utiliza la identidad global configurada en `.env`.
 
 La respuesta publicada conserva una identificación visible con el formato `Nombre del agente: respuesta`. Por tanto, SolidSET muestra como emisor el login propio del recurso y el contenido deja claro qué agente IA produjo la contestación.
 
@@ -355,15 +367,16 @@ Este endpoint no funciona como proxy: recibe y procesa el mensaje.
 Para identificar agentes candidatos, el router admite estas fuentes del payload:
 
 ```text
-SelectedAgentResourceIds[]
 Destiny.dests[].resource
-Chat.resourceTable[].idResource
-Chat.destiny[].idResource
+SelectedAgentResourceIds[] (solo cuando Destiny.dests está vacío)
+Destiny.resource (solo cuando Destiny.dests está vacío)
 ```
 
-`Chat.channels[].idChannel` y `Chat.idWorkRoom` se interpretan como `SysWorkRoom.IDWorkRoom`. Los recursos encontrados todavía deben tener `SysResourceIA.active = true` y una relación activa en `SysChatIAResource`; por eso los usuarios normales incluidos en `resourceTable` no se ejecutan como agentes.
+En mensajes dirigidos, `Destiny.dests[].resource` es la fuente de verdad y tiene precedencia absoluta. Solo responde el recurso destinatario si existe en `SysResourceIA`, tiene `active=true` y está habilitado para el canal. Una lista auxiliar `SelectedAgentResourceIds` no puede añadir otros agentes cuando `Destiny.dests` contiene destinatarios.
 
-Cuando un recurso activo aparece en `Chat.resourceTable` o `Chat.destiny` y todavía no tiene relación con el canal, el router crea automáticamente `SysChatIAResource(IDResource, IDWorkRoom)` con `active = true`. Esto cubre canales privados o dinámicos descubiertos por primera vez mediante una notificación. Las selecciones enviadas únicamente mediante `SelectedAgentResourceIds` no crean relaciones implícitas.
+`Chat.resourceTable` y `Chat.destiny` describen participantes del chat y nunca se usan para seleccionar agentes. De este modo, estar presente en el canal no autoriza a un agente a responder. Si el recurso destinatario activo todavía no tiene relación con un canal privado o dinámico, el router crea exclusivamente para ese destino `SysChatIAResource(IDResource, IDWorkRoom)` con `active=true`.
+
+`Chat.channels[].idChannel` y `Chat.idWorkRoom` se interpretan como `SysWorkRoom.IDWorkRoom`.
 
 Un mensaje humano puede tener el mismo `Sender.resource` que el agente configurado. El agente puede responder porque SolidSET utiliza ese recurso como identidad compartida; únicamente se descartan mensajes que lleguen marcados con `Info.generated_by_ia`.
 

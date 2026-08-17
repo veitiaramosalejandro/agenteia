@@ -356,13 +356,9 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
-    """Extrae agentes explícitos y recursos participantes del chat de SolidSET."""
+    """Selecciona únicamente los recursos destinatarios del mensaje dirigido."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
-    selected: list[str] = []
-    for key in ("SelectedAgentResourceIds", "selectedAgentResourceIds", "AgentResourceIds"):
-        values = payload.get(key)
-        if isinstance(values, list):
-            selected.extend(str(value).strip() for value in values if value)
+    destination_resources: list[str] = []
     destiny = payload.get("FrameworkDestiny")
     if isinstance(destiny, dict):
         destinations = destiny.get("Dests", destiny.get("dests", []))
@@ -372,23 +368,22 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
                     lowered = {str(key).lower(): value for key, value in destination.items()}
                     value = lowered.get("resource") or lowered.get("idresource")
                     if value:
-                        selected.append(str(value).strip())
+                        destination_resources.append(str(value).strip())
 
-    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-    chat_lower = {str(key).lower(): value for key, value in chat.items()}
-    for collection_name in ("resourcetable", "destiny"):
-        resources = chat_lower.get(collection_name)
-        if not isinstance(resources, list):
-            continue
-        for resource in resources:
-            if not isinstance(resource, dict):
-                continue
-            lowered = {str(key).lower(): value for key, value in resource.items()}
-            value = lowered.get("idresource") or lowered.get("resource")
-            if value:
-                selected.append(str(value).strip())
+    destination_resources = list(dict.fromkeys(
+        value for value in destination_resources
+        if value and value != str(uuid.UUID(int=0))
+    ))
+    if destination_resources:
+        return destination_resources
+
+    selected: list[str] = []
+    for key in ("SelectedAgentResourceIds", "selectedAgentResourceIds", "AgentResourceIds"):
+        values = payload.get(key)
+        if isinstance(values, list):
+            selected.extend(str(value).strip() for value in values if value)
     destiny_resource = str(candidate.get("destiny_resource") or "").strip()
-    if destiny_resource:
+    if destiny_resource and destiny_resource != str(uuid.UUID(int=0)):
         selected.append(destiny_resource)
     return list(dict.fromkeys(value for value in selected if value))
 
@@ -442,8 +437,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
         if not channel_id or not selected:
             continue
         try:
-            payload_participants = _payload_participant_resource_ids(candidate)
-            ensure_payload_agent_workroom_assignments(channel_id, payload_participants)
+            ensure_payload_agent_workroom_assignments(channel_id, selected)
             configured_agents = get_active_agents_for_workroom(channel_id, selected)
         except (ValueError, psycopg.Error) as exc:
             print(f"⚠️ No se pudo resolver agentes seleccionados para {channel_id}: {exc}")
