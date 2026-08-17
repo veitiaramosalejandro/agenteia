@@ -9,6 +9,7 @@ import threading
 import uuid
 import httpx
 import psycopg
+import pymssql
 import redis
 from contextlib import suppress
 from collections import OrderedDict
@@ -34,15 +35,16 @@ from app.agent.tools import solidset_send_chat_message
 from app.connectors.db_client import save_sys_resource_ia
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
+from app.system.resource_ingest import ingest_solidset_resources
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
 # ============================================================
 
 app = FastAPI(
-    title="Machining Assistant Agent API",
-    description="Agente inteligente para diagnóstico de maquinaria CNC con sistema de aprendizaje contextual",
-    version="2.0.0"
+    title="Agent API",
+    description="Agente inteligente",
+    version="1.0.0"
 )
 
 # CORS para permitir conexiones desde el frontend
@@ -1057,7 +1059,7 @@ class UserFeedbackResponse(BaseModel):
 class SysResourceIAConfiguration(BaseModel):
     Name: Optional[str] = Field(None, max_length=255)
     Stamp: Optional[datetime] = None
-    IDResource: Optional[uuid.UUID] = None
+    IDResource: uuid.UUID
 
     class Config:
         extra = "forbid"
@@ -1070,6 +1072,15 @@ class SysResourceIAConfigurationStored(SysResourceIAConfiguration):
 class SysResourceIAConfigurationResponse(BaseModel):
     status: str
     configuration: SysResourceIAConfigurationStored
+
+
+class SysResourceIAIngestResponse(BaseModel):
+    status: str
+    sourceRows: int
+    synchronized: int
+    inserted: int
+    updated: int
+    skipped: int
 
 
 def _to_camel_alias(field_name: str) -> str:
@@ -1290,6 +1301,22 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 # ENDPOINTS PRINCIPALES
 # ============================================================
+
+@app.post(
+    "/api/v1/agent/solidset/resources/sync",
+    response_model=SysResourceIAIngestResponse,
+)
+def sync_solidset_resources() -> SysResourceIAIngestResponse:
+    """Sincroniza SysResources de SQL Server con SysResourceIA en PostgreSQL."""
+    try:
+        result = ingest_solidset_resources()
+    except (pymssql.Error, psycopg.Error) as exc:
+        print(f"❌ No se pudo sincronizar SysResourceIA: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudieron sincronizar los recursos entre SQL Server y PostgreSQL.",
+        ) from exc
+    return SysResourceIAIngestResponse(status="synchronized", **result)
 
 @app.post(
     "/api/v1/agent/solidset/chat-configuration",

@@ -9,7 +9,7 @@ from datetime import datetime
 # ============================================================
 
 st.set_page_config(
-    page_title="Machining Assistant AI",
+    page_title="Assistant AI",
     page_icon="⚙️",
     layout="centered",
     initial_sidebar_state="expanded"
