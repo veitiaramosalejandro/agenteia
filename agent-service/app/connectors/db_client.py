@@ -25,6 +25,7 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
         configuration.get("Name"),
         configuration.get("Stamp"),
         configuration.get("IDResource"),
+        configuration.get("active", False),
     )
 
     with _postgres_connection() as connection:
@@ -32,9 +33,9 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
             cursor.execute(
                 '''
                 INSERT INTO public."SysResourceIA" (
-                    "Name", "Stamp", "IDResource"
+                    "Name", "Stamp", "IDResource", active
                 )
-                VALUES (%s, %s, %s)
+                VALUES (%s, %s, %s, %s)
                 RETURNING *
                 ''',
                 values,

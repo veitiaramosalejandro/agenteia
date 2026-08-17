@@ -1060,6 +1060,7 @@ class SysResourceIAConfiguration(BaseModel):
     Name: Optional[str] = Field(None, max_length=255)
     Stamp: Optional[datetime] = None
     IDResource: uuid.UUID
+    active: bool = False
 
     class Config:
         extra = "forbid"
