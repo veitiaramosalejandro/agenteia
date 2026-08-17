@@ -52,6 +52,30 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
     return dict(saved)
 
 
+def get_solidset_login_for_active_agent(resource_id: UUID | str) -> dict[str, Any] | None:
+    """Obtiene internamente la cuenta de un agente activo; nunca exponer este resultado por API."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT l."IDLogin", l."Username", l."Password", l."Salt",
+                       l."LastIDResource", l."ActiveIDLogin2Resource"
+                FROM public."SysLogin" l
+                INNER JOIN public."SysResourceIA" r
+                    ON r."IDResource" = l."LastIDResource"
+                WHERE r."IDResource" = %s
+                  AND r.active = true
+                  AND NULLIF(l."Username", '') IS NOT NULL
+                  AND NULLIF(l."Password", '') IS NOT NULL
+                ORDER BY l."IDLogin"
+                LIMIT 1
+                ''',
+                (UUID(str(resource_id)),),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row is not None else None
+
+
 def get_active_agents_for_workroom(
     workroom_id: UUID | str,
     selected_resource_ids: Iterable[UUID | str],
@@ -78,6 +102,32 @@ def get_active_agents_for_workroom(
                 (UUID(str(workroom_id)), selected),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+
+def ensure_payload_agent_workroom_assignments(
+    workroom_id: UUID | str,
+    resource_ids: Iterable[UUID | str],
+) -> int:
+    """Vincula al canal recursos activos descubiertos en el payload de SolidSET."""
+    resources = list(dict.fromkeys(UUID(str(value)) for value in resource_ids))
+    if not resources:
+        return 0
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                INSERT INTO public."SysChatIAResource" (
+                    "IDResource", "IDWorkRoom", active, response_order
+                )
+                SELECT r."IDResource", %s, true, 0
+                FROM public."SysResourceIA" r
+                WHERE r.active = true
+                  AND r."IDResource" = ANY(%s)
+                ON CONFLICT ("IDResource", "IDWorkRoom") DO NOTHING
+                ''',
+                (UUID(str(workroom_id)), resources),
+            )
+            return max(0, cursor.rowcount)
 
 
 def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:

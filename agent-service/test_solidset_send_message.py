@@ -1,12 +1,78 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 
-from app.agent.tools import solidset_send_chat_message
+from app.agent.tools import _solidset_request_as_agent, solidset_send_chat_message
 
 
 class SolidsetSendChatMessageTests(unittest.TestCase):
+    @patch("app.agent.tools._solidset_get_all_base_candidates")
+    @patch("app.agent.tools.get_solidset_login_for_active_agent")
+    @patch("app.agent.tools.httpx.Client")
+    def test_agent_authenticates_through_login_json(
+        self, client_class, login_lookup, base_candidates
+    ):
+        login_lookup.return_value = {
+            "Username": "agent.user",
+            "Password": "secret-value",
+        }
+        base_candidates.return_value = ["http://solidset.local"]
+        client = MagicMock()
+        client_class.return_value.__enter__.return_value = client
+        client.post.return_value = MagicMock(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            json=lambda: {"Success": True},
+        )
+        client.cookies.items.return_value = []
+        expected_response = httpx.Response(200, json={"Result": 0})
+        client.request.return_value = expected_response
+
+        response, base, error = _solidset_request_as_agent(
+            agent_resource_id="ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+            method="POST",
+            endpoint="/Chat/SendMessageForm",
+            form_payload={"RawMessage": "Agente Dev17: respuesta"},
+        )
+
+        self.assertIs(response, expected_response)
+        self.assertEqual(base, "http://solidset.local")
+        self.assertEqual(error, "")
+        login_call = client.post.call_args
+        self.assertEqual(login_call.args[0], "http://solidset.local/User/LoginJson")
+        self.assertEqual(login_call.kwargs["data"]["UserName"], "agent.user")
+        self.assertEqual(login_call.kwargs["data"]["Password"], "secret-value")
+
+    @patch("app.agent.tools.settings.SOLIDSET_USER_ACTIONS_ENABLED", True)
+    @patch("app.agent.tools._solidset_request_authenticated")
+    @patch("app.agent.tools._solidset_request_as_agent")
+    def test_agent_response_uses_its_own_solidset_login(
+        self, agent_request_mock, global_request_mock
+    ):
+        agent_request_mock.return_value = (
+            httpx.Response(200, json={"Result": 0}),
+            "http://solidset.local",
+            "",
+        )
+
+        result = solidset_send_chat_message.invoke(
+            {
+                "canal_id": "channel-123",
+                "mensaje": "Respuesta del agente",
+                "confirm": True,
+                "generated_by_ia": True,
+                "agent_resource_id": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+            }
+        )
+
+        self.assertIn("Mensaje enviado", result)
+        global_request_mock.assert_not_called()
+        self.assertEqual(
+            agent_request_mock.call_args.kwargs["agent_resource_id"],
+            "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+        )
+
     @patch("app.agent.tools.settings.SOLIDSET_USER_ACTIONS_ENABLED", True)
     @patch("app.agent.tools._solidset_request_authenticated")
     def test_sends_long_message_in_form_body_not_query_string(self, request_mock):

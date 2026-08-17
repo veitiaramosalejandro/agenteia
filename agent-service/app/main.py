@@ -34,6 +34,7 @@ from app.agent.speech import text_to_speech
 from app.agent.tools import solidset_send_chat_message
 from app.connectors.db_client import (
     configure_agent_workroom,
+    ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
     get_agent_knowledge,
     save_agent_knowledge,
@@ -44,6 +45,7 @@ from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
 from app.system.resource_ingest import (
     ingest_solidset_chat_resources,
+    ingest_solidset_logins,
     ingest_solidset_resources,
     ingest_solidset_workrooms,
 )
@@ -335,7 +337,11 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         and not active_followup
     ):
         return "no_es_pregunta_peticion_o_continuacion"
-    if (not settings.SOLIDSET_AUTO_REPLY_ALLOW_SELF) and _is_self_sender(sender_resource=sender_resource, sender_name=sender_name):
+    if (
+        not candidate.get("agent_resource_id")
+        and (not settings.SOLIDSET_AUTO_REPLY_ALLOW_SELF)
+        and _is_self_sender(sender_resource=sender_resource, sender_name=sender_name)
+    ):
         return "remitente_es_recurso_del_agente"
 
     if settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION:
@@ -350,7 +356,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
-    """Extrae exclusivamente los agentes seleccionados por SolidSET."""
+    """Extrae agentes explícitos y recursos participantes del chat de SolidSET."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     selected: list[str] = []
     for key in ("SelectedAgentResourceIds", "selectedAgentResourceIds", "AgentResourceIds"):
@@ -367,10 +373,42 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
                     value = lowered.get("resource") or lowered.get("idresource")
                     if value:
                         selected.append(str(value).strip())
+
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    chat_lower = {str(key).lower(): value for key, value in chat.items()}
+    for collection_name in ("resourcetable", "destiny"):
+        resources = chat_lower.get(collection_name)
+        if not isinstance(resources, list):
+            continue
+        for resource in resources:
+            if not isinstance(resource, dict):
+                continue
+            lowered = {str(key).lower(): value for key, value in resource.items()}
+            value = lowered.get("idresource") or lowered.get("resource")
+            if value:
+                selected.append(str(value).strip())
     destiny_resource = str(candidate.get("destiny_resource") or "").strip()
     if destiny_resource:
         selected.append(destiny_resource)
     return list(dict.fromkeys(value for value in selected if value))
+
+
+def _payload_participant_resource_ids(candidate: dict) -> list[str]:
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    chat_lower = {str(key).lower(): value for key, value in chat.items()}
+    participants: list[str] = []
+    for collection_name in ("resourcetable", "destiny"):
+        resources = chat_lower.get(collection_name)
+        if not isinstance(resources, list):
+            continue
+        for resource in resources:
+            if isinstance(resource, dict):
+                lowered = {str(key).lower(): value for key, value in resource.items()}
+                value = lowered.get("idresource") or lowered.get("resource")
+                if value:
+                    participants.append(str(value).strip())
+    return list(dict.fromkeys(value for value in participants if value))
 
 
 def _candidate_session_id(candidate: dict) -> uuid.UUID:
@@ -404,15 +442,14 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
         if not channel_id or not selected:
             continue
         try:
+            payload_participants = _payload_participant_resource_ids(candidate)
+            ensure_payload_agent_workroom_assignments(channel_id, payload_participants)
             configured_agents = get_active_agents_for_workroom(channel_id, selected)
         except (ValueError, psycopg.Error) as exc:
             print(f"⚠️ No se pudo resolver agentes seleccionados para {channel_id}: {exc}")
             continue
-        sender_resource = str(candidate.get("sender_resource") or "").strip().lower()
         for configured_agent in configured_agents:
             agent_resource_id = str(configured_agent["IDResource"])
-            if sender_resource == agent_resource_id.lower():
-                continue
             routed_candidate = dict(candidate)
             try:
                 private_knowledge = get_agent_knowledge(agent_resource_id, channel_id)
@@ -1266,6 +1303,15 @@ class SysWorkRoomIngestResponse(BaseModel):
     skipped: int
 
 
+class SysLoginIngestResponse(BaseModel):
+    status: str
+    sourceRows: int
+    synchronized: int
+    inserted: int
+    updated: int
+    skipped: int
+
+
 class MultiAgentDialogueRequest(BaseModel):
     IDWorkRoom: uuid.UUID
     IDSession: Optional[uuid.UUID] = None
@@ -1565,6 +1611,23 @@ def sync_solidset_workrooms() -> SysWorkRoomIngestResponse:
         ) from exc
     return SysWorkRoomIngestResponse(status="synchronized", **result)
 
+
+@app.post(
+    "/api/v1/agent/solidset/logins/sync",
+    response_model=SysLoginIngestResponse,
+)
+def sync_solidset_logins() -> SysLoginIngestResponse:
+    """Sincroniza dbo.SysLogin sin exponer credenciales en la respuesta."""
+    try:
+        result = ingest_solidset_logins()
+    except (pymssql.Error, psycopg.Error) as exc:
+        print(f"❌ No se pudo sincronizar SysLogin: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudieron sincronizar las cuentas de SolidSET.",
+        ) from exc
+    return SysLoginIngestResponse(status="synchronized", **result)
+
 @app.post(
     "/api/v1/agent/solidset/agents/{agent_resource_id}/knowledge",
     response_model=AgentKnowledgeResponse,
@@ -1628,11 +1691,6 @@ async def handle_multi_agent_dialogue(
         raise HTTPException(status_code=422, detail="Se permiten como máximo 10 agentes por mensaje.")
 
     configured_agents = get_active_agents_for_workroom(request.IDWorkRoom, selected)
-    sender_resource = str(request.SenderResourceId or "").lower()
-    configured_agents = [
-        item for item in configured_agents
-        if str(item["IDResource"]).lower() != sender_resource
-    ]
     if not configured_agents:
         raise HTTPException(
             status_code=404,

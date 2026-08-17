@@ -46,6 +46,100 @@ WORKROOM_QUERY = """
 """
 
 
+LOGIN_QUERY = """
+    SELECT
+        Username,
+        Password,
+        Salt,
+        IDLogin,
+        LastIDResource,
+        ActiveIDLogin2Resource
+    FROM dbo.SysLogin
+"""
+
+
+def ingest_solidset_logins() -> dict[str, int]:
+    """Sincroniza cuentas SolidSET para autenticar al agente de cada recurso."""
+    with pymssql.connect(
+        server=settings.SQL_SERVER_HOST,
+        user=settings.SQL_SERVER_USER,
+        password=settings.SQL_SERVER_PASSWORD,
+        database=settings.SQL_SERVER_DB,
+        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+    ) as source_connection:
+        source_cursor = source_connection.cursor(as_dict=True)
+        source_cursor.execute(LOGIN_QUERY)
+        source_rows = source_cursor.fetchall() or []
+
+    logins: dict[UUID, tuple[str | None, str | None, str | None, UUID | None, UUID | None]] = {}
+    skipped = 0
+
+    def optional_uuid(value: object) -> UUID | None:
+        if value is None or not str(value).strip():
+            return None
+        return UUID(str(value))
+
+    for row in source_rows:
+        try:
+            login_id = UUID(str(row.get("IDLogin")))
+            last_resource_id = optional_uuid(row.get("LastIDResource"))
+            active_link_id = optional_uuid(row.get("ActiveIDLogin2Resource"))
+        except (TypeError, ValueError, AttributeError):
+            skipped += 1
+            continue
+
+        username = row.get("Username")
+        password = row.get("Password")
+        salt = row.get("Salt")
+        logins[login_id] = (
+            str(username).strip() if username is not None else None,
+            str(password) if password is not None else None,
+            str(salt) if salt is not None else None,
+            last_resource_id,
+            active_link_id,
+        )
+
+    login_ids = list(logins)
+    with _postgres_connection() as target_connection:
+        with target_connection.cursor() as target_cursor:
+            existing_ids: set[UUID] = set()
+            if login_ids:
+                target_cursor.execute(
+                    'SELECT "IDLogin" FROM public."SysLogin" WHERE "IDLogin" = ANY(%s)',
+                    (login_ids,),
+                )
+                existing_ids = {row["IDLogin"] for row in target_cursor.fetchall()}
+                target_cursor.executemany(
+                    '''
+                    INSERT INTO public."SysLogin" (
+                        "IDLogin", "Username", "Password", "Salt",
+                        "LastIDResource", "ActiveIDLogin2Resource"
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT ("IDLogin") DO UPDATE SET
+                        "Username" = EXCLUDED."Username",
+                        "Password" = EXCLUDED."Password",
+                        "Salt" = EXCLUDED."Salt",
+                        "LastIDResource" = EXCLUDED."LastIDResource",
+                        "ActiveIDLogin2Resource" = EXCLUDED."ActiveIDLogin2Resource"
+                    ''',
+                    [
+                        (login_id, username, password, salt, last_resource_id, active_link_id)
+                        for login_id, (
+                            username, password, salt, last_resource_id, active_link_id
+                        ) in logins.items()
+                    ],
+                )
+
+    return {
+        "sourceRows": len(source_rows),
+        "synchronized": len(logins),
+        "inserted": len(set(login_ids) - existing_ids),
+        "updated": len(existing_ids),
+        "skipped": skipped,
+    }
+
+
 def ingest_solidset_resources() -> dict[str, int]:
     """Sincroniza los recursos de SolidSET desde SQL Server hacia PostgreSQL."""
     with pymssql.connect(

@@ -4,7 +4,7 @@
 
 > Este documento debe actualizarse en el mismo cambio que modifique una ruta, método HTTP, contrato de entrada, respuesta o comportamiento observable de la API.
 
-Actualmente la API expone 22 endpoints funcionales. Puedes consultar siempre la documentación interactiva en:
+Actualmente la API expone 23 endpoints funcionales. Puedes consultar siempre la documentación interactiva en:
 
 ```text
 http://localhost:8000/docs
@@ -16,14 +16,15 @@ El funcionamiento habitual sería:
 
 ```text
 1. Sincronizar recursos desde SQL Server
-2. Sincronizar el catálogo SysWorkRoom
-3. Sincronizar las relaciones recurso–canal
-4. Configurar qué recursos son agentes IA
-5. Activar agentes dentro de sus canales
-6. Cargar conocimiento privado para cada agente
-7. SolidSET selecciona uno o varios agentes
-8. Ejecutar el diálogo multiagente
-9. Cada agente responde con memoria y conocimiento independientes
+2. Sincronizar las cuentas SysLogin
+3. Sincronizar el catálogo SysWorkRoom
+4. Sincronizar las relaciones recurso–canal
+5. Configurar qué recursos son agentes IA
+6. Activar agentes dentro de sus canales
+7. Cargar conocimiento privado para cada agente
+8. SolidSET selecciona uno o varios agentes
+9. Ejecutar el diálogo multiagente
+10. Cada agente responde con memoria y conocimiento independientes
 ```
 
 # Configuración multiagente
@@ -152,12 +153,13 @@ Comportamiento:
 1. Comprueba que cada agente existe.
 2. Comprueba que está activo globalmente.
 3. Comprueba que está activo y asignado al canal.
-4. Excluye al agente si es el remitente.
-5. Crea o actualiza una fila en `SysAgentIASession`.
-6. Ejecuta todos los agentes en paralelo.
-7. Cada uno utiliza su propia memoria y conocimiento.
-8. Devuelve una respuesta independiente por agente.
-9. Con `SendToSolidSET = true`, publica las respuestas en el canal.
+4. Crea o actualiza una fila en `SysAgentIASession`.
+5. Ejecuta todos los agentes en paralelo.
+6. Cada uno utiliza su propia memoria y conocimiento.
+7. Devuelve una respuesta independiente por agente.
+8. Con `SendToSolidSET = true`, publica las respuestas en el canal.
+
+El mismo `IDResource` puede aparecer como remitente y agente configurado. Esto es válido cuando una persona interviene usando el recurso que SolidSET ha configurado como agente; el bloqueo de bucles se realiza mediante `Info.generated_by_ia`, no descartando el recurso remitente.
 
 Respuesta:
 
@@ -292,9 +294,46 @@ Respuesta aproximada:
 }
 ```
 
+---
+
+## 8. Sincronizar cuentas de acceso
+
+```http
+POST /api/v1/agent/solidset/logins/sync
+```
+
+Ejecuta en SQL Server:
+
+```sql
+SELECT Username, Password, Salt, IDLogin,
+       LastIDResource, ActiveIDLogin2Resource
+FROM dbo.SysLogin;
+```
+
+Guarda los datos en PostgreSQL `SysLogin` mediante un `UPSERT` por `IDLogin`. `LastIDResource` permite localizar la cuenta correspondiente al `IDResource` de un agente activo.
+
+Al enviar una respuesta automática o multiagente, la API usa el `agent_resource_id` para buscar una cuenta cuyo `SysLogin.LastIDResource` coincida con `SysResourceIA.IDResource`. Solo se admite si el agente continúa con `active=true`. La API inicia una sesión independiente con `POST /User/LoginJson`, enviando `UserName`, `Password` y `TimezoneID`, y después publica el mensaje con las cookies de esa misma sesión. Si no existe una cuenta válida o `LoginJson` rechaza el acceso, el envío falla explícitamente y no utiliza la identidad global configurada en `.env`.
+
+La respuesta publicada conserva una identificación visible con el formato `Nombre del agente: respuesta`. Por tanto, SolidSET muestra como emisor el login propio del recurso y el contenido deja claro qué agente IA produjo la contestación.
+
+La respuesta contiene únicamente contadores; nunca devuelve ni registra `Password` o `Salt`:
+
+```json
+{
+  "status": "synchronized",
+  "sourceRows": 325,
+  "synchronized": 325,
+  "inserted": 325,
+  "updated": 0,
+  "skipped": 0
+}
+```
+
+Los campos `Password` y `Salt` son datos sensibles. El acceso al esquema PostgreSQL debe quedar limitado al servicio del agente y no deben incluirse en endpoints de consulta, logs ni mensajes de error.
+
 # Entrada de mensajes desde SolidSET
 
-## 8. Recibir una notificación FrameworkMessage
+## 9. Recibir una notificación FrameworkMessage
 
 ```http
 POST /api/v1/agent/notification/framework-message
@@ -313,9 +352,24 @@ Funciones:
 
 Este endpoint no funciona como proxy: recibe y procesa el mensaje.
 
+Para identificar agentes candidatos, el router admite estas fuentes del payload:
+
+```text
+SelectedAgentResourceIds[]
+Destiny.dests[].resource
+Chat.resourceTable[].idResource
+Chat.destiny[].idResource
+```
+
+`Chat.channels[].idChannel` y `Chat.idWorkRoom` se interpretan como `SysWorkRoom.IDWorkRoom`. Los recursos encontrados todavía deben tener `SysResourceIA.active = true` y una relación activa en `SysChatIAResource`; por eso los usuarios normales incluidos en `resourceTable` no se ejecutan como agentes.
+
+Cuando un recurso activo aparece en `Chat.resourceTable` o `Chat.destiny` y todavía no tiene relación con el canal, el router crea automáticamente `SysChatIAResource(IDResource, IDWorkRoom)` con `active = true`. Esto cubre canales privados o dinámicos descubiertos por primera vez mediante una notificación. Las selecciones enviadas únicamente mediante `SelectedAgentResourceIds` no crean relaciones implícitas.
+
+Un mensaje humano puede tener el mismo `Sender.resource` que el agente configurado. El agente puede responder porque SolidSET utiliza ese recurso como identidad compartida; únicamente se descartan mensajes que lleguen marcados con `Info.generated_by_ia`.
+
 ---
 
-## 9. Capturar y reenviar FrameworkHub
+## 10. Capturar y reenviar FrameworkHub
 
 ```http
 POST /api/v1/agent/notification/frameworkHub/SendMessage
@@ -346,7 +400,7 @@ X-Agent-Replies-Scheduled
 
 # Conversación tradicional
 
-## 10. Diálogo con un único agente
+## 11. Diálogo con un único agente
 
 ```http
 POST /api/v1/agent/dialogue
@@ -383,7 +437,7 @@ Para nuevos desarrollos con varios agentes debe preferirse `/multi-agent/dialogu
 
 ---
 
-## 11. Registrar feedback
+## 12. Registrar feedback
 
 ```http
 POST /api/v1/agent/feedback
@@ -416,7 +470,7 @@ Para feedback multiagente convendría que SolidSET conserve también el `IDAgent
 
 # Memoria y archivos
 
-## 12. Consultar historial
+## 13. Consultar historial
 
 ```http
 GET /api/v1/agent/history/{session_id}
@@ -437,7 +491,7 @@ En multiagente, el identificador interno incluye agente, canal y sesión.
 
 ---
 
-## 13. Eliminar historial
+## 14. Eliminar historial
 
 ```http
 DELETE /api/v1/agent/history/{session_id}
@@ -449,7 +503,7 @@ Es una operación destructiva: elimina el historial conversacional de esa clave.
 
 ---
 
-## 14. Obtener audio generado
+## 15. Obtener audio generado
 
 ```http
 GET /api/v1/agent/audio-response?file=nombre.mp3
@@ -461,7 +515,7 @@ Valida que el archivo exista y que la ruta solicitada sea segura.
 
 # Supervisión y diagnóstico
 
-## 15. Estado general del agente
+## 16. Estado general del agente
 
 ```http
 GET /api/v1/agent/health
@@ -481,7 +535,7 @@ Es el endpoint principal para monitorización.
 
 ---
 
-## 16. Resumen de evaluación
+## 17. Resumen de evaluación
 
 ```http
 GET /api/v1/agent/evaluation/summary
@@ -499,7 +553,7 @@ Devuelve métricas operativas relacionadas con:
 
 ---
 
-## 17. Mensajes recientes capturados
+## 18. Mensajes recientes capturados
 
 ```http
 GET /api/v1/agent/notification/recent-messages?limit=30
@@ -519,7 +573,7 @@ Sirve para comprobar que SolidSET está enviando correctamente:
 
 ---
 
-## 18. Contexto de un usuario
+## 19. Contexto de un usuario
 
 ```http
 GET /api/v1/agent/context/{user_id}
@@ -539,7 +593,7 @@ Se usa principalmente para depuración.
 
 ---
 
-## 19. Métricas de reintentos SQL
+## 20. Métricas de reintentos SQL
 
 ```http
 GET /api/v1/agent/sql-retry-stats
@@ -554,7 +608,7 @@ Muestra:
 
 ---
 
-## 20. Reiniciar métricas SQL
+## 21. Reiniciar métricas SQL
 
 ```http
 POST /api/v1/agent/sql-retry-stats/reset
@@ -566,7 +620,7 @@ No modifica tablas ni datos de SolidSET; solamente reinicia contadores internos.
 
 # Conectividad
 
-## 21. Probar SolidSET
+## 22. Probar SolidSET
 
 ```http
 GET /api/v1/connectivity/solidset
@@ -584,7 +638,7 @@ Sirve para diagnosticar:
 
 ---
 
-## 22. Probar todas las integraciones
+## 23. Probar todas las integraciones
 
 ```http
 GET /api/v1/connectivity/all

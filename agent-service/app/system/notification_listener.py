@@ -436,6 +436,12 @@ class NotificationApiListener:
             return first(*(lowered.get(name.lower()) for name in names))
 
         args = normalized.get("Args") if isinstance(normalized.get("Args"), list) else []
+        chat_channels = nested(chat, "channels")
+        first_chat_channel = (
+            chat_channels[0]
+            if isinstance(chat_channels, list) and chat_channels and isinstance(chat_channels[0], dict)
+            else {}
+        )
         normalized["IDSenderResource"] = first(
             normalized.get("IDSenderResource"),
             nested(sender, "IDResource", "IdResource", "ResourceID", "resource"),
@@ -453,6 +459,7 @@ class NotificationApiListener:
             nested(workroom, "IDWorkRoom", "IdWorkRoom", "workRoom"),
             nested(chat, "IDWorkRoom", "workRoom"), nested(chat_data, "IDWorkRoom", "workRoom"),
             nested(destiny, "IDWorkRoom", "IdWorkRoom", "workRoom", "room"),
+            nested(first_chat_channel, "IDChannel", "IdChannel", "idChannel"),
         )
         normalized["ChannelName"] = first(
             normalized.get("ChannelName"),

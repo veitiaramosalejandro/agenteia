@@ -6,10 +6,52 @@ from app.main import (
     MultiAgentDialogueRequest,
     _route_candidates_to_selected_agents,
     handle_multi_agent_dialogue,
+    notification_listener,
 )
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    def test_channel_id_falls_back_to_chat_channels(self):
+        room_id = uuid4()
+        normalized = notification_listener._normalize_framework_message({
+            "RawMessage": "Hola agente",
+            "Sender": {"resource": str(uuid4())},
+            "Destiny": {},
+            "Chat": {"channels": [{"idChannel": str(room_id)}]},
+        })
+        self.assertEqual(str(room_id), normalized["IDWorkRoom"])
+
+    def test_routes_active_agent_from_chat_resource_table_even_when_it_is_sender(self):
+        room_id = uuid4()
+        resource_id = uuid4()
+        session_id = uuid4()
+        candidate = {
+            "fingerprint": "solidset-message",
+            "channel_id": str(room_id),
+            "sender_resource": str(resource_id),
+            "payload": {
+                "FrameworkSender": {"session": str(session_id), "resource": str(resource_id)},
+                "Chat": {
+                    "channels": [{"idChannel": str(room_id)}],
+                    "resourceTable": [{"idResource": str(resource_id)}],
+                    "destiny": [{"idResource": str(resource_id)}],
+                },
+            },
+        }
+        configured = [{"IDResource": resource_id, "Name": "Agente Dev17"}]
+        with (
+            patch("app.main.ensure_payload_agent_workroom_assignments", return_value=1) as assign,
+            patch("app.main.get_active_agents_for_workroom", return_value=configured) as registry,
+            patch("app.main.get_agent_knowledge", return_value=""),
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        registry.assert_called_once_with(str(room_id), [str(resource_id)])
+        assign.assert_called_once_with(str(room_id), [str(resource_id)])
+        self.assertEqual(1, len(routed))
+        self.assertEqual(str(resource_id), routed[0]["agent_resource_id"])
+        self.assertEqual(str(session_id), routed[0]["agent_session_id"])
+
     def test_routes_only_active_selected_agents_returned_by_registry(self):
         room_id = uuid4()
         first = uuid4()
@@ -25,6 +67,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             {"IDResource": second, "Name": "Agente B"},
         ]
         with (
+            patch("app.main.ensure_payload_agent_workroom_assignments", return_value=0),
             patch("app.main.get_active_agents_for_workroom", return_value=configured),
             patch("app.main.get_agent_knowledge", return_value="Conocimiento privado"),
         ):

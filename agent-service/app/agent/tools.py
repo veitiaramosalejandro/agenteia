@@ -19,6 +19,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams
 
 from app.config import settings
+from app.connectors.db_client import get_solidset_login_for_active_agent
 from app.rag.vector_store import ensure_vector_collection
 
 from app.rag.audio_processor import extract_audio_features
@@ -330,6 +331,82 @@ def _solidset_request_authenticated(
             return response, base, ""
     except Exception as exc:
         return None, base, str(exc)
+
+
+def _solidset_request_as_agent(
+    *,
+    agent_resource_id: str,
+    method: str,
+    endpoint: str,
+    form_payload: Optional[dict[str, Any]] = None,
+) -> tuple[Optional[httpx.Response], str, str]:
+    """Autentica y ejecuta una petición usando la cuenta del recurso agente."""
+    try:
+        login = get_solidset_login_for_active_agent(agent_resource_id)
+    except Exception as exc:
+        return None, "", f"no se pudo resolver la cuenta del agente: {exc}"
+    if not login:
+        return None, "", "el recurso no está activo o no tiene una cuenta SysLogin sincronizada"
+
+    username = str(login.get("Username") or "").strip()
+    password = str(login.get("Password") or "")
+    if not username or not password:
+        return None, "", "la cuenta del agente no tiene Username/Password válidos"
+
+    target = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+    last_error = "SolidSET rechazó la autenticación del recurso"
+    for base in _solidset_get_all_base_candidates():
+        try:
+            with httpx.Client(
+                timeout=20.0,
+                verify=settings.NOTIF_API_VERIFY_TLS,
+                follow_redirects=True,
+            ) as client:
+                login_payload = {
+                    "UserName": username,
+                    "Password": password,
+                    "TimezoneID": settings.SOLIDSET_TIMEZONE_ID or "GMT Standard Time",
+                }
+                login_response = client.post(
+                    f"{base}/User/LoginJson",
+                    data=login_payload,
+                    headers=_solidset_action_headers(),
+                )
+                if login_response.status_code >= 400:
+                    last_error = f"HTTP {login_response.status_code} al autenticar en {base}/User/LoginJson"
+                    continue
+                try:
+                    login_result = login_response.json()
+                except Exception:
+                    login_result = None
+                if isinstance(login_result, dict):
+                    success = login_result.get("Success", login_result.get("success"))
+                    error = login_result.get("Error", login_result.get("error"))
+                    if success is False or error:
+                        last_error = "SolidSET rechazó LoginJson para la cuenta del agente"
+                        continue
+                access_key = _solidset_extract_access_key(login_response)
+
+                cookie_header = _solidset_merge_cookie_headers(
+                    _solidset_action_headers().get("Cookie", ""),
+                    _solidset_client_cookie_header(client),
+                )
+                headers = _solidset_action_headers()
+                if cookie_header:
+                    headers["Cookie"] = cookie_header
+                if access_key:
+                    headers["X-Access-Key"] = access_key
+                    headers["Authorization"] = f"Bearer {access_key}"
+                response = client.request(
+                    method.upper(),
+                    f"{base}{target}",
+                    headers=headers,
+                    data=form_payload,
+                )
+                return response, base, ""
+        except Exception as exc:
+            last_error = str(exc)
+    return None, "", last_error
 
 
 def _normalize_document_lines(content: str) -> list[str]:
@@ -856,14 +933,18 @@ def solidset_send_chat_message(
         form_payload["Info[generated_by_ia]"] = "1"
         if agent_resource_id:
             form_payload["Info[agent_resource_id]"] = str(agent_resource_id).strip()
-    response, base, error = _solidset_request_authenticated(
-        method="POST",
-        endpoint="/Chat/SendMessageForm",
+    request_sender = _solidset_request_as_agent if agent_resource_id else _solidset_request_authenticated
+    request_args: dict[str, Any] = {
+        "method": "POST",
+        "endpoint": "/Chat/SendMessageForm",
         # SendMessageForm espera datos de formulario. Usar ``params`` colocaba
         # RawMessage en la URL y hacía que IIS devolviera 404.15 para respuestas
         # extensas (por ejemplo, análisis construidos desde cientos de mensajes).
-        form_payload=form_payload,
-    )
+        "form_payload": form_payload,
+    }
+    if agent_resource_id:
+        request_args["agent_resource_id"] = str(agent_resource_id).strip()
+    response, base, error = request_sender(**request_args)
     if response is None:
         return f"Error enviando mensaje a SOLIDSET: {error or 'sin detalle'}"
     if response.status_code >= 400:
