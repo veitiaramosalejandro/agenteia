@@ -62,7 +62,13 @@ def get_solidset_login_for_active_agent(resource_id: UUID | str) -> dict[str, An
                        l."LastIDResource", l."ActiveIDLogin2Resource"
                 FROM public."SysLogin" l
                 INNER JOIN public."SysResourceIA" r
-                    ON r."IDResource" = l."LastIDResource"
+                    ON (
+                        r."ActiveIDLogin2Resource" IS NOT NULL
+                        AND l."ActiveIDLogin2Resource" = r."ActiveIDLogin2Resource"
+                    ) OR (
+                        r."ActiveIDLogin2Resource" IS NULL
+                        AND l."LastIDResource" = r."IDResource"
+                    )
                 WHERE r."IDResource" = %s
                   AND r.active = true
                   AND NULLIF(l."Username", '') IS NOT NULL
@@ -89,10 +95,25 @@ def get_active_agents_for_workroom(
             cursor.execute(
                 '''
                 SELECT r."ID", r."Name", r."IDResource", r.active,
-                       c."IDWorkRoom", c.response_order
+                       c."IDWorkRoom", c.response_order, login."FullName"
                 FROM public."SysResourceIA" r
                 INNER JOIN public."SysChatIAResource" c
                     ON c."IDResource" = r."IDResource"
+                LEFT JOIN LATERAL (
+                    SELECT l."FullName"
+                    FROM public."SysLogin" l
+                    WHERE (
+                        r."ActiveIDLogin2Resource" IS NOT NULL
+                        AND l."ActiveIDLogin2Resource" = r."ActiveIDLogin2Resource"
+                    ) OR (
+                        r."ActiveIDLogin2Resource" IS NULL
+                        AND l."LastIDResource" = r."IDResource"
+                    )
+                    ORDER BY
+                        CASE WHEN NULLIF(BTRIM(l."FullName"), '') IS NULL THEN 1 ELSE 0 END,
+                        l."IDLogin"
+                    LIMIT 1
+                ) login ON true
                 WHERE c."IDWorkRoom" = %s
                   AND r.active = true
                   AND c.active = true

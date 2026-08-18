@@ -13,6 +13,7 @@ RESOURCE_QUERY = """
     SELECT
         SysResources.DisplayName,
         SysResources.ResourceId,
+        SysResources.ActiveIDLogin2Resource,
         SysLogin.FullName
     FROM dbo.SysResources
     INNER JOIN dbo.SysLogin
@@ -49,6 +50,7 @@ WORKROOM_QUERY = """
 LOGIN_QUERY = """
     SELECT
         Username,
+        FullName,
         Password,
         Salt,
         IDLogin,
@@ -72,7 +74,10 @@ def ingest_solidset_logins() -> dict[str, int]:
         source_cursor.execute(LOGIN_QUERY)
         source_rows = source_cursor.fetchall() or []
 
-    logins: dict[UUID, tuple[str | None, str | None, str | None, UUID | None, UUID | None]] = {}
+    logins: dict[
+        UUID,
+        tuple[str | None, str | None, str | None, str | None, UUID | None, UUID | None],
+    ] = {}
     skipped = 0
 
     def optional_uuid(value: object) -> UUID | None:
@@ -90,10 +95,12 @@ def ingest_solidset_logins() -> dict[str, int]:
             continue
 
         username = row.get("Username")
+        full_name = row.get("FullName")
         password = row.get("Password")
         salt = row.get("Salt")
         logins[login_id] = (
             str(username).strip() if username is not None else None,
+            str(full_name).strip() if full_name is not None else None,
             str(password) if password is not None else None,
             str(salt) if salt is not None else None,
             last_resource_id,
@@ -113,20 +120,25 @@ def ingest_solidset_logins() -> dict[str, int]:
                 target_cursor.executemany(
                     '''
                     INSERT INTO public."SysLogin" (
-                        "IDLogin", "Username", "Password", "Salt",
+                        "IDLogin", "Username", "FullName", "Password", "Salt",
                         "LastIDResource", "ActiveIDLogin2Resource"
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT ("IDLogin") DO UPDATE SET
                         "Username" = EXCLUDED."Username",
+                        "FullName" = EXCLUDED."FullName",
                         "Password" = EXCLUDED."Password",
                         "Salt" = EXCLUDED."Salt",
                         "LastIDResource" = EXCLUDED."LastIDResource",
                         "ActiveIDLogin2Resource" = EXCLUDED."ActiveIDLogin2Resource"
                     ''',
                     [
-                        (login_id, username, password, salt, last_resource_id, active_link_id)
+                        (
+                            login_id, username, full_name, password, salt,
+                            last_resource_id, active_link_id,
+                        )
                         for login_id, (
-                            username, password, salt, last_resource_id, active_link_id
+                            username, full_name, password, salt,
+                            last_resource_id, active_link_id,
                         ) in logins.items()
                     ],
                 )
@@ -156,17 +168,22 @@ def ingest_solidset_resources() -> dict[str, int]:
 
     # El diccionario evita duplicados si SQL Server devuelve más de un login
     # para el mismo recurso. La clave canónica siempre es ResourceId.
-    resources: dict[UUID, str | None] = {}
+    resources: dict[UUID, tuple[str | None, UUID | None]] = {}
     skipped = 0
     for row in source_rows:
         raw_resource_id = row.get("ResourceId")
         try:
             resource_id = UUID(str(raw_resource_id))
+            raw_active_link = row.get("ActiveIDLogin2Resource")
+            active_link_id = UUID(str(raw_active_link)) if raw_active_link else None
         except (TypeError, ValueError, AttributeError):
             skipped += 1
             continue
         display_name = row.get("DisplayName")
-        resources[resource_id] = str(display_name).strip() if display_name is not None else None
+        resources[resource_id] = (
+            str(display_name).strip() if display_name is not None else None,
+            active_link_id,
+        )
 
     resource_ids = list(resources)
     synchronized_at = datetime.now()
@@ -183,15 +200,17 @@ def ingest_solidset_resources() -> dict[str, int]:
 
                 target_cursor.executemany(
                     '''
-                    INSERT INTO public."SysResourceIA" ("Name", "Stamp", "IDResource")
-                    VALUES (%s, %s, %s)
+                    INSERT INTO public."SysResourceIA" (
+                        "Name", "Stamp", "IDResource", "ActiveIDLogin2Resource"
+                    ) VALUES (%s, %s, %s, %s)
                     ON CONFLICT ("IDResource") DO UPDATE SET
                         "Name" = EXCLUDED."Name",
-                        "Stamp" = EXCLUDED."Stamp"
+                        "Stamp" = EXCLUDED."Stamp",
+                        "ActiveIDLogin2Resource" = EXCLUDED."ActiveIDLogin2Resource"
                     ''',
                     [
-                        (display_name, synchronized_at, resource_id)
-                        for resource_id, display_name in resources.items()
+                        (display_name, synchronized_at, resource_id, active_link_id)
+                        for resource_id, (display_name, active_link_id) in resources.items()
                     ],
                 )
 

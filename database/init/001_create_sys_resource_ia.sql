@@ -12,12 +12,14 @@ CREATE TABLE IF NOT EXISTS public."SysResourceIA" (
     "Name" varchar(255),
     "Stamp" timestamp without time zone,
     "IDResource" uuid NOT NULL,
+    "ActiveIDLogin2Resource" uuid,
     active boolean NOT NULL DEFAULT false,
     CONSTRAINT "PK_SysResourceIA" PRIMARY KEY ("ID")
 );
 
 ALTER TABLE public."SysResourceIA"
     ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS "ActiveIDLogin2Resource" uuid,
     ALTER COLUMN "ID" SET DEFAULT gen_random_uuid(),
     ALTER COLUMN "IDResource" SET NOT NULL,
     DROP COLUMN IF EXISTS "Code",

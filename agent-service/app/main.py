@@ -388,6 +388,15 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     return list(dict.fromkeys(value for value in selected if value))
 
 
+def _agent_visible_name(configured_agent: dict[str, Any]) -> str:
+    """Construye la identidad pública del agente desde el nombre de su login."""
+    resource_id = str(configured_agent.get("IDResource") or "").strip()
+    full_name = str(configured_agent.get("FullName") or "").strip()
+    fallback = str(configured_agent.get("Name") or resource_id).strip()
+    identity = full_name or fallback or resource_id
+    return f"Asistente IA {identity}".strip()
+
+
 def _payload_participant_resource_ids(candidate: dict) -> list[str]:
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
@@ -453,7 +462,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             routed_candidate.update({
                 "fingerprint": f"{candidate.get('fingerprint')}:{agent_resource_id}",
                 "agent_resource_id": agent_resource_id,
-                "agent_name": configured_agent.get("Name") or agent_resource_id,
+                "agent_name": _agent_visible_name(configured_agent),
                 "agent_session_id": str(_candidate_session_id(candidate)),
                 "agent_knowledge": private_knowledge,
                 "addressed_to_agent": True,
@@ -1695,7 +1704,7 @@ async def handle_multi_agent_dialogue(
 
     async def execute_one(configured_agent: dict[str, Any]) -> MultiAgentAnswer:
         agent_resource_id = str(configured_agent["IDResource"])
-        agent_name = str(configured_agent.get("Name") or agent_resource_id)
+        agent_name = _agent_visible_name(configured_agent)
         isolated_session = (
             f"solidset:agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
             f"conversation:{conversation_id}"

@@ -69,7 +69,11 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                 "Chat": {"resourceTable": [{"idResource": str(other_participant)}]},
             },
         }
-        configured = [{"IDResource": requested_agent, "Name": "Agente destino"}]
+        configured = [{
+            "IDResource": requested_agent,
+            "Name": "Dev20",
+            "FullName": "Victor Vargas",
+        }]
         with (
             patch("app.main.ensure_payload_agent_workroom_assignments", return_value=0) as assign,
             patch("app.main.get_active_agents_for_workroom", return_value=configured) as registry,
@@ -81,6 +85,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         registry.assert_called_once_with(str(room_id), [str(requested_agent)])
         self.assertEqual(1, len(routed))
         self.assertEqual(str(requested_agent), routed[0]["agent_resource_id"])
+        self.assertEqual("Asistente IA Victor Vargas", routed[0]["agent_name"])
 
     def test_routes_only_active_selected_agents_returned_by_registry(self):
         room_id = uuid4()

@@ -196,6 +196,7 @@ Mapeo:
 ```text
 SysResources.DisplayName → SysResourceIA.Name
 SysResources.ResourceId  → SysResourceIA.IDResource
+SysResources.ActiveIDLogin2Resource → SysResourceIA.ActiveIDLogin2Resource
 ```
 
 La sincronización es idempotente:
@@ -305,12 +306,18 @@ POST /api/v1/agent/solidset/logins/sync
 Ejecuta en SQL Server:
 
 ```sql
-SELECT Username, Password, Salt, IDLogin,
+SELECT Username, FullName, Password, Salt, IDLogin,
        LastIDResource, ActiveIDLogin2Resource
 FROM dbo.SysLogin;
 ```
 
-Guarda los datos en PostgreSQL `SysLogin` mediante un `UPSERT` por `IDLogin`. `LastIDResource` permite localizar la cuenta correspondiente al `IDResource` de un agente activo.
+Guarda los datos en PostgreSQL `SysLogin` mediante un `UPSERT` por `IDLogin`. La cuenta exacta del agente se resuelve uniendo `SysResourceIA.ActiveIDLogin2Resource` con `SysLogin.ActiveIDLogin2Resource`; esto evita elegir otro usuario que tenga el mismo `LastIDResource`.
+
+Mapeo adicional:
+
+```text
+dbo.SysLogin.FullName → PostgreSQL SysLogin.FullName
+```
 
 Al enviar una respuesta automática o multiagente, el router entrega el `agent_resource_id` seleccionado al método `_solidset_login`. Este método busca una cuenta cuyo `SysLogin.LastIDResource` coincida con `SysResourceIA.IDResource` y, antes de autenticar, exige que `SysResourceIA.active=true`. Después inicia una sesión independiente con `POST /User/LoginJson` y publica el mensaje con las cookies de esa misma sesión.
 
@@ -326,7 +333,7 @@ Resources[0]      = SysResourceIA.IDResource
 
 `SysLogin.Password` es el HMAC ya generado por SolidSET, no una contraseña reversible. `PasswordEncrypted=true` hace que el método de SolidSET omita `GenerateHMAC` y compare directamente ese valor. `Resources[0]` obliga a registrar la sesión con el recurso agente solicitado cuando el login dispone de varios recursos. Si el recurso no es un agente activo, no tiene una cuenta válida o `LoginJson` rechaza el acceso, el envío falla explícitamente y no utiliza la identidad global configurada en `.env`.
 
-La respuesta publicada conserva una identificación visible con el formato `Nombre del agente: respuesta`. Por tanto, SolidSET muestra como emisor el login propio del recurso y el contenido deja claro qué agente IA produjo la contestación.
+La respuesta publicada usa `SysLogin.FullName` y conserva una identificación visible con el formato `Asistente IA {FullName}: respuesta`; por ejemplo, `Asistente IA Alejandro Veitia: ...`. SolidSET muestra además como emisor el login propio del recurso. Si excepcionalmente `FullName` está vacío, se utiliza `SysResourceIA.Name` como respaldo.
 
 La respuesta contiene únicamente contadores; nunca devuelve ni registra `Password` o `Salt`:
 

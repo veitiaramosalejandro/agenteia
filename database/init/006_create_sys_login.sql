@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS public."SysLogin" (
     "IDLogin" uuid NOT NULL,
     "Username" text,
+    "FullName" text,
     "Password" text,
     "Salt" text,
     "LastIDResource" uuid,
