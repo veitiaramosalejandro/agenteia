@@ -4,7 +4,7 @@
 
 > Este documento debe actualizarse en el mismo cambio que modifique una ruta, método HTTP, contrato de entrada, respuesta o comportamiento observable de la API.
 
-Actualmente la API expone 23 endpoints funcionales. Puedes consultar siempre la documentación interactiva en:
+Actualmente la API expone 24 endpoints funcionales. Puedes consultar siempre la documentación interactiva en:
 
 ```text
 http://localhost:8000/docs
@@ -513,9 +513,56 @@ Funciones:
 
 Para feedback multiagente convendría que SolidSET conserve también el `IDAgentResource` que produjo la respuesta.
 
+---
+
+## 13. Capturar una reacción de SolidSET
+
+```http
+POST /api/v1/agent/solidset/reactions/capture
+```
+
+Recibe el mismo contrato de `ChangeReactionRequest` después de que SolidSET haya establecido `IDUser` desde la sesión:
+
+```json
+{
+  "IDChat": 1822812,
+  "IDUser": "1790fc78-023d-4506-a7e8-5c030e9386d1",
+  "IDChannel": "d8e82821-d52f-44bf-9b70-682651a6196e",
+  "IDEmoji": "U+1F64F",
+  "Counter": 1
+}
+```
+
+La API consulta `dbo.SysChat.IDChat2`, comprueba que el emisor esté registrado en `SysResourceIA` y que el mensaje comience con `Asistente IA`. Después guarda el evento en PostgreSQL `SysAgentIAReaction` y lo incorpora al aprendizaje aislado del agente que emitió la respuesta.
+
+Señales posibles:
+
+```text
+positive → aprobación, agradecimiento, corazón, celebración
+negative → desaprobación, enfado o tristeza
+neutral  → emoji sin clasificación explícita
+removed  → Counter = 0; se registra la retirada pero no se aprende
+```
+
+La combinación `(IDChat, IDUser, IDEmoji)` es idempotente. Repetir el mismo contador no genera aprendizaje duplicado.
+
+Respuesta:
+
+```json
+{
+  "status": "captured",
+  "learned": true,
+  "changed": true,
+  "signal": "positive",
+  "IDChat": 1822812,
+  "IDAgentResource": "272700d8-d1ba-46a6-a121-b76fce8ecb9f",
+  "AgentName": "Asistente IA Victor Vargas"
+}
+```
+
 # Memoria y archivos
 
-## 13. Consultar historial
+## 14. Consultar historial
 
 ```http
 GET /api/v1/agent/history/{session_id}
@@ -536,7 +583,7 @@ En multiagente, el identificador interno incluye agente, canal y sesión.
 
 ---
 
-## 14. Eliminar historial
+## 15. Eliminar historial
 
 ```http
 DELETE /api/v1/agent/history/{session_id}
@@ -548,7 +595,7 @@ Es una operación destructiva: elimina el historial conversacional de esa clave.
 
 ---
 
-## 15. Obtener audio generado
+## 16. Obtener audio generado
 
 ```http
 GET /api/v1/agent/audio-response?file=nombre.mp3
@@ -560,7 +607,7 @@ Valida que el archivo exista y que la ruta solicitada sea segura.
 
 # Supervisión y diagnóstico
 
-## 16. Estado general del agente
+## 17. Estado general del agente
 
 ```http
 GET /api/v1/agent/health
@@ -580,7 +627,7 @@ Es el endpoint principal para monitorización.
 
 ---
 
-## 17. Resumen de evaluación
+## 18. Resumen de evaluación
 
 ```http
 GET /api/v1/agent/evaluation/summary
@@ -598,7 +645,7 @@ Devuelve métricas operativas relacionadas con:
 
 ---
 
-## 18. Mensajes recientes capturados
+## 19. Mensajes recientes capturados
 
 ```http
 GET /api/v1/agent/notification/recent-messages?limit=30
@@ -618,7 +665,7 @@ Sirve para comprobar que SolidSET está enviando correctamente:
 
 ---
 
-## 19. Contexto de un usuario
+## 20. Contexto de un usuario
 
 ```http
 GET /api/v1/agent/context/{user_id}
@@ -638,7 +685,7 @@ Se usa principalmente para depuración.
 
 ---
 
-## 20. Métricas de reintentos SQL
+## 21. Métricas de reintentos SQL
 
 ```http
 GET /api/v1/agent/sql-retry-stats
@@ -653,7 +700,7 @@ Muestra:
 
 ---
 
-## 21. Reiniciar métricas SQL
+## 22. Reiniciar métricas SQL
 
 ```http
 POST /api/v1/agent/sql-retry-stats/reset
@@ -665,7 +712,7 @@ No modifica tablas ni datos de SolidSET; solamente reinicia contadores internos.
 
 # Conectividad
 
-## 22. Probar SolidSET
+## 23. Probar SolidSET
 
 ```http
 GET /api/v1/connectivity/solidset
@@ -683,7 +730,7 @@ Sirve para diagnosticar:
 
 ---
 
-## 23. Probar todas las integraciones
+## 24. Probar todas las integraciones
 
 ```http
 GET /api/v1/connectivity/all

@@ -49,6 +49,11 @@ from app.system.resource_ingest import (
     ingest_solidset_resources,
     ingest_solidset_workrooms,
 )
+from app.system.reaction_capture import (
+    classify_reaction,
+    resolve_agent_message,
+    save_agent_reaction,
+)
 from app.system.schema import Actividad
 
 # ============================================================
@@ -1313,6 +1318,27 @@ class UserFeedbackResponse(BaseModel):
     topics: list[str] = []
 
 
+class SolidSETReactionCaptureRequest(BaseModel):
+    IDChat: int = Field(..., gt=0)
+    IDUser: uuid.UUID
+    IDChannel: uuid.UUID
+    IDEmoji: str = Field(..., min_length=1, max_length=64)
+    Counter: int = Field(..., ge=0)
+
+    class Config:
+        extra = "forbid"
+
+
+class SolidSETReactionCaptureResponse(BaseModel):
+    status: str
+    learned: bool
+    changed: bool
+    signal: str
+    IDChat: int
+    IDAgentResource: uuid.UUID
+    AgentName: str
+
+
 class SysResourceIAConfiguration(BaseModel):
     Name: Optional[str] = Field(None, max_length=255)
     Stamp: Optional[datetime] = None
@@ -2246,6 +2272,86 @@ def submit_feedback(req: UserFeedbackRequest):
             status_code=500,
             detail=f"Error registrando feedback del usuario: {str(e)}"
         )
+
+
+@app.post(
+    "/api/v1/agent/solidset/reactions/capture",
+    response_model=SolidSETReactionCaptureResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def capture_solidset_agent_reaction(
+    req: SolidSETReactionCaptureRequest,
+) -> SolidSETReactionCaptureResponse:
+    """Captura una reacción ya registrada en SolidSET y la aprende para su agente."""
+    try:
+        message = resolve_agent_message(req.IDChat)
+    except (pymssql.Error, psycopg.Error) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo resolver el mensaje reaccionado.",
+        ) from exc
+    if message is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El chat no existe o no fue emitido por un agente IA registrado.",
+        )
+
+    channel_id = req.IDChannel
+    if channel_id.int == 0 and message.get("IDWorkRoom"):
+        channel_id = uuid.UUID(str(message["IDWorkRoom"]))
+    signal = classify_reaction(req.IDEmoji, req.Counter)
+    reaction_data = {
+        "IDChat": req.IDChat,
+        "IDUser": req.IDUser,
+        "IDChannel": channel_id,
+        "IDEmoji": req.IDEmoji.strip(),
+        "Counter": req.Counter,
+        "Signal": signal,
+        "IDAgentResource": message["IDAgentResource"],
+        "AgentResponse": str(message.get("RawMessage") or ""),
+    }
+    try:
+        _, changed = save_agent_reaction(reaction_data)
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo persistir la reacción del agente.",
+        ) from exc
+
+    learned = False
+    if changed and signal != "removed":
+        learned = bool(agent.sistema_aprendizaje.aprender_actividad(Actividad(
+            id=f"agent_reaction_{req.IDChat}_{req.IDUser}_{req.IDEmoji}",
+            recurso_humano_id=str(message["IDAgentResource"]),
+            canal_id=str(channel_id),
+            tipo=f"agent_reaction_{signal}",
+            descripcion=(
+                f"Reacción {req.IDEmoji} ({signal}) del usuario {req.IDUser} "
+                f"a la respuesta del agente: {str(message.get('RawMessage') or '')[:1000]}"
+            ),
+            timestamp=datetime.now(),
+            metadatos={
+                "source": "solidset_reaction",
+                "id_chat": req.IDChat,
+                "id_user": str(req.IDUser),
+                "id_channel": str(channel_id),
+                "id_emoji": req.IDEmoji,
+                "counter": req.Counter,
+                "signal": signal,
+                "agent_resource_id": str(message["IDAgentResource"]),
+            },
+        )))
+
+    agent_name = _agent_visible_name(message)
+    return SolidSETReactionCaptureResponse(
+        status="captured",
+        learned=learned,
+        changed=changed,
+        signal=signal,
+        IDChat=req.IDChat,
+        IDAgentResource=message["IDAgentResource"],
+        AgentName=agent_name,
+    )
 
 
 @app.get("/api/v1/agent/audio-response")
