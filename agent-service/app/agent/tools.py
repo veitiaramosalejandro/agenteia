@@ -866,6 +866,7 @@ def solidset_send_chat_message(
     meeting_mirror_general: bool = False,
     generated_by_ia: bool = False,
     agent_resource_id: Optional[str] = None,
+    agent_identity_id: Optional[str] = None,
 ) -> str:
     """
     ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
@@ -962,8 +963,20 @@ def solidset_send_chat_message(
         form_payload["Info[meeting_mirror_general]"] = "1"
     if generated_by_ia:
         form_payload["Info[generated_by_ia]"] = "1"
-        if agent_resource_id:
-            form_payload["Info[agent_resource_id]"] = str(agent_resource_id).strip()
+        visual_resource_id = str(
+            agent_identity_id or agent_resource_id or ""
+        ).strip()
+        if visual_resource_id:
+            # En autorrespuestas se publica SysResourceIA.ID para que SolidSET
+            # no confunda al agente con el recurso humano autenticado.
+            form_payload["Info[agent_resource_id]"] = visual_resource_id
+        if agent_identity_id:
+            visual_agent_id = str(agent_identity_id).strip()
+            # Identidad visual distinta para autorrespuestas. SolidSET la guarda
+            # como IDAgentIA sin alterar el IDResource usado para autenticar.
+            form_payload["Info[id_agent_ia]"] = visual_agent_id
+            form_payload["Info[agent_id]"] = visual_agent_id
+            form_payload["IDAgentIA"] = visual_agent_id
     request_sender = _solidset_request_as_agent if agent_resource_id else _solidset_request_authenticated
     request_args: dict[str, Any] = {
         "method": "POST",

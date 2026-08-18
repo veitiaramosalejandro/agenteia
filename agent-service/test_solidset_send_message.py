@@ -84,6 +84,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
                 "confirm": True,
                 "generated_by_ia": True,
                 "agent_resource_id": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+                "agent_identity_id": "2555288c-44c7-4209-95f2-3de98f0f416d",
             }
         )
 
@@ -91,6 +92,21 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         global_request_mock.assert_not_called()
         self.assertEqual(
             agent_request_mock.call_args.kwargs["agent_resource_id"],
+            "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+        )
+        form = agent_request_mock.call_args.kwargs["form_payload"]
+        self.assertEqual(
+            form["IDAgentIA"], "2555288c-44c7-4209-95f2-3de98f0f416d"
+        )
+        self.assertEqual(
+            form["Info[id_agent_ia]"], "2555288c-44c7-4209-95f2-3de98f0f416d"
+        )
+        self.assertEqual(
+            form["Info[agent_resource_id]"],
+            "2555288c-44c7-4209-95f2-3de98f0f416d",
+        )
+        self.assertNotEqual(
+            form["Info[agent_resource_id]"],
             "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
         )
 

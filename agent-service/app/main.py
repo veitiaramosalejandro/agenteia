@@ -437,6 +437,51 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     if has_explicit_destinations:
         return destination_resources
 
+    # Chat privado propio: no hay Destiny.dests porque el usuario escribe en su
+    # canal personal. Chat.destiny type=1 identifica al propietario y permite
+    # conversar con su propio agente. Esta regla no aplica a meetings.
+    if not candidate.get("meeting_id"):
+        chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+        chat_lower = {str(key).lower(): value for key, value in chat.items()}
+        channels = chat_lower.get("channels")
+        private_channel = False
+        if isinstance(channels, list):
+            for channel in channels:
+                if not isinstance(channel, dict):
+                    continue
+                lowered_channel = {
+                    str(key).lower(): value for key, value in channel.items()
+                }
+                try:
+                    if int(lowered_channel.get("channelkind")) == 1:
+                        private_channel = True
+                        break
+                except (TypeError, ValueError):
+                    continue
+        if private_channel:
+            private_destinations = chat_lower.get("destiny")
+            owner_resources: list[str] = []
+            if isinstance(private_destinations, list):
+                for destination in private_destinations:
+                    if not isinstance(destination, dict):
+                        continue
+                    lowered = {
+                        str(key).lower(): value for key, value in destination.items()
+                    }
+                    try:
+                        destination_type = int(lowered.get("type"))
+                    except (TypeError, ValueError):
+                        continue
+                    if destination_type != 1:
+                        continue
+                    resource = str(
+                        lowered.get("idresource") or lowered.get("resource") or ""
+                    ).strip()
+                    if resource and resource != str(uuid.UUID(int=0)):
+                        owner_resources.append(resource)
+            if owner_resources:
+                return list(dict.fromkeys(owner_resources))
+
     selected: list[str] = []
     for key in ("SelectedAgentResourceIds", "selectedAgentResourceIds", "AgentResourceIds"):
         values = payload.get(key)
@@ -528,6 +573,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             routed_candidate.update({
                 "fingerprint": f"{candidate.get('fingerprint')}:{agent_resource_id}",
                 "agent_resource_id": agent_resource_id,
+                "agent_identity_id": str(configured_agent.get("ID") or ""),
                 "agent_name": _agent_visible_name(configured_agent),
                 "agent_session_id": str(_candidate_session_id(candidate)),
                 "agent_knowledge": private_knowledge,
@@ -633,6 +679,7 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
 
         conversation_scope = reply_resource if is_direct else channel_id
         agent_resource_id = str(candidate.get("agent_resource_id") or "").strip()
+        agent_identity_id = str(candidate.get("agent_identity_id") or "").strip()
         agent_name = str(candidate.get("agent_name") or agent_resource_id).strip()
         conversation_id = str(
             candidate.get("chat_id")
@@ -655,6 +702,12 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             or settings.SOLIDSET_LOGIN_USERNAME
             or "solidset.agent"
         ).strip()
+        self_agent_reply = bool(
+            agent_identity_id
+            and str(candidate.get("sender_resource") or "").strip().lower()
+            == agent_resource_id.lower()
+            and not meeting_id
+        )
 
         response_text = _direct_courtesy_response(incoming_text) if is_direct else None
         if response_text is None:
@@ -726,6 +779,7 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     "meeting_mirror_general": bool(candidate.get("meeting_active")),
                     "generated_by_ia": True,
                     "agent_resource_id": agent_resource_id,
+                    "agent_identity_id": agent_identity_id if self_agent_reply else None,
                 },
             )
             send_result_text = str(send_result)
@@ -1794,6 +1848,7 @@ async def handle_multi_agent_dialogue(
 
     async def execute_one(configured_agent: dict[str, Any]) -> MultiAgentAnswer:
         agent_resource_id = str(configured_agent["IDResource"])
+        agent_identity_id = str(configured_agent.get("ID") or "")
         agent_name = _agent_visible_name(configured_agent)
         isolated_session = (
             f"solidset:agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
@@ -1850,6 +1905,11 @@ async def handle_multi_agent_dialogue(
                     "confirm": True,
                     "generated_by_ia": True,
                     "agent_resource_id": agent_resource_id,
+                    "agent_identity_id": (
+                        agent_identity_id
+                        if request.SenderResourceId == configured_agent["IDResource"]
+                        else None
+                    ),
                 },
             ))
             sent = send_detail.startswith("✅")

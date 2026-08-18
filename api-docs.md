@@ -387,6 +387,10 @@ En mensajes dirigidos, `Destiny.dests[].resource` es la fuente de verdad y tiene
 
 Un mensaje humano puede tener el mismo `Sender.resource` que el agente configurado. El agente puede responder porque SolidSET utiliza ese recurso como identidad compartida; únicamente se descartan mensajes que lleguen marcados con `Info.generated_by_ia`.
 
+En un chat privado propio (`Chat.channels[].channelKind=1`) es válido conversar con el agente asociado al mismo recurso del usuario. Cuando `Destiny.dests` está vacío, el router toma exclusivamente `Chat.destiny[].idResource` con `type=1` como propietario del canal privado. Ese recurso todavía debe existir como agente activo. Esta excepción solo aplica a chats privados y no altera la regla de meetings, donde `type=1` es el autor y nunca responde.
+
+Cuando el propietario y el agente comparten el mismo `IDResource`, la respuesta conserva `SysResourceIA.IDResource` internamente para login y permisos, pero utiliza `SysResourceIA.ID` como identidad visual diferenciada. El formulario enviado a SolidSET incluye ese UUID en `Info[agent_resource_id]`, `IDAgentIA`, `Info[id_agent_ia]` e `Info[agent_id]`. Por tanto, `Info[agent_resource_id]` nunca contiene el recurso humano en una autorrespuesta privada. Para respuestas destinadas a otro recurso se mantiene la identidad normal del agente.
+
 ### Respuestas dentro de meetings
 
 Cuando el mensaje contiene `Info.meeting_id`, `ExtraData.meeting_id` o `Chat.idMeeting`, la respuesta se mantiene dentro del meeting. `meeting_mirror_general` ya no es necesario para detectar este contexto.
