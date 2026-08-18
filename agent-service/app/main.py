@@ -51,6 +51,8 @@ from app.system.resource_ingest import (
 )
 from app.system.reaction_capture import (
     classify_reaction,
+    get_agent_reinforcement_context,
+    reaction_reward,
     resolve_agent_message,
     save_agent_reaction,
 )
@@ -517,12 +519,19 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             except (ValueError, psycopg.Error) as exc:
                 print(f"⚠️ Conocimiento privado no disponible para {agent_resource_id}: {exc}")
                 private_knowledge = ""
+            try:
+                reinforcement = get_agent_reinforcement_context(
+                    agent_resource_id, channel_id
+                )
+            except (ValueError, psycopg.Error):
+                reinforcement = ""
             routed_candidate.update({
                 "fingerprint": f"{candidate.get('fingerprint')}:{agent_resource_id}",
                 "agent_resource_id": agent_resource_id,
                 "agent_name": _agent_visible_name(configured_agent),
                 "agent_session_id": str(_candidate_session_id(candidate)),
                 "agent_knowledge": private_knowledge,
+                "agent_reinforcement": reinforcement,
                 "addressed_to_agent": True,
             })
             routed.append(routed_candidate)
@@ -616,6 +625,7 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             "agent_resource_id": candidate.get("agent_resource_id"),
             "agent_name": candidate.get("agent_name"),
             "agent_knowledge": candidate.get("agent_knowledge"),
+            "agent_reinforcement": candidate.get("agent_reinforcement"),
             "workroom_id": channel_id,
         }
         if not incoming_text or (not channel_id and not reply_resource):
@@ -1334,6 +1344,7 @@ class SolidSETReactionCaptureResponse(BaseModel):
     learned: bool
     changed: bool
     signal: str
+    reward: float
     IDChat: int
     IDAgentResource: uuid.UUID
     AgentName: str
@@ -1793,6 +1804,11 @@ async def handle_multi_agent_dialogue(
             agent_resource_id,
             request.IDWorkRoom,
         )
+        reinforcement = await asyncio.to_thread(
+            get_agent_reinforcement_context,
+            agent_resource_id,
+            request.IDWorkRoom,
+        )
         await asyncio.to_thread(
             touch_agent_session,
             conversation_id,
@@ -1809,6 +1825,7 @@ async def handle_multi_agent_dialogue(
                 "agent_resource_id": agent_resource_id,
                 "agent_name": agent_name,
                 "agent_knowledge": private_knowledge,
+                "agent_reinforcement": reinforcement,
                 "workroom_id": str(request.IDWorkRoom),
                 "source": "solidset_multi_agent",
             },
@@ -2300,6 +2317,7 @@ def capture_solidset_agent_reaction(
     if channel_id.int == 0 and message.get("IDWorkRoom"):
         channel_id = uuid.UUID(str(message["IDWorkRoom"]))
     signal = classify_reaction(req.IDEmoji, req.Counter)
+    reward = reaction_reward(signal, req.Counter)
     reaction_data = {
         "IDChat": req.IDChat,
         "IDUser": req.IDUser,
@@ -2307,6 +2325,7 @@ def capture_solidset_agent_reaction(
         "IDEmoji": req.IDEmoji.strip(),
         "Counter": req.Counter,
         "Signal": signal,
+        "Reward": reward,
         "IDAgentResource": message["IDAgentResource"],
         "AgentResponse": str(message.get("RawMessage") or ""),
     }
@@ -2338,6 +2357,7 @@ def capture_solidset_agent_reaction(
                 "id_emoji": req.IDEmoji,
                 "counter": req.Counter,
                 "signal": signal,
+                "reward": reward,
                 "agent_resource_id": str(message["IDAgentResource"]),
             },
         )))
@@ -2348,6 +2368,7 @@ def capture_solidset_agent_reaction(
         learned=learned,
         changed=changed,
         signal=signal,
+        reward=reward,
         IDChat=req.IDChat,
         IDAgentResource=message["IDAgentResource"],
         AgentName=agent_name,

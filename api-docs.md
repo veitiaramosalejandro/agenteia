@@ -535,6 +535,19 @@ Recibe el mismo contrato de `ChangeReactionRequest` después de que SolidSET hay
 
 La API consulta `dbo.SysChat.IDChat2`, comprueba que el emisor esté registrado en `SysResourceIA` y que el mensaje comience con `Asistente IA`. Después guarda el evento en PostgreSQL `SysAgentIAReaction` y lo incorpora al aprendizaje aislado del agente que emitió la respuesta.
 
+Este endpoint cierra un ciclo de Reinforcement Learning basado en memoria de preferencias:
+
+```text
+positive → reward = +Counter
+negative → reward = -Counter
+neutral  → reward = +0.1 × Counter
+removed  → reward = 0
+```
+
+Antes de generar futuras respuestas, el agente consulta sus recompensas del canal. Los patrones positivos se presentan como ejemplos cuyo enfoque y claridad debe favorecer; los negativos como patrones que debe corregir y evitar. La política está aislada por `IDAgentResource` y `IDChannel`, no mezcla reacciones entre agentes y nunca expone al usuario las recompensas internas.
+
+Se trata de RL con memoria y recuperación de preferencias, apropiado para mejora online segura. No modifica en caliente los pesos del modelo base ni copia literalmente respuestas anteriores.
+
 Señales posibles:
 
 ```text
@@ -554,6 +567,7 @@ Respuesta:
   "learned": true,
   "changed": true,
   "signal": "positive",
+  "reward": 1.0,
   "IDChat": 1822812,
   "IDAgentResource": "272700d8-d1ba-46a6-a121-b76fce8ecb9f",
   "AgentName": "Asistente IA Victor Vargas"

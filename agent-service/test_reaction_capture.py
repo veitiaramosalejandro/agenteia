@@ -3,7 +3,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from app.main import SolidSETReactionCaptureRequest, capture_solidset_agent_reaction
-from app.system.reaction_capture import classify_reaction
+from app.system.reaction_capture import classify_reaction, reaction_reward
 
 
 class ReactionCaptureTests(unittest.TestCase):
@@ -13,6 +13,8 @@ class ReactionCaptureTests(unittest.TestCase):
         self.assertEqual("negative", classify_reaction("U+1F44E", 1))
         self.assertEqual("neutral", classify_reaction("U+1F914", 1))
         self.assertEqual("removed", classify_reaction("U+1F44D", 0))
+        self.assertEqual(1.0, reaction_reward("positive", 1))
+        self.assertEqual(-2.0, reaction_reward("negative", 2))
 
     @patch("app.main.agent.sistema_aprendizaje.aprender_actividad", return_value=True)
     @patch("app.main.save_agent_reaction")
@@ -45,6 +47,7 @@ class ReactionCaptureTests(unittest.TestCase):
         self.assertTrue(response.learned)
         self.assertTrue(response.changed)
         self.assertEqual("positive", response.signal)
+        self.assertEqual(1.0, response.reward)
         self.assertEqual(agent_resource, response.IDAgentResource)
         self.assertEqual("Asistente IA Victor Vargas", response.AgentName)
         learn.assert_called_once()
