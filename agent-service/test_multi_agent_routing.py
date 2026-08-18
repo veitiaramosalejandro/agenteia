@@ -52,9 +52,14 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         room_id = uuid4()
         requested_agent = uuid4()
         other_participant = uuid4()
+        sender_resource = uuid4()
+        sender_login = uuid4()
         candidate = {
             "fingerprint": "directed-message",
             "channel_id": str(room_id),
+            "sender_resource": str(sender_resource),
+            "sender_login": str(sender_login),
+            "is_direct": False,
             "payload": {
                 "FrameworkDestiny": {
                     "workRoom": str(room_id),
@@ -86,6 +91,9 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len(routed))
         self.assertEqual(str(requested_agent), routed[0]["agent_resource_id"])
         self.assertEqual("Asistente IA Victor Vargas", routed[0]["agent_name"])
+        self.assertTrue(routed[0]["is_direct"])
+        self.assertEqual(str(sender_resource), routed[0]["reply_resource"])
+        self.assertEqual(str(sender_login), routed[0]["reply_login"])
 
     def test_meeting_copy_does_not_activate_senders_own_agent(self):
         room_id = uuid4()

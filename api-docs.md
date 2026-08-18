@@ -381,6 +381,8 @@ Destiny.resource (solo cuando Destiny.dests está vacío)
 
 En mensajes dirigidos, `Destiny.dests[].resource` es la fuente de verdad y tiene precedencia absoluta. Solo responde el recurso destinatario si existe en `SysResourceIA`, tiene `active=true` y está habilitado para el canal. Una lista auxiliar `SelectedAgentResourceIds` no puede añadir otros agentes cuando `Destiny.dests` contiene destinatarios.
 
+La respuesta invierte siempre la relación del mensaje original. Si la entrada es `Alejandro -> Víctor`, el agente inicia sesión con la cuenta de Víctor y publica `Víctor -> Alejandro`: `Destiny.WorkRoom` conserva el canal y `Destiny.Dests[0].Resource`/`Login` contienen el recurso y login del autor original. Esta inversión se aplica después de seleccionar el agente, porque la detección inicial solo puede conocer una identidad global y no todos los agentes dinámicos registrados.
+
 `Chat.resourceTable` y `Chat.destiny` describen participantes del chat y nunca se usan para seleccionar agentes. De este modo, estar presente en el canal no autoriza a un agente a responder. Si el recurso destinatario activo todavía no tiene relación con un canal privado o dinámico, el router crea exclusivamente para ese destino `SysChatIAResource(IDResource, IDWorkRoom)` con `active=true`.
 
 `Chat.channels[].idChannel` y `Chat.idWorkRoom` se interpretan como `SysWorkRoom.IDWorkRoom`.

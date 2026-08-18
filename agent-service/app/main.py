@@ -579,6 +579,13 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 "agent_knowledge": private_knowledge,
                 "agent_reinforcement": reinforcement,
                 "addressed_to_agent": True,
+                # Una vez que SolidSET seleccionó al agente, su respuesta debe
+                # invertir la conversación: agente autenticado -> autor original.
+                # La detección inicial de ``is_direct`` solo conoce la identidad
+                # global configurada y puede no reconocer agentes dinámicos.
+                "is_direct": bool(str(candidate.get("sender_resource") or "").strip()),
+                "reply_resource": str(candidate.get("sender_resource") or "").strip(),
+                "reply_login": str(candidate.get("sender_login") or "").strip(),
             })
             routed.append(routed_candidate)
     return routed
@@ -657,7 +664,9 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         channel_id = (candidate.get("channel_id") or "").strip()
         is_direct = bool(candidate.get("is_direct"))
         reply_resource = str(candidate.get("reply_resource") or "").strip()
-        reply_login = str(candidate.get("sender_login") or "").strip()
+        reply_login = str(
+            candidate.get("reply_login") or candidate.get("sender_login") or ""
+        ).strip()
         visibility_level = int(candidate.get("visibility_level", 1))
         meeting_id = str(candidate.get("meeting_id") or "").strip()
         meeting_code = str(candidate.get("meeting_code") or "").strip()
@@ -2361,6 +2370,7 @@ def capture_solidset_agent_reaction(
 ) -> SolidSETReactionCaptureResponse:
     """Captura una reacción ya registrada en SolidSET y la aprende para su agente."""
     try:
+        print(req)
         message = resolve_agent_message(req.IDChat)
     except (pymssql.Error, psycopg.Error) as exc:
         raise HTTPException(
