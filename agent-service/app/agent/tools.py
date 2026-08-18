@@ -945,12 +945,21 @@ def solidset_send_chat_message(
         form_payload["Destiny.Resource"] = resource
         if resource_login:
             form_payload["Destiny.Login"] = resource_login
-    if meeting_mirror_general:
+    meeting = str(meeting_id or "").strip()
+    meeting_label = str(meeting_code or "").strip()
+    if meeting:
+        # SolidSET vincula el chat al meeting a través de ExtraData. El workroom
+        # permanece únicamente como ruta técnica; no se marca como espejo general.
+        meeting_extra = {"meeting_id": meeting}
+        if meeting_label:
+            meeting_extra["meeting_code"] = meeting_label
+        form_payload["ExtraData"] = json.dumps(meeting_extra, separators=(",", ":"))
+        form_payload["Info[meeting_id]"] = meeting
+        if meeting_label:
+            form_payload["Info[meeting_code]"] = meeting_label
+    elif meeting_mirror_general:
+        # Compatibilidad con el modo espejo antiguo cuando no existe meeting_id.
         form_payload["Info[meeting_mirror_general]"] = "1"
-        if meeting_id:
-            form_payload["Info[meeting_id]"] = str(meeting_id).strip()
-        if meeting_code:
-            form_payload["Info[meeting_code]"] = str(meeting_code).strip()
     if generated_by_ia:
         form_payload["Info[generated_by_ia]"] = "1"
         if agent_resource_id:

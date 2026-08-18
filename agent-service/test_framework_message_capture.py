@@ -90,7 +90,6 @@ class TestFrameworkMessageCapture(unittest.TestCase):
                 "FrameworkKind": "ChatMessage",
                 "VisibilityLevel": "Confidential",
                 "Info": {
-                    "meeting_mirror_general": "1",
                     "meeting_id": "meeting-123",
                     "meeting_code": "M8",
                 },
@@ -141,16 +140,20 @@ class TestFrameworkMessageCapture(unittest.TestCase):
         self.assertEqual(listener._normalize_chat_importance("3"), 3)
         self.assertEqual(listener._normalize_chat_importance("invalid"), 1)
 
-    def test_meeting_context_requires_active_mirror_flag(self):
+    def test_meeting_context_uses_meeting_id_without_mirror_flag(self):
         listener = NotificationApiListener.__new__(NotificationApiListener)
         active = listener._extract_meeting_context({
-            "meeting_mirror_general": "1", "meeting_id": "meeting-1", "meeting_code": "M8"
+            "meeting_id": "meeting-1", "meeting_code": "M8"
         })
-        inactive = listener._extract_meeting_context({
-            "meeting_mirror_general": "0", "meeting_id": "meeting-1", "meeting_code": "M8"
-        })
+        from_extra = listener._extract_meeting_context(
+            {}, '{"meeting_id":"meeting-2","meeting_code":"M10"}'
+        )
+        inactive = listener._extract_meeting_context({"meeting_mirror_general": "1"})
         self.assertTrue(active["active"])
         self.assertEqual(active["meeting_id"], "meeting-1")
+        self.assertTrue(from_extra["active"])
+        self.assertEqual(from_extra["meeting_id"], "meeting-2")
+        self.assertEqual(from_extra["meeting_code"], "M10")
         self.assertFalse(inactive["active"])
         self.assertEqual(inactive["meeting_id"], "")
 

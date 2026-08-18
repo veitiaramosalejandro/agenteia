@@ -387,6 +387,31 @@ En mensajes dirigidos, `Destiny.dests[].resource` es la fuente de verdad y tiene
 
 Un mensaje humano puede tener el mismo `Sender.resource` que el agente configurado. El agente puede responder porque SolidSET utiliza ese recurso como identidad compartida; únicamente se descartan mensajes que lleguen marcados con `Info.generated_by_ia`.
 
+### Respuestas dentro de meetings
+
+Cuando el mensaje contiene `Info.meeting_id`, `ExtraData.meeting_id` o `Chat.idMeeting`, la respuesta se mantiene dentro del meeting. `meeting_mirror_general` ya no es necesario para detectar este contexto.
+
+El formulario enviado a `/Chat/SendMessageForm` incluye:
+
+```text
+Destiny.WorkRoom      = canal técnico subyacente
+Info[meeting_id]      = UUID del meeting
+Info[meeting_code]    = código opcional, por ejemplo M10
+ExtraData             = {"meeting_id":"...","meeting_code":"M10"}
+```
+
+El `WorkRoom` se conserva únicamente porque SolidSET lo utiliza como ruta de transporte. `ExtraData.meeting_id` es lo que vincula el nuevo chat al meeting y activa las validaciones de participante bloqueado o expulsado mostradas por `MeetingChatSendGuard`. La API no añade `Info[meeting_mirror_general]`, evitando convertir la respuesta en un espejo general del canal.
+
+En meetings, `Chat.destiny` es la fuente canónica para decidir qué agente responde:
+
+```text
+Chat.destiny[].type = 1 → autor de la pregunta; nunca responde
+Chat.destiny[].type = 2 → destinatario solicitado; puede responder
+Chat.destiny[].sequence → orden de los destinatarios
+```
+
+Cuando `Chat.destiny` está presente, el router ignora `Destiny.dests`, porque esta última colección puede contener copias técnicas para el autor y otros participantes del meeting. Solo los recursos `type=2` pasan después por las validaciones de `SysResourceIA.active` y asignación al canal técnico. Si únicamente existe una entrada `type=1`, no se ejecuta ningún agente. `Destiny.dests` se utiliza como respaldo exclusivamente si el payload de meeting no contiene `Chat.destiny`.
+
 ---
 
 ## 10. Capturar y reenviar FrameworkHub

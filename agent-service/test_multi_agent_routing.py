@@ -87,6 +87,88 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(requested_agent), routed[0]["agent_resource_id"])
         self.assertEqual("Asistente IA Victor Vargas", routed[0]["agent_name"])
 
+    def test_meeting_copy_does_not_activate_senders_own_agent(self):
+        room_id = uuid4()
+        sender_agent = uuid4()
+        candidate = {
+            "fingerprint": "meeting-copy-for-author",
+            "channel_id": str(room_id),
+            "sender_resource": str(sender_agent),
+            "meeting_id": str(uuid4()),
+            "payload": {
+                "FrameworkSender": {"resource": str(sender_agent)},
+                "FrameworkDestiny": {
+                    "dests": [{"resource": str(sender_agent), "kind": 2, "sequence": 1}],
+                },
+                "Chat": {
+                    "destiny": [{
+                        "idResource": str(sender_agent),
+                        "type": 1,
+                        "sequence": 0,
+                    }],
+                },
+            },
+        }
+        with (
+            patch("app.main.ensure_payload_agent_workroom_assignments") as assign,
+            patch("app.main.get_active_agents_for_workroom") as registry,
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        self.assertEqual([], routed)
+        assign.assert_not_called()
+        registry.assert_not_called()
+
+    def test_meeting_copy_activates_agent_different_from_sender(self):
+        room_id = uuid4()
+        sender_agent = uuid4()
+        requested_agent = uuid4()
+        candidate = {
+            "fingerprint": "meeting-copy-for-destination",
+            "channel_id": str(room_id),
+            "sender_resource": str(sender_agent),
+            "meeting_id": str(uuid4()),
+            "payload": {
+                "FrameworkSender": {"resource": str(sender_agent)},
+                "FrameworkDestiny": {
+                    "dests": [
+                        {"resource": str(requested_agent), "kind": 2, "sequence": 1},
+                        {"resource": str(sender_agent), "kind": 2},
+                        {"resource": str(uuid4()), "kind": 2},
+                    ],
+                },
+                "Chat": {
+                    "destiny": [
+                        {
+                            "idResource": str(sender_agent),
+                            "type": 1,
+                            "sequence": 0,
+                        },
+                        {
+                            "idResource": str(requested_agent),
+                            "type": 2,
+                            "sequence": 1,
+                        },
+                    ],
+                },
+            },
+        }
+        configured = [{
+            "IDResource": requested_agent,
+            "Name": "Dev20",
+            "FullName": "Victor Vargas",
+        }]
+        with (
+            patch("app.main.ensure_payload_agent_workroom_assignments", return_value=0),
+            patch("app.main.get_active_agents_for_workroom", return_value=configured),
+            patch("app.main.get_agent_knowledge", return_value=""),
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        self.assertEqual(1, len(routed))
+        self.assertEqual(str(requested_agent), routed[0]["agent_resource_id"])
+        self.assertEqual("Asistente IA Victor Vargas", routed[0]["agent_name"])
+
     def test_routes_only_active_selected_agents_returned_by_registry(self):
         room_id = uuid4()
         first = uuid4()

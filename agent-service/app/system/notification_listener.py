@@ -559,19 +559,52 @@ class NotificationApiListener:
         return 1
 
     @staticmethod
-    def _extract_meeting_context(info: Any) -> Dict[str, Any]:
-        """Extrae el contexto de reunión cuando meeting_mirror_general está activo."""
-        if not isinstance(info, dict):
-            return {"active": False, "meeting_id": "", "meeting_code": ""}
-        lowered = {str(key).lower(): value for key, value in info.items()}
-        active_value = str(lowered.get("meeting_mirror_general") or "").strip().lower()
-        active = active_value in {"1", "true", "yes", "on"}
-        if not active:
+    def _extract_meeting_context(
+        info: Any,
+        extra_data: Any = None,
+        chat: Any = None,
+    ) -> Dict[str, Any]:
+        """Extrae un meeting explícito desde Info, ExtraData o Chat."""
+        lowered = (
+            {str(key).lower(): value for key, value in info.items()}
+            if isinstance(info, dict) else {}
+        )
+        extra: Dict[str, Any] = {}
+        if isinstance(extra_data, dict):
+            extra = {str(key).lower(): value for key, value in extra_data.items()}
+        elif isinstance(extra_data, str) and extra_data.strip():
+            try:
+                parsed = json.loads(extra_data)
+                if isinstance(parsed, dict):
+                    extra = {str(key).lower(): value for key, value in parsed.items()}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        chat_lower = (
+            {str(key).lower(): value for key, value in chat.items()}
+            if isinstance(chat, dict) else {}
+        )
+        chat_extra = chat_lower.get("extradata")
+        if not extra and isinstance(chat_extra, str) and chat_extra.strip():
+            try:
+                parsed = json.loads(chat_extra)
+                if isinstance(parsed, dict):
+                    extra = {str(key).lower(): value for key, value in parsed.items()}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        meeting_id = str(
+            lowered.get("meeting_id")
+            or extra.get("meeting_id")
+            or chat_lower.get("idmeeting")
+            or ""
+        ).strip()
+        if not meeting_id or meeting_id == "00000000-0000-0000-0000-000000000000":
             return {"active": False, "meeting_id": "", "meeting_code": ""}
         return {
             "active": True,
-            "meeting_id": str(lowered.get("meeting_id") or "").strip(),
-            "meeting_code": str(lowered.get("meeting_code") or "").strip(),
+            "meeting_id": meeting_id,
+            "meeting_code": str(
+                lowered.get("meeting_code") or extra.get("meeting_code") or ""
+            ).strip(),
         }
 
     @staticmethod
@@ -784,7 +817,9 @@ class NotificationApiListener:
         destiny_resource = str(destiny_lower.get("resource") or destiny_lower.get("idresource") or "").strip()
         destiny_dests = destiny_lower.get("dests") if isinstance(destiny_lower.get("dests"), list) else []
         addressed_to_agent = self._destiny_addresses_agent(destiny)
-        meeting = self._extract_meeting_context(data.get("Info"))
+        meeting = self._extract_meeting_context(
+            data.get("Info"), data.get("ExtraData"), data.get("Chat")
+        )
         message_kind = self._normalize_message_kind(data.get("FrameworkKind", data.get("Kind")))
         # Un destinatario explícito prevalece sobre workRoom: se responde al Sender.resource.
         is_direct = addressed_to_agent
@@ -1036,7 +1071,11 @@ class NotificationApiListener:
         is_public = payload.get("IsPublic") if payload else None
         resource_table = payload.get("ResourceTable") if payload else None
         destiny = payload.get("Destiny") if payload else None
-        meeting = self._extract_meeting_context(payload.get("Info") if payload else None)
+        meeting = self._extract_meeting_context(
+            payload.get("Info") if payload else None,
+            payload.get("ExtraData") if payload else None,
+            payload.get("Chat") if payload else None,
+        )
         framework_stamp = payload.get("FrameworkStamp") or payload.get("Stamp") if payload else None
         event_timestamp = datetime.utcnow()
         if isinstance(framework_stamp, str) and framework_stamp.strip():

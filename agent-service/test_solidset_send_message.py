@@ -152,9 +152,13 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self.assertEqual(form["Destiny.Dests[0].Kind"], 2)
         self.assertEqual(form["VisibilityLevel"], 3)
         self.assertEqual(form["Importance"], 3)
-        self.assertEqual(form["Info[meeting_mirror_general]"], "1")
+        self.assertNotIn("Info[meeting_mirror_general]", form)
         self.assertEqual(form["Info[meeting_id]"], "meeting-123")
         self.assertEqual(form["Info[meeting_code]"], "M8")
+        self.assertEqual(
+            form["ExtraData"],
+            '{"meeting_id":"meeting-123","meeting_code":"M8"}',
+        )
         self.assertEqual(form["Kind"], 7)
         self.assertNotIn("Destiny.Resource", form)
 

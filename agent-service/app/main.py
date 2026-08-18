@@ -358,6 +358,39 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     """Selecciona únicamente los recursos destinatarios del mensaje dirigido."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    if candidate.get("meeting_id"):
+        chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+        chat_lower = {str(key).lower(): value for key, value in chat.items()}
+        chat_destinations = chat_lower.get("destiny")
+        if isinstance(chat_destinations, list) and chat_destinations:
+            responders: list[tuple[int, str]] = []
+            for destination in chat_destinations:
+                if not isinstance(destination, dict):
+                    continue
+                lowered = {
+                    str(key).lower(): value for key, value in destination.items()
+                }
+                try:
+                    destination_type = int(lowered.get("type"))
+                except (TypeError, ValueError):
+                    continue
+                if destination_type != 2:
+                    continue
+                resource = str(
+                    lowered.get("idresource") or lowered.get("resource") or ""
+                ).strip()
+                if not resource or resource == str(uuid.UUID(int=0)):
+                    continue
+                try:
+                    sequence = int(lowered.get("sequence") or 0)
+                except (TypeError, ValueError):
+                    sequence = 0
+                responders.append((sequence, resource))
+            responders.sort(key=lambda item: item[0])
+            # La presencia de Chat.destiny es autoritativa en meetings, incluso
+            # si solo contiene type=1 y por tanto no hay agente destinatario.
+            return list(dict.fromkeys(resource for _, resource in responders))
+
     destination_resources: list[str] = []
     destiny = payload.get("FrameworkDestiny")
     if isinstance(destiny, dict):
@@ -374,7 +407,27 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
         value for value in destination_resources
         if value and value != str(uuid.UUID(int=0))
     ))
-    if destination_resources:
+    has_explicit_destinations = bool(destination_resources)
+    # En meetings SolidSET genera una copia técnica para cada participante. La
+    # copia entregada al autor puede incluir su propio recurso en Destiny.dests;
+    # nunca debe activar el agente de la persona que formuló la pregunta.
+    if candidate.get("meeting_id"):
+        sender_resource = str(candidate.get("sender_resource") or "").strip().lower()
+        if not sender_resource:
+            framework_sender = payload.get("FrameworkSender")
+            if isinstance(framework_sender, dict):
+                sender_lower = {
+                    str(key).lower(): value for key, value in framework_sender.items()
+                }
+                sender_resource = str(
+                    sender_lower.get("resource") or sender_lower.get("idresource") or ""
+                ).strip().lower()
+        if sender_resource:
+            destination_resources = [
+                value for value in destination_resources
+                if value.lower() != sender_resource
+            ]
+    if has_explicit_destinations:
         return destination_resources
 
     selected: list[str] = []
