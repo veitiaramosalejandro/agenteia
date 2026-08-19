@@ -897,6 +897,11 @@ Variables usadas por `agent-service`:
 - `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`: base de datos y
   credenciales de SQL Server.
 
+El `.env` de producción debe declarar `ENVIRONMENT=production`, utilizar
+`OLLAMA_BASE_URL=http://ollama-llm:11434` y no contener una cuenta global en
+`SOLIDSET_LOGIN_*`; la identidad para responder se obtiene de `SysLogin` según
+el recurso agente seleccionado.
+
 Ejemplo para producción:
 
 ```env
