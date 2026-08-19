@@ -820,6 +820,16 @@ class NotificationApiListener:
         meeting = self._extract_meeting_context(
             data.get("Info"), data.get("ExtraData"), data.get("Chat")
         )
+        chat_payload = data.get("Chat") if isinstance(data.get("Chat"), dict) else {}
+        chat_lower = {str(key).lower(): value for key, value in chat_payload.items()}
+        quoted_payload = (
+            chat_lower.get("chatquestion")
+            if isinstance(chat_lower.get("chatquestion"), dict)
+            else {}
+        )
+        quoted_lower = {
+            str(key).lower(): value for key, value in quoted_payload.items()
+        }
         message_kind = self._normalize_message_kind(data.get("FrameworkKind", data.get("Kind")))
         # Un destinatario explícito prevalece sobre workRoom: se responde al Sender.resource.
         is_direct = addressed_to_agent
@@ -852,6 +862,14 @@ class NotificationApiListener:
             "kind_reply_eligible": message_kind["conversational"],
             "message_category": message_kind["category"],
             "message": raw_message.strip(),
+            "quoted_chat_id": (
+                chat_lower.get("chatquestionmessage")
+                or quoted_lower.get("idchat2")
+            ),
+            "quoted_message": str(quoted_lower.get("rawmessage") or "").strip(),
+            "quoted_sender_resource": str(
+                quoted_lower.get("idsenderresource") or ""
+            ).strip(),
             "destiny_resource": destiny_resource,
             "addressed_to_agent": addressed_to_agent,
             "is_direct": is_direct,

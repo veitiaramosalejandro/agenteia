@@ -97,6 +97,15 @@ class TestFrameworkMessageCapture(unittest.TestCase):
                 "IDSenderResource": "sender-resource",
                 "IDSenderLogin": "sender-login",
                 "Importance": "High",
+                "Chat": {
+                    "chatQuestionMessage": 1818393,
+                    "chatQuestion": {
+                        "idChat2": 1818393,
+                        "idSenderResource": "quoted-sender-resource",
+                        "rawMessage": "Que dia es hoy?",
+                        "idMeeting": "old-meeting-id",
+                    },
+                },
                 "FrameworkDestiny": {
                     "workRoom": "room-1",
                     "dests": [{"login": "agent-login", "resource": "agent-resource"}],
@@ -117,6 +126,12 @@ class TestFrameworkMessageCapture(unittest.TestCase):
         self.assertTrue(candidate["meeting_active"])
         self.assertEqual(candidate["meeting_id"], "meeting-123")
         self.assertEqual(candidate["meeting_code"], "M8")
+        self.assertEqual(candidate["quoted_chat_id"], 1818393)
+        self.assertEqual(candidate["quoted_message"], "Que dia es hoy?")
+        self.assertEqual(
+            candidate["quoted_sender_resource"], "quoted-sender-resource"
+        )
+        self.assertNotEqual(candidate["meeting_id"], "old-meeting-id")
         self.assertTrue(candidate["kind_reply_eligible"])
         self.assertEqual(candidate["message_kind_value"], 7)
 

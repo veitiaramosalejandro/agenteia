@@ -10,6 +10,16 @@ Actualmente la API expone 24 endpoints funcionales. Puedes consultar siempre la 
 http://localhost:8000/docs
 ```
 
+## Registro de IP por petición
+
+Todas las peticiones HTTP, independientemente del endpoint, generan una línea en la consola del servicio con la IP TCP directa, la primera IP declarada por el proxy, método, ruta, estado y duración. Ejemplo:
+
+```text
+🌐 API_REQUEST ip=127.0.0.1 forwarded_ip=- method=POST endpoint=/api/v1/dialogue status=200 duration_ms=84.2
+```
+
+`ip` es la conexión observada por FastAPI y no puede ser sustituida mediante cabeceras. `forwarded_ip` muestra separadamente el primer valor de `X-Forwarded-For` o `X-Real-IP`; solo debe considerarse la IP real del cliente cuando el proxy que establece esas cabeceras sea de confianza. No se registran cuerpos ni parámetros de consulta.
+
 ## Flujo principal recomendado
 
 El funcionamiento habitual sería:
@@ -391,7 +401,9 @@ Un mensaje humano puede tener el mismo `Sender.resource` que el agente configura
 
 En un chat privado propio (`Chat.channels[].channelKind=1`) es válido conversar con el agente asociado al mismo recurso del usuario. Cuando `Destiny.dests` está vacío, el router toma exclusivamente `Chat.destiny[].idResource` con `type=1` como propietario del canal privado. Ese recurso todavía debe existir como agente activo. Esta excepción solo aplica a chats privados y no altera la regla de meetings, donde `type=1` es el autor y nunca responde.
 
-Cuando el propietario y el agente comparten el mismo `IDResource`, la respuesta conserva `SysResourceIA.IDResource` internamente para login y permisos, pero utiliza `SysResourceIA.ID` como identidad visual diferenciada. El formulario enviado a SolidSET incluye ese UUID en `Info[agent_resource_id]`, `IDAgentIA`, `Info[id_agent_ia]` e `Info[agent_id]`. Por tanto, `Info[agent_resource_id]` nunca contiene el recurso humano en una autorrespuesta privada. Para respuestas destinadas a otro recurso se mantiene la identidad normal del agente.
+Cuando el propietario y el agente comparten el mismo `IDResource`, la respuesta conserva `SysResourceIA.IDResource` para login y permisos y envía `SysResourceIA.ID` como identidad lógica en `Info[agent_resource_id]`, `IDAgentIA`, `Info[id_agent_ia]` e `Info[agent_id]`. No se intenta sustituir `Sender` desde el formulario: SolidSET llama `St_SendMessageSync(req, currentL, currentS, currentR)` y persiste el remitente de la sesión autenticada.
+
+Para mostrar una autorrespuesta a la izquierda, el cliente SolidSET debe considerar la marca de agente al calcular `ChatView.FromSelf`: si `Info[generated_by_ia]=1` y `Info[id_agent_ia]` contiene un UUID distinto, el mensaje debe tratarse visualmente como `FromSelf=false`, aunque `Chat.IDSender`/`IDSenderResource` coincidan con el usuario autenticado. La alternativa estructural es registrar para cada agente un login y recurso SolidSET independientes; en ese caso no se necesita una excepción visual.
 
 ### Respuestas dentro de meetings
 
@@ -407,6 +419,10 @@ ExtraData             = {"meeting_id":"...","meeting_code":"M10"}
 ```
 
 El `WorkRoom` se conserva únicamente porque SolidSET lo utiliza como ruta de transporte. `ExtraData.meeting_id` es lo que vincula el nuevo chat al meeting y activa las validaciones de participante bloqueado o expulsado mostradas por `MeetingChatSendGuard`. La API no añade `Info[meeting_mirror_general]`, evitando convertir la respuesta en un espejo general del canal.
+
+Antes del envío, la API valida que `meeting_id` exista en `dbo.SysMeeting`, esté activo y que su `IDChannel` coincida con `Destiny.WorkRoom`. Si el identificador recibido es obsoleto, intenta resolver el meeting mediante `meeting_code` dentro del mismo canal. Si ninguna reunión coincide, omite el ámbito meeting y envía al canal técnico, evitando conflictos con la FK `FK_SysChat2SysWorkRoom_SysMeeting`.
+
+Cuando `Chat.chatQuestion` está presente, el agente recibe `chatQuestion.rawMessage` y `chatQuestion.idChat2` como contexto del mensaje citado. La petición actual continúa siendo `RawMessage`; el mensaje citado no sustituye al autor, los destinatarios ni el meeting actuales y se trata como contenido no confiable, no como una instrucción del sistema.
 
 En meetings, `Chat.destiny` es la fuente canónica para decidir qué agente responde:
 
@@ -452,6 +468,8 @@ X-Agent-Replies-Scheduled
 # Conversación tradicional
 
 ## 11. Diálogo con un único agente
+
+Los saludos identifican respetuosamente al interlocutor mediante el `FullName` asociado al recurso, por ejemplo: `¡Hola, Alejandro Veitia! Es un placer saludarte. ¿En qué puedo ayudarte?`. No muestran el alias del recurso, perfil, rol, permisos ni cantidad o nombres de canales. Si no se puede resolver `FullName`, se utiliza el mismo saludo sin nombre.
 
 ```http
 POST /api/v1/agent/dialogue

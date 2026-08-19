@@ -77,6 +77,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def _request_ip_details(request: Request) -> tuple[str, str]:
+    """Obtiene la IP TCP y la cadena informada por proxies, sin confundirlas."""
+    direct_ip = request.client.host if request.client else "unknown"
+    forwarded_ip = (
+        request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+        or request.headers.get("x-real-ip", "").strip()
+        or "-"
+    )
+    return direct_ip, forwarded_ip
+
+
+@app.middleware("http")
+async def log_request_origin_ip(request: Request, call_next):
+    """Muestra en consola el origen y resultado de cada petición HTTP."""
+    started_at = perf_counter()
+    direct_ip, forwarded_ip = _request_ip_details(request)
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        elapsed_ms = (perf_counter() - started_at) * 1000
+        print(
+            "🌐 API_REQUEST "
+            f"ip={direct_ip} forwarded_ip={forwarded_ip} "
+            f"method={request.method} endpoint={request.url.path} "
+            f"status={status_code} duration_ms={elapsed_ms:.1f}",
+            flush=True,
+        )
+
 # Instancia del agente
 agent = MachiningAgent()
 orchestrator = SolidSETOrchestrator(agent)
@@ -675,6 +707,9 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         importance = int(candidate.get("importance", 0))
         message_metadata = {
             "chat_id": candidate.get("chat_id"),
+            "quoted_chat_id": candidate.get("quoted_chat_id"),
+            "quoted_message": candidate.get("quoted_message"),
+            "quoted_sender_resource": candidate.get("quoted_sender_resource"),
             "recipient_count": int(candidate.get("recipient_count", 0)),
             "importance": importance,
             "agent_resource_id": candidate.get("agent_resource_id"),

@@ -137,8 +137,11 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self.assertEqual(call["form_payload"]["Destiny.WorkRoom"], "channel-123")
 
     @patch("app.agent.tools.settings.SOLIDSET_USER_ACTIONS_ENABLED", True)
+    @patch("app.agent.tools._resolve_solidset_meeting_id", return_value="meeting-123")
     @patch("app.agent.tools._solidset_request_authenticated")
-    def test_sends_directed_channel_message_using_destiny_dests(self, request_mock):
+    def test_sends_directed_channel_message_using_destiny_dests(
+        self, request_mock, meeting_mock
+    ):
         request_mock.return_value = (
             httpx.Response(200, json={"Result": 0}),
             "http://solidset.local",
@@ -177,6 +180,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         )
         self.assertEqual(form["Kind"], 7)
         self.assertNotIn("Destiny.Resource", form)
+        meeting_mock.assert_called_once_with("meeting-123", "channel-123", "M8")
 
 
 if __name__ == "__main__":

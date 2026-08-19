@@ -26,6 +26,61 @@ from app.rag.audio_processor import extract_audio_features
 from app.rag.retriever import get_rag_context
 
 
+def _resolve_solidset_meeting_id(
+    meeting_id: Optional[str],
+    channel_id: Optional[str],
+    meeting_code: Optional[str] = None,
+) -> Optional[str]:
+    """Devuelve un meeting existente y perteneciente al canal indicado."""
+    try:
+        channel_uuid = uuid.UUID(str(channel_id or "").strip())
+    except (ValueError, TypeError, AttributeError):
+        return None
+    try:
+        requested_uuid = uuid.UUID(str(meeting_id or "").strip())
+    except (ValueError, TypeError, AttributeError):
+        requested_uuid = None
+    code = str(meeting_code or "").strip()
+    try:
+        with pymssql.connect(
+            server=settings.SQL_SERVER_HOST,
+            user=settings.SQL_SERVER_USER,
+            password=settings.SQL_SERVER_PASSWORD,
+            database=settings.SQL_SERVER_DB,
+            login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+            timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+        ) as connection:
+            cursor = connection.cursor(as_dict=True)
+            if requested_uuid is not None:
+                cursor.execute(
+                    '''
+                    SELECT TOP 1 ID
+                    FROM dbo.SysMeeting WITH (NOLOCK)
+                    WHERE ID = %s AND IDChannel = %s AND Active = 1
+                    ''',
+                    (requested_uuid, channel_uuid),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return str(row["ID"])
+            if code:
+                cursor.execute(
+                    '''
+                    SELECT TOP 1 ID
+                    FROM dbo.SysMeeting WITH (NOLOCK)
+                    WHERE IDChannel = %s AND Code = %s AND Active = 1
+                    ORDER BY ModifiedTime DESC, CreationDate DESC
+                    ''',
+                    (channel_uuid, code),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return str(row["ID"])
+    except pymssql.Error as exc:
+        print(f"⚠️ No se pudo validar el meeting de SolidSET: {exc}")
+    return None
+
+
 def _generated_docs_dir() -> Path:
     target = Path(settings.GENERATED_DOCS_DIR).expanduser()
     if not target.is_absolute():
@@ -946,8 +1001,19 @@ def solidset_send_chat_message(
         form_payload["Destiny.Resource"] = resource
         if resource_login:
             form_payload["Destiny.Login"] = resource_login
-    meeting = str(meeting_id or "").strip()
+    requested_meeting = str(meeting_id or "").strip()
     meeting_label = str(meeting_code or "").strip()
+    meeting = _resolve_solidset_meeting_id(
+        requested_meeting,
+        channel,
+        meeting_label,
+    ) if requested_meeting else None
+    if requested_meeting and not meeting:
+        print(
+            "⚠️ Meeting descartado para evitar FK inválida: "
+            f"meeting={requested_meeting} code={meeting_label or '-'} "
+            f"channel={channel or '-'}"
+        )
     if meeting:
         # SolidSET vincula el chat al meeting a través de ExtraData. El workroom
         # permanece únicamente como ruta técnica; no se marca como espejo general.
@@ -972,12 +1038,14 @@ def solidset_send_chat_message(
             form_payload["Info[agent_resource_id]"] = visual_resource_id
         if agent_identity_id:
             visual_agent_id = str(agent_identity_id).strip()
-            # Identidad visual distinta para autorrespuestas. SolidSET la guarda
-            # como IDAgentIA sin alterar el IDResource usado para autenticar.
+            # Identidad lógica de la autorrespuesta. SolidSET autentica y persiste
+            # el emisor real desde la sesión; el cliente debe usar esta marca para
+            # no clasificar el mensaje del agente como FromSelf.
             form_payload["Info[id_agent_ia]"] = visual_agent_id
             form_payload["Info[agent_id]"] = visual_agent_id
             form_payload["IDAgentIA"] = visual_agent_id
     request_sender = _solidset_request_as_agent if agent_resource_id else _solidset_request_authenticated
+    print(form_payload)
     request_args: dict[str, Any] = {
         "method": "POST",
         "endpoint": "/Chat/SendMessageForm",
