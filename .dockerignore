@@ -4,3 +4,4 @@ agent-service/audio/
 agent-service/data/
 postgres_data/
 qdrant_data/
+n8n_data/

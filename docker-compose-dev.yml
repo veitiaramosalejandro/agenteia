@@ -3,6 +3,7 @@ services:
   ollama-llm:
     image: ollama/ollama:latest
     container_name: machining_ollama
+    hostname: ollama-llm
     restart: always
     user: root  # Añadir esta línea
     ports:
@@ -42,6 +43,7 @@ services:
   vector-db:
     image: qdrant/qdrant:latest # Opción robusta y ligera (o chromadb / pgvector)
     container_name: machining_vector_db
+    hostname: vector-db
     restart: always
     ports:
       - 6333:6333
@@ -54,6 +56,7 @@ services:
   timescaledb:
     image: timescale/timescaledb:latest-pg15
     container_name: machining_db
+    hostname: timescaledb
     restart: always
     environment:
       - POSTGRES_USER=user
@@ -71,6 +74,7 @@ services:
   redis-cache:
     image: redis:alpine
     container_name: machining_redis
+    hostname: redis-cache
     restart: always
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
     ports:
@@ -82,6 +86,37 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - machining-network
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    hostname: n8n
+    restart: always
+    ports:
+      - 5678:5678
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=UTC
+      - N8N_SECURE_COOKIE=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin123
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=timescaledb
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=user
+      - DB_POSTGRESDB_PASSWORD=pass
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./n8n_data:/home/node/.n8n
     networks:
       - machining-network
 
