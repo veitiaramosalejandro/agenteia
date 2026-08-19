@@ -38,6 +38,7 @@ from app.connectors.db_client import (
     get_active_agents_for_workroom,
     get_agent_knowledge,
     get_solidset_instance,
+    list_active_solidset_instances,
     save_agent_knowledge,
     save_solidset_instance,
     save_sys_resource_ia,
@@ -1031,33 +1032,69 @@ def _run_startup_connectivity_checks() -> dict:
         "tcp": _probe_tcp(redis_host, redis_port),
     }
 
-    notif_enabled = settings.NOTIF_API_ENABLED and bool((settings.NOTIF_API_BASE_URL or "").strip())
-    checks["notification_api"] = {
-        "enabled": notif_enabled,
-        "tcp": _probe_tcp(*_extract_host_port_from_url(settings.NOTIF_API_BASE_URL, 443)) if notif_enabled else {"ok": True, "skipped": True},
-        "http": _probe_http(
-            settings.NOTIF_API_BASE_URL,
-            "/api/Request",
-            verify_tls=settings.NOTIF_API_VERIFY_TLS,
-        ) if notif_enabled else {"ok": True, "skipped": True},
-    }
+    try:
+        configured_instances = list_active_solidset_instances()
+        instances_error = ""
+    except Exception as exc:
+        configured_instances = []
+        instances_error = str(exc)
 
-    solidset_rest_enabled = bool((settings.SOLIDSET_RESTAPI_BASE_URL or "").strip())
-    checks["solidset_restapi"] = {
-        "configured": solidset_rest_enabled,
-        "tcp": _probe_tcp(*_extract_host_port_from_url(settings.SOLIDSET_RESTAPI_BASE_URL, 80)) if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
-        "root": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL) if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
-        "heartbeat": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL, "/RestApi/Heartbeat") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},
-        "swagger": _probe_http(settings.SOLIDSET_RESTAPI_BASE_URL, "/swagger/index.html") if solidset_rest_enabled else {"ok": False, "error": "SOLIDSET_RESTAPI_BASE_URL_no_configurada"},        
-    }
+    instance_checks = []
+    for instance in configured_instances:
+        base_url = str(instance.get("BaseUrl") or "").strip()
+        notification_url = str(instance.get("NotificationUrl") or "").strip()
 
-    solidset_chat_base = (settings.SOLIDSET_CHAT_BASE_URL or settings.NOTIF_API_BASE_URL or "").strip()
-    solidset_chat_enabled = bool(solidset_chat_base)
-    checks["solidset_chatapi"] = {
-        "configured": solidset_chat_enabled,
-        "tcp": _probe_tcp(*_extract_host_port_from_url(solidset_chat_base, 80)) if solidset_chat_enabled else {"ok": False, "error": "SOLIDSET_CHAT_BASE_URL_no_configurada"},
-        "root": _probe_http(solidset_chat_base) if solidset_chat_enabled else {"ok": False, "error": "SOLIDSET_CHAT_BASE_URL_no_configurada"},
-        "notifications": _probe_http(solidset_chat_base, "/Chat/GetNotifications") if solidset_chat_enabled else {"ok": False, "error": "SOLIDSET_CHAT_BASE_URL_no_configurada"},
+        def probe_configured_url(url: str, path: str, default_port: int) -> dict:
+            if not url:
+                return {"ok": False, "error": "url_no_configurada", "url": url}
+            candidates = [url.rstrip("/")]
+            parsed = urlparse(url)
+            if (
+                (os.path.exists("/.dockerenv") or os.getenv("RUNNING_IN_DOCKER") == "1")
+                and (parsed.hostname or "").lower() in {"localhost", "127.0.0.1"}
+            ):
+                docker_url = url.replace("localhost", "host.docker.internal").replace(
+                    "127.0.0.1", "host.docker.internal"
+                ).rstrip("/")
+                if docker_url not in candidates:
+                    candidates.insert(0, docker_url)
+            last_probe = {"ok": False, "error": "sin_candidatos", "url": url}
+            for candidate_url in candidates:
+                tcp = _probe_tcp(*_extract_host_port_from_url(candidate_url, default_port))
+                http = _probe_http(
+                    candidate_url,
+                    path,
+                    verify_tls=settings.NOTIF_API_VERIFY_TLS,
+                )
+                last_probe = {
+                    "ok": bool(tcp.get("ok") and http.get("ok")),
+                    "configured_url": url,
+                    "effective_url": candidate_url,
+                    "tcp": tcp,
+                    "http": http,
+                }
+                if last_probe["ok"]:
+                    break
+            return last_probe
+
+        instance_checks.append({
+            "id": str(instance.get("ID") or ""),
+            "code": str(instance.get("Code") or ""),
+            "name": str(instance.get("Name") or ""),
+            "source_ip": str(instance.get("SourceIP") or ""),
+            "base_url": base_url,
+            "notification_url": notification_url,
+            "solidset": probe_configured_url(base_url, "/RestApi/Heartbeat", 80),
+            "notification": (
+                probe_configured_url(notification_url, "/api/Request", 443)
+                if notification_url
+                else {"ok": True, "skipped": True, "error": "NotificationUrl_no_configurada"}
+            ),
+        })
+    checks["solidset_instances"] = {
+        "configured": bool(instance_checks),
+        "error": instances_error or None,
+        "instances": instance_checks,
     }
 
     sql_host, sql_port = _extract_host_port(settings.SQL_SERVER_HOST, 1433)
@@ -1074,7 +1111,17 @@ def _run_startup_connectivity_checks() -> dict:
     }
 
     all_ok = True
-    for service_data in checks.values():
+    for service_name, service_data in checks.items():
+        if service_name == "solidset_instances":
+            if not service_data.get("configured") or service_data.get("error"):
+                all_ok = False
+            for instance in service_data.get("instances", []):
+                if not instance.get("solidset", {}).get("ok", False):
+                    all_ok = False
+                notification = instance.get("notification", {})
+                if not notification.get("ok", False) and not notification.get("skipped"):
+                    all_ok = False
+            continue
         for probe_name, probe_result in service_data.items():
             if probe_name in {"enabled", "configured", "database"}:
                 continue
@@ -1134,20 +1181,27 @@ def _log_startup_connectivity(report: dict) -> None:
     print(f"   - PostgreSQL/TimescaleDB URL: {db_url or 'DB_URL_no_configurada'}")
     print(f"     • TCP: {_probe_to_text(postgres.get('tcp', {}))}")
 
-    notif = checks.get("notification_api", {})
-    notif_url = settings.NOTIF_API_BASE_URL or "NOTIF_API_BASE_URL_no_configurada"
-    print(f"   - Notification API URL: {notif_url}")
-    print(f"     • Enabled: {notif.get('enabled', False)}")
-    print(f"     • TCP: {_probe_to_text(notif.get('tcp', {}))}")
-    print(f"     • HTTP /api/Request: {_probe_to_text(notif.get('http', {}))}")
-
-    solidset_rest = checks.get("solidset_restapi", {})
-    solidset_rest_url = settings.SOLIDSET_RESTAPI_BASE_URL or "SOLIDSET_RESTAPI_BASE_URL_no_configurada"
-    print(f"   - SolidSET RestApi URL: {solidset_rest_url}")
-    print(f"     • Configured: {solidset_rest.get('configured', False)}")
-    print(f"     • TCP: {_probe_to_text(solidset_rest.get('tcp', {}))}")
-    print(f"     • HTTP /: {_probe_to_text(solidset_rest.get('root', {}))}")
-    print(f"     • HTTP /RestApi/Heartbeat: {_probe_to_text(solidset_rest.get('heartbeat', {}))}")        
+    configured = checks.get("solidset_instances", {})
+    print("   - Instancias SolidSET configuradas en PostgreSQL:")
+    if configured.get("error"):
+        print(f"     • ERROR consultando SysSolidSETInstance: {configured['error']}")
+    elif not configured.get("instances"):
+        print("     • Ninguna instancia activa configurada")
+    for instance in configured.get("instances", []):
+        print(
+            f"     • [{instance.get('code') or '-'}] {instance.get('name') or '-'} "
+            f"SourceIP={instance.get('source_ip') or '-'}"
+        )
+        solidset = instance.get("solidset", {})
+        print(
+            f"       SolidSET: {solidset.get('configured_url') or instance.get('base_url') or '-'} "
+            f"-> {solidset.get('effective_url') or '-'}: {_probe_to_text(solidset)}"
+        )
+        notification = instance.get("notification", {})
+        print(
+            f"       Notification: {notification.get('configured_url') or instance.get('notification_url') or '-'} "
+            f"-> {notification.get('effective_url') or '-'}: {_probe_to_text(notification)}"
+        )
 
 
 def _build_dialogue_cache_key(session_id: str, user_id: str, canal_id: Optional[str], message: str) -> str:

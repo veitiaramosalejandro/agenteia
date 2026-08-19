@@ -1,17 +1,38 @@
 services:
   # API del agente. n8n accede internamente mediante http://agent-service:8000.
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: machining_nginx
+    hostname: nginx
+    restart: unless-stopped
+    ports:
+      - 80:80
+    volumes:
+      - ./nginx/conf.d/agent.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      agent-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - machining-network
+
   agent-service:
     image: agent-service:0.0.1    
     container_name: machining_agent
     hostname: agent-service
     restart: unless-stopped
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"
     env_file:
       - .env
     environment:
-      ENVIRONMENT: development
+      ENVIRONMENT: production
       RUNNING_IN_DOCKER: "1"
       OLLAMA_BASE_URL: http://ollama-llm:11434
       VECTOR_DB_URL: http://vector-db:6333
@@ -19,6 +40,7 @@ services:
       POSTGRES_PORT: 5432
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
+      DIALOGUE_MAX_CONCURRENT: 1
     volumes:      
       - ./data:/app/data
       - ./audio:/app/audio
@@ -48,13 +70,13 @@ services:
       - ./ollama_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-      # Ajustado para una RTX A3000 de 6 GB: chat y embeddings grandes se cargan
-      # de uno en uno para evitar agotar VRAM/RAM.
-      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
-      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-2}
+      # El compose base funciona también sin GPU. Con CPU se limita la
+      # concurrencia para no agotar RAM; el overlay GPU puede sobrescribirla.
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-4096}
-      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+      - OLLAMA_FLASH_ATTENTION=0
       - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
     healthcheck:
@@ -63,14 +85,6 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
-    # Si cuentas con GPU Nvidia, descomenta estas líneas para aceleración hardware:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     networks:
       - machining-network
 
