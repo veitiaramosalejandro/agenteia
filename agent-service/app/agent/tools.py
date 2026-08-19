@@ -46,8 +46,7 @@ def _resolve_solidset_meeting_id(
     code = str(meeting_code or "").strip()
     try:
         with pymssql.connect(
-            server=settings.SQL_SERVER_HOST,
-            port=settings.SQL_SERVER_PORT,
+            **settings.sql_server_connection_options(),
             user=settings.SQL_SERVER_USER,
             password=settings.SQL_SERVER_PASSWORD,
             database=settings.SQL_SERVER_DB,
@@ -752,8 +751,7 @@ def query_sql_server(query: str) -> str:
 
     try:
         conn = pymssql.connect(
-            server=server,
-            port=settings.SQL_SERVER_PORT,
+            **settings.sql_server_connection_options(),
             user=user,
             password=password,
             database=database,
@@ -815,8 +813,7 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
 
     try:
         conn = pymssql.connect(
-            server=server,
-            port=settings.SQL_SERVER_PORT,
+            **settings.sql_server_connection_options(),
             user=user,
             password=password,
             database=database,

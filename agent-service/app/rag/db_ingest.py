@@ -105,8 +105,7 @@ class DatabaseIngestor:
         import pymssql
 
         return pymssql.connect(
-            server=settings.SQL_SERVER_HOST,
-            port=settings.SQL_SERVER_PORT,
+            **settings.sql_server_connection_options(),
             user=settings.SQL_SERVER_USER,
             password=settings.SQL_SERVER_PASSWORD,
             database=settings.SQL_SERVER_DB,
@@ -425,8 +424,7 @@ class DatabaseIngestor:
             print("\n📊 Ingestando clientes desde SQL Server...")
             
             conn = pymssql.connect(
-                server=settings.SQL_SERVER_HOST,
-                port=settings.SQL_SERVER_PORT,
+                **settings.sql_server_connection_options(),
                 user=settings.SQL_SERVER_USER,
                 password=settings.SQL_SERVER_PASSWORD,
                 database=settings.SQL_SERVER_DB,
@@ -511,8 +509,7 @@ class DatabaseIngestor:
             print("\n🔧 Ingestando máquinas desde SQL Server...")
             
             conn = pymssql.connect(
-                server=settings.SQL_SERVER_HOST,
-                port=settings.SQL_SERVER_PORT,
+                **settings.sql_server_connection_options(),
                 user=settings.SQL_SERVER_USER,
                 password=settings.SQL_SERVER_PASSWORD,
                 database=settings.SQL_SERVER_DB,
@@ -597,8 +594,7 @@ class DatabaseIngestor:
             print("\n📝 Ingestando actividades desde SQL Server...")
             
             conn = pymssql.connect(
-                server=settings.SQL_SERVER_HOST,
-                port=settings.SQL_SERVER_PORT,
+                **settings.sql_server_connection_options(),
                 user=settings.SQL_SERVER_USER,
                 password=settings.SQL_SERVER_PASSWORD,
                 database=settings.SQL_SERVER_DB,

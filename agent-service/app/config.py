@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     
     # SQL Server (para compatibilidad)
     SQL_SERVER_HOST: str = os.getenv("SQL_SERVER_HOST", "172.16.10.167")
+    SQL_SERVER_INSTANCE: str = os.getenv("SQL_SERVER_INSTANCE", "").strip()
     # Desde contenedores Linux se debe usar el puerto TCP de la instancia.
     # La sintaxis Windows ``.\\INSTANCIA`` depende de SQL Browser y no es
     # interpretada de forma fiable por FreeTDS/pymssql.
@@ -133,6 +134,23 @@ class Settings(BaseSettings):
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_samples")
     GENERATED_DOCS_DIR: str = os.getenv("GENERATED_DOCS_DIR", "./data/generated_docs")
     INGEST_INTERVAL_SECONDS: int = int(os.getenv("INGEST_INTERVAL_SECONDS", "3600"))
+
+    def sql_server_connection_options(self) -> dict:
+        """Devuelve el destino pymssql sin forzar puerto en instancias nombradas."""
+        server = self.SQL_SERVER_HOST.strip().rstrip("\\")
+        instance = self.SQL_SERVER_INSTANCE.strip().strip("\\")
+        if instance:
+            server = f"{server}\\{instance}"
+
+        options = {"server": server}
+        if "\\" not in server and self.SQL_SERVER_PORT > 0:
+            options["port"] = self.SQL_SERVER_PORT
+        return options
+
+    def sql_server_endpoint_label(self) -> str:
+        options = self.sql_server_connection_options()
+        port = options.get("port")
+        return f"{options['server']}:{port}" if port else str(options["server"])
     
     class Config:
         env_file = ".env"
@@ -148,7 +166,7 @@ if settings.ENVIRONMENT == "development":
     print(f"  - Qdrant: {settings.VECTOR_DB_URL}")
     print(f"  - Redis: {settings.REDIS_URL}")
     print(f"  - PostgreSQL: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}")
-    print(f"  - SQL Server: {settings.SQL_SERVER_HOST}")    
+    print(f"  - SQL Server: {settings.sql_server_endpoint_label()}")
     print(f"  - SolidSET RestApi: {settings.SOLIDSET_RESTAPI_BASE_URL}")
     print(f"  - Notifications Api: {settings.NOTIF_API_BASE_URL}")
     

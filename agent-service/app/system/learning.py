@@ -150,8 +150,7 @@ class SistemaAprendizaje:
         for attempt in range(1, kwargs.get("retries", 3) + 1):
             try:
                 return pymssql.connect(
-                    server=settings.SQL_SERVER_HOST,
-                    port=settings.SQL_SERVER_PORT,
+                    **settings.sql_server_connection_options(),
                     user=settings.SQL_SERVER_USER,
                     password=settings.SQL_SERVER_PASSWORD,
                     database=settings.SQL_SERVER_DB,

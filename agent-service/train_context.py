@@ -144,8 +144,7 @@ def main():
         # 2. Conectar a la base de datos
         print("2. Conectando a la base de datos SQL Server...")
         conn = pymssql.connect(
-            server=settings.SQL_SERVER_HOST,
-            port=settings.SQL_SERVER_PORT,
+            **settings.sql_server_connection_options(),
             user=settings.SQL_SERVER_USER,
             password=settings.SQL_SERVER_PASSWORD,
             database=settings.SQL_SERVER_DB,

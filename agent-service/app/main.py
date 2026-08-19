@@ -1016,8 +1016,7 @@ def _probe_sql_server_connection() -> dict:
     """Comprueba SQL Server realmente; soporta host\\instancia y puerto dinámico."""
     try:
         with pymssql.connect(
-            server=settings.SQL_SERVER_HOST,
-            port=settings.SQL_SERVER_PORT,
+            **settings.sql_server_connection_options(),
             user=settings.SQL_SERVER_USER,
             password=settings.SQL_SERVER_PASSWORD,
             database=settings.SQL_SERVER_DB,
@@ -1029,13 +1028,13 @@ def _probe_sql_server_connection() -> dict:
                 cursor.fetchone()
         return {
             "ok": True,
-            "server": f"{settings.SQL_SERVER_HOST}:{settings.SQL_SERVER_PORT}",
+            "server": settings.sql_server_endpoint_label(),
             "database": settings.SQL_SERVER_DB,
         }
     except Exception as exc:
         return {
             "ok": False,
-            "server": f"{settings.SQL_SERVER_HOST}:{settings.SQL_SERVER_PORT}",
+            "server": settings.sql_server_endpoint_label(),
             "database": settings.SQL_SERVER_DB,
             "error": str(exc),
         }
@@ -1201,7 +1200,7 @@ def _log_startup_connectivity(report: dict) -> None:
 
     sql_server = checks.get("sql_server", {})
     print(
-        f"   - SQL Server: {settings.SQL_SERVER_HOST}:{settings.SQL_SERVER_PORT} "
+        f"   - SQL Server: {settings.sql_server_endpoint_label()} "
         f"| DB: {settings.SQL_SERVER_DB}"
     )
     print(f"     • Conexión SQL: {_probe_to_text(sql_server.get('connection', {}))}")

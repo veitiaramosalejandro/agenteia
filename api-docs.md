@@ -14,7 +14,7 @@ Como alternativa exclusivamente interna, `scripts/issue-internal-certificate.ps1
 
 La resolución habitual de identidad (`Username`, `FullName`, `IDLogin`, `IDResource`) utiliza exclusivamente la réplica PostgreSQL `SysLogin`; un identificador desconocido no desencadena conexiones a SQL Server. SQL Server queda reservado para ingestas y consultas operativas explícitas. En el perfil CPU de producción, Ollama usa `OLLAMA_KV_CACHE_TYPE=f16` porque una caché V cuantizada requiere Flash Attention.
 
-En el despliegue Windows actual, SQL Server se alcanza desde Docker mediante `SQL_SERVER_DOCKER_HOST=host.docker.internal` y el puerto TCP estático de `SQL2017DEV` en `SQL_SERVER_DOCKER_PORT`. La notación local de Windows `.\SQL2017DEV` no debe pasarse a `pymssql` dentro del contenedor Linux. Catálogo, usuario y contraseña permanecen en `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`.
+En el despliegue Windows actual, SQL Server se alcanza desde Docker mediante `SQL_SERVER_DOCKER_HOST=host.docker.internal` y `SQL_SERVER_INSTANCE=SQL2017DEV`. La API compone una única barra invertida y no fuerza el puerto cuando existe una instancia. Catálogo, usuario y contraseña permanecen en `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`.
 
 El despliegue `docker-compose-prod.yml` utiliza Ollama por CPU de forma predeterminada y no exige el runtime NVIDIA. Cuando `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` funcione correctamente, la aceleración se activa añadiendo el overlay `docker-compose-prod.gpu.yml`. En producción Uvicorn se ejecuta sin `--reload`.
 
@@ -883,17 +883,20 @@ Cada agente mantiene su propia sesión, memoria y conocimiento.
 ```
 # Conectividad de producción: SQL Server y Qdrant
 
-En Docker, SQL Server debe configurarse mediante un host y un puerto TCP
-separados. No se debe usar la notación local de Windows
-`​.\\SQL2017DEV`, porque `pymssql`/FreeTDS dentro del contenedor Linux no
-resuelve de forma fiable las instancias nombradas.
+En este servidor Docker, SQL Server se configura como instancia nombrada. El
+host y la instancia se declaran por separado y la API construye para FreeTDS
+el destino `host.docker.internal\SQL2017DEV` sin forzar el puerto `1433`. No se
+debe usar `.\\SQL2017DEV`: el punto identifica al propio contenedor y las dos
+barras literales provocan un destino inválido.
 
 Variables usadas por `agent-service`:
 
 - `SQL_SERVER_DOCKER_HOST`: host alcanzable desde Docker; normalmente
   `host.docker.internal` cuando SQL Server está en el mismo servidor Windows.
-- `SQL_SERVER_DOCKER_PORT`: puerto TCP estático asignado a la instancia
-  `SQL2017DEV`; si se omite se utiliza `1433`.
+- `SQL_SERVER_INSTANCE`: nombre de instancia, actualmente `SQL2017DEV`. Cuando
+  tiene valor, no se envía un puerto explícito y FreeTDS consulta SQL Browser.
+- `SQL_SERVER_DOCKER_PORT`: solamente se utiliza cuando
+  `SQL_SERVER_INSTANCE` está vacío; su valor predeterminado es `1433`.
 - `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`: base de datos y
   credenciales de SQL Server.
 
@@ -906,6 +909,7 @@ Ejemplo para producción:
 
 ```env
 SQL_SERVER_DOCKER_HOST=host.docker.internal
+SQL_SERVER_INSTANCE=SQL2017DEV
 SQL_SERVER_DOCKER_PORT=1433
 SQL_SERVER_DB=DEV_ISIFrameIsicom
 SQL_SERVER_USER=sa

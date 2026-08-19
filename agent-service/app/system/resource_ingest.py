@@ -63,8 +63,7 @@ LOGIN_QUERY = """
 def ingest_solidset_logins() -> dict[str, int]:
     """Sincroniza cuentas SolidSET para autenticar al agente de cada recurso."""
     with pymssql.connect(
-        server=settings.SQL_SERVER_HOST,
-        port=settings.SQL_SERVER_PORT,
+        **settings.sql_server_connection_options(),
         user=settings.SQL_SERVER_USER,
         password=settings.SQL_SERVER_PASSWORD,
         database=settings.SQL_SERVER_DB,
@@ -156,8 +155,7 @@ def ingest_solidset_logins() -> dict[str, int]:
 def ingest_solidset_resources() -> dict[str, int]:
     """Sincroniza los recursos de SolidSET desde SQL Server hacia PostgreSQL."""
     with pymssql.connect(
-        server=settings.SQL_SERVER_HOST,
-        port=settings.SQL_SERVER_PORT,
+        **settings.sql_server_connection_options(),
         user=settings.SQL_SERVER_USER,
         password=settings.SQL_SERVER_PASSWORD,
         database=settings.SQL_SERVER_DB,
@@ -230,8 +228,7 @@ def ingest_solidset_resources() -> dict[str, int]:
 def ingest_solidset_chat_resources() -> dict[str, int]:
     """Sincroniza las relaciones recurso-sala desde SolidSET."""
     with pymssql.connect(
-        server=settings.SQL_SERVER_HOST,
-        port=settings.SQL_SERVER_PORT,
+        **settings.sql_server_connection_options(),
         user=settings.SQL_SERVER_USER,
         password=settings.SQL_SERVER_PASSWORD,
         database=settings.SQL_SERVER_DB,
@@ -307,8 +304,7 @@ def ingest_solidset_chat_resources() -> dict[str, int]:
 def ingest_solidset_workrooms() -> dict[str, int]:
     """Sincroniza el catálogo de canales de SolidSET hacia PostgreSQL."""
     with pymssql.connect(
-        server=settings.SQL_SERVER_HOST,
-        port=settings.SQL_SERVER_PORT,
+        **settings.sql_server_connection_options(),
         user=settings.SQL_SERVER_USER,
         password=settings.SQL_SERVER_PASSWORD,
         database=settings.SQL_SERVER_DB,
