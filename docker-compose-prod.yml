@@ -1,16 +1,13 @@
 services:
   # API del agente. n8n accede internamente mediante http://agent-service:8000.
   agent-service:
-    image: agent-service:0.0.1
-    build:
-      context: ./agent-service
-      dockerfile: Dockerfile
+    image: agent-service:0.0.1    
     container_name: machining_agent
     hostname: agent-service
     restart: unless-stopped
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     ports:
-      - 8000:8000
+      - "8000:8000"
     env_file:
       - .env
     environment:
@@ -22,18 +19,7 @@ services:
       POSTGRES_PORT: 5432
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
-      # El SQL Server de desarrollo se ejecuta en el host. En un servidor
-      # remoto puede sobrescribirse con SQL_SERVER_HOST desde Compose/.env.
-      SQL_SERVER_HOST: ${SQL_SERVER_DOCKER_HOST:-host.docker.internal}
-      # URLs de diagnóstico/listener. El enrutamiento de respuestas continúa
-      # resolviéndose mediante SysSolidSETInstance en PostgreSQL.
-      SOLIDSET_RESTAPI_BASE_URL: ${SOLIDSET_DOCKER_BASE_URL:-http://host.docker.internal:52130}
-      SOLIDSET_CHAT_BASE_URL: ${SOLIDSET_DOCKER_BASE_URL:-http://host.docker.internal:52130}
-      NOTIF_API_BASE_URL: ${NOTIF_DOCKER_BASE_URL:-http://host.docker.internal:52131}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./agent-service:/app
+    volumes:      
       - ./data:/app/data
       - ./audio:/app/audio
     depends_on:
@@ -46,8 +32,7 @@ services:
       vector-db:
         condition: service_started
     networks:
-      - machining-network
-      - network-db01
+      - machining-network      
 
   # 3. Servidor de Modelos Locales (Ollama)
   ollama-llm:
@@ -186,9 +171,6 @@ services:
 networks:
   machining-network:
     driver: bridge
-  network-db01:
-    name: network-db01    
-    external: true
 
 volumes:
   redis_data:

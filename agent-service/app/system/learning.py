@@ -737,8 +737,12 @@ class SistemaAprendizaje:
                 f"señal='{reaction.get('signal')}', repetida={reaction.get('is_repeated')}, negativa={reaction.get('is_negative')}"
             )
 
+            feedback_identity = (
+                f"{session_id}:{user_text}:{agent_response}:{corrected_response or ''}"
+            )
+            feedback_digest = hashlib.md5(feedback_identity.encode()).hexdigest()[:24]
             actividad = Actividad(
-                id=f"feedback_{hashlib.md5(f'{session_id}:{user_text}:{agent_response}:{corrected_response or ""}'.encode()).hexdigest()[:24]}",
+                id=f"feedback_{feedback_digest}",
                 recurso_humano_id=username,
                 canal_id=canal_id or "general",
                 tipo=tipo,
@@ -794,8 +798,10 @@ class SistemaAprendizaje:
                 f"Feedback -reciente: {feedback_summary or 'sin_feedback_reciente'}."
             )
 
+            profile_identity = f"{username}:{canal_id or 'general'}:{perfil_texto}"
+            profile_digest = hashlib.md5(profile_identity.encode()).hexdigest()[:24]
             actividad = Actividad(
-                id=f"profile_{hashlib.md5(f'{username}:{canal_id or "general"}:{perfil_texto}'.encode()).hexdigest()[:24]}",
+                id=f"profile_{profile_digest}",
                 recurso_humano_id=username,
                 canal_id=canal_id or "perfil_usuario",
                 tipo="perfil_usuario",

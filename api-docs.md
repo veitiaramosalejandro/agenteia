@@ -1,5 +1,7 @@
 # API del agente SolidSET
 
+> Entorno Docker de desarrollo: la API se ejecuta con Python 3.11 y el código del servicio mantiene compatibilidad sintáctica con esa versión.
+
 Última actualización: 19 de agosto de 2026.
 
 > Este documento debe actualizarse en el mismo cambio que modifique una ruta, método HTTP, contrato de entrada, respuesta o comportamiento observable de la API.
