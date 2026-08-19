@@ -68,6 +68,8 @@ X-SolidSET-Instance: solidset-lisboa
 
 El encabezado tiene precedencia. Si falta, la API busca `request.client.host` en `SourceIP`; no utiliza `X-Forwarded-For` para seleccionar la instalación. Una instancia desconocida recibe `400` y nunca provoca que las credenciales se prueben contra otra instalación. La instancia se conserva en la huella del evento, sesión del agente, login y envío de respuesta.
 
+La resolución por IP admite que `X-SolidSET-Instance` no esté presente: los parámetros opcionales se tipan explícitamente en PostgreSQL, de modo que una búsqueda únicamente por `SourceIP` no produce un `503`. Los errores de acceso a PostgreSQL continúan devolviendo `503`; una IP simplemente no registrada devuelve `400`.
+
 ## 1. Guardar o actualizar un agente
 
 ```http

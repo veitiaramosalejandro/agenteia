@@ -105,9 +105,12 @@ def get_solidset_instance(
                 '''
                 SELECT * FROM public."SysSolidSETInstance"
                 WHERE active = true
-                  AND ((%s IS NOT NULL AND LOWER("Code") = LOWER(%s))
-                    OR (%s IS NOT NULL AND "SourceIP" = %s))
-                ORDER BY CASE WHEN %s IS NOT NULL AND LOWER("Code") = LOWER(%s)
+                  AND ((NULLIF(%s::text, '') IS NOT NULL
+                        AND LOWER("Code") = LOWER(%s::text))
+                    OR (NULLIF(%s::text, '') IS NOT NULL
+                        AND "SourceIP" = %s::text))
+                ORDER BY CASE WHEN NULLIF(%s::text, '') IS NOT NULL
+                                   AND LOWER("Code") = LOWER(%s::text)
                               THEN 0 ELSE 1 END
                 LIMIT 1
                 ''',
