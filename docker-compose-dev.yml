@@ -7,7 +7,9 @@ services:
     ports:
       - 80:80
     volumes:
-      - ./nginx/conf.d/agent.conf:/etc/nginx/conf.d/default.conf:ro
+      # Desarrollo siempre usa HTTP; no depende de la configuración TLS activa
+      # ni monta certificados de producción.
+      - ./nginx/templates/agent-http.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       agent-service:
         condition: service_started
@@ -43,14 +45,17 @@ services:
       POSTGRES_PORT: 5432
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
-      # El SQL Server de desarrollo se ejecuta en el host. En un servidor
-      # remoto puede sobrescribirse con SQL_SERVER_HOST desde Compose/.env.
+      DIALOGUE_MAX_CONCURRENT: ${DIALOGUE_MAX_CONCURRENT:-1}
       SQL_SERVER_HOST: ${SQL_SERVER_DOCKER_HOST:-host.docker.internal}
-      # URLs de diagnóstico/listener. El enrutamiento de respuestas continúa
-      # resolviéndose mediante SysSolidSETInstance en PostgreSQL.
-      SOLIDSET_RESTAPI_BASE_URL: ${SOLIDSET_DOCKER_BASE_URL:-http://host.docker.internal:52130}
-      SOLIDSET_CHAT_BASE_URL: ${SOLIDSET_DOCKER_BASE_URL:-http://host.docker.internal:52130}
-      NOTIF_API_BASE_URL: ${NOTIF_DOCKER_BASE_URL:-http://host.docker.internal:52131}
+      # Con instancia vacía conecta directamente al puerto configurado.
+      SQL_SERVER_INSTANCE: ${SQL_SERVER_INSTANCE-SQL2017DEV}
+      SQL_SERVER_PORT: ${SQL_SERVER_DOCKER_PORT:-1433}
+      # Igual que producción: cada agente usa el SysLogin de PostgreSQL.
+      SOLIDSET_LOGIN_USERNAME: ""
+      SOLIDSET_LOGIN_PASSWORD: ""
+      SOLIDSET_LOGIN_HASHPASS: ""
+      SOLIDSET_LOGIN_RESOURCE_ID: ""
+      SOLIDSET_RESOURCE_ID: ""
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -65,10 +70,9 @@ services:
       redis-cache:
         condition: service_healthy
       vector-db:
-        condition: service_started
+        condition: service_healthy
     networks:
       - machining-network
-      - network-db01
 
   # 3. Servidor de Modelos Locales (Ollama)
   ollama-llm:
@@ -84,14 +88,13 @@ services:
       - ./ollama_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-      # Ajustado para una RTX A3000 de 6 GB: chat y embeddings grandes se cargan
-      # de uno en uno para evitar agotar VRAM/RAM.
-      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
-      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-2}
+      # Perfil CPU seguro, equivalente al compose de producción base.
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-4096}
-      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
-      - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
+      - OLLAMA_FLASH_ATTENTION=0
+      - OLLAMA_KV_CACHE_TYPE=f16
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
     healthcheck:
       test: ["CMD", "ollama", "list"]
@@ -99,14 +102,6 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
-    # Si cuentas con GPU Nvidia, descomenta estas líneas para aceleración hardware:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     networks:
       - machining-network
 
@@ -120,6 +115,12 @@ services:
       - 6333:6333
     volumes:
       - ./qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     networks:
       - machining-network
 
@@ -207,9 +208,6 @@ services:
 networks:
   machining-network:
     driver: bridge
-  network-db01:
-    name: network-db01    
-    external: true
 
 volumes:
   redis_data:

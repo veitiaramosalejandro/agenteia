@@ -4,6 +4,24 @@
 
 El diagnóstico de inicio y el campo `runtime.startup_connectivity` de `GET /api/v1/agent/health` obtienen las instalaciones activas directamente de PostgreSQL `SysSolidSETInstance`. Para cada fila verifican `BaseUrl` y `NotificationUrl` e informan `Code`, `SourceIP`, URL configurada y URL efectiva. Dentro de Docker, una URL configurada con `localhost` se prueba mediante `host.docker.internal`, sin modificar el valor persistido. Las variables históricas `SOLIDSET_RESTAPI_BASE_URL` y `NOTIF_API_BASE_URL` no determinan este diagnóstico multiinstancia.
 
+Los endpoints de notificación resuelven la instancia, en orden, mediante
+`X-SolidSET-Instance`, la IP reenviada por Nginx, la IP TCP directa y el host
+HTTP. Esto permite que una instalación registrada con
+`SourceIP=android.isicom.pt` sea reconocida detrás del proxy Docker y evita el
+`400 Instancia SolidSET desconocida` causado por la IP interna de Nginx.
+Cuando ninguna señal coincide pero PostgreSQL contiene exactamente una
+instancia activa, esa única instancia se utiliza sin ambigüedad. Si existen
+varias instalaciones activas, el fallback no se aplica y el emisor debe enviar
+`X-SolidSET-Instance` o una dirección registrada.
+
+Los saludos directos (`hola`, `hola como estás` y equivalentes) se contestan de
+forma inmediata, respetuosa y usando únicamente el `FullName` del remitente;
+no se muestran perfiles ni canales y no se espera al LLM. Cuando una persona
+habla con su propio agente, incluida una conversación de meeting, el envío usa
+el UUID interno de `SysResourceIA` como identidad visual del agente para que la
+respuesta aparezca como interlocutor distinto. El log informa las fases
+`encolada`, `iniciando`, `enrutamiento completado` y el resultado del envío.
+
 En Docker, Nginx publica la API mediante `http://android.isicom.pt/` y reenvía internamente hacia `http://agent-service:8000`. Por tanto, los endpoints conservan sus rutas; por ejemplo, salud está disponible en `http://android.isicom.pt/api/v1/agent/health` y Swagger en `http://android.isicom.pt/docs`. La ruta técnica `GET /nginx-health` comprueba únicamente el proxy.
 
 Para HTTPS, `scripts/issue-letsencrypt.ps1 -Email <correo>` ejecuta Certbot mediante webroot, emite el certificado de `android.isicom.pt` y activa el virtual host TLS en el puerto 443. El desafío `/.well-known/acme-challenge/` permanece accesible por HTTP para renovaciones. `scripts/renew-letsencrypt.ps1` renueva los certificados próximos a vencer y recarga Nginx. El DNS público debe apuntar al servidor y el NAT/firewall debe admitir entrada TCP 80 y 443.
@@ -17,6 +35,13 @@ La resolución habitual de identidad (`Username`, `FullName`, `IDLogin`, `IDReso
 En el despliegue Windows actual, SQL Server se alcanza desde Docker mediante `SQL_SERVER_DOCKER_HOST=host.docker.internal` y `SQL_SERVER_INSTANCE=SQL2017DEV`. La API compone una única barra invertida y no fuerza el puerto cuando existe una instancia. Catálogo, usuario y contraseña permanecen en `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`.
 
 El despliegue `docker-compose-prod.yml` utiliza Ollama por CPU de forma predeterminada y no exige el runtime NVIDIA. Cuando `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` funcione correctamente, la aceleración se activa añadiendo el overlay `docker-compose-prod.gpu.yml`. En producción Uvicorn se ejecuta sin `--reload`.
+
+El despliegue `docker-compose-dev.yml` replica la topología funcional de
+producción, pero publica exclusivamente HTTP en los puertos 80 y 8000, no
+incluye Certbot ni monta certificados. Conserva el montaje del código fuente y
+Uvicorn `--reload` para desarrollo. También espera la salud de PostgreSQL,
+Redis, Ollama y Qdrant, utiliza el perfil CPU seguro y resuelve SolidSET desde
+`SysSolidSETInstance` y las identidades desde `SysLogin` en PostgreSQL.
 
 Última actualización: 19 de agosto de 2026.
 
@@ -915,6 +940,11 @@ SQL_SERVER_DB=DEV_ISIFrameIsicom
 SQL_SERVER_USER=sa
 SQL_SERVER_PASSWORD=<secreto>
 ```
+
+Si SQL Browser/UDP 1434 no es alcanzable desde Docker, debe dejarse
+`SQL_SERVER_INSTANCE=` vacío y asignar a `SQL_SERVER_DOCKER_PORT` el puerto TCP
+real publicado por `SQL2017DEV`. El Compose preserva expresamente el valor
+vacío para activar este modo de conexión directa.
 
 La cuenta global antigua de SolidSET queda deshabilitada en
 `docker-compose-prod.yml`. Cada respuesta inicia sesión con el `SysLogin` del

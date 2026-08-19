@@ -93,13 +93,34 @@ def _request_ip_details(request: Request) -> tuple[str, str]:
 
 
 def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | None:
-    """Resuelve la instalación origen; el encabezado explícito tiene precedencia."""
-    direct_ip, _ = _request_ip_details(request)
+    """Resuelve la instalación aun cuando la petición atraviesa Nginx."""
+    direct_ip, forwarded_ip = _request_ip_details(request)
     instance_code = request.headers.get("x-solidset-instance", "").strip()
-    return get_solidset_instance(
-        code=instance_code or None,
-        source_ip=None if instance_code else direct_ip,
-    )
+    if instance_code:
+        return get_solidset_instance(code=instance_code)
+
+    # SourceIP puede contener una IP o el host público registrado para la
+    # instalación. Detrás de Nginx, request.client es la IP del contenedor del
+    # proxy, por lo que también se prueban X-Forwarded-For/X-Real-IP y Host.
+    candidates = [forwarded_ip, direct_ip, request.url.hostname or ""]
+    seen: set[str] = set()
+    for candidate in candidates:
+        source = str(candidate or "").strip()
+        if not source or source == "-" or source in seen:
+            continue
+        seen.add(source)
+        instance = get_solidset_instance(source_ip=source)
+        if instance is not None:
+            return instance
+
+    # En una instalación con un único SolidSET activo no existe ambigüedad y
+    # Nginx/Docker puede ocultar tanto el host público como la IP original.
+    # Con varias instalaciones no se aplica este fallback: deben identificarse
+    # por cabecera, IP o host para impedir respuestas en el sistema equivocado.
+    active_instances = list_active_solidset_instances()
+    if len(active_instances) == 1:
+        return active_instances[0]
+    return None
 
 
 def _attach_solidset_instance(candidates: list[dict], instance: dict[str, Any]) -> None:
@@ -273,6 +294,10 @@ def _schedule_auto_replies(candidates: list[dict]) -> None:
     """Mantiene una referencia fuerte y registra fallos de la tarea en background."""
     if not candidates:
         return
+    print(
+        f"🤖 Auto-respuesta encolada; candidatos={len(candidates)}",
+        flush=True,
+    )
     task = asyncio.create_task(_process_auto_replies(candidates))
     _auto_reply_background_tasks.add(task)
 
@@ -328,10 +353,35 @@ def _weather_location_prompt(raw_text: str) -> Optional[str]:
     return "¿De qué ciudad o localidad quieres conocer el tiempo?"
 
 
-def _direct_courtesy_response(raw_text: str) -> Optional[str]:
+def _direct_courtesy_response(
+    raw_text: str,
+    recipient_name: str = "",
+) -> Optional[str]:
     """Responde cumplidos/agradecimientos directos sin ocupar SQL, RAG u Ollama."""
     text = " ".join((raw_text or "").strip().lower().split())
-    if not text or _looks_like_question_or_request(text):
+    if not text:
+        return None
+    display_name = " ".join(str(recipient_name or "").strip().split())
+    try:
+        uuid.UUID(display_name)
+        display_name = ""
+    except (ValueError, AttributeError):
+        pass
+    if display_name.lower() in {"desconocido", "unknown", "-"}:
+        display_name = ""
+    greeting_name = f", {display_name}" if display_name else ""
+    greeting_terms = {
+        "hola",
+        "hola como estas",
+        "hola cómo estás",
+        "buenos dias",
+        "buenos días",
+        "buenas tardes",
+        "buenas noches",
+    }
+    if text.rstrip("!?., ") in greeting_terms:
+        return f"¡Hola{greeting_name}! Estoy muy bien, gracias. ¿En qué puedo ayudarte?"
+    if _looks_like_question_or_request(text):
         return None
     if any(term in text for term in ("obrigado", "obrigada", "boa explicação", "boa explicacao", "muito bom")):
         return "Muito obrigado. Fico satisfeito por a explicação ter sido útil."
@@ -722,6 +772,10 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
 
 
 async def _process_auto_replies(candidates: list[dict]) -> int:
+    print(
+        f"🤖 Iniciando procesamiento de auto-respuesta; candidatos={len(candidates)}",
+        flush=True,
+    )
     if not settings.SOLIDSET_AUTO_REPLY_ENABLED:
         return 0
     if not settings.SOLIDSET_USER_ACTIONS_ENABLED:
@@ -729,6 +783,10 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         return 0
 
     candidates = _route_candidates_to_selected_agents(candidates)
+    print(
+        f"🤖 Enrutamiento de auto-respuesta completado; ejecuciones={len(candidates)}",
+        flush=True,
+    )
     # Una selección explícita de SolidSET prevalece sobre el límite histórico
     # de una sola autorrespuesta, manteniendo un techo defensivo por mensaje.
     max_replies = min(
@@ -818,10 +876,16 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             agent_identity_id
             and str(candidate.get("sender_resource") or "").strip().lower()
             == agent_resource_id.lower()
-            and not meeting_id
         )
 
-        response_text = _direct_courtesy_response(incoming_text) if is_direct else None
+        response_text = (
+            _direct_courtesy_response(
+                incoming_text,
+                str(candidate.get("sender_name") or ""),
+            )
+            if is_direct
+            else None
+        )
         if response_text is None:
             response_text = _weather_location_prompt(incoming_text)
         if response_text is None:
