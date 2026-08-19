@@ -1,10 +1,10 @@
 # API del agente SolidSET
 
-Última actualización: 17 de agosto de 2026.
+Última actualización: 19 de agosto de 2026.
 
 > Este documento debe actualizarse en el mismo cambio que modifique una ruta, método HTTP, contrato de entrada, respuesta o comportamiento observable de la API.
 
-Actualmente la API expone 24 endpoints funcionales. Puedes consultar siempre la documentación interactiva en:
+Actualmente la API expone 25 endpoints funcionales. Puedes consultar siempre la documentación interactiva en:
 
 ```text
 http://localhost:8000/docs
@@ -38,6 +38,35 @@ El funcionamiento habitual sería:
 ```
 
 # Configuración multiagente
+
+## 0. Registrar una instancia SolidSET
+
+```http
+POST /api/v1/agent/solidset/instances
+```
+
+Registra o actualiza por `Code` las URLs que antes se seleccionaban desde `.env`:
+
+```json
+{
+  "Code": "solidset-lisboa",
+  "Name": "SolidSET Lisboa",
+  "BaseUrl": "http://192.168.10.20:52130",
+  "NotificationUrl": "http://192.168.10.20:52131",
+  "SourceIP": "192.168.10.20",
+  "active": true
+}
+```
+
+La configuración se guarda en PostgreSQL `SysSolidSETInstance`. Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`; si encuentra alguna, actualiza esa misma fila y conserva su `ID`. La respuesta indica `status=created` o `status=updated`. Existen índices únicos normalizados para impedir duplicados incluso con diferencias de mayúsculas o una barra final en la URL. `BaseUrl` se utiliza para `/User/LoginJson`, consultas y respuestas; `NotificationUrl` se utiliza únicamente para reenviar al servicio de notificaciones correspondiente.
+
+Cada SolidSET debe llamar los endpoints de entrada con:
+
+```http
+X-SolidSET-Instance: solidset-lisboa
+```
+
+El encabezado tiene precedencia. Si falta, la API busca `request.client.host` en `SourceIP`; no utiliza `X-Forwarded-For` para seleccionar la instalación. Una instancia desconocida recibe `400` y nunca provoca que las credenciales se prueben contra otra instalación. La instancia se conserva en la huella del evento, sesión del agente, login y envío de respuesta.
 
 ## 1. Guardar o actualizar un agente
 
@@ -154,9 +183,12 @@ Es el endpoint principal de la arquitectura multiagente.
     "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
     "272700d8-d1ba-46a6-a121-b76fce8ecb9f"
   ],
-  "SendToSolidSET": false
+  "SendToSolidSET": true,
+  "SolidSETInstanceCode": "solidset-lisboa"
 }
 ```
+
+`SolidSETInstanceCode` es obligatorio cuando `SendToSolidSET=true`. Si solo se desea generar la respuesta sin publicarla, puede mantenerse `SendToSolidSET=false` y omitir la instancia.
 
 Comportamiento:
 

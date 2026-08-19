@@ -37,7 +37,9 @@ from app.connectors.db_client import (
     ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
     get_agent_knowledge,
+    get_solidset_instance,
     save_agent_knowledge,
+    save_solidset_instance,
     save_sys_resource_ia,
     touch_agent_session,
 )
@@ -87,6 +89,28 @@ def _request_ip_details(request: Request) -> tuple[str, str]:
         or "-"
     )
     return direct_ip, forwarded_ip
+
+
+def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | None:
+    """Resuelve la instalación origen; el encabezado explícito tiene precedencia."""
+    direct_ip, _ = _request_ip_details(request)
+    instance_code = request.headers.get("x-solidset-instance", "").strip()
+    return get_solidset_instance(
+        code=instance_code or None,
+        source_ip=None if instance_code else direct_ip,
+    )
+
+
+def _attach_solidset_instance(candidates: list[dict], instance: dict[str, Any]) -> None:
+    for candidate in candidates:
+        original_fingerprint = str(candidate.get("fingerprint") or "")
+        candidate["fingerprint"] = f"{instance['ID']}:{original_fingerprint}"
+        candidate["solidset_instance_id"] = str(instance["ID"])
+        candidate["solidset_instance_code"] = str(instance["Code"])
+        candidate["solidset_base_url"] = str(instance["BaseUrl"]).rstrip("/")
+        candidate["solidset_notification_url"] = str(
+            instance.get("NotificationUrl") or ""
+        ).rstrip("/")
 
 
 @app.middleware("http")
@@ -731,7 +755,8 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             or conversation_scope
         )
         session_id = (
-            f"solidset:agent:{agent_resource_id}:room:{channel_id}:"
+            f"solidset:{candidate.get('solidset_instance_id') or 'unscoped'}:"
+            f"agent:{agent_resource_id}:room:{channel_id}:"
             f"conversation:{conversation_id}"
         )
         await asyncio.to_thread(
@@ -824,6 +849,7 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     "generated_by_ia": True,
                     "agent_resource_id": agent_resource_id,
                     "agent_identity_id": agent_identity_id if self_agent_reply else None,
+                    "solidset_base_url": candidate.get("solidset_base_url"),
                 },
             )
             send_result_text = str(send_result)
@@ -1467,6 +1493,29 @@ class SysResourceIAConfigurationResponse(BaseModel):
     configuration: SysResourceIAConfigurationStored
 
 
+class SolidSETInstanceConfiguration(BaseModel):
+    Code: str = Field(..., min_length=1, max_length=80)
+    Name: str = Field(..., min_length=1, max_length=255)
+    BaseUrl: str = Field(..., min_length=8, max_length=500)
+    NotificationUrl: Optional[str] = Field(None, max_length=500)
+    SourceIP: Optional[str] = Field(None, max_length=255)
+    active: bool = True
+
+    class Config:
+        extra = "forbid"
+
+
+class SolidSETInstanceStored(SolidSETInstanceConfiguration):
+    ID: uuid.UUID
+    CreatedAt: datetime
+    UpdatedAt: datetime
+
+
+class SolidSETInstanceConfigurationResponse(BaseModel):
+    status: str
+    configuration: SolidSETInstanceStored
+
+
 class SysResourceIAIngestResponse(BaseModel):
     status: str
     sourceRows: int
@@ -1510,6 +1559,7 @@ class MultiAgentDialogueRequest(BaseModel):
     SelectedAgentResourceIds: list[uuid.UUID]
     SenderResourceId: Optional[uuid.UUID] = None
     SendToSolidSET: bool = False
+    SolidSETInstanceCode: Optional[str] = Field(None, max_length=80)
 
     class Config:
         extra = "forbid"
@@ -1881,6 +1931,19 @@ async def handle_multi_agent_dialogue(
     if len(selected) > 10:
         raise HTTPException(status_code=422, detail="Se permiten como máximo 10 agentes por mensaje.")
 
+    solidset_instance = None
+    if request.SendToSolidSET:
+        if not str(request.SolidSETInstanceCode or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail="SolidSETInstanceCode es obligatorio cuando SendToSolidSET=true.",
+            )
+        solidset_instance = get_solidset_instance(
+            code=str(request.SolidSETInstanceCode).strip()
+        )
+        if solidset_instance is None:
+            raise HTTPException(status_code=404, detail="La instancia SolidSET no existe o está inactiva.")
+
     configured_agents = get_active_agents_for_workroom(request.IDWorkRoom, selected)
     if not configured_agents:
         raise HTTPException(
@@ -1954,6 +2017,7 @@ async def handle_multi_agent_dialogue(
                         if request.SenderResourceId == configured_agent["IDResource"]
                         else None
                     ),
+                    "solidset_base_url": str(solidset_instance["BaseUrl"]),
                 },
             ))
             sent = send_detail.startswith("✅")
@@ -2033,10 +2097,52 @@ def save_solidset_chat_configuration(
     )
 
 @app.post(
+    "/api/v1/agent/solidset/instances",
+    response_model=SolidSETInstanceConfigurationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_solidset_instance(
+    configuration: SolidSETInstanceConfiguration,
+) -> SolidSETInstanceConfigurationResponse:
+    """Registra o actualiza la URL y origen permitido de una instalación SolidSET."""
+    payload = configuration.model_dump()
+    for field in ("BaseUrl", "NotificationUrl"):
+        value = str(payload.get(field) or "").strip().rstrip("/")
+        if field == "BaseUrl" or value:
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{field} debe ser una URL HTTP(S) absoluta.",
+                )
+        payload[field] = value or None
+    payload["Code"] = payload["Code"].strip()
+    payload["Name"] = payload["Name"].strip()
+    payload["SourceIP"] = str(payload.get("SourceIP") or "").strip() or None
+    try:
+        saved = save_solidset_instance(payload)
+    except psycopg.errors.UniqueViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="SourceIP ya está asignada a otra instancia SolidSET.",
+        ) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo guardar la instancia SolidSET en PostgreSQL.",
+        ) from exc
+    operation = str(saved.pop("_operation", "saved"))
+    return SolidSETInstanceConfigurationResponse(
+        status=operation,
+        configuration=SolidSETInstanceStored(**saved),
+    )
+
+
+@app.post(
     "/api/v1/agent/notification/framework-message",
     response_model=SendMessageResultDTO,
 )
-async def receive_framework_notification(message: FrameworkMessageDTO):
+async def receive_framework_notification(message: FrameworkMessageDTO, request: Request):
     print(message.model_dump_json(indent=2))
 
     """Recibe desde Notification un FrameworkMessage ya capturado y lo aprende en Qdrant."""
@@ -2046,8 +2152,19 @@ async def receive_framework_notification(message: FrameworkMessageDTO):
         if hasattr(message, "model_dump")
         else message.dict()
     )
+    try:
+        instance = _resolve_request_solidset_instance(request)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No se pudo resolver la instancia SolidSET.") from exc
+    if instance is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Instancia SolidSET desconocida. Envía X-SolidSET-Instance o registra la IP origen.",
+        )
+    payload["_SolidSETInstanceID"] = str(instance["ID"])
     capture = notification_listener.capture_realtime_payload(payload)
     candidates = capture.get("auto_reply_candidates") or []
+    _attach_solidset_instance(candidates, instance)
     if candidates:
         _schedule_auto_replies(candidates)
     if capture["errors"]:
@@ -2072,12 +2189,25 @@ async def capture_and_forward_framework_message(request: Request):
     except json.JSONDecodeError:
         payload = {"RawMessage": raw_body.decode("utf-8", errors="replace")}
 
+    try:
+        instance = _resolve_request_solidset_instance(request)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No se pudo resolver la instancia SolidSET.") from exc
+    if instance is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Instancia SolidSET desconocida. Envía X-SolidSET-Instance o registra la IP origen.",
+        )
+    if isinstance(payload, dict):
+        payload["_SolidSETInstanceID"] = str(instance["ID"])
     capture = notification_listener.capture_realtime_payload(payload)
+    candidates = capture.get("auto_reply_candidates") or []
+    _attach_solidset_instance(candidates, instance)
 
-    upstream_base = (settings.NOTIF_API_BASE_URL or "").rstrip("/")
+    upstream_base = str(instance.get("NotificationUrl") or "").rstrip("/")
     if not upstream_base:
         raise HTTPException(status_code=503, detail={
-            "message": "NOTIF_API_BASE_URL no está configurada para reenviar el mensaje.",
+            "message": "La instancia no tiene NotificationUrl configurada para reenviar el mensaje.",
             "capture": capture,
         })
 
@@ -2110,7 +2240,6 @@ async def capture_and_forward_framework_message(request: Request):
     # aquí la respuesta porque la notificación posterior tendrá la misma huella y
     # será correctamente descartada como duplicada. Solo se responde si SolidSET
     # aceptó primero el mensaje original.
-    candidates = capture.get("auto_reply_candidates") or []
     if upstream.status_code < 400 and candidates:
         _schedule_auto_replies(candidates)
         print(

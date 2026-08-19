@@ -1,7 +1,13 @@
 import unittest
 from types import SimpleNamespace
 
-from app.main import _request_ip_details
+from unittest.mock import patch
+
+from app.main import (
+    _attach_solidset_instance,
+    _request_ip_details,
+    _resolve_request_solidset_instance,
+)
 
 
 class RequestIpLoggingTests(unittest.TestCase):
@@ -26,6 +32,33 @@ class RequestIpLoggingTests(unittest.TestCase):
 
         self.assertEqual(direct, "127.0.0.1")
         self.assertEqual(forwarded, "-")
+
+    @patch("app.main.get_solidset_instance")
+    def test_explicit_instance_header_has_precedence_over_source_ip(self, lookup):
+        lookup.return_value = {"Code": "plant-a"}
+        request = SimpleNamespace(
+            client=SimpleNamespace(host="10.0.0.8"),
+            headers={"x-solidset-instance": "plant-a"},
+        )
+
+        result = _resolve_request_solidset_instance(request)
+
+        self.assertEqual(result["Code"], "plant-a")
+        lookup.assert_called_once_with(code="plant-a", source_ip=None)
+
+    def test_candidate_is_namespaced_and_receives_response_url(self):
+        candidates = [{"fingerprint": "same-message"}]
+        instance = {
+            "ID": "instance-id",
+            "Code": "plant-a",
+            "BaseUrl": "http://10.0.0.8:52130/",
+            "NotificationUrl": "http://10.0.0.8:52131/",
+        }
+
+        _attach_solidset_instance(candidates, instance)
+
+        self.assertEqual(candidates[0]["fingerprint"], "instance-id:same-message")
+        self.assertEqual(candidates[0]["solidset_base_url"], "http://10.0.0.8:52130")
 
 
 if __name__ == "__main__":

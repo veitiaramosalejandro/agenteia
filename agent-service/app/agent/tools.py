@@ -19,7 +19,10 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams
 
 from app.config import settings
-from app.connectors.db_client import get_solidset_login_for_active_agent
+from app.connectors.db_client import (
+    get_solidset_login_for_active_agent,
+    list_active_solidset_instances,
+)
 from app.rag.vector_store import ensure_vector_collection
 
 from app.rag.audio_processor import extract_audio_features
@@ -237,11 +240,11 @@ def _solidset_clear_runtime_auth() -> None:
 
 def _solidset_get_all_base_candidates() -> list[str]:
     collected: list[str] = []
-    for configured in [
-        settings.SOLIDSET_CHAT_BASE_URL,
-        settings.SOLIDSET_RESTAPI_BASE_URL,
-        settings.NOTIF_API_BASE_URL,
-    ]:
+    try:
+        configured_urls = [row.get("BaseUrl") for row in list_active_solidset_instances()]
+    except Exception:
+        configured_urls = []
+    for configured in configured_urls:
         for candidate in _solidset_candidate_base_urls((configured or "").strip()):
             if candidate and candidate not in collected:
                 collected.append(candidate)
@@ -351,7 +354,7 @@ def _solidset_authenticate_runtime(force: bool = False) -> tuple[bool, str]:
 
     candidates = _solidset_get_all_base_candidates()
     if not candidates:
-        return False, "falta SOLIDSET_CHAT_BASE_URL o SOLIDSET_RESTAPI_BASE_URL o NOTIF_API_BASE_URL"
+        return False, "no hay instancias activas registradas en SysSolidSETInstance"
 
     last_error = "sin detalle"
     for base in candidates:
@@ -445,11 +448,15 @@ def _solidset_request_as_agent(
     method: str,
     endpoint: str,
     form_payload: Optional[dict[str, Any]] = None,
+    solidset_base_url: Optional[str] = None,
 ) -> tuple[Optional[httpx.Response], str, str]:
     """Autentica y ejecuta una petición usando la cuenta del recurso agente."""
     target = endpoint if endpoint.startswith("/") else f"/{endpoint}"
     last_error = "el recurso no está activo, no tiene SysLogin o SolidSET rechazó LoginJson"
-    for base in _solidset_get_all_base_candidates():
+    bases = _solidset_candidate_base_urls(str(solidset_base_url or "").strip())
+    if not bases:
+        return None, "", "la petición no contiene una instancia SolidSET registrada"
+    for base in bases:
         try:
             with httpx.Client(
                 timeout=20.0,
@@ -922,6 +929,7 @@ def solidset_send_chat_message(
     generated_by_ia: bool = False,
     agent_resource_id: Optional[str] = None,
     agent_identity_id: Optional[str] = None,
+    solidset_base_url: Optional[str] = None,
 ) -> str:
     """
     ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
@@ -1056,6 +1064,7 @@ def solidset_send_chat_message(
     }
     if agent_resource_id:
         request_args["agent_resource_id"] = str(agent_resource_id).strip()
+        request_args["solidset_base_url"] = str(solidset_base_url or "").strip()
     response, base, error = request_sender(**request_args)
     if response is None:
         return f"Error enviando mensaje a SOLIDSET: {error or 'sin detalle'}"

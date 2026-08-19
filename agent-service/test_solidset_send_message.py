@@ -23,17 +23,15 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self.assertEqual(access_key, "")
         client.post.assert_not_called()
 
-    @patch("app.agent.tools._solidset_get_all_base_candidates")
     @patch("app.agent.tools.get_solidset_login_for_active_agent")
     @patch("app.agent.tools.httpx.Client")
     def test_agent_authenticates_through_login_json(
-        self, client_class, login_lookup, base_candidates
+        self, client_class, login_lookup
     ):
         login_lookup.return_value = {
             "Username": "agent.user",
             "Password": "secret-value",
         }
-        base_candidates.return_value = ["http://solidset.local"]
         client = MagicMock()
         client_class.return_value.__enter__.return_value = client
         client.post.return_value = MagicMock(
@@ -50,6 +48,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
             method="POST",
             endpoint="/Chat/SendMessageForm",
             form_payload={"RawMessage": "Agente Dev17: respuesta"},
+            solidset_base_url="http://solidset.local",
         )
 
         self.assertIs(response, expected_response)
@@ -85,6 +84,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
                 "generated_by_ia": True,
                 "agent_resource_id": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
                 "agent_identity_id": "2555288c-44c7-4209-95f2-3de98f0f416d",
+                "solidset_base_url": "http://solidset.local",
             }
         )
 
@@ -93,6 +93,10 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self.assertEqual(
             agent_request_mock.call_args.kwargs["agent_resource_id"],
             "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+        )
+        self.assertEqual(
+            agent_request_mock.call_args.kwargs["solidset_base_url"],
+            "http://solidset.local",
         )
         form = agent_request_mock.call_args.kwargs["form_payload"]
         self.assertEqual(

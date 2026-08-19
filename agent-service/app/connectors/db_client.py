@@ -20,6 +20,112 @@ def _postgres_connection() -> psycopg.Connection:
     )
 
 
+def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
+    """Registra o actualiza por Code, BaseUrl o SourceIP sin crear duplicados."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT "ID"
+                FROM public."SysSolidSETInstance"
+                WHERE LOWER(BTRIM("Code")) = LOWER(BTRIM(%s))
+                   OR LOWER(RTRIM(BTRIM("BaseUrl"), '/')) =
+                      LOWER(RTRIM(BTRIM(%s), '/'))
+                   OR (NULLIF(%s::text, '') IS NOT NULL AND "SourceIP" = %s)
+                ORDER BY
+                    CASE WHEN LOWER(BTRIM("Code")) = LOWER(BTRIM(%s)) THEN 0
+                         WHEN NULLIF(%s::text, '') IS NOT NULL AND "SourceIP" = %s THEN 1
+                         ELSE 2 END
+                LIMIT 1
+                FOR UPDATE
+                ''',
+                (
+                    configuration["Code"], configuration["BaseUrl"],
+                    configuration.get("SourceIP"), configuration.get("SourceIP"),
+                    configuration["Code"], configuration.get("SourceIP"),
+                    configuration.get("SourceIP"),
+                ),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute(
+                    '''
+                    UPDATE public."SysSolidSETInstance"
+                    SET "Code" = %s,
+                        "Name" = %s,
+                        "BaseUrl" = %s,
+                        "NotificationUrl" = %s,
+                        "SourceIP" = %s,
+                        active = %s,
+                        "UpdatedAt" = CURRENT_TIMESTAMP
+                    WHERE "ID" = %s
+                    RETURNING *
+                    ''',
+                    (
+                        configuration["Code"], configuration["Name"],
+                        configuration["BaseUrl"], configuration.get("NotificationUrl"),
+                        configuration.get("SourceIP"), configuration.get("active", True),
+                        existing["ID"],
+                    ),
+                )
+                row = cursor.fetchone()
+                operation = "updated"
+            else:
+                cursor.execute(
+                    '''
+                    INSERT INTO public."SysSolidSETInstance" (
+                        "Code", "Name", "BaseUrl", "NotificationUrl", "SourceIP", active
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING *
+                    ''',
+                    (
+                        configuration["Code"], configuration["Name"],
+                        configuration["BaseUrl"], configuration.get("NotificationUrl"),
+                        configuration.get("SourceIP"), configuration.get("active", True),
+                    ),
+                )
+                row = cursor.fetchone()
+                operation = "created"
+    if row is None:
+        raise RuntimeError("PostgreSQL no devolvió la instancia SolidSET guardada.")
+    result = dict(row)
+    result["_operation"] = operation
+    return result
+
+
+def get_solidset_instance(
+    *, code: str | None = None, source_ip: str | None = None
+) -> dict[str, Any] | None:
+    """Resuelve una instancia activa por código explícito o IP directa."""
+    if not code and not source_ip:
+        return None
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT * FROM public."SysSolidSETInstance"
+                WHERE active = true
+                  AND ((%s IS NOT NULL AND LOWER("Code") = LOWER(%s))
+                    OR (%s IS NOT NULL AND "SourceIP" = %s))
+                ORDER BY CASE WHEN %s IS NOT NULL AND LOWER("Code") = LOWER(%s)
+                              THEN 0 ELSE 1 END
+                LIMIT 1
+                ''',
+                (code, code, source_ip, source_ip, code, code),
+            )
+            row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def list_active_solidset_instances() -> list[dict[str, Any]]:
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT * FROM public."SysSolidSETInstance" WHERE active=true ORDER BY "Code"'
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+
 def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
     """Crea o actualiza la configuración canónica de un agente por IDResource."""
     values = (
