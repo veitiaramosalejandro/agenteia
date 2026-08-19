@@ -5,3 +5,9 @@ agent-service/data/
 postgres_data/
 qdrant_data/
 n8n_data/
+certbot/internal/*.key
+certbot/internal/*.crt
+certbot/internal/*.csr
+certbot/internal/*.srl
+certbot/conf/
+certbot/www/
