@@ -415,6 +415,8 @@ Funciones:
 
 Este endpoint no funciona como proxy: recibe y procesa el mensaje.
 
+Cada mensaje humano se indexa primero como aprendizaje global del sistema. Si `IDSenderResource` coincide con un `SysResourceIA.IDResource` activo, también se indexa una copia privada con `scope=agent_owner_behavior` y `agent_resource_id` del propietario. Así, cada agente aprende el conocimiento, vocabulario y patrones expresados por su propio recurso humano, mientras todos los agentes continúan aprendiendo del contexto general permitido. La copia privada queda excluida de los demás agentes mediante el filtro `agent_resource_id`; las respuestas generadas por IA no vuelven a entrar en este ciclo.
+
 Para identificar agentes candidatos, el router admite estas fuentes del payload:
 
 ```text

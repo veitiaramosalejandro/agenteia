@@ -6,6 +6,45 @@ from app.system.notification_listener import NotificationApiListener
 
 
 class TestFrameworkMessageCapture(unittest.TestCase):
+    def test_learns_message_globally_and_for_its_owner_agent(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        listener.sistema = Mock()
+        listener.sistema.aprender_actividad.return_value = True
+        entry = {
+            "source": "framework_hub_realtime",
+            "endpoint": "/framework-message",
+            "channel_id": "room-1",
+            "data": {
+                "RawMessage": "Esta es mi forma de resolver la incidencia",
+                "IDSenderResource": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+                "SenderFullName": "Alejandro Veitia",
+                "IDWorkRoom": "room-1",
+                "IsPublic": 1,
+            },
+        }
+        owner = {
+            "ID": "7e5e0520-dc47-499d-abb9-f917223ac440",
+            "IDResource": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+            "Name": "Dev17",
+        }
+
+        with patch(
+            "app.system.notification_listener.get_active_agent_identity_for_resource",
+            return_value=owner,
+        ):
+            learned = listener._learn_entry(entry, "abc123")
+
+        self.assertTrue(learned)
+        self.assertEqual(2, listener.sistema.aprender_actividad.call_count)
+        global_activity, private_activity = [
+            call.args[0] for call in listener.sistema.aprender_actividad.call_args_list
+        ]
+        self.assertNotIn("agent_resource_id", global_activity.metadatos)
+        self.assertEqual(
+            owner["IDResource"], private_activity.metadatos["agent_resource_id"]
+        )
+        self.assertEqual("agent_owner_behavior", private_activity.metadatos["scope"])
+
     def test_normalizes_framework_message_dto(self):
         listener = NotificationApiListener.__new__(NotificationApiListener)
         payload = {

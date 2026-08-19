@@ -12,6 +12,7 @@ from typing import Any, DefaultDict, Dict, List, Optional
 import httpx
 
 from app.config import settings
+from app.connectors.db_client import get_active_agent_identity_for_resource
 from app.system.learning import SistemaAprendizaje
 from app.system.schema import Actividad
 
@@ -1155,7 +1156,42 @@ class NotificationApiListener:
                 "payload": data,
             },
         )
-        return self.sistema.aprender_actividad(actividad)
+        learned_global = self.sistema.aprender_actividad(actividad)
+
+        # Cada mensaje permanece en el aprendizaje global. Además, cuando el
+        # remitente es el recurso humano propietario de un agente activo, se
+        # guarda una segunda representación privada etiquetada para ese agente.
+        # consultar_documentacion filtra agent_resource_id y evita que otro
+        # agente utilice este patrón personal.
+        if sender_resource and raw_message:
+            try:
+                owner_agent = get_active_agent_identity_for_resource(sender_resource)
+            except Exception as exc:
+                owner_agent = None
+                print(f"⚠️ No se pudo resolver aprendizaje privado del agente: {exc}")
+            if owner_agent:
+                private_metadata = dict(actividad.metadatos or {})
+                private_metadata.update({
+                    "agent_resource_id": str(owner_agent["IDResource"]),
+                    "agent_identity_id": str(owner_agent["ID"]),
+                    "scope": "agent_owner_behavior",
+                    "learning_origin": "human_resource_message",
+                })
+                private_activity = Actividad(
+                    id=f"agent_owner_{owner_agent['ID']}_{fingerprint[:20]}",
+                    recurso_humano_id=str(sender_resource),
+                    canal_id=actividad.canal_id,
+                    tipo="agent_owner_behavior",
+                    descripcion=(
+                        "Patrón comunicativo y conocimiento expresado por el "
+                        f"recurso humano propietario: {summary}"
+                    ),
+                    timestamp=event_timestamp,
+                    metadatos=private_metadata,
+                )
+                self.sistema.aprender_actividad(private_activity)
+
+        return learned_global
 
     def capture_realtime_payload(
         self,

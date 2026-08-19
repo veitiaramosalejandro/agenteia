@@ -191,6 +191,29 @@ def get_solidset_login_for_active_agent(resource_id: UUID | str) -> dict[str, An
             return dict(row) if row is not None else None
 
 
+def get_active_agent_identity_for_resource(
+    resource_id: UUID | str,
+) -> dict[str, Any] | None:
+    """Resuelve el agente activo cuyo propietario humano usa IDResource."""
+    try:
+        normalized = UUID(str(resource_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT "ID", "IDResource", "Name"
+                FROM public."SysResourceIA"
+                WHERE "IDResource" = %s AND active = true
+                LIMIT 1
+                ''',
+                (normalized,),
+            )
+            row = cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
 def get_active_agents_for_workroom(
     workroom_id: UUID | str,
     selected_resource_ids: Iterable[UUID | str],
