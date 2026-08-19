@@ -21,6 +21,28 @@ habla con su propio agente, incluida una conversación de meeting, el envío usa
 el UUID interno de `SysResourceIA` como identidad visual del agente para que la
 respuesta aparezca como interlocutor distinto. El log informa las fases
 `encolada`, `iniciando`, `enrutamiento completado` y el resultado del envío.
+El envío a SolidSET tiene prioridad sobre el aprendizaje de la interacción: la
+sesión y Qdrant se actualizan después de publicar, tienen tiempos máximos y sus fallos no impiden publicar la
+respuesta. Antes del login se registra `base=<BaseUrl>` para mostrar qué URL de
+`SysSolidSETInstance` está siendo utilizada. Dentro de Docker, un SolidSET
+ejecutado en el host debe configurarse como
+`http://host.docker.internal:52130`, no como `http://localhost:52130`.
+El método de envío registra su entrada antes de validar el meeting. Si recibe
+una URL localhost dentro de Docker, prueba primero su traducción a
+`host.docker.internal` y evita esperar un timeout contra el propio contenedor.
+La traducción conserva el binding HTTP original: conecta por TCP a
+`host.docker.internal`, pero envía `Host: localhost:52130`. Esto permite usar
+`BaseUrl=http://localhost:52130` en `SysSolidSETInstance` cuando IIS rechaza
+otros nombres con `400 Bad Request - Invalid Hostname`.
+Los intentos de envío registran la lectura de `SysLogin`, cada llamada a
+`LoginJson` y la respuesta HTTP de `/Chat/SendMessageForm`, sin imprimir
+contraseñas. El perfil de desarrollo utiliza `qwen2.5:3b` con contexto 2048
+para reducir el consumo de memoria; producción conserva su modelo configurable.
+El login contextual envía el hash persistido con `PasswordEncrypted=true` y el
+nombre exacto `TimezoneId`. No envía `Resources[0]`: en el controlador C# esa
+colección es opcional y el recurso vigente se selecciona mediante
+`SysLogin.LastIDResource`. Los rechazos HTTP muestran hasta 500 caracteres del
+cuerpo para diagnosticar ModelState sin registrar credenciales.
 
 En Docker, Nginx publica la API mediante `http://android.isicom.pt/` y reenvía internamente hacia `http://agent-service:8000`. Por tanto, los endpoints conservan sus rutas; por ejemplo, salud está disponible en `http://android.isicom.pt/api/v1/agent/health` y Swagger en `http://android.isicom.pt/docs`. La ruta técnica `GET /nginx-health` comprueba únicamente el proxy.
 
@@ -109,7 +131,11 @@ Cada SolidSET debe llamar los endpoints de entrada con:
 X-SolidSET-Instance: solidset-lisboa
 ```
 
-El encabezado tiene precedencia. Si falta, la API busca `request.client.host` en `SourceIP`; no utiliza `X-Forwarded-For` para seleccionar la instalación. Una instancia desconocida recibe `400` y nunca provoca que las credenciales se prueben contra otra instalación. La instancia se conserva en la huella del evento, sesión del agente, login y envío de respuesta.
+El encabezado tiene precedencia. Si falta, la API busca en `SourceIP` la IP
+reenviada, la IP TCP directa y el host HTTP. Si ninguna coincide pero existe
+exactamente una instancia activa, utiliza esa única instancia; con varias,
+mantiene el rechazo `400` para impedir un enrutamiento ambiguo. La instancia se
+conserva en la huella del evento, sesión del agente, login y envío de respuesta.
 
 La resolución por IP admite que `X-SolidSET-Instance` no esté presente: los parámetros opcionales se tipan explícitamente en PostgreSQL, de modo que una búsqueda únicamente por `SourceIP` no produce un `503`. Los errores de acceso a PostgreSQL continúan devolviendo `503`; una IP simplemente no registrada devuelve `400`.
 

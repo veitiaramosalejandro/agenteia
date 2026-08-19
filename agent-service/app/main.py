@@ -860,12 +860,6 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             f"agent:{agent_resource_id}:room:{channel_id}:"
             f"conversation:{conversation_id}"
         )
-        await asyncio.to_thread(
-            touch_agent_session,
-            candidate.get("agent_session_id"),
-            agent_resource_id,
-            channel_id,
-        )
         user_id = str(
             candidate.get("sender_resource")
             or candidate.get("sender_name")
@@ -929,16 +923,13 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                 "Por favor, inténtalo de nuevo en unos instantes."
             )
 
-        await asyncio.to_thread(
-            _learn_agent_interaction,
-            agent_resource_id=agent_resource_id,
-            channel_id=channel_id,
-            session_id=session_id,
-            user_text=incoming_text,
-            response_text=response_text,
-        )
-
         try:
+            print(
+                f"📤 Enviando auto-respuesta a SolidSET "
+                f"base={candidate.get('solidset_base_url') or '-'} "
+                f"agent_resource={agent_resource_id} meeting={meeting_id or '-'}",
+                flush=True,
+            )
             send_result = await asyncio.to_thread(
                 solidset_send_chat_message.invoke,
                 {
@@ -972,6 +963,40 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     f"source_kind={message_kind} reply_kind=ChatMessage(7) "
                     f"sender={candidate.get('sender_name', 'desconocido')}"
                 )
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            touch_agent_session,
+                            candidate.get("agent_session_id"),
+                            agent_resource_id,
+                            channel_id,
+                        ),
+                        timeout=5,
+                    )
+                except Exception as exc:
+                    print(
+                        "⚠️ Respuesta enviada, pero no se pudo actualizar la "
+                        f"sesión del agente: {exc}",
+                        flush=True,
+                    )
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            _learn_agent_interaction,
+                            agent_resource_id=agent_resource_id,
+                            channel_id=channel_id,
+                            session_id=session_id,
+                            user_text=incoming_text,
+                            response_text=response_text,
+                        ),
+                        timeout=15,
+                    )
+                except Exception as exc:
+                    print(
+                        "⚠️ Respuesta enviada, pero no se pudo guardar su "
+                        f"aprendizaje: {exc}",
+                        flush=True,
+                    )
             else:
                 print(f"⚠️ Auto-reply no enviado en canal {channel_id}: {send_result_text}")
         except Exception as exc:

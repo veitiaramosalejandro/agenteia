@@ -118,15 +118,19 @@ def _solidset_candidate_base_urls(base_url: str) -> list[str]:
         alt = base_url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
         alt = alt.rstrip("/")
         if alt not in urls:
-            urls.append(alt)
+            # Dentro del contenedor localhost nunca es el host Windows. Se
+            # prueba primero la traducción para no consumir un timeout inútil.
+            urls.insert(0, alt)
     return urls
 
 
-def _solidset_action_headers() -> dict:
+def _solidset_action_headers(host_header: Optional[str] = None) -> dict:
     headers = {
         "Accept": "application/json",
         "X-Requested-With": "XMLHttpRequest",
     }
+    if str(host_header or "").strip():
+        headers["Host"] = str(host_header).strip()
 
     cookie_parts = []
     if settings.SOLIDSET_WORKSTATION_ID:
@@ -255,20 +259,29 @@ def _solidset_login(
     client: httpx.Client,
     base_url: str,
     agent_resource_id: Optional[str] = None,
+    host_header: Optional[str] = None,
 ) -> tuple[bool, str, str]:
     """Autentica la identidad global o la cuenta del recurso agente solicitado."""
     if agent_resource_id:
+        print(
+            f"🔐 Preparando LoginJson base={base_url} "
+            f"agent_resource={agent_resource_id}",
+            flush=True,
+        )
         try:
             login = get_solidset_login_for_active_agent(agent_resource_id)
-        except Exception:
+        except Exception as exc:
+            print(f"❌ No se pudo leer SysLogin del agente: {exc}", flush=True)
             return False, "", ""
         # La consulta incluye el filtro SysResourceIA.active=true. Si no devuelve
         # fila, el recurso no puede actuar como agente ni utilizar otra identidad.
         if not login:
+            print("❌ El agente no está activo o no tiene SysLogin asociado", flush=True)
             return False, "", ""
         username = str(login.get("Username") or "").strip()
         password = str(login.get("Password") or "")
         if not username or not password:
+            print("❌ SysLogin no contiene Username/Password utilizables", flush=True)
             return False, "", ""
 
         login_payload = {
@@ -277,18 +290,27 @@ def _solidset_login(
             # SysLogin.Password ya contiene el HMAC generado por SolidSET.
             # LoginViewModel.PasswordEncrypted evita aplicar GenerateHMAC otra vez.
             "PasswordEncrypted": "true",
-            "TimezoneID": settings.SOLIDSET_TIMEZONE_ID or "GMT Standard Time",
-            # Fuerza que RegisterSessionResource use el recurso del agente que
-            # está respondiendo, incluso si el login dispone de varios recursos.
-            "Resources[0]": str(agent_resource_id),
+            # Coincide con LoginViewModel.TimezoneId. Resources es opcional y
+            # no selecciona CurrentIDResource; se utiliza LastIDResource.
+            "TimezoneId": settings.SOLIDSET_TIMEZONE_ID or "GMT Standard Time",
         }
         try:
             response = client.post(
                 f"{base_url}/User/LoginJson",
                 data=login_payload,
-                headers=_solidset_action_headers(),
+                headers=_solidset_action_headers(host_header),
+            )
+            print(
+                f"🔐 LoginJson respondió HTTP {response.status_code} "
+                f"base={base_url}",
+                flush=True,
             )
             if response.status_code >= 400:
+                print(
+                    f"❌ LoginJson HTTP {response.status_code}: "
+                    f"{response.text[:500]}",
+                    flush=True,
+                )
                 return False, "", ""
             try:
                 result = response.json()
@@ -298,9 +320,17 @@ def _solidset_login(
                 success = result.get("Success", result.get("success"))
                 error = result.get("Error", result.get("error"))
                 if success is False or error:
+                    print(
+                        f"❌ LoginJson rechazado: {str(result)[:300]}",
+                        flush=True,
+                    )
                     return False, "", ""
             return True, "/User/LoginJson", _solidset_extract_access_key(response)
-        except Exception:
+        except Exception as exc:
+            print(
+                f"❌ Error conectando con LoginJson base={base_url}: {exc}",
+                flush=True,
+            )
             return False, "", ""
 
     if not settings.SOLIDSET_LOGIN_USERNAME and not settings.SOLIDSET_LOGIN_HASHPASS:
@@ -457,6 +487,21 @@ def _solidset_request_as_agent(
     if not bases:
         return None, "", "la petición no contiene una instancia SolidSET registrada"
     for base in bases:
+        configured_url = urlparse(str(solidset_base_url or "").strip())
+        effective_url = urlparse(base)
+        logical_host = ""
+        if (
+            (configured_url.hostname or "").lower() in {"localhost", "127.0.0.1"}
+            and (effective_url.hostname or "").lower() == "host.docker.internal"
+        ):
+            # IIS puede escuchar físicamente en el host Docker pero aceptar
+            # únicamente el binding lógico localhost:puerto.
+            logical_host = configured_url.netloc
+        print(
+            f"🌐 Intentando envío autenticado del agente base={base} "
+            f"host_header={logical_host or '-'}",
+            flush=True,
+        )
         try:
             with httpx.Client(
                 timeout=20.0,
@@ -467,15 +512,17 @@ def _solidset_request_as_agent(
                     client,
                     base,
                     agent_resource_id=agent_resource_id,
+                    host_header=logical_host or None,
                 )
                 if not authenticated:
+                    print(f"⚠️ Login del agente falló en {base}", flush=True)
                     continue
 
                 cookie_header = _solidset_merge_cookie_headers(
-                    _solidset_action_headers().get("Cookie", ""),
+                    _solidset_action_headers(logical_host).get("Cookie", ""),
                     _solidset_client_cookie_header(client),
                 )
-                headers = _solidset_action_headers()
+                headers = _solidset_action_headers(logical_host)
                 if cookie_header:
                     headers["Cookie"] = cookie_header
                 if access_key:
@@ -487,9 +534,15 @@ def _solidset_request_as_agent(
                     headers=headers,
                     data=form_payload,
                 )
+                print(
+                    f"📨 Chat/SendMessageForm respondió HTTP "
+                    f"{response.status_code} base={base}",
+                    flush=True,
+                )
                 return response, base, ""
         except Exception as exc:
             last_error = str(exc)
+            print(f"❌ Error enviando mediante {base}: {exc}", flush=True)
     return None, "", last_error
 
 
@@ -945,6 +998,12 @@ def solidset_send_chat_message(
     - Requiere confirm=true para evitar envíos accidentales.
     - Usa credenciales SOLIDSET_LOGIN_* del .env.
     """
+    print(
+        "📨 Entrando en solidset_send_chat_message "
+        f"base={solidset_base_url or '-'} channel={canal_id or '-'} "
+        f"resource={recurso_id or '-'} meeting={meeting_id or '-'}",
+        flush=True,
+    )
     if not settings.SOLIDSET_USER_ACTIONS_ENABLED:
         return (
             "Acción bloqueada: habilita SOLIDSET_USER_ACTIONS_ENABLED=true en .env "
@@ -1061,8 +1120,8 @@ def solidset_send_chat_message(
             form_payload["Info[id_agent_ia]"] = visual_agent_id
             form_payload["Info[agent_id]"] = visual_agent_id
             form_payload["IDAgentIA"] = visual_agent_id
-    request_sender = _solidset_request_as_agent if agent_resource_id else _solidset_request_authenticated
-    print(form_payload)
+    print(form_payload, flush=True)
+    request_sender = _solidset_request_as_agent if agent_resource_id else _solidset_request_authenticated    
     request_args: dict[str, Any] = {
         "method": "POST",
         "endpoint": "/Chat/SendMessageForm",

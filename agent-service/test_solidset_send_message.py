@@ -59,10 +59,8 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self.assertEqual(login_call.kwargs["data"]["UserName"], "agent.user")
         self.assertEqual(login_call.kwargs["data"]["Password"], "secret-value")
         self.assertEqual(login_call.kwargs["data"]["PasswordEncrypted"], "true")
-        self.assertEqual(
-            login_call.kwargs["data"]["Resources[0]"],
-            "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
-        )
+        self.assertEqual(login_call.kwargs["data"]["TimezoneId"], "GMT Standard Time")
+        self.assertNotIn("Resources[0]", login_call.kwargs["data"])
 
     @patch("app.agent.tools.settings.SOLIDSET_USER_ACTIONS_ENABLED", True)
     @patch("app.agent.tools._solidset_request_authenticated")
