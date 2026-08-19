@@ -11,6 +11,83 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    def test_talk_with_agent_selects_only_explicit_ai_destination(self):
+        room_id = uuid4()
+        sender_resource = uuid4()
+        selected_agent = uuid4()
+        unselected_agent = uuid4()
+        candidate = {
+            "fingerprint": "talk-with-agent",
+            "channel_id": str(room_id),
+            "sender_resource": str(sender_resource),
+            "payload": {
+                "FrameworkDestiny": {
+                    "dests": [{"resource": str(unselected_agent), "kind": 2}],
+                },
+                "Chat": {
+                    "destiny": [
+                        {
+                            "iDResource": str(sender_resource),
+                            "type": 1,
+                            "sequence": 0,
+                        },
+                        {
+                            "iDResource": str(selected_agent),
+                            "type": 2,
+                            "talkWithAgent": True,
+                            "sequence": 1,
+                        },
+                        {
+                            "iDResource": str(unselected_agent),
+                            "type": 2,
+                            "talkWithAgent": False,
+                            "sequence": 2,
+                        },
+                    ],
+                },
+            },
+        }
+        configured = [{
+            "IDResource": selected_agent,
+            "FullName": "Victor Vargas",
+        }]
+        with (
+            patch("app.main.ensure_payload_agent_workroom_assignments", return_value=0) as assign,
+            patch("app.main.get_active_agents_for_workroom", return_value=configured) as registry,
+            patch("app.main.get_agent_knowledge", return_value=""),
+            patch("app.main.get_agent_reinforcement_context", return_value=""),
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        assign.assert_called_once_with(str(room_id), [str(selected_agent)])
+        registry.assert_called_once_with(str(room_id), [str(selected_agent)])
+        self.assertEqual([str(selected_agent)], [item["agent_resource_id"] for item in routed])
+
+    def test_talk_with_agent_false_prevents_legacy_fallback(self):
+        room_id = uuid4()
+        agent = uuid4()
+        candidate = {
+            "fingerprint": "talk-with-agent-false",
+            "channel_id": str(room_id),
+            "payload": {
+                "FrameworkDestiny": {"dests": [{"resource": str(agent), "kind": 2}]},
+                "Chat": {"destiny": [{
+                    "iDResource": str(agent),
+                    "type": 2,
+                    "talkWithAgent": False,
+                }]},
+            },
+        }
+        with (
+            patch("app.main.ensure_payload_agent_workroom_assignments") as assign,
+            patch("app.main.get_active_agents_for_workroom") as registry,
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        self.assertEqual([], routed)
+        assign.assert_not_called()
+        registry.assert_not_called()
+
     def test_channel_id_falls_back_to_chat_channels(self):
         room_id = uuid4()
         normalized = notification_listener._normalize_framework_message({

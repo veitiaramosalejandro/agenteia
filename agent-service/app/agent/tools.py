@@ -1005,6 +1005,9 @@ def solidset_send_chat_message(
             form_payload["Destiny.Dests[0].Login"] = resource_login
         form_payload["Destiny.Dests[0].Resource"] = resource
         form_payload["Destiny.Dests[0].Kind"] = 2
+        # Compatibilidad con la nueva variante del contrato de SolidSET, que
+        # identifica explícitamente las intervenciones de IA mediante type=2.
+        form_payload["Destiny.Dests[0].Type"] = 2
     elif resource:
         form_payload["Destiny.Resource"] = resource
         if resource_login:

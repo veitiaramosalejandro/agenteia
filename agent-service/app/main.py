@@ -421,10 +421,52 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     """Selecciona únicamente los recursos destinatarios del mensaje dirigido."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    chat_lower = {str(key).lower(): value for key, value in chat.items()}
+    chat_destinations = chat_lower.get("destiny")
+
+    # Nueva señal explícita de SolidSET. Cuando Chat.destiny incluye
+    # talkWithAgent, esa colección es autoritativa tanto en canales como en
+    # meetings: solo los recursos IA (type=2) marcados con true responden. La
+    # mera presencia del campo también impide caer en reglas antiguas y activar
+    # por accidente otro agente del canal.
+    has_talk_with_agent_flag = False
+    selected_by_flag: list[tuple[int, str]] = []
+    if isinstance(chat_destinations, list):
+        for destination in chat_destinations:
+            if not isinstance(destination, dict):
+                continue
+            lowered = {str(key).lower(): value for key, value in destination.items()}
+            if "talkwithagent" not in lowered:
+                continue
+            has_talk_with_agent_flag = True
+            flag = lowered.get("talkwithagent")
+            talks_with_agent = (
+                flag is True
+                or (isinstance(flag, int) and flag == 1)
+                or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
+            )
+            try:
+                destination_type = int(lowered.get("type"))
+            except (TypeError, ValueError):
+                continue
+            if not talks_with_agent or destination_type != 2:
+                continue
+            resource = str(
+                lowered.get("idresource") or lowered.get("resource") or ""
+            ).strip()
+            if not resource or resource == str(uuid.UUID(int=0)):
+                continue
+            try:
+                sequence = int(lowered.get("sequence") or 0)
+            except (TypeError, ValueError):
+                sequence = 0
+            selected_by_flag.append((sequence, resource))
+    if has_talk_with_agent_flag:
+        selected_by_flag.sort(key=lambda item: item[0])
+        return list(dict.fromkeys(resource for _, resource in selected_by_flag))
+
     if candidate.get("meeting_id"):
-        chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-        chat_lower = {str(key).lower(): value for key, value in chat.items()}
-        chat_destinations = chat_lower.get("destiny")
         if isinstance(chat_destinations, list) and chat_destinations:
             responders: list[tuple[int, str]] = []
             for destination in chat_destinations:
