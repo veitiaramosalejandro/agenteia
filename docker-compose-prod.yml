@@ -53,6 +53,17 @@ services:
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
       DIALOGUE_MAX_CONCURRENT: 1
+      SQL_SERVER_HOST: ${SQL_SERVER_DOCKER_HOST:-host.docker.internal}
+      SQL_SERVER_PORT: ${SQL_SERVER_DOCKER_PORT:-1433}
+      # Las respuestas usan la identidad por recurso almacenada en PostgreSQL.
+      # Se neutraliza cualquier cuenta global antigua que permanezca en .env.
+      SOLIDSET_LOGIN_USERNAME: ""
+      SOLIDSET_LOGIN_PASSWORD: ""
+      SOLIDSET_LOGIN_HASHPASS: ""
+      SOLIDSET_LOGIN_RESOURCE_ID: ""
+      SOLIDSET_RESOURCE_ID: ""
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:      
       - ./data:/app/data
       - ./audio:/app/audio
@@ -64,7 +75,7 @@ services:
       redis-cache:
         condition: service_healthy
       vector-db:
-        condition: service_started
+        condition: service_healthy
     networks:
       - machining-network      
 
@@ -89,7 +100,7 @@ services:
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-4096}
       - OLLAMA_FLASH_ATTENTION=0
-      - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
+      - OLLAMA_KV_CACHE_TYPE=f16
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
     healthcheck:
       test: ["CMD", "ollama", "list"]
@@ -110,6 +121,12 @@ services:
       - 6333:6333
     volumes:
       - ./qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     networks:
       - machining-network
 

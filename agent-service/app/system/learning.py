@@ -13,6 +13,7 @@ from qdrant_client.models import PointStruct, Distance, VectorParams
 from langchain_ollama import OllamaEmbeddings
 
 from app.config import settings
+from app.connectors.db_client import resolve_solidset_identity
 from app.rag.vector_store import ensure_vector_collection
 from app.system.schema import (
     RecursoHumano, RecursoMaterial, Canal, Actividad, ContextoUsuario
@@ -150,6 +151,7 @@ class SistemaAprendizaje:
             try:
                 return pymssql.connect(
                     server=settings.SQL_SERVER_HOST,
+                    port=settings.SQL_SERVER_PORT,
                     user=settings.SQL_SERVER_USER,
                     password=settings.SQL_SERVER_PASSWORD,
                     database=settings.SQL_SERVER_DB,
@@ -214,36 +216,23 @@ class SistemaAprendizaje:
         raise last_error
 
     def _resolve_user_identity(self, user_id: str) -> Dict[str, Optional[str]]:
-        """Resuelve username/login/resource para aceptar user_id como Username o GUID."""
+        """Resuelve username/login/resource usando la réplica SysLogin de PostgreSQL."""
         raw_user = (user_id or "").strip()
         identity = {"input": raw_user, "username": raw_user, "login_id": None, "resource_id": None, "full_name": None, "display_name": None}
         if not raw_user:
             return identity
         try:
-            row = self._fetch_one_with_fresh_connection_retry(
-                query="""
-                    SELECT TOP 1 sl.IDLogin, sl.Username, sl.FullName, sr.ResourceId, sr.DisplayName
-                    FROM dbo.SysLogin sl WITH (NOLOCK)
-                    LEFT JOIN dbo.SysResources sr WITH (NOLOCK) ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
-                    WHERE sl.Username = %s
-                       OR sl.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                       OR sr.ResourceId = TRY_CONVERT(uniqueidentifier, %s)
-                    ORDER BY CASE WHEN sl.Username = %s THEN 0 ELSE 1 END, sl.Username
-                """,
-                params=(raw_user, raw_user, raw_user, raw_user),
-                context="resolve_user_identity_query",
-                retries=2,
-            )
+            row = resolve_solidset_identity(raw_user)
             if row:
                 identity.update({
                     "username": (row.get("Username") or raw_user).strip(),
                     "login_id": str(row.get("IDLogin") or "").strip() or None,
-                    "resource_id": str(row.get("ResourceId") or "").strip() or None,
+                    "resource_id": str(row.get("IDResource") or "").strip() or None,
                     "full_name": (row.get("FullName") or "").strip() or None,
                     "display_name": (row.get("DisplayName") or "").strip() or None,
                 })
         except Exception as e:
-            print(f"⚠️ No se pudo resolver identidad de usuario '{raw_user}': {e}")
+            print(f"⚠️ No se pudo resolver identidad PostgreSQL de '{raw_user}': {e}")
         return identity
 
     def resolve_conversation_identity(

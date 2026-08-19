@@ -1012,6 +1012,35 @@ def _probe_http_json(base_url: str, path: str, timeout_seconds: float = 4.0, ver
         return {"ok": False, "url": target, "error": str(exc)}
 
 
+def _probe_sql_server_connection() -> dict:
+    """Comprueba SQL Server realmente; soporta host\\instancia y puerto dinámico."""
+    try:
+        with pymssql.connect(
+            server=settings.SQL_SERVER_HOST,
+            port=settings.SQL_SERVER_PORT,
+            user=settings.SQL_SERVER_USER,
+            password=settings.SQL_SERVER_PASSWORD,
+            database=settings.SQL_SERVER_DB,
+            login_timeout=min(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+            timeout=min(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+        return {
+            "ok": True,
+            "server": f"{settings.SQL_SERVER_HOST}:{settings.SQL_SERVER_PORT}",
+            "database": settings.SQL_SERVER_DB,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "server": f"{settings.SQL_SERVER_HOST}:{settings.SQL_SERVER_PORT}",
+            "database": settings.SQL_SERVER_DB,
+            "error": str(exc),
+        }
+
+
 def _run_startup_connectivity_checks() -> dict:
     checks = {}
 
@@ -1097,9 +1126,8 @@ def _run_startup_connectivity_checks() -> dict:
         "instances": instance_checks,
     }
 
-    sql_host, sql_port = _extract_host_port(settings.SQL_SERVER_HOST, 1433)
     checks["sql_server"] = {
-        "tcp": _probe_tcp(sql_host, sql_port),
+        "connection": _probe_sql_server_connection(),
         "database": settings.SQL_SERVER_DB,
     }
 
@@ -1172,9 +1200,11 @@ def _log_startup_connectivity(report: dict) -> None:
     print(f"     • TCP: {_probe_to_text(redis.get('tcp', {}))}")
 
     sql_server = checks.get("sql_server", {})
-    sql_tcp = sql_server.get("tcp", {})
-    print(f"   - SQL Server: {settings.SQL_SERVER_HOST} | DB: {settings.SQL_SERVER_DB}")
-    print(f"     • TCP: {_probe_to_text(sql_tcp)}")
+    print(
+        f"   - SQL Server: {settings.SQL_SERVER_HOST}:{settings.SQL_SERVER_PORT} "
+        f"| DB: {settings.SQL_SERVER_DB}"
+    )
+    print(f"     • Conexión SQL: {_probe_to_text(sql_server.get('connection', {}))}")
 
     postgres = checks.get("postgres_timescaledb", {})
     db_url = os.getenv("DB_URL", "")

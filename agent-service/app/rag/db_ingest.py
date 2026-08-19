@@ -106,6 +106,7 @@ class DatabaseIngestor:
 
         return pymssql.connect(
             server=settings.SQL_SERVER_HOST,
+            port=settings.SQL_SERVER_PORT,
             user=settings.SQL_SERVER_USER,
             password=settings.SQL_SERVER_PASSWORD,
             database=settings.SQL_SERVER_DB,
@@ -425,6 +426,7 @@ class DatabaseIngestor:
             
             conn = pymssql.connect(
                 server=settings.SQL_SERVER_HOST,
+                port=settings.SQL_SERVER_PORT,
                 user=settings.SQL_SERVER_USER,
                 password=settings.SQL_SERVER_PASSWORD,
                 database=settings.SQL_SERVER_DB,
@@ -510,6 +512,7 @@ class DatabaseIngestor:
             
             conn = pymssql.connect(
                 server=settings.SQL_SERVER_HOST,
+                port=settings.SQL_SERVER_PORT,
                 user=settings.SQL_SERVER_USER,
                 password=settings.SQL_SERVER_PASSWORD,
                 database=settings.SQL_SERVER_DB,
@@ -595,6 +598,7 @@ class DatabaseIngestor:
             
             conn = pymssql.connect(
                 server=settings.SQL_SERVER_HOST,
+                port=settings.SQL_SERVER_PORT,
                 user=settings.SQL_SERVER_USER,
                 password=settings.SQL_SERVER_PASSWORD,
                 database=settings.SQL_SERVER_DB,

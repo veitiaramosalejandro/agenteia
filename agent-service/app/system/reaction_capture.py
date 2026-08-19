@@ -44,6 +44,7 @@ def resolve_agent_message(id_chat: int) -> dict[str, Any] | None:
     """Resuelve el mensaje original en SQL Server y valida su agente en PostgreSQL."""
     with pymssql.connect(
         server=settings.SQL_SERVER_HOST,
+        port=settings.SQL_SERVER_PORT,
         user=settings.SQL_SERVER_USER,
         password=settings.SQL_SERVER_PASSWORD,
         database=settings.SQL_SERVER_DB,

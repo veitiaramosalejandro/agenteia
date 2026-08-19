@@ -126,8 +126,21 @@ server {
 '@
     $activeDirectory = Split-Path -Parent $activeConfig
     New-Item -ItemType Directory -Force -Path $activeDirectory | Out-Null
-    Set-Content -LiteralPath $activeConfig -Value $internalHttpsConfig -Encoding utf8
+    [System.IO.File]::WriteAllText($activeConfig, $internalHttpsConfig)
 }
+
+# Normalizar siempre, incluso si la plantilla copiada fue guardada por Windows
+# PowerShell/Notepad con BOM UTF-8. Nginx interpreta el BOM como "﻿upstream".
+$normalizedConfig = [System.IO.File]::ReadAllText($activeConfig).TrimStart(
+    [char]0xFEFF
+)
+$utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    $activeConfig,
+    $normalizedConfig + [Environment]::NewLine,
+    $utf8WithoutBom
+)
+
 docker compose -f $composeFile up -d --force-recreate nginx
 if ($LASTEXITCODE -ne 0) { throw "No se pudo activar Nginx con el certificado interno." }
 docker exec machining_nginx nginx -t

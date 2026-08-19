@@ -214,6 +214,36 @@ def get_active_agent_identity_for_resource(
     return dict(row) if row is not None else None
 
 
+def resolve_solidset_identity(identifier: str) -> dict[str, Any] | None:
+    """Resuelve identidades desde la réplica PostgreSQL, sin consultar SQL Server."""
+    raw_identifier = str(identifier or "").strip()
+    if not raw_identifier:
+        return None
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT l."IDLogin", l."Username", l."FullName",
+                       l."LastIDResource" AS "IDResource",
+                       COALESCE(NULLIF(BTRIM(r."Name"), ''),
+                                NULLIF(BTRIM(l."FullName"), ''),
+                                NULLIF(BTRIM(l."Username"), '')) AS "DisplayName"
+                FROM public."SysLogin" l
+                LEFT JOIN public."SysResourceIA" r
+                  ON r."IDResource" = l."LastIDResource"
+                WHERE LOWER(l."Username") = LOWER(%s)
+                   OR l."IDLogin"::text = %s
+                   OR l."LastIDResource"::text = %s
+                ORDER BY CASE WHEN LOWER(l."Username") = LOWER(%s) THEN 0 ELSE 1 END,
+                         l."Username", l."IDLogin"
+                LIMIT 1
+                ''',
+                (raw_identifier, raw_identifier, raw_identifier, raw_identifier),
+            )
+            row = cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
 def get_active_agents_for_workroom(
     workroom_id: UUID | str,
     selected_resource_ids: Iterable[UUID | str],

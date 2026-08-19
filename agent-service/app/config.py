@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     
     # SQL Server (para compatibilidad)
     SQL_SERVER_HOST: str = os.getenv("SQL_SERVER_HOST", "172.16.10.167")
+    # Desde contenedores Linux se debe usar el puerto TCP de la instancia.
+    # La sintaxis Windows ``.\\INSTANCIA`` depende de SQL Browser y no es
+    # interpretada de forma fiable por FreeTDS/pymssql.
+    SQL_SERVER_PORT: int = int(os.getenv("SQL_SERVER_PORT", "1433"))
     SQL_SERVER_USER: str = os.getenv("SQL_SERVER_USER", "sa")
     SQL_SERVER_PASSWORD: str = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
     SQL_SERVER_DB: str = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")

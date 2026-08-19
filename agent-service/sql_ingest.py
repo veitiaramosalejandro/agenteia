@@ -20,6 +20,7 @@ def ingest_sql_knowledge():
     try:
         conn = pymssql.connect(
             server=settings.SQL_SERVER_HOST,
+            port=settings.SQL_SERVER_PORT,
             user=settings.SQL_SERVER_USER,
             password=settings.SQL_SERVER_PASSWORD,
             database=settings.SQL_SERVER_DB,

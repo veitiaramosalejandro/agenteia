@@ -12,6 +12,10 @@ Si HTTP-01 no puede atravesar el NAT/firewall, `scripts/issue-letsencrypt-dns.ps
 
 Como alternativa exclusivamente interna, `scripts/issue-internal-certificate.ps1` crea una CA privada `ISICOM Internal Root CA`, emite un certificado con SAN `android.isicom.pt` y activa HTTPS en Nginx. Los clientes deben instalar `certbot/internal/isicom-internal-ca.crt` en su almacén de autoridades raíz. La clave `isicom-internal-ca.key` es sensible, no debe distribuirse y debe custodiarse fuera del servidor tras emitir los certificados necesarios.
 
+La resolución habitual de identidad (`Username`, `FullName`, `IDLogin`, `IDResource`) utiliza exclusivamente la réplica PostgreSQL `SysLogin`; un identificador desconocido no desencadena conexiones a SQL Server. SQL Server queda reservado para ingestas y consultas operativas explícitas. En el perfil CPU de producción, Ollama usa `OLLAMA_KV_CACHE_TYPE=f16` porque una caché V cuantizada requiere Flash Attention.
+
+En el despliegue Windows actual, SQL Server se alcanza desde Docker mediante `SQL_SERVER_DOCKER_HOST=host.docker.internal` y el puerto TCP estático de `SQL2017DEV` en `SQL_SERVER_DOCKER_PORT`. La notación local de Windows `.\SQL2017DEV` no debe pasarse a `pymssql` dentro del contenedor Linux. Catálogo, usuario y contraseña permanecen en `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`.
+
 El despliegue `docker-compose-prod.yml` utiliza Ollama por CPU de forma predeterminada y no exige el runtime NVIDIA. Cuando `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` funcione correctamente, la aceleración se activa añadiendo el overlay `docker-compose-prod.gpu.yml`. En producción Uvicorn se ejecuta sin `--reload`.
 
 Última actualización: 19 de agosto de 2026.
@@ -877,3 +881,36 @@ Un mensaje puede seleccionar varios agentes.
 Cada agente se valida y ejecuta por separado.
 Cada agente mantiene su propia sesión, memoria y conocimiento.
 ```
+# Conectividad de producción: SQL Server y Qdrant
+
+En Docker, SQL Server debe configurarse mediante un host y un puerto TCP
+separados. No se debe usar la notación local de Windows
+`​.\\SQL2017DEV`, porque `pymssql`/FreeTDS dentro del contenedor Linux no
+resuelve de forma fiable las instancias nombradas.
+
+Variables usadas por `agent-service`:
+
+- `SQL_SERVER_DOCKER_HOST`: host alcanzable desde Docker; normalmente
+  `host.docker.internal` cuando SQL Server está en el mismo servidor Windows.
+- `SQL_SERVER_DOCKER_PORT`: puerto TCP estático asignado a la instancia
+  `SQL2017DEV`; si se omite se utiliza `1433`.
+- `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`: base de datos y
+  credenciales de SQL Server.
+
+Ejemplo para producción:
+
+```env
+SQL_SERVER_DOCKER_HOST=host.docker.internal
+SQL_SERVER_DOCKER_PORT=1433
+SQL_SERVER_DB=DEV_ISIFrameIsicom
+SQL_SERVER_USER=sa
+SQL_SERVER_PASSWORD=<secreto>
+```
+
+La cuenta global antigua de SolidSET queda deshabilitada en
+`docker-compose-prod.yml`. Cada respuesta inicia sesión con el `SysLogin` del
+recurso agente almacenado en PostgreSQL.
+
+Qdrant dispone de una comprobación TCP de salud. El agente no comienza hasta
+que `vector-db:6333` acepta conexiones, evitando que la creación inicial de la
+colección `machining_docs` falle por una carrera de arranque.

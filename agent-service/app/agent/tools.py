@@ -47,6 +47,7 @@ def _resolve_solidset_meeting_id(
     try:
         with pymssql.connect(
             server=settings.SQL_SERVER_HOST,
+            port=settings.SQL_SERVER_PORT,
             user=settings.SQL_SERVER_USER,
             password=settings.SQL_SERVER_PASSWORD,
             database=settings.SQL_SERVER_DB,
@@ -752,6 +753,7 @@ def query_sql_server(query: str) -> str:
     try:
         conn = pymssql.connect(
             server=server,
+            port=settings.SQL_SERVER_PORT,
             user=user,
             password=password,
             database=database,
@@ -812,7 +814,14 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
     database = settings.SQL_SERVER_DB
 
     try:
-        conn = pymssql.connect(server=server, user=user, password=password, database=database, timeout=5)
+        conn = pymssql.connect(
+            server=server,
+            port=settings.SQL_SERVER_PORT,
+            user=user,
+            password=password,
+            database=database,
+            timeout=5,
+        )
         cursor = conn.cursor(as_dict=True)
 
         if table_name:
