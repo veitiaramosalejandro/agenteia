@@ -21,6 +21,19 @@ def _postgres_connection() -> psycopg.Connection:
     )
 
 
+def ensure_solidset_agent_resource_schema() -> None:
+    """Actualiza volúmenes PostgreSQL existentes para el recurso Software IA."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('''
+                ALTER TABLE public."SysResourceIA"
+                  ADD COLUMN IF NOT EXISTS "IDAgentResource" uuid;
+                CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysResourceIA_IDAgentResource"
+                  ON public."SysResourceIA" ("IDAgentResource")
+                  WHERE "IDAgentResource" IS NOT NULL;
+            ''')
+
+
 def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
     """Registra o actualiza por Code, BaseUrl o SourceIP sin crear duplicados."""
     with _postgres_connection() as connection:
@@ -414,6 +427,7 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
         configuration.get("Stamp"),
         configuration.get("IDResource"),
         configuration.get("active", False),
+        configuration.get("IDAgentResource"),
     )
 
     with _postgres_connection() as connection:
@@ -421,13 +435,16 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
             cursor.execute(
                 '''
                 INSERT INTO public."SysResourceIA" (
-                    "Name", "Stamp", "IDResource", active
+                    "Name", "Stamp", "IDResource", active, "IDAgentResource"
                 )
-                VALUES (%s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT ("IDResource") DO UPDATE SET
                     "Name" = EXCLUDED."Name",
                     "Stamp" = EXCLUDED."Stamp",
-                    active = EXCLUDED.active
+                    active = EXCLUDED.active,
+                    "IDAgentResource" = COALESCE(
+                        EXCLUDED."IDAgentResource", public."SysResourceIA"."IDAgentResource"
+                    )
                 RETURNING *
                 ''',
                 values,
@@ -481,7 +498,7 @@ def get_active_agent_identity_for_resource(
         with connection.cursor() as cursor:
             cursor.execute(
                 '''
-                SELECT "ID", "IDResource", "Name"
+                SELECT "ID", "IDResource", "IDAgentResource", "Name"
                 FROM public."SysResourceIA"
                 WHERE "IDResource" = %s AND active = true
                 LIMIT 1
@@ -534,7 +551,7 @@ def get_active_agents_for_workroom(
         with connection.cursor() as cursor:
             cursor.execute(
                 '''
-                SELECT r."ID", r."Name", r."IDResource", r.active,
+                SELECT r."ID", r."Name", r."IDResource", r."IDAgentResource", r.active,
                        c."IDWorkRoom", c.response_order, login."FullName"
                 FROM public."SysResourceIA" r
                 INNER JOIN public."SysChatIAResource" c

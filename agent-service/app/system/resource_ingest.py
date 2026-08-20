@@ -14,10 +14,14 @@ RESOURCE_QUERY = """
         SysResources.DisplayName,
         SysResources.ResourceId,
         SysResources.ActiveIDLogin2Resource,
+        SysResource2Agent.IDAgentResource,
         SysLogin.FullName
     FROM dbo.SysResources
     INNER JOIN dbo.SysLogin
         ON SysLogin.ActiveIDLogin2Resource = SysResources.ActiveIDLogin2Resource
+    LEFT JOIN dbo.SysResource2Agent
+        ON SysResource2Agent.IDHumanResource = SysResources.ResourceId
+       AND SysResource2Agent.Active = 1
     ORDER BY SysResources.DisplayName ASC
 """
 
@@ -168,7 +172,7 @@ def ingest_solidset_resources() -> dict[str, int]:
 
     # El diccionario evita duplicados si SQL Server devuelve más de un login
     # para el mismo recurso. La clave canónica siempre es ResourceId.
-    resources: dict[UUID, tuple[str | None, UUID | None]] = {}
+    resources: dict[UUID, tuple[str | None, UUID | None, UUID | None]] = {}
     skipped = 0
     for row in source_rows:
         raw_resource_id = row.get("ResourceId")
@@ -176,6 +180,8 @@ def ingest_solidset_resources() -> dict[str, int]:
             resource_id = UUID(str(raw_resource_id))
             raw_active_link = row.get("ActiveIDLogin2Resource")
             active_link_id = UUID(str(raw_active_link)) if raw_active_link else None
+            raw_agent_resource = row.get("IDAgentResource")
+            agent_resource_id = UUID(str(raw_agent_resource)) if raw_agent_resource else None
         except (TypeError, ValueError, AttributeError):
             skipped += 1
             continue
@@ -183,6 +189,7 @@ def ingest_solidset_resources() -> dict[str, int]:
         resources[resource_id] = (
             str(display_name).strip() if display_name is not None else None,
             active_link_id,
+            agent_resource_id,
         )
 
     resource_ids = list(resources)
@@ -201,16 +208,17 @@ def ingest_solidset_resources() -> dict[str, int]:
                 target_cursor.executemany(
                     '''
                     INSERT INTO public."SysResourceIA" (
-                        "Name", "Stamp", "IDResource", "ActiveIDLogin2Resource"
-                    ) VALUES (%s, %s, %s, %s)
+                        "Name", "Stamp", "IDResource", "ActiveIDLogin2Resource", "IDAgentResource"
+                    ) VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT ("IDResource") DO UPDATE SET
                         "Name" = EXCLUDED."Name",
                         "Stamp" = EXCLUDED."Stamp",
-                        "ActiveIDLogin2Resource" = EXCLUDED."ActiveIDLogin2Resource"
+                        "ActiveIDLogin2Resource" = EXCLUDED."ActiveIDLogin2Resource",
+                        "IDAgentResource" = EXCLUDED."IDAgentResource"
                     ''',
                     [
-                        (display_name, synchronized_at, resource_id, active_link_id)
-                        for resource_id, (display_name, active_link_id) in resources.items()
+                        (display_name, synchronized_at, resource_id, active_link_id, agent_resource_id)
+                        for resource_id, (display_name, active_link_id, agent_resource_id) in resources.items()
                     ],
                 )
 

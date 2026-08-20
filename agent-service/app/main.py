@@ -38,6 +38,7 @@ from app.connectors.db_client import (
     deactivate_llm_provider_configuration,
     ensure_llm_provider_schema,
     ensure_agent_model_schema,
+    ensure_solidset_agent_resource_schema,
     ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
     get_agent_knowledge,
@@ -682,14 +683,40 @@ def _human_reply_destination(candidate: dict) -> dict[str, str]:
                 sequence = 0
             # Si existe más de un humano, el autor del mensaje tiene prioridad.
             priority = -1 if sender_resource and resource.lower() == sender_resource.lower() else sequence
-            humans.append((priority, {"resource": resource, "login": login}))
+            humans.append((priority, {
+                "resource": resource,
+                "login": login,
+                "resource_name": str(lowered.get("resourcename") or lowered.get("username") or "").strip(),
+            }))
     if humans:
         humans.sort(key=lambda item: item[0])
         return humans[0][1]
     return {
         "resource": sender_resource,
         "login": str(candidate.get("sender_login") or "").strip(),
+        "resource_name": str(candidate.get("sender_name") or "").strip(),
     }
+
+
+def _selected_agent_chat_destination(candidate: dict, agent_resource_id: str) -> dict[str, str]:
+    """Conserva nombre/login del destino IA marcado con talkWithAgent."""
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    destinations = {str(k).lower(): v for k, v in chat.items()}.get("destiny")
+    if isinstance(destinations, list):
+        for destination in destinations:
+            if not isinstance(destination, dict):
+                continue
+            lowered = {str(key).lower(): value for key, value in destination.items()}
+            resource = str(lowered.get("idresource") or lowered.get("resource") or "").strip()
+            if resource.lower() != agent_resource_id.lower():
+                continue
+            return {
+                "resource": resource,
+                "login": str(lowered.get("idlogin") or lowered.get("login") or "").strip(),
+                "resource_name": str(lowered.get("resourcename") or "").strip(),
+            }
+    return {"resource": agent_resource_id, "login": "", "resource_name": ""}
 
 
 def _agent_visible_name(configured_agent: dict[str, Any]) -> str:
@@ -757,8 +784,20 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             continue
         for configured_agent in configured_agents:
             agent_resource_id = str(configured_agent["IDResource"])
+            solidset_agent_resource_id = str(
+                configured_agent.get("IDAgentResource") or ""
+            ).strip()
+            if not solidset_agent_resource_id:
+                print(
+                    "⚠️ Agente omitido: falta IDAgentResource de dbo.SysResource2Agent "
+                    f"para IDHumanResource={agent_resource_id}"
+                )
+                continue
             routed_candidate = dict(candidate)
             human_destination = _human_reply_destination(candidate)
+            agent_chat_destination = _selected_agent_chat_destination(
+                candidate, agent_resource_id
+            )
             try:
                 private_knowledge = get_agent_knowledge(agent_resource_id, channel_id)
             except (ValueError, psycopg.Error) as exc:
@@ -773,7 +812,8 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             routed_candidate.update({
                 "fingerprint": f"{candidate.get('fingerprint')}:{agent_resource_id}",
                 "agent_resource_id": agent_resource_id,
-                "agent_identity_id": str(configured_agent.get("ID") or ""),
+                "agent_identity_id": solidset_agent_resource_id,
+                "agent_configuration_id": str(configured_agent.get("ID") or ""),
                 "agent_name": _agent_visible_name(configured_agent),
                 "agent_session_id": str(_candidate_session_id(candidate)),
                 "agent_knowledge": private_knowledge,
@@ -786,6 +826,9 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 "is_direct": bool(human_destination.get("resource")),
                 "reply_resource": human_destination.get("resource", ""),
                 "reply_login": human_destination.get("login", ""),
+                "reply_resource_name": human_destination.get("resource_name", ""),
+                "agent_chat_resource_name": agent_chat_destination.get("resource_name", ""),
+                "agent_chat_login": agent_chat_destination.get("login", ""),
                 "reply_destiny_inverted": True,
             })
             routed.append(routed_candidate)
@@ -920,12 +963,6 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             or settings.SOLIDSET_LOGIN_USERNAME
             or "solidset.agent"
         ).strip()
-        self_agent_reply = bool(
-            agent_identity_id
-            and str(candidate.get("sender_resource") or "").strip().lower()
-            == agent_resource_id.lower()
-        )
-
         response_text = (
             _direct_courtesy_response(
                 incoming_text,
@@ -1001,7 +1038,10 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     "meeting_mirror_general": bool(candidate.get("meeting_active")),
                     "generated_by_ia": True,
                     "agent_resource_id": agent_resource_id,
-                    "agent_identity_id": agent_identity_id if self_agent_reply else None,
+                    "agent_identity_id": agent_identity_id,
+                    "agent_chat_resource_name": candidate.get("agent_chat_resource_name"),
+                    "agent_chat_login_id": candidate.get("agent_chat_login"),
+                    "human_chat_resource_name": candidate.get("reply_resource_name"),
                     "solidset_base_url": candidate.get("solidset_base_url"),
                 },
             )
@@ -1635,6 +1675,7 @@ async def startup_db_learning() -> None:
     if getattr(app.state, "db_study_task", None) is None:
         try:
             await asyncio.to_thread(ensure_llm_provider_schema)
+            await asyncio.to_thread(ensure_solidset_agent_resource_schema)
             await asyncio.to_thread(ensure_agent_model_schema)
         except psycopg.Error as exc:
             print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
@@ -1752,6 +1793,7 @@ class SysResourceIAConfiguration(BaseModel):
     Name: Optional[str] = Field(None, max_length=255)
     Stamp: Optional[datetime] = None
     IDResource: uuid.UUID
+    IDAgentResource: Optional[uuid.UUID] = None
     active: bool = False
 
     class Config:
@@ -2301,7 +2343,7 @@ async def handle_multi_agent_dialogue(
 
     async def execute_one(configured_agent: dict[str, Any]) -> MultiAgentAnswer:
         agent_resource_id = str(configured_agent["IDResource"])
-        agent_identity_id = str(configured_agent.get("ID") or "")
+        agent_identity_id = str(configured_agent.get("IDAgentResource") or "").strip()
         agent_name = _agent_visible_name(configured_agent)
         isolated_session = (
             f"solidset:agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
@@ -2358,11 +2400,8 @@ async def handle_multi_agent_dialogue(
                     "confirm": True,
                     "generated_by_ia": True,
                     "agent_resource_id": agent_resource_id,
-                    "agent_identity_id": (
-                        agent_identity_id
-                        if request.SenderResourceId == configured_agent["IDResource"]
-                        else None
-                    ),
+                    "agent_identity_id": agent_identity_id or None,
+                    "recurso_id": str(request.SenderResourceId or "") or None,
                     "solidset_base_url": str(solidset_instance["BaseUrl"]),
                 },
             ))

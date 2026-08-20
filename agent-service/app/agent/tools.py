@@ -988,6 +988,9 @@ def solidset_send_chat_message(
     generated_by_ia: bool = False,
     agent_resource_id: Optional[str] = None,
     agent_identity_id: Optional[str] = None,
+    agent_chat_resource_name: Optional[str] = None,
+    agent_chat_login_id: Optional[str] = None,
+    human_chat_resource_name: Optional[str] = None,
     solidset_base_url: Optional[str] = None,
 ) -> str:
     """
@@ -1122,6 +1125,38 @@ def solidset_send_chat_message(
             form_payload["Info[id_agent_ia]"] = visual_agent_id
             form_payload["Info[agent_id]"] = visual_agent_id
             form_payload["IDAgentIA"] = visual_agent_id
+        if visual_resource_id and channel and resource:
+            # La UI de SolidSET pinta From/To desde Chat, no solo desde Destiny.
+            # Para una autorrespuesta se invierten explícitamente los roles:
+            # agente lógico type=1 (origen) -> humano type=2 (destino).
+            form_payload["Chat.IDSenderResource"] = visual_resource_id
+            if agent_chat_login_id:
+                form_payload["Chat.IDSender"] = str(agent_chat_login_id).strip()
+            form_payload["Chat.IDWorkRoom"] = channel
+            if meeting:
+                form_payload["Chat.IDMeeting"] = meeting
+            form_payload["Chat.RawMessage"] = text
+            form_payload["Chat.Kind"] = 60 if meeting else 0
+            if agent_chat_login_id:
+                form_payload["Chat.Destiny[0].IDLogin"] = str(agent_chat_login_id).strip()
+            form_payload["Chat.Destiny[0].IDResource"] = visual_resource_id
+            form_payload["Chat.Destiny[0].ResourceName"] = (
+                str(agent_chat_resource_name or "").strip() or "Agente IA"
+            )
+            form_payload["Chat.Destiny[0].TalkWithAgent"] = "true"
+            form_payload["Chat.Destiny[0].Type"] = 1
+            form_payload["Chat.Destiny[0].IDChannel"] = channel
+            form_payload["Chat.Destiny[0].Sequence"] = 0
+            if resource_login:
+                form_payload["Chat.Destiny[1].IDLogin"] = resource_login
+            form_payload["Chat.Destiny[1].IDResource"] = resource
+            if human_chat_resource_name:
+                form_payload["Chat.Destiny[1].ResourceName"] = str(
+                    human_chat_resource_name
+                ).strip()
+            form_payload["Chat.Destiny[1].Type"] = 2
+            form_payload["Chat.Destiny[1].IDChannel"] = channel
+            form_payload["Chat.Destiny[1].Sequence"] = 1
     print(form_payload, flush=True)
     request_sender = _solidset_request_as_agent if agent_resource_id else _solidset_request_authenticated    
     request_args: dict[str, Any] = {

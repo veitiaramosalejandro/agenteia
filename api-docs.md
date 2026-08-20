@@ -104,6 +104,12 @@ El funcionamiento habitual sería:
 
 # Configuración multiagente
 
+En producción, docker-compose-prod.yml carga .env.production. Este archivo
+contiene únicamente el fallback de modelo y el secreto maestro de cifrado; las
+asignaciones dinámicas se leen de PostgreSQL mediante
+SysLLMProviderConfiguration y SysAgentIAModel. Debe conservarse fuera del
+control de versiones y copiarse junto al Compose durante el despliegue.
+
 ## Proveedores LLM intercambiables
 
 La lógica de SolidSET depende de una interfaz común de modelo de chat
@@ -280,6 +286,32 @@ La API usa las claves planas `Destiny.Dests[0].*` porque `/Chat/SendMessageForm`
 recibe formulario; el model binder de SolidSET lo convierte al objeto anidado
 `Destiny.Dests`. `talkWithAgent` no se reenvía en la respuesta para evitar que
 la respuesta generada vuelva a activar al agente.
+
+Además se envía el bloque `Chat` que utiliza el cliente SolidSET para pintar
+`From` y `To`. En una conversación con el agente propio queda:
+
+```text
+Chat.IDSenderResource = SysResourceIA.IDAgentResource
+Chat.IDSender = login propietario del recurso humano
+Chat.IDWorkRoom = IDWorkRoom
+Chat.IDMeeting = meeting válido (si existe)
+Chat.RawMessage = respuesta
+Chat.Kind = 60 en meeting; 0 en un canal normal
+Chat.Destiny[0] = agente, Type=1, TalkWithAgent=true
+Chat.Destiny[1] = recurso humano, Type=2
+```
+
+Así la UI recibe `From: agente [IA] To: humano`, en lugar de reutilizar la
+dirección del mensaje original `From: humano To: agente [IA]`.
+
+`SysResourceIA.IDResource` identifica al recurso humano propietario y se usa
+para seleccionar el agente, resolver su login, memoria y conocimiento.
+`SysResourceIA.IDAgentResource` identifica al recurso software que representa
+al agente en SolidSET y procede de
+`dbo.SysResource2Agent.IDAgentResource`. Nunca se utiliza el UUID interno
+`SysResourceIA.ID` como remitente de SolidSET. Si un agente activo todavía no
+tiene `IDAgentResource`, la respuesta se omite para no publicarla con la
+identidad del humano.
 
 `TrainingMode` admite `rag_reinforcement`, `rag_only` y `disabled`. La mejora
 actual no modifica los pesos del modelo: utiliza conocimiento vectorial aislado,
@@ -502,7 +534,8 @@ Respuesta:
 POST /api/v1/agent/solidset/resources/sync
 ```
 
-Ejecuta la consulta de `SysResources` y `SysLogin`.
+Ejecuta la consulta de `SysResources` y `SysLogin`, y obtiene la identidad del
+recurso software mediante la relación activa de `SysResource2Agent`.
 
 Mapeo:
 
@@ -510,6 +543,7 @@ Mapeo:
 SysResources.DisplayName → SysResourceIA.Name
 SysResources.ResourceId  → SysResourceIA.IDResource
 SysResources.ActiveIDLogin2Resource → SysResourceIA.ActiveIDLogin2Resource
+SysResource2Agent.IDAgentResource → SysResourceIA.IDAgentResource
 ```
 
 La sincronización es idempotente:

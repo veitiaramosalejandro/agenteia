@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meeting IA — ISI Communicator</title>
+  <style>
+    :root {
+      --blue: #247EC1;
+      --green: #16A34A;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --line: #e7e5e4;
+      --bg: #fafaf9;
+      --card: #fff;
+      --code: #1c1917;
+      --code-bg: #1c1917;
+      --code-fg: #e7e5e4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.55;
+    }
+    header {
+      background: var(--blue);
+      color: #fff;
+      padding: 2rem 1.5rem 1.5rem;
+    }
+    header h1 { margin: 0 0 .35rem; font-size: 1.65rem; font-weight: 650; }
+    header p { margin: 0; opacity: .92; max-width: 52rem; }
+    .meta { margin-top: .85rem; font-size: .85rem; opacity: .85; }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+      padding: .65rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem .9rem;
+      font-size: .85rem;
+    }
+    nav a { color: var(--blue); text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    main { max-width: 52rem; margin: 0 auto; padding: 1.5rem; }
+    h2 {
+      margin: 2rem 0 .75rem;
+      font-size: 1.2rem;
+      border-bottom: 2px solid var(--blue);
+      padding-bottom: .3rem;
+    }
+    h3 { margin: 1.35rem 0 .5rem; font-size: 1.02rem; }
+    p, li { color: var(--ink); }
+    .muted { color: var(--muted); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      font-size: .92rem;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: .45rem .6rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f5f5f4; }
+    code, .chip {
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: .88em;
+    }
+    code {
+      background: #f5f5f4;
+      padding: .1rem .3rem;
+      border-radius: 4px;
+    }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 1rem;
+      border-radius: 8px;
+      overflow: auto;
+      font-size: .82rem;
+      line-height: 1.45;
+    }
+    pre code { background: none; color: inherit; padding: 0; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 2rem;
+      height: 1.55rem;
+      padding: 0 .4rem;
+      border-radius: 5px;
+      background: var(--blue);
+      color: var(--green);
+      font-weight: 700;
+      letter-spacing: .04em;
+      border: 1px solid #fff;
+      box-shadow: inset 0 0 0 2px #fff, 0 0 0 1px var(--green);
+    }
+    .note {
+      background: #eff6ff;
+      border-left: 4px solid var(--blue);
+      padding: .7rem .9rem;
+      margin: 1rem 0;
+    }
+    .warn {
+      background: #fff7ed;
+      border-left: 4px solid #ea580c;
+      padding: .7rem .9rem;
+      margin: 1rem 0;
+    }
+    ul.files { columns: 1; }
+    footer {
+      max-width: 52rem;
+      margin: 0 auto;
+      padding: 0 1.5rem 2.5rem;
+      color: var(--muted);
+      font-size: .85rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Meeting IA</h1>
+    <p>
+      Documentación del modo «hablar con mi IA» en el meeting: chip en la ficha,
+      sufijo <code>[IA]</code> en el To, persistencia al apagar el switch,
+      y payload que llega al servidor de IA.
+    </p>
+    <p class="meta">Última actualización: 2026-08-19 · ISI Communicator / ISI_FRAME / WPF / NotificationManager</p>
+  </header>
+  <nav>
+    <a href="#modelo">Modelo</a>
+    <a href="#chip">Chip</a>
+    <a href="#to">To persistente</a>
+    <a href="#payload">Payload IA</a>
+    <a href="#respuesta">Respuesta IA</a>
+    <a href="#api">API</a>
+    <a href="#ficheros">Ficheros</a>
+    <a href="#changelog">Changelog</a>
+  </nav>
+  <main>
+    <h2 id="modelo">1. Modelo</h2>
+    <p>
+      Un participante humano (ej. Paulo) y su agente (PauloAI) son <strong>dos recursos</strong>.
+      El switch IA <strong>no</strong> es un flag permanente en <code>SysResources</code>:
+      es participación del agente en <em>ese</em> meeting.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Concepto</th><th>Dónde vive</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Humano</td>
+          <td><code>SysResources</code> (persona)</td>
+        </tr>
+        <tr>
+          <td>Agente</td>
+          <td><code>SysResources</code> Kind = Software (5), nombre <code>{Nome} IA</code></td>
+        </tr>
+        <tr>
+          <td>Enlace humano ↔ agente</td>
+          <td><code>dbo.SysResource2Agent</code> (<code>IDHumanResource</code> PK → <code>IDAgentResource</code>, <code>Active</code>)</td>
+        </tr>
+        <tr>
+          <td>IA ON en un meeting</td>
+          <td>El agente entra en <code>SysMeeting2Resource</code></td>
+        </tr>
+        <tr>
+          <td>IA OFF</td>
+          <td>Se quita al agente de <code>SysMeeting2Resource</code> (el enlace en <code>SysResource2Agent</code> se mantiene)</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note">
+      El save del meeting (DELETE+INSERT de participantes) <strong>preserva</strong> las filas del agente
+      (snapshot/restore en <code>MeetingUtils</code> / <code>MeetingAgentStore</code>).
+      El agente no entra en Equipa, no recibe convite ni login.
+    </div>
+
+    <h2 id="chip">2. Chip en la ficha</h2>
+    <p>
+      Chip <span class="chip">IA</span> en la <strong>esquina superior derecha</strong> de la ficha del participante local
+      (WPF y LiveKit <code>host.html</code>). No va en la fila de mic/cámara.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Estado</th><th>Qué hace</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>OFF</td>
+          <td>Solo el recurso humano está en el meeting.</td>
+        </tr>
+        <tr>
+          <td>ON</td>
+          <td>
+            Crea/enlaza el agente y lo mete en el roster del meeting.
+            <strong>No se muestra una segunda ficha</strong>: el modo queda en la misma tarjeta
+            (chip activo + sufijo <code> [IA]</code> en el nombre).
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>Solo el dueño de la ficha (recurso actual) puede conmutarlo. No hace falta ser gestor.</li>
+      <li>Chip activo (paridad WPF): cuadrado azul <code>#247EC1</code>, círculo blanco interior, borde y texto <code>#16A34A</code>.</li>
+      <li>En LiveKit el click va por <code>postLocalParticipantAction('toggleTalkWithAgent')</code>.</li>
+      <li>El roster UI filtra <code>IsAgent</code>: el agente está en BD para To/<code>[IA]</code>, pero no se pinta como tarjeta extra.</li>
+    </ul>
+
+    <h2 id="to">3. To / Cc persistente con [IA]</h2>
+    <p>
+      Si envías un mensaje con el destinatario en modo IA, el header muestra
+      <strong>Nome [IA]</strong> (o <strong>Me [IA]</strong> si eres tú).
+      Ese To <strong>queda congelado</strong>: apagar el chip después no lo quita,
+      ni encenderlo lo añade a mensajes antiguos.
+    </p>
+    <p>El sufijo es idempotente: un recurso que ya se llama <code>{Nome} IA</code> no duplica el texto.</p>
+
+    <h3>Persistencia</h3>
+    <table>
+      <thead>
+        <tr><th>Valor</th><th>Significado</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>SysChat2SysResource.TalkWithAgent = NULL</code></td>
+          <td>Mensaje anterior a este snapshot (se puede pintar con el estado live del meeting).</td>
+        </tr>
+        <tr>
+          <td><code>0</code></td>
+          <td>To/Cc sin IA en el momento del envío.</td>
+        </tr>
+        <tr>
+          <td><code>1</code></td>
+          <td>To/Cc con IA en el momento del envío. El historial siempre muestra <code>[IA]</code>.</td>
+        </tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>Al enviar: NotificationManager (<code>MessageServer</code>), <code>ChatHelper.SaveChat</code> y guest insert sellan el flag.</li>
+      <li>Al pintar historial: <code>FillDest</code> / <code>EnrichMessageDestinations</code> usan el snapshot, no el switch actual.</li>
+      <li>Compositor (mensaje aún no grabado, <code>IDChat2 == 0</code>): sigue el estado live del meeting.</li>
+      <li><code>Chat2Resource</code> binario <strong>no</strong> se amplió (Read/Write igual). El bool viaja en JSON / se infiere del sufijo del nombre.</li>
+    </ul>
+    <div class="warn">
+      Mensajes enviados <em>antes</em> de desplegar esta columna no tienen snapshot.
+      Tras apagar la IA, su To puede perder el <code>[IA]</code>. Los nuevos envíos sí lo conservan.
+    </div>
+
+    <h2 id="payload">4. Payload al servidor de IA</h2>
+    <p>
+      El cliente WPF reenvía el <code>FrameworkMessage</code> completo (JSON camelCase, <code>null</code> omitido).
+    </p>
+    <table>
+      <thead>
+        <tr><th>Ítem</th><th>Valor</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>URL por defecto</td>
+          <td><code>http://172.16.11.49:8000</code> (<code>AIAgentUrl</code>)</td>
+        </tr>
+        <tr>
+          <td>Endpoint (aprendizaje / notificación)</td>
+          <td><code>POST /api/v1/agent/notification/framework-message</code></td>
+        </tr>
+        <tr>
+          <td>Endpoint (diálogo)</td>
+          <td><code>POST /api/v1/agent/dialogue</code></td>
+        </tr>
+        <tr>
+          <td>Cliente</td>
+          <td><code>AIAgentClient.SendFrameworkMessageAsync</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      El WPF reenvía <strong>todos</strong> los chats a ese endpoint. El servidor de IA debe filtrar
+      los que van dirigidos al agente.
+    </p>
+    <h3>Cómo saber que el destiny es IA</h3>
+    <ul>
+      <li><code>chat.destiny[].talkWithAgent === true</code> (preferido)</li>
+      <li>o <code>type === 2</code> (To) y <code>resourceName</code> termina en <code>[IA]</code> / <code> IA</code></li>
+    </ul>
+    <p>
+      El <code>iDResource</code> del To es el <strong>humano</strong>, no el recurso Software.
+      System.Text.Json deja nombres tipo <code>iDChat2</code>, <code>iDResource</code>, <code>iDMeeting</code>
+      (solo baja la primera letra).
+    </p>
+    <pre><code>{
+  "stamp": "2026-08-18T22:03:00Z",
+  "kind": 7,
+  "rawMessage": "Sim sim",
+  "importance": 1,
+  "sender": {
+    "login": "&lt;guid-login-remetente&gt;",
+    "resource": "&lt;guid-recurso-remetente&gt;",
+    "workRoom": "&lt;guid-canal&gt;"
+  },
+  "destiny": {
+    "workRoom": "&lt;guid-canal&gt;",
+    "resource": "&lt;guid-recurso-destinatario&gt;"
+  },
+  "chat": {
+    "iDChat2": 123456,
+    "iDSender": "&lt;guid-login-remetente&gt;",
+    "iDSenderResource": "&lt;guid-recurso-remetente&gt;",
+    "iDWorkRoom": "&lt;guid-canal&gt;",
+    "iDMeeting": "&lt;guid-meeting&gt;",
+    "rawMessage": "Sim sim",
+    "stamp": "2026-08-18T22:03:00Z",
+    "kind": 60,
+    "destiny": [
+      {
+        "iDLogin": "&lt;guid-login-remetente&gt;",
+        "iDResource": "&lt;guid-recurso-remetente&gt;",
+        "resourceName": "Victor Vargas",
+        "type": 1,
+        "iDChannel": "&lt;guid-canal&gt;",
+        "sequence": 0
+      },
+      {
+        "iDLogin": "&lt;guid-login-destinatario&gt;",
+        "iDResource": "&lt;guid-recurso-humano&gt;",
+        "resourceName": "Victor Vargas [IA]",
+        "talkWithAgent": true,
+        "type": 2,
+        "iDChannel": "&lt;guid-canal&gt;",
+        "sequence": 1
+      }
+    ]
+  }
+}</code></pre>
+    <p class="muted">
+      <code>kind</code> del envelope: <code>7</code> = <code>ChatMessage</code>.
+      <code>chat.kind</code>: <code>60</code> = <code>MeetingComment</code> (en canal normal suele ser <code>0</code>).
+      <code>type</code> en destiny: <code>1</code> From, <code>2</code> To, <code>3</code> Cc.
+    </p>
+    <p>Filtro sugerido en el servidor de IA:</p>
+    <pre><code>any(d.get("talkWithAgent") is True for d in (msg.get("chat") or {}).get("destiny") or [])</code></pre>
+    <p>
+      Para contestar: usar <code>iDMeeting</code> / <code>iDWorkRoom</code> / <code>iDChat2</code> como hilo,
+      y el <code>iDResource</code> del To como destinatario humano (modo IA).
+    </p>
+
+    <h2 id="respuesta">5. Cómo debe responder la IA</h2>
+    <p>
+      Humano → IA: <strong>From: Me</strong> · <strong>To: Me [IA]</strong>.<br>
+      IA → humano: <strong>From: Me [IA]</strong> · <strong>To: Me</strong>.
+    </p>
+    <p>
+      El servidor de IA no debe reenviar el mensaje como el humano.
+      Tiene que grabar el chat <strong>como el recurso agente</strong> (Software, <code>IDAgentResource</code>
+      de <code>SysResource2Agent</code>) y poner el To en el <strong>humano</strong>, sin modo IA.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Campo al enviar la respuesta</th><th>Valor</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>chat.iDSenderResource</code></td>
+          <td>GUID del <strong>agente</strong> (no el humano)</td>
+        </tr>
+        <tr>
+          <td><code>chat.iDSender</code></td>
+          <td>Login del dueño (o vacío si el agente no tiene login)</td>
+        </tr>
+        <tr>
+          <td>From (<code>destiny type: 1</code>)</td>
+          <td>Mismo GUID agente · <code>talkWithAgent: true</code> · nombre con <code> [IA]</code></td>
+        </tr>
+        <tr>
+          <td>To (<code>destiny type: 2</code>)</td>
+          <td>GUID del <strong>humano</strong> · <strong>sin</strong> <code>talkWithAgent</code></td>
+        </tr>
+        <tr>
+          <td><code>iDMeeting</code> / <code>iDWorkRoom</code></td>
+          <td>Los del mensaje original</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note">
+      Si el remitente es el agente, el stamp en BD pone <code>TalkWithAgent=1</code> solo en el From
+      y deja el To a 0 (aunque el chip IA siga ON). Así no sale <code>To: Me [IA]</code> en la respuesta.
+    </div>
+    <pre><code>{
+  "kind": 7,
+  "rawMessage": "Claro, te ayudo.",
+  "chat": {
+    "iDSenderResource": "&lt;guid-agente&gt;",
+    "iDWorkRoom": "&lt;guid-canal&gt;",
+    "iDMeeting": "&lt;guid-meeting&gt;",
+    "rawMessage": "Claro, te ayudo.",
+    "kind": 60,
+    "destiny": [
+      {
+        "iDResource": "&lt;guid-agente&gt;",
+        "resourceName": "Victor Vargas [IA]",
+        "talkWithAgent": true,
+        "type": 1
+      },
+      {
+        "iDResource": "&lt;guid-humano&gt;",
+        "resourceName": "Victor Vargas",
+        "type": 2
+      }
+    ]
+  }
+}</code></pre>
+    <p class="muted">
+      En WPF, el recurso agente del usuario actual se trata como «Me» y el From recibe <code>[IA]</code>.
+      El To humano sin flag se pinta como «Me».
+    </p>
+
+    <h2 id="api">6. API ISI_FRAME</h2>
+    <table>
+      <thead>
+        <tr><th>Acción</th><th>Contrato</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Conmutar IA</td>
+          <td><code>POST RestApi/MeetingTalkWithAgent?idMeeting=&amp;enabled=</code></td>
+        </tr>
+        <tr>
+          <td>Flags en header</td>
+          <td>
+            <code>MeetingHeaderParticipantDto</code>:
+            <code>IsAgent</code>, <code>HasAgent</code>, <code>TalkWithAgent</code>,
+            <code>IDOwnerResource</code>, <code>IDAgentResource</code>
+          </td>
+        </tr>
+        <tr>
+          <td>Nombre en header</td>
+          <td>Sufija <code>Name</code> / <code>FullName</code> si <code>TalkWithAgent || IsAgent</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="ficheros">7. Ficheros</h2>
+    <h3>ISI_FRAME</h3>
+    <ul class="files">
+      <li><code>DoctusCore/LibDoctus/Services/Meeting/MeetingAgentStore.cs</code></li>
+      <li><code>DoctusCore/LibDoctus/Utils/Helpers/ChatHelper.cs</code></li>
+      <li><code>DoctusCore/LibDoctus/Models/Chat.cs</code> (<code>Chat2Resource.TalkWithAgent</code>)</li>
+      <li><code>DoctusCore/Doctus/Utils/MeetingGuestChatService.cs</code></li>
+      <li><code>DoctusCore/Doctus/Utils/MeetingUtils.cs</code></li>
+      <li><code>DoctusCore/Doctus/Controllers/RestApiController.cs</code></li>
+      <li><code>host.html</code> (chip LiveKit)</li>
+    </ul>
+    <h3>WPF</h3>
+    <ul class="files">
+      <li><code>WpfIsiframeControls/ChatViews/ChannelChatMessagesView.xaml</code> (+ <code>.xaml.cs</code>, MeetingModeration, LiveKit)</li>
+      <li><code>WpfIsiframeControls/ChatViews/ChannelContentView.xaml.cs</code></li>
+      <li><code>WpfIsiframeControls/ChatEntities.cs</code></li>
+      <li><code>WpfIsiframeControls/Entities.cs</code> (<code>Chat2Resource.TalkWithAgent</code>)</li>
+      <li><code>WpfIsiframeControls/IsiFrameServer.cs</code></li>
+      <li><code>WpfIsiframeControls/Infrastructure/AgenteIA/AIAgentClient.cs</code></li>
+      <li><code>WpfIsiframeControls/Helper.cs</code> (<code>CurrentAgentResourceId</code>)</li>
+    </ul>
+    <h3>NotificationManager</h3>
+    <ul class="files">
+      <li><code>NotificationManagerNETCore/Messaging/MessageServer.cs</code></li>
+      <li><code>NotificationLibNETCore/Chat2Resource.cs</code></li>
+    </ul>
+
+    <h2 id="changelog">8. Changelog</h2>
+    <h3>2026-08-19</h3>
+    <ul>
+      <li>Respuesta de la IA: From se pinta como <code>Me [IA]</code> y To como <code>Me</code> si el envío va como recurso agente → humano.</li>
+      <li>Snapshot: si el remitente es el agente, <code>TalkWithAgent=1</code> solo en el From (el To no hereda el chip ON).</li>
+      <li>Fix: el sufijo <code>[IA]</code> ya no se muestra en el From cuando el remitente soy yo (ni en el compositor ni en mensajes enviados); solo se aplica a destinatarios.</li>
+      <li>Fix: <code>ApplyStoredAgentModeSuffixToDestiny</code> (NotificationManager) ahora matchea por par <code>(IDResource, Type)</code> en lugar de solo IDResource, evitando que el <code>[IA]</code> del To se propague al From en la vista de los demás usuarios.</li>
+      <li>Fix: <code>FixChatResourceTable</code> (NotificationManager) ahora lee <code>TalkWithAgent</code> de la BD y aplica el sufijo <code>[IA]</code> al <code>ResourceName</code>, para que al refrescar/recargar el chat los demás usuarios sigan viendo el indicador.</li>
+      <li>Fix: <code>FillResourcesNames4Destinations</code> (WPF) preserva el sufijo <code>[IA]</code> cuando sobrescribe <code>ResourceName</code> con el nombre del login/cache, evitando que al refrescar el chat los demás pierdan el indicador.</li>
+    </ul>
+    <h3>2026-08-18</h3>
+    <ul>
+      <li>Chip IA en esquina superior derecha de la ficha local (WPF + LiveKit). Sin segunda tarjeta del agente.</li>
+      <li>API <code>MeetingTalkWithAgent</code> + tabla <code>SysResource2Agent</code> + flags en header del meeting.</li>
+      <li>To/Cc con sufijo <code> [IA]</code> según modo del destinatario.</li>
+      <li>Snapshot en <code>SysChat2SysResource.TalkWithAgent</code>: el To histórico no se pierde al apagar la IA.</li>
+      <li>JSON al servidor de IA: destino IA con <code>"talkWithAgent": true</code>.</li>
+    </ul>
+  </main>
+  <footer>
+    Fuente viva: actualizar este fichero en el mismo trabajo que cualquier cambio de Meeting IA.
+    Ruta: <code>C:\_DADOS_\Cursor\Documentacion\Meeting-IA.html</code>
+  </footer>
+</body>
+</html>

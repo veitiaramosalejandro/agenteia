@@ -78,10 +78,15 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
             {
                 "canal_id": "channel-123",
                 "mensaje": "Respuesta del agente",
+                "recurso_id": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+                "recurso_login_id": "1790fc78-023d-4506-a7e8-5c030e9386d1",
                 "confirm": True,
                 "generated_by_ia": True,
                 "agent_resource_id": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
                 "agent_identity_id": "2555288c-44c7-4209-95f2-3de98f0f416d",
+                "agent_chat_resource_name": "Dev17 [IA]",
+                "agent_chat_login_id": "1790fc78-023d-4506-a7e8-5c030e9386d1",
+                "human_chat_resource_name": "Alejandro Veitia",
                 "solidset_base_url": "http://solidset.local",
             }
         )
@@ -111,6 +116,29 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
             form["Info[agent_resource_id]"],
             "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
         )
+        self.assertEqual(
+            form["Chat.IDSenderResource"],
+            "2555288c-44c7-4209-95f2-3de98f0f416d",
+        )
+        self.assertEqual(form["Chat.IDWorkRoom"], "channel-123")
+        self.assertEqual(form["Chat.RawMessage"], "Respuesta del agente")
+        self.assertEqual(form["Chat.Kind"], 0)
+        self.assertEqual(
+            form["Chat.IDSender"], "1790fc78-023d-4506-a7e8-5c030e9386d1"
+        )
+        self.assertEqual(
+            form["Chat.Destiny[0].IDResource"],
+            "2555288c-44c7-4209-95f2-3de98f0f416d",
+        )
+        self.assertEqual(form["Chat.Destiny[0].ResourceName"], "Dev17 [IA]")
+        self.assertEqual(form["Chat.Destiny[0].TalkWithAgent"], "true")
+        self.assertEqual(form["Chat.Destiny[0].Type"], 1)
+        self.assertEqual(
+            form["Chat.Destiny[1].IDResource"],
+            "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+        )
+        self.assertEqual(form["Chat.Destiny[1].ResourceName"], "Alejandro Veitia")
+        self.assertEqual(form["Chat.Destiny[1].Type"], 2)
 
     @patch("app.agent.tools.settings.SOLIDSET_USER_ACTIONS_ENABLED", True)
     @patch("app.agent.tools._solidset_request_authenticated")

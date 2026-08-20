@@ -42,7 +42,7 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - .env.production
     environment:
       ENVIRONMENT: production
       RUNNING_IN_DOCKER: "1"
@@ -53,11 +53,8 @@ services:
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
       DIALOGUE_MAX_CONCURRENT: 1
-      SQL_SERVER_HOST: ${SQL_SERVER_DOCKER_HOST:-host.docker.internal}
-      # Usa la instancia nombrada cuando tiene valor. Si se deja vacía, la API
-      # conecta directamente a SQL_SERVER_DOCKER_PORT (más fiable en Docker).
-      SQL_SERVER_INSTANCE: ${SQL_SERVER_INSTANCE-SQL2017DEV}
-      SQL_SERVER_PORT: ${SQL_SERVER_DOCKER_PORT:-1433}
+      # SQL_SERVER_HOST/INSTANCE/PORT proceden de .env.production. No deben
+      # interpolarse aquí desde el .env de desarrollo.
       # Las respuestas usan la identidad por recurso almacenada en PostgreSQL.
       # Se neutraliza cualquier cuenta global antigua que permanezca en .env.
       SOLIDSET_LOGIN_USERNAME: ""

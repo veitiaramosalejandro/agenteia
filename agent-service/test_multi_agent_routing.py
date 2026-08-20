@@ -51,6 +51,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         }
         configured = [{
             "IDResource": selected_agent,
+            "IDAgentResource": uuid4(),
             "FullName": "Victor Vargas",
         }]
         with (
@@ -158,6 +159,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         }
         configured = [{
             "IDResource": requested_agent,
+            "IDAgentResource": uuid4(),
             "Name": "Dev20",
             "FullName": "Victor Vargas",
         }]
@@ -245,6 +247,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         }
         configured = [{
             "IDResource": requested_agent,
+            "IDAgentResource": uuid4(),
             "Name": "Dev20",
             "FullName": "Victor Vargas",
         }]
@@ -287,6 +290,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         configured = [{
             "ID": agent_identity,
             "IDResource": owner_resource,
+            "IDAgentResource": agent_identity,
             "Name": "Dev17",
             "FullName": "Alejandro Veitia",
         }]
@@ -314,8 +318,8 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "payload": {"SelectedAgentResourceIds": [str(first), str(second)]},
         }
         configured = [
-            {"IDResource": first, "Name": "Agente A"},
-            {"IDResource": second, "Name": "Agente B"},
+            {"IDResource": first, "IDAgentResource": uuid4(), "Name": "Agente A"},
+            {"IDResource": second, "IDAgentResource": uuid4(), "Name": "Agente B"},
         ]
         with (
             patch("app.main.ensure_payload_agent_workroom_assignments", return_value=0),
@@ -334,8 +338,8 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         second = uuid4()
         conversation_id = uuid4()
         configured = [
-            {"IDResource": first, "Name": "Agente A"},
-            {"IDResource": second, "Name": "Agente B"},
+            {"IDResource": first, "IDAgentResource": uuid4(), "Name": "Agente A"},
+            {"IDResource": second, "IDAgentResource": uuid4(), "Name": "Agente B"},
         ]
         sessions = []
 
