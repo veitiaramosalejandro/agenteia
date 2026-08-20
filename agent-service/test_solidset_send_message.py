@@ -166,13 +166,13 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         )
         self.assertEqual(
             form["Chat.IDSenderResource"],
-            "1790fc78-023d-4506-a7e8-5c030e9386d1",
+            "2555288c-44c7-4209-95f2-3de98f0f416d",
         )
         self.assertEqual(form["Chat.IDWorkRoom"], "channel-123")
         self.assertEqual(form["Chat.RawMessage"], "Respuesta del agente")
         self.assertEqual(form["Chat.Kind"], 0)
         self.assertEqual(
-            form["Chat.IDSender"], "2555288c-44c7-4209-95f2-3de98f0f416d"
+            form["Chat.IDSender"], "1790fc78-023d-4506-a7e8-5c030e9386d1"
         )
         self.assertEqual(
             form["Chat.Destiny[0].IDResource"],
@@ -187,6 +187,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         )
         self.assertEqual(form["Chat.Destiny[1].ResourceName"], "Alejandro Veitia")
         self.assertEqual(form["Chat.Destiny[1].Type"], 2)
+        self.assertNotIn("Chat.Destiny[1].TalkWithAgent", form)
 
     @patch("app.agent.tools.settings.SOLIDSET_USER_ACTIONS_ENABLED", True)
     @patch("app.agent.tools._solidset_request_authenticated")

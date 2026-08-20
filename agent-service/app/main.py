@@ -661,6 +661,7 @@ def _human_reply_destination(candidate: dict) -> dict[str, str]:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
     destinations = chat_lower.get("destiny")
+    resource_table = chat_lower.get("resourcetable")
     sender_resource = str(candidate.get("sender_resource") or "").strip()
     humans: list[tuple[int, dict[str, str]]] = []
     if isinstance(destinations, list):
@@ -687,11 +688,26 @@ def _human_reply_destination(candidate: dict) -> dict[str, str]:
             humans.append((priority, {
                 "resource": resource,
                 "login": login,
-                "resource_name": str(lowered.get("resourcename") or lowered.get("username") or "").strip(),
+                "resource_name": str(lowered.get("username") or lowered.get("resourcename") or "").strip(),
             }))
     if humans:
         humans.sort(key=lambda item: item[0])
-        return humans[0][1]
+        selected_human = humans[0][1]
+        if not selected_human["resource_name"] and isinstance(resource_table, list):
+            for participant in resource_table:
+                if not isinstance(participant, dict):
+                    continue
+                lowered = {str(key).lower(): value for key, value in participant.items()}
+                participant_resource = str(
+                    lowered.get("idresource") or lowered.get("resource") or ""
+                ).strip()
+                if participant_resource.lower() != selected_human["resource"].lower():
+                    continue
+                selected_human["resource_name"] = str(
+                    lowered.get("username") or lowered.get("resourcename") or ""
+                ).strip()
+                break
+        return selected_human
     return {
         "resource": sender_resource,
         "login": str(candidate.get("sender_login") or "").strip(),

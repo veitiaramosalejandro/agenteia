@@ -296,8 +296,8 @@ Además se envía el bloque `Chat` que utiliza el cliente SolidSET para pintar
 `From` y `To`. En una conversación con el agente propio queda:
 
 ```text
-Chat.IDSenderResource = IDLogin propietario (campo invertido para SolidSET)
-Chat.IDSender = SysResourceIA.IDAgentResource
+Chat.IDSenderResource = SysResourceIA.IDAgentResource
+Chat.IDSender = login del propietario del agente, si existe; si no, se omite
 Chat.IDWorkRoom = IDWorkRoom
 Chat.IDMeeting = meeting válido (si existe)
 Chat.RawMessage = respuesta
@@ -317,9 +317,11 @@ al remitente técnico del agente en SolidSET y procede de
 técnica. También identifica siempre al participante From mediante
 `Chat.Destiny[0].IDResource`, incluso cuando el propietario conversa con su
 propia IA. `Chat.Destiny[1]` contiene exclusivamente el recurso humano
-destinatario. `Chat.IDSender` contiene el mismo `IDAgentResource` verificado que
-identifica al From, mientras `Chat.IDSenderResource` contiene el `IDLogin`
-propietario por el contrato particular del receptor SolidSET. Nunca se utiliza
+destinatario y no lleva `TalkWithAgent`. `Chat.IDSenderResource` contiene el
+mismo `IDAgentResource` verificado que identifica al From. `Chat.IDSender`
+contiene exclusivamente el login del propietario cuando está disponible;
+nunca contiene un GUID de recurso y se omite si el agente no tiene login.
+Nunca se utiliza
 el UUID interno `SysResourceIA.ID` como
 participante de SolidSET. Si un agente activo todavía no tiene
 `IDAgentResource`, la respuesta se omite para no publicarla con una identidad

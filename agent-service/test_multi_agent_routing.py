@@ -79,6 +79,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     "dests": [{"resource": str(unselected_agent), "kind": 2}],
                 },
                 "Chat": {
+                    "resourceTable": [{
+                        "idResource": str(sender_resource),
+                        "userName": "Alejandro Veitia",
+                    }],
                     "destiny": [
                         {
                             "iDLogin": str(sender_login),
@@ -120,6 +124,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([str(selected_agent)], [item["agent_resource_id"] for item in routed])
         self.assertEqual(str(sender_resource), routed[0]["reply_resource"])
         self.assertEqual(str(sender_login), routed[0]["reply_login"])
+        self.assertEqual("Alejandro Veitia", routed[0]["reply_resource_name"])
         self.assertTrue(routed[0]["reply_destiny_inverted"])
 
     def test_talk_with_agent_false_prevents_legacy_fallback(self):
