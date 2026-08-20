@@ -821,8 +821,14 @@ AGENT_RESPONSE_CONSUMER_GROUP=agent-response-workers-v1
 AGENT_RESPONSE_STREAM_MAXLEN=100000
 AGENT_RESPONSE_MAX_RETRIES=3
 AGENT_RESPONSE_CLAIM_IDLE_MS=300000
+AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS=15
 AGENT_RESPONSE_STATUS_TTL_SECONDS=86400
 ```
+
+`XREADGROUP` espera hasta 5 segundos. Un `redis.exceptions.TimeoutError` durante
+esa espera se interpreta como cola vacía y el worker continúa. Otros errores
+temporales de Redis provocan una reconexión automática cada 2 segundos; no
+finalizan el proceso del worker.
 
 La tabla PostgreSQL `SysAgentIAResponseAudit` conserva `RequestID`, `IDChat2`,
 payload original, estado, código, cantidad de respuestas, resultado resumido,

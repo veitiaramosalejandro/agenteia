@@ -13,7 +13,14 @@ class AgentResponseQueue:
     """Cola durable de respuestas basada en Redis Streams."""
 
     def __init__(self) -> None:
-        self.client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        self.client = redis.Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=settings.AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS,
+            health_check_interval=30,
+            retry_on_timeout=True,
+        )
         self.stream = settings.AGENT_RESPONSE_STREAM
         self.group = settings.AGENT_RESPONSE_CONSUMER_GROUP
 
@@ -50,21 +57,26 @@ class AgentResponseQueue:
         ))
 
     def read(self, consumer: str, block_ms: int = 5000) -> list[tuple[str, dict[str, str]]]:
-        self.ensure_group()
-        claimed = self.client.xautoclaim(
-            self.stream,
-            self.group,
-            consumer,
-            min_idle_time=settings.AGENT_RESPONSE_CLAIM_IDLE_MS,
-            start_id="0-0",
-            count=1,
-        )
-        claimed_messages = claimed[1] if claimed and len(claimed) > 1 else []
-        if claimed_messages:
-            return [(message_id, fields) for message_id, fields in claimed_messages]
-        response = self.client.xreadgroup(
-            self.group, consumer, {self.stream: ">"}, count=1, block=block_ms
-        )
+        try:
+            self.ensure_group()
+            claimed = self.client.xautoclaim(
+                self.stream,
+                self.group,
+                consumer,
+                min_idle_time=settings.AGENT_RESPONSE_CLAIM_IDLE_MS,
+                start_id="0-0",
+                count=1,
+            )
+            claimed_messages = claimed[1] if claimed and len(claimed) > 1 else []
+            if claimed_messages:
+                return [(message_id, fields) for message_id, fields in claimed_messages]
+            response = self.client.xreadgroup(
+                self.group, consumer, {self.stream: ">"}, count=1, block=block_ms
+            )
+        except redis.TimeoutError:
+            # XREADGROUP es una espera larga. Un timeout sin mensajes no debe
+            # finalizar el worker ni provocar el reinicio del contenedor.
+            return []
         if not response:
             return []
         return [(message_id, fields) for _, messages in response for message_id, fields in messages]

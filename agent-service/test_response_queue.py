@@ -1,6 +1,7 @@
 import json
 import unittest
 from unittest.mock import MagicMock, patch
+import redis
 
 from app.response_queue import AgentResponseQueue
 
@@ -41,6 +42,16 @@ class AgentResponseQueueTests(unittest.TestCase):
 
         self.assertEqual(messages[0][0], "2-0")
         client.xreadgroup.assert_not_called()
+
+    @patch("app.response_queue.redis.Redis.from_url")
+    def test_blocking_read_timeout_is_an_empty_queue(self, from_url):
+        client = MagicMock()
+        client.xautoclaim.return_value = ("0-0", [], [])
+        client.xreadgroup.side_effect = redis.TimeoutError("Timeout reading from socket")
+        from_url.return_value = client
+        queue = AgentResponseQueue()
+
+        self.assertEqual(queue.read("worker-1"), [])
 
 
 if __name__ == "__main__":

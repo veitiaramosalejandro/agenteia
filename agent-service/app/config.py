@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     AGENT_RESPONSE_CLAIM_IDLE_MS: int = max(
         30000, int(os.getenv("AGENT_RESPONSE_CLAIM_IDLE_MS", "300000"))
     )
+    AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS: int = max(
+        10, int(os.getenv("AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS", "15"))
+    )
     AGENT_TEMPORAL_STATE_TTL_SECONDS: int = max(
         300, int(os.getenv("AGENT_TEMPORAL_STATE_TTL_SECONDS", "3600"))
     )

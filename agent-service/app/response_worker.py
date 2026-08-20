@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import redis
 
 from app.config import settings
 from app.connectors.db_client import (
@@ -24,7 +25,13 @@ async def run_worker() -> None:
     consumer = os.getenv("AGENT_RESPONSE_CONSUMER_NAME") or queue.default_consumer_name()
     print(f"🛠️ Agent response worker activo consumer={consumer}", flush=True)
     while True:
-        messages = await asyncio.to_thread(queue.read, consumer)
+        try:
+            messages = await asyncio.to_thread(queue.read, consumer)
+        except redis.RedisError as exc:
+            print(f"⚠️ Redis Stream temporalmente no disponible: {exc}", flush=True)
+            await asyncio.sleep(2)
+            queue = AgentResponseQueue()
+            continue
         for message_id, fields in messages:
             request_id = str(fields.get("request_id") or "")
             chat_id = str(fields.get("chat_id") or "")
