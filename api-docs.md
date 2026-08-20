@@ -1464,3 +1464,23 @@ Servicios Docker:
 docker compose -f docker-compose-prod.yml up -d historical-worker historical-producer
 docker compose -f docker-compose-prod.yml up -d --scale historical-worker=2
 ```
+
+## Organización de Swagger
+
+Swagger (`/docs`) presenta la documentación pública de los endpoints en inglés
+y agrupa las operaciones mediante etiquetas OpenAPI estables:
+
+- `Conversation`
+- `SolidSET Notifications`
+- `Asynchronous Responses`
+- `Historical Ingestion`
+- `SolidSET Agents`
+- `SolidSET Configuration`
+- `LLM Providers`
+- `Learning and Feedback`
+- `Audio, History and Context`
+- `Observability`
+- `Connectivity`
+
+La clasificación solo modifica la presentación y documentación OpenAPI; no
+cambia las URLs, cuerpos, respuestas ni comportamiento de los endpoints.

@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from urllib.request import Request as URLRequest, urlopen
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -94,10 +95,26 @@ from app.historical.store import (
 # CONFIGURACIÓN DE LA APLICACIÓN
 # ============================================================
 
+OPENAPI_TAGS = [
+    {"name": "Conversation", "description": "Direct requests and conversational agent execution."},
+    {"name": "SolidSET Notifications", "description": "FrameworkMessage reception, preview, and capture."},
+    {"name": "Asynchronous Responses", "description": "Response status tracking and queue metrics."},
+    {"name": "Historical Ingestion", "description": "Dry runs, execution, auditing, and removal of historical knowledge."},
+    {"name": "SolidSET Agents", "description": "Agents, workrooms, models, private knowledge, and multi-agent execution."},
+    {"name": "SolidSET Configuration", "description": "SolidSET instances and master-data synchronization."},
+    {"name": "LLM Providers", "description": "AI model and provider configuration."},
+    {"name": "Learning and Feedback", "description": "Feedback, reactions, reinforcement signals, and learning evaluation."},
+    {"name": "Audio, History and Context", "description": "Generated audio, conversation history, and user context."},
+    {"name": "Observability", "description": "Health, metrics, recent messages, and internal diagnostics."},
+    {"name": "Connectivity", "description": "Connectivity checks for configured external services."},
+]
+
+
 app = FastAPI(
     title="Agent API",
-    description="Agente inteligente",
-    version="1.0.0"
+    description="Intelligent agent API integrated with SolidSET.",
+    version="1.0.0",
+    openapi_tags=OPENAPI_TAGS,
 )
 
 # CORS para permitir conexiones desde el frontend
@@ -2167,13 +2184,13 @@ async def shutdown_db_learning() -> None:
 # ============================================================
 
 class ChatConversationRequest(BaseModel):
-    session_id: str = Field(..., description="ID de la sesión de conversación")
-    message: str = Field(..., description="Mensaje enviado por el usuario")
-    user_id: str = Field(..., description="Username del usuario que está consultando en el sistema")
-    resource_id: Optional[str] = Field(None, description="IDResource canónico del interlocutor")
-    login_id: Optional[str] = Field(None, description="IDLogin de la sesión activa")
-    canal_id: Optional[str] = Field(None, description="ID del canal actual (opcional)")
-    generate_audio: bool = Field(False, description="Si se debe generar audio de la respuesta")
+    session_id: str = Field(..., description="Conversation session ID")
+    message: str = Field(..., description="Message submitted by the user")
+    user_id: str = Field(..., description="Username of the user making the request")
+    resource_id: Optional[str] = Field(None, description="Canonical IDResource of the participant")
+    login_id: Optional[str] = Field(None, description="IDLogin of the active session")
+    canal_id: Optional[str] = Field(None, description="Current workroom ID (optional)")
+    generate_audio: bool = Field(False, description="Whether an audio response should be generated")
 
 class ChatConversationResponse(BaseModel):
     session_id: str
@@ -2184,16 +2201,16 @@ class ChatConversationResponse(BaseModel):
 
 
 class UserFeedbackRequest(BaseModel):
-    session_id: str = Field(..., description="ID de la sesión de conversación")
-    user_id: str = Field(..., description="Username del usuario que aporta feedback")
-    user_text: str = Field(..., description="Mensaje original del usuario")
-    agent_response: str = Field(..., description="Respuesta del agente que se evalúa")
-    corrected_response: Optional[str] = Field(None, description="Respuesta correcta o corrección del usuario")
-    canal_id: Optional[str] = Field(None, description="ID del canal donde ocurrió la interacción")
-    feedback_type: str = Field("explicit", description="Tipo de feedback: explicit o implicit")
-    reason: Optional[str] = Field(None, description="Motivo del feedback o corrección")
-    previous_user_text: Optional[str] = Field(None, description="Mensaje anterior del usuario para detectar repetición")
-    update_profile: bool = Field(True, description="Si se debe actualizar el perfil dinámico del usuario")
+    session_id: str = Field(..., description="Conversation session ID")
+    user_id: str = Field(..., description="Username of the user providing feedback")
+    user_text: str = Field(..., description="Original user message")
+    agent_response: str = Field(..., description="Agent response being evaluated")
+    corrected_response: Optional[str] = Field(None, description="Expected response or user correction")
+    canal_id: Optional[str] = Field(None, description="Workroom ID where the interaction occurred")
+    feedback_type: str = Field("explicit", description="Feedback type: explicit or implicit")
+    reason: Optional[str] = Field(None, description="Reason for the feedback or correction")
+    previous_user_text: Optional[str] = Field(None, description="Previous user message used to detect repetition")
+    update_profile: bool = Field(True, description="Whether the dynamic user profile should be updated")
 
 
 class UserFeedbackResponse(BaseModel):
@@ -3208,7 +3225,7 @@ def _require_historical_admin(
     x_agent_admin_key: str = Header(
         ...,
         alias="X-Agent-Admin-Key",
-        description="Clave configurada en HISTORICAL_INGESTION_ADMIN_KEY.",
+        description="Administrative key configured in HISTORICAL_INGESTION_ADMIN_KEY.",
     ),
 ) -> None:
     configured = settings.HISTORICAL_INGESTION_ADMIN_KEY.strip()
@@ -3865,13 +3882,13 @@ def get_chat_history(
     before: int = Query(
         0,
         ge=0,
-        description="Cantidad de mensajes mas recientes a omitir antes de devolver resultados (cursor para scroll hacia atras)."
+        description="Number of recent messages to skip before returning results (backward-scroll cursor)."
     ),
     limit: int = Query(
         10,
         ge=1,
         le=100,
-        description="Cantidad maxima de mensajes a devolver por pagina."
+        description="Maximum number of messages returned per page."
     ),
 ):
     """
@@ -4265,6 +4282,40 @@ def test_all_connectivity():
 # ============================================================
 # PUNTO DE ENTRADA PARA EJECUCIÓN DIRECTA
 # ============================================================
+
+def _swagger_tag_for_path(path: str) -> str:
+    """Classify each operation into a stable Swagger UI section."""
+    if "/historical-ingestion" in path:
+        return "Historical Ingestion"
+    if "/responses" in path:
+        return "Asynchronous Responses"
+    if "/notification" in path:
+        return "SolidSET Notifications"
+    if "/llm/providers" in path:
+        return "LLM Providers"
+    if "/solidset/agents" in path or "/solidset/multi-agent" in path:
+        return "SolidSET Agents"
+    if "/solidset/" in path:
+        return "SolidSET Configuration"
+    if path.endswith("/feedback") or "/reactions/" in path or "/evaluation/" in path:
+        return "Learning and Feedback"
+    if "/audio-response" in path or "/history/" in path or "/context/" in path:
+        return "Audio, History and Context"
+    if path.endswith("/dialogue"):
+        return "Conversation"
+    if "/connectivity/" in path:
+        return "Connectivity"
+    return "Observability"
+
+
+for route in app.routes:
+    if isinstance(route, APIRoute):
+        tag = _swagger_tag_for_path(route.path)
+        route.tags = [tag]
+        route.summary = route.name.replace("_", " ").title().replace("Solidset", "SolidSET")
+        route.description = next(
+            item["description"] for item in OPENAPI_TAGS if item["name"] == tag
+        )
 
 if __name__ == "__main__":
     import uvicorn
