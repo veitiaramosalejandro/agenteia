@@ -38,6 +38,7 @@ from app.connectors.db_client import (
     deactivate_llm_provider_configuration,
     ensure_llm_provider_schema,
     ensure_agent_model_schema,
+    ensure_agent_response_audit_schema,
     ensure_solidset_agent_resource_schema,
     ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
@@ -51,6 +52,7 @@ from app.connectors.db_client import (
     save_agent_knowledge,
     save_llm_provider_configuration,
     save_agent_model_configuration,
+    save_agent_response_audit,
     save_solidset_instance,
     save_sys_resource_ia,
     touch_agent_session,
@@ -73,6 +75,7 @@ from app.system.reaction_capture import (
 )
 from app.system.schema import Actividad
 from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
+from app.response_queue import AgentResponseQueue
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
@@ -105,17 +108,34 @@ def _request_ip_details(request: Request) -> tuple[str, str]:
     return direct_ip, forwarded_ip
 
 
+_solidset_instance_cache_lock = threading.Lock()
+_solidset_instance_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
 def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | None:
     """Resuelve la instalación aun cuando la petición atraviesa Nginx."""
     direct_ip, forwarded_ip = _request_ip_details(request)
     instance_code = request.headers.get("x-solidset-instance", "").strip()
+    request_host = str(getattr(getattr(request, "url", None), "hostname", "") or "")
+    cache_key = "|".join((
+        instance_code.lower(), forwarded_ip.lower(), direct_ip.lower(),
+        request_host.lower(),
+    ))
+    with _solidset_instance_cache_lock:
+        cached = _solidset_instance_cache.get(cache_key)
+        if cached and cached[0] > time():
+            return dict(cached[1])
     if instance_code:
-        return get_solidset_instance(code=instance_code)
+        instance = get_solidset_instance(code=instance_code, source_ip=None)
+        if instance is not None:
+            with _solidset_instance_cache_lock:
+                _solidset_instance_cache[cache_key] = (time() + 60, dict(instance))
+        return instance
 
     # SourceIP puede contener una IP o el host público registrado para la
     # instalación. Detrás de Nginx, request.client es la IP del contenedor del
     # proxy, por lo que también se prueban X-Forwarded-For/X-Real-IP y Host.
-    candidates = [forwarded_ip, direct_ip, request.url.hostname or ""]
+    candidates = [forwarded_ip, direct_ip, request_host]
     seen: set[str] = set()
     for candidate in candidates:
         source = str(candidate or "").strip()
@@ -124,6 +144,8 @@ def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | Non
         seen.add(source)
         instance = get_solidset_instance(source_ip=source)
         if instance is not None:
+            with _solidset_instance_cache_lock:
+                _solidset_instance_cache[cache_key] = (time() + 60, dict(instance))
             return instance
 
     # En una instalación con un único SolidSET activo no existe ambigüedad y
@@ -132,7 +154,10 @@ def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | Non
     # por cabecera, IP o host para impedir respuestas en el sistema equivocado.
     active_instances = list_active_solidset_instances()
     if len(active_instances) == 1:
-        return active_instances[0]
+        instance = active_instances[0]
+        with _solidset_instance_cache_lock:
+            _solidset_instance_cache[cache_key] = (time() + 60, dict(instance))
+        return instance
     return None
 
 
@@ -172,6 +197,7 @@ async def log_request_origin_ip(request: Request, call_next):
 agent = MachiningAgent()
 orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
+response_queue = AgentResponseQueue()
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
@@ -538,6 +564,22 @@ def _schedule_auto_replies(candidates: list[dict], request_id: str = "") -> None
             print(f"❌ Error no controlado procesando auto-respuesta: {exc}")
 
     task.add_done_callback(_completed)
+
+
+def _enqueue_auto_replies(
+    payload: dict[str, Any],
+    instance: dict[str, Any],
+    request_id: str,
+    chat_id: str,
+) -> str:
+    """Publica una solicitud durable; la API nunca ejecuta el LLM directamente."""
+    stream_id = response_queue.enqueue(request_id, chat_id, payload, instance)
+    print(
+        f"📥 Auto-respuesta en Redis Stream request={request_id} stream_id={stream_id} "
+        "payload=FrameworkMessage",
+        flush=True,
+    )
+    return stream_id
 
 
 def _is_safe_auto_reply_output(response_text: str) -> bool:
@@ -2056,6 +2098,7 @@ async def startup_db_learning() -> None:
             await asyncio.to_thread(ensure_llm_provider_schema)
             await asyncio.to_thread(ensure_solidset_agent_resource_schema)
             await asyncio.to_thread(ensure_agent_model_schema)
+            await asyncio.to_thread(ensure_agent_response_audit_schema)
         except psycopg.Error as exc:
             print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
         app.state.startup_connectivity = _run_startup_connectivity_checks()
@@ -2896,6 +2939,8 @@ def register_solidset_instance(
     payload["SourceIP"] = str(payload.get("SourceIP") or "").strip() or None
     try:
         saved = save_solidset_instance(payload)
+        with _solidset_instance_cache_lock:
+            _solidset_instance_cache.clear()
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3042,6 +3087,7 @@ def read_agent_model(agent_resource_id: uuid.UUID) -> dict[str, Any]:
 @app.post(
     "/api/v1/agent/notification/framework-message",
     response_model=SendMessageResultDTO,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def receive_framework_notification(message: FrameworkMessageDTO, request: Request):
     print(message.model_dump_json(indent=2))
@@ -3063,42 +3109,57 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
             detail="Instancia SolidSET desconocida. Envía X-SolidSET-Instance o registra la IP origen.",
         )
     payload["_SolidSETInstanceID"] = str(instance["ID"])
-    capture = notification_listener.capture_realtime_payload(payload)
-    candidates = capture.get("auto_reply_candidates") or []
-    _attach_solidset_instance(candidates, instance)
-    chat_id = _framework_message_chat_id(payload, candidates)
+    chat_id = _framework_message_chat_id(payload, [])
     # IDChat2 es la referencia compartida con WPF/SolidSET. Solo se genera un
     # UUID defensivo para notificaciones técnicas que no contienen chat.
     request_id = chat_id or str(uuid.uuid4())
-    _create_response_status(request_id, chat_id, len(candidates))
-    if candidates:
-        _schedule_auto_replies(candidates, request_id)
-    else:
-        _update_response_status(request_id, "completed", response_count=0)
-    if capture["errors"]:
-        _update_response_status(
+    _create_response_status(request_id, chat_id, 0)
+    try:
+        if settings.AGENT_RESPONSE_QUEUE_ENABLED:
+            await asyncio.to_thread(
+                _enqueue_auto_replies,
+                payload,
+                dict(instance),
+                request_id,
+                chat_id,
+            )
+        else:
+            capture = notification_listener.capture_realtime_payload(payload)
+            candidates = capture.get("auto_reply_candidates") or []
+            _attach_solidset_instance(candidates, instance)
+            _schedule_auto_replies(candidates, request_id)
+    except redis.RedisError as exc:
+        _update_response_status(request_id, "failed", error=str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "No se pudo encolar o auditar la solicitud.",
+                "requestId": request_id,
+                "error": str(exc),
+            },
+        ) from exc
+    try:
+        await asyncio.to_thread(
+            save_agent_response_audit,
             request_id,
-            "failed",
-            error=f"No se pudo indexar el mensaje: {capture['errors']} error(es).",
+            chat_id,
+            "queued",
+            0,
+            None,
+            payload,
+            None,
         )
-        return SendMessageResultDTO(
-            Result=2,  # UnexpectedException
-            Message=message,
-            Error=f"No se pudo indexar el mensaje en Qdrant: {capture['errors']} error(es).",
-            requestId=request_id,
-            status="failed",
-            statusUrl=f"/api/v1/agent/responses/{request_id}/status",
-        )
-    print(
-        f"📥 FrameworkMessage aprendido={capture['learned']} "
-        f"omitido={capture['skipped']} respuestas_programadas={len(candidates)}"
-    )
+    except psycopg.Error as exc:
+        # Redis Stream ya aceptó el trabajo. No se devuelve 503 porque el
+        # cliente podría duplicarlo; el worker reintentará el UPSERT terminal.
+        print(f"⚠️ Solicitud encolada sin auditoría inicial PostgreSQL: {exc}")
+    print(f"📥 FrameworkMessage encolado requestId={request_id}")
     return SendMessageResultDTO(
         Result=0,
         Message=message,
         Error=None,
         requestId=request_id,
-        status="queued" if candidates else "completed",
+        status="queued",
         statusUrl=f"/api/v1/agent/responses/{request_id}/status",
     )
 
@@ -3112,6 +3173,15 @@ def read_agent_response_status_by_chat(
     if data is None:
         raise HTTPException(status_code=404, detail="No existe estado para ese chatId.")
     return _localize_response_status(data, lang)
+
+
+@app.get("/api/v1/agent/responses/queue/status")
+def read_agent_response_queue_status() -> dict[str, Any]:
+    """Métricas operativas del Stream y sus workers."""
+    try:
+        return response_queue.stats()
+    except redis.RedisError as exc:
+        raise HTTPException(status_code=503, detail="Redis Stream no disponible.") from exc
 
 
 @app.get("/api/v1/agent/responses/{request_id}/status")

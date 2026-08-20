@@ -34,6 +34,77 @@ def ensure_solidset_agent_resource_schema() -> None:
             ''')
 
 
+def ensure_agent_response_audit_schema() -> None:
+    """Crea la auditoría durable de solicitudes y resultados del agente."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS public."SysAgentIAResponseAudit" (
+                    "RequestID" varchar(100) PRIMARY KEY,
+                    "IDChat2" varchar(100),
+                    "Status" varchar(30) NOT NULL,
+                    "Code" integer NOT NULL DEFAULT 0,
+                    "ResponseCount" integer NOT NULL DEFAULT 0,
+                    "RequestPayload" jsonb,
+                    "Result" jsonb,
+                    "Error" text,
+                    "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    "CompletedAt" timestamptz
+                );
+                CREATE INDEX IF NOT EXISTS "IX_SysAgentIAResponseAudit_IDChat2"
+                  ON public."SysAgentIAResponseAudit" ("IDChat2");
+                ALTER TABLE public."SysAgentIAResponseAudit"
+                  ADD COLUMN IF NOT EXISTS "RequestPayload" jsonb,
+                  ADD COLUMN IF NOT EXISTS "Result" jsonb;
+            ''')
+
+
+def save_agent_response_audit(
+    request_id: str,
+    chat_id: str,
+    status: str,
+    response_count: int = 0,
+    error: str | None = None,
+    request_payload: dict[str, Any] | None = None,
+    result: dict[str, Any] | None = None,
+) -> None:
+    codes = {
+        "queued": 0, "processing": 1, "searching": 2, "thinking": 3,
+        "sending": 4, "completed": 5, "failed": 6, "cancelled": 7,
+    }
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                INSERT INTO public."SysAgentIAResponseAudit" (
+                    "RequestID", "IDChat2", "Status", "Code", "ResponseCount",
+                    "Error", "RequestPayload", "Result"
+                ) VALUES (%s, NULLIF(%s, ''), %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                ON CONFLICT ("RequestID") DO UPDATE SET
+                    "IDChat2" = COALESCE(EXCLUDED."IDChat2", public."SysAgentIAResponseAudit"."IDChat2"),
+                    "Status" = EXCLUDED."Status",
+                    "Code" = EXCLUDED."Code",
+                    "ResponseCount" = EXCLUDED."ResponseCount",
+                    "Error" = EXCLUDED."Error",
+                    "RequestPayload" = COALESCE(EXCLUDED."RequestPayload", public."SysAgentIAResponseAudit"."RequestPayload"),
+                    "Result" = COALESCE(EXCLUDED."Result", public."SysAgentIAResponseAudit"."Result"),
+                    "UpdatedAt" = CURRENT_TIMESTAMP,
+                    "CompletedAt" = CASE
+                        WHEN EXCLUDED."Status" IN ('completed', 'failed', 'cancelled')
+                        THEN CURRENT_TIMESTAMP ELSE NULL END
+                ''',
+                (
+                    request_id, chat_id, status, codes.get(status, -1),
+                    response_count, error,
+                    __import__("json").dumps(request_payload, ensure_ascii=False, default=str)
+                    if request_payload is not None else None,
+                    __import__("json").dumps(result, ensure_ascii=False, default=str)
+                    if result is not None else None,
+                ),
+            )
+
+
 def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
     """Registra o actualiza por Code, BaseUrl o SourceIP sin crear duplicados."""
     with _postgres_connection() as connection:
