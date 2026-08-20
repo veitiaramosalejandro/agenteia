@@ -255,18 +255,18 @@ _response_status_lock = threading.Lock()
 _response_status_fallback: dict[str, dict[str, Any]] = {}
 
 _RESPONSE_DISPLAY_MESSAGES = {
-    "queued": {"es": "Esperando…", "en": "Waiting…", "pt": "Aguardando…"},
-    "processing": {"es": "Procesando…", "en": "Processing…", "pt": "Processando…"},
+    "queued": {"es": "Esperando…", "en": "Waiting…", "pt": "A aguardar…"},
+    "processing": {"es": "Procesando…", "en": "Processing…", "pt": "A processar…"},
     "searching": {
         "es": "Buscando información…",
         "en": "Searching for information…",
-        "pt": "Procurando informações…",
+        "pt": "A pesquisar informação…",
     },
-    "thinking": {"es": "Pensando…", "en": "Thinking…", "pt": "Pensando…"},
+    "thinking": {"es": "Pensando…", "en": "Thinking…", "pt": "A pensar…"},
     "sending": {
         "es": "Enviando respuesta…",
         "en": "Sending response…",
-        "pt": "Enviando resposta…",
+        "pt": "A enviar a resposta…",
     },
     "completed": {"es": "Respondido", "en": "Answered", "pt": "Respondido"},
     "failed": {
@@ -298,7 +298,7 @@ def _response_display_messages(status_name: str) -> dict[str, str]:
 
 def _localize_response_status(data: dict[str, Any], language: str) -> dict[str, Any]:
     localized = json.loads(json.dumps(data, ensure_ascii=False))
-    lang = language if language in {"es", "en", "pt"} else "es"
+    lang = language if language in {"es", "en", "pt"} else "pt"
     messages = _response_display_messages(str(localized.get("status") or ""))
     localized["code"] = _RESPONSE_STATUS_CODES.get(
         str(localized.get("status") or ""), -1
@@ -390,7 +390,7 @@ def _create_response_status(request_id: str, chat_id: str, candidate_count: int)
         "chatId": chat_id or None,
         "status": "queued",
         "code": _RESPONSE_STATUS_CODES["queued"],
-        "displayMessage": _RESPONSE_DISPLAY_MESSAGES["queued"]["es"],
+        "displayMessage": _RESPONSE_DISPLAY_MESSAGES["queued"]["pt"],
         "displayMessages": _response_display_messages("queued"),
         "completed": False,
         "createdAt": now,
@@ -422,7 +422,7 @@ def _update_response_status(
         return
     now = _utc_status_timestamp()
     display_messages = _response_display_messages(status_name)
-    display = display_messages["es"]
+    display = display_messages["pt"]
     if agent_resource_id:
         agents = data.setdefault("agents", [])
         agent_state = next(
@@ -1710,7 +1710,7 @@ def _run_startup_connectivity_checks() -> dict:
 
         def probe_configured_url(url: str, path: str, default_port: int) -> dict:
             if not url:
-                return {"ok": False, "error": "url_no_configurada", "url": url}
+                return {"ok": False, "error": "url_nao_configurado", "url": url}
             candidates = [url.rstrip("/")]
             parsed = urlparse(url)
             if (
@@ -1752,7 +1752,7 @@ def _run_startup_connectivity_checks() -> dict:
             "notification": (
                 probe_configured_url(notification_url, "/api/Request", 443)
                 if notification_url
-                else {"ok": True, "skipped": True, "error": "NotificationUrl_no_configurada"}
+                else {"ok": True, "skipped": True, "error": "NotificationUrl_nao_configurado"}
             ),
         })
     checks["solidset_instances"] = {
@@ -1770,7 +1770,7 @@ def _run_startup_connectivity_checks() -> dict:
     pg_host, pg_port = _extract_host_port_from_url(db_url, 5432)
     checks["postgres_timescaledb"] = {
         "configured": bool(db_url),
-        "tcp": _probe_tcp(pg_host, pg_port) if db_url else {"ok": False, "error": "DB_URL_no_configurada"},
+        "tcp": _probe_tcp(pg_host, pg_port) if db_url else {"ok": False, "error": "DB_URL_nao_configurado"},
     }
 
     all_ok = True
@@ -2664,9 +2664,27 @@ def detect_offensive_content(text: str) -> bool:
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Maneja errores de validación de peticiones."""
     print("❌ Error de validación en la petición recibida:", exc.errors())
+    translated_errors = []
+    validation_messages = {
+        "missing": "Campo obrigatório.",
+        "string_type": "O valor deve ser uma cadeia de caracteres.",
+        "int_type": "O valor deve ser um número inteiro.",
+        "bool_type": "O valor deve ser verdadeiro ou falso.",
+        "uuid_parsing": "O valor deve ser um UUID válido.",
+        "url_parsing": "O valor deve ser um URL válido.",
+        "json_invalid": "O corpo do pedido contém JSON inválido.",
+    }
+    for error in exc.errors():
+        translated = dict(error)
+        error_type = str(error.get("type") or "")
+        translated["msg"] = validation_messages.get(
+            error_type,
+            "O valor fornecido não é válido para este campo.",
+        )
+        translated_errors.append(translated)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors()},
+        content={"detail": translated_errors},
     )
 
 @app.exception_handler(HTTPException)
@@ -2693,7 +2711,7 @@ def sync_solidset_workrooms() -> SysWorkRoomIngestResponse:
         print(f"❌ No se pudo sincronizar SysWorkRoom: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudieron sincronizar los canales de SolidSET.",
+            detail="Não foi possível sincronizar os canais do SolidSET.",
         ) from exc
     return SysWorkRoomIngestResponse(status="synchronized", **result)
 
@@ -2710,7 +2728,7 @@ def sync_solidset_logins() -> SysLoginIngestResponse:
         print(f"❌ No se pudo sincronizar SysLogin: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudieron sincronizar las cuentas de SolidSET.",
+            detail="Não foi possível sincronizar as contas do SolidSET.",
         ) from exc
     return SysLoginIngestResponse(status="synchronized", **result)
 
@@ -2733,9 +2751,9 @@ async def create_agent_knowledge(
     try:
         saved = await asyncio.to_thread(save_agent_knowledge, payload)
     except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+        raise HTTPException(status_code=404, detail="O agente indicado não existe.") from exc
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo guardar el conocimiento.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível guardar o conhecimento.") from exc
     indexed = await asyncio.to_thread(agent.sistema_aprendizaje.aprender_conocimiento_agente, saved)
     return AgentKnowledgeResponse(**saved, indexed=indexed)
 
@@ -2759,7 +2777,7 @@ async def set_agent_workroom_configuration(
             response_order=request.response_order,
         )
     except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+        raise HTTPException(status_code=404, detail="O agente indicado não existe.") from exc
     return AgentWorkRoomConfigurationResponse(**saved)
 
 @app.post(
@@ -2772,28 +2790,28 @@ async def handle_multi_agent_dialogue(
     """Ejecuta de forma independiente los agentes seleccionados por SolidSET."""
     selected = list(dict.fromkeys(request.SelectedAgentResourceIds))
     if not selected:
-        raise HTTPException(status_code=422, detail="Selecciona al menos un agente.")
+        raise HTTPException(status_code=422, detail="Selecione, pelo menos, um agente.")
     if len(selected) > 10:
-        raise HTTPException(status_code=422, detail="Se permiten como máximo 10 agentes por mensaje.")
+        raise HTTPException(status_code=422, detail="É permitido um máximo de 10 agentes por mensagem.")
 
     solidset_instance = None
     if request.SendToSolidSET:
         if not str(request.SolidSETInstanceCode or "").strip():
             raise HTTPException(
                 status_code=422,
-                detail="SolidSETInstanceCode es obligatorio cuando SendToSolidSET=true.",
+                detail="SolidSETInstanceCode é obrigatório quando SendToSolidSET=true.",
             )
         solidset_instance = get_solidset_instance(
             code=str(request.SolidSETInstanceCode).strip()
         )
         if solidset_instance is None:
-            raise HTTPException(status_code=404, detail="La instancia SolidSET no existe o está inactiva.")
+            raise HTTPException(status_code=404, detail="A instância SolidSET não existe ou está inativa.")
 
     configured_agents = get_active_agents_for_workroom(request.IDWorkRoom, selected)
     if not configured_agents:
         raise HTTPException(
             status_code=404,
-            detail="Ningún agente seleccionado está activo y asignado al canal.",
+            detail="Nenhum dos agentes selecionados está ativo e atribuído ao canal.",
         )
 
     conversation_id = request.IDSession or uuid.uuid4()
@@ -2805,8 +2823,8 @@ async def handle_multi_agent_dialogue(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "El recurso humano seleccionado no tiene IDAgentResource "
-                    "sincronizado desde dbo.SysResource2Agent."
+                    "O recurso humano selecionado não tem um IDAgentResource "
+                    "sincronizado a partir de dbo.SysResource2Agent."
                 ),
             )
         agent_name = _agent_visible_name(configured_agent)
@@ -2898,7 +2916,7 @@ def sync_solidset_chat_resources() -> SysChatIAResourceIngestResponse:
         print(f"❌ No se pudo sincronizar SysChatIAResource: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudieron sincronizar las relaciones de chat.",
+            detail="Não foi possível sincronizar as relações de chat.",
         ) from exc
     return SysChatIAResourceIngestResponse(status="synchronized", **result)
 
@@ -2914,7 +2932,7 @@ def sync_solidset_resources() -> SysResourceIAIngestResponse:
         print(f"❌ No se pudo sincronizar SysResourceIA: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudieron sincronizar los recursos entre SQL Server y PostgreSQL.",
+            detail="Não foi possível sincronizar os recursos entre o SQL Server e o PostgreSQL.",
         ) from exc
     return SysResourceIAIngestResponse(status="synchronized", **result)
 
@@ -2938,7 +2956,7 @@ def save_solidset_chat_configuration(
         print(f"❌ No se pudo guardar la configuración SysResourceIA: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudo guardar la configuración en PostgreSQL.",
+            detail="Não foi possível guardar a configuração no PostgreSQL.",
         ) from exc
 
     return SysResourceIAConfigurationResponse(
@@ -2963,7 +2981,7 @@ def register_solidset_instance(
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"{field} debe ser una URL HTTP(S) absoluta.",
+                    detail=f"{field} deve ser um URL HTTP(S) absoluto.",
                 )
         payload[field] = value or None
     payload["Code"] = payload["Code"].strip()
@@ -2976,12 +2994,12 @@ def register_solidset_instance(
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="SourceIP ya está asignada a otra instancia SolidSET.",
+            detail="SourceIP já está atribuído a outra instância SolidSET.",
         ) from exc
     except psycopg.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudo guardar la instancia SolidSET en PostgreSQL.",
+            detail="Não foi possível guardar a instância SolidSET no PostgreSQL.",
         ) from exc
     operation = str(saved.pop("_operation", "saved"))
     return SolidSETInstanceConfigurationResponse(
@@ -3001,11 +3019,11 @@ def save_llm_provider(
     """Registra/actualiza un proveedor global o específico de un agente."""
     payload = configuration.model_dump()
     if code.strip().lower() != payload["Code"].strip().lower():
-        raise HTTPException(status_code=422, detail="El Code de la ruta y del cuerpo deben coincidir.")
+        raise HTTPException(status_code=422, detail="O Code da rota e do corpo devem coincidir.")
     provider = payload["Provider"].strip().lower().replace("-", "_")
     if provider not in ProviderRegistry.names():
         raise HTTPException(status_code=422, detail={
-            "message": "Proveedor LLM no soportado.",
+            "message": "Fornecedor LLM não suportado.",
             "available": list(ProviderRegistry.names()),
         })
     payload["Code"] = payload["Code"].strip()
@@ -3017,14 +3035,14 @@ def save_llm_provider(
         if value:
             parsed = urlparse(value)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise HTTPException(status_code=422, detail=f"{field} debe ser una URL HTTP(S) absoluta.")
+                raise HTTPException(status_code=422, detail=f"{field} deve ser um URL HTTP(S) absoluto.")
         payload[field] = value or None
     if provider == "ollama" and not payload.get("BaseUrl"):
         payload["BaseUrl"] = settings.OLLAMA_BASE_URL.rstrip("/")
     if provider in {"openai_compatible", "local_openai"} and not payload.get("BaseUrl"):
-        raise HTTPException(status_code=422, detail="BaseUrl es obligatoria para un proveedor OpenAI compatible.")
+        raise HTTPException(status_code=422, detail="BaseUrl é obrigatório para um fornecedor compatível com OpenAI.")
     if provider == "azure_openai" and not (payload.get("AzureEndpoint") or payload.get("BaseUrl")):
-        raise HTTPException(status_code=422, detail="AzureEndpoint o BaseUrl es obligatorio para Azure OpenAI.")
+        raise HTTPException(status_code=422, detail="AzureEndpoint ou BaseUrl é obrigatório para Azure OpenAI.")
     if payload.get("IDResource") is not None:
         payload["IsDefault"] = False
 
@@ -3040,11 +3058,11 @@ def save_llm_provider(
         ))
         saved = save_llm_provider_configuration(payload)
     except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="El IDResource indicado no existe.") from exc
+        raise HTTPException(status_code=404, detail="O IDResource indicado não existe.") from exc
     except (ValueError, RuntimeError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail="A configuração do fornecedor não é válida.") from exc
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo guardar el proveedor en PostgreSQL.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível guardar o fornecedor no PostgreSQL.") from exc
     agent.clear_llm_configuration_cache()
     return LLMProviderConfigurationResponse(
         status="saved", configuration=LLMProviderConfigurationStored(**saved)
@@ -3060,7 +3078,7 @@ def get_llm_providers() -> list[LLMProviderConfigurationStored]:
     try:
         return [LLMProviderConfigurationStored(**row) for row in list_llm_provider_configurations()]
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudieron consultar los proveedores.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível consultar os fornecedores.") from exc
 
 
 @app.delete("/api/v1/agent/llm/providers/{code}")
@@ -3069,9 +3087,9 @@ def deactivate_llm_provider(code: str) -> dict[str, str]:
     try:
         changed = deactivate_llm_provider_configuration(code.strip())
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo desactivar el proveedor.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível desativar o fornecedor.") from exc
     if not changed:
-        raise HTTPException(status_code=404, detail="La configuración no existe.")
+        raise HTTPException(status_code=404, detail="A configuração não existe.")
     agent.clear_llm_configuration_cache()
     return {"status": "deactivated", "code": code.strip()}
 
@@ -3091,13 +3109,13 @@ def configure_agent_model(
     try:
         saved = save_agent_model_configuration(agent_resource_id, payload)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail="A configuração solicitada não foi encontrada.") from exc
     except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+        raise HTTPException(status_code=404, detail="O agente indicado não existe.") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail="A configuração do modelo não é válida.") from exc
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo asignar el modelo al agente.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível atribuir o modelo ao agente.") from exc
     agent.clear_llm_configuration_cache()
     return AgentIAModelStored(**saved)
 
@@ -3110,9 +3128,9 @@ def read_agent_model(agent_resource_id: uuid.UUID) -> dict[str, Any]:
     try:
         saved = get_agent_model_configurations(agent_resource_id)
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo consultar el modelo del agente.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível consultar o modelo do agente.") from exc
     if not saved:
-        raise HTTPException(status_code=404, detail="El agente no tiene SysAgentIAModel activo.")
+        raise HTTPException(status_code=404, detail="O agente não tem nenhum SysAgentIAModel ativo.")
     return {"IDResource": agent_resource_id, "models": saved}
 
 
@@ -3134,11 +3152,11 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
     try:
         instance = _resolve_request_solidset_instance(request)
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo resolver la instancia SolidSET.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível determinar a instância SolidSET.") from exc
     if instance is None:
         raise HTTPException(
             status_code=400,
-            detail="Instancia SolidSET desconocida. Envía X-SolidSET-Instance o registra la IP origen.",
+            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance ou registe o endereço IP de origem.",
         )
     payload["_SolidSETInstanceID"] = str(instance["ID"])
     chat_id = _framework_message_chat_id(payload, [])
@@ -3165,7 +3183,7 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
         raise HTTPException(
             status_code=503,
             detail={
-                "message": "No se pudo encolar o auditar la solicitud.",
+                "message": "Não foi possível colocar o pedido na fila nem registá-lo para auditoria.",
                 "requestId": request_id,
                 "error": str(exc),
             },
@@ -3198,12 +3216,12 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
 
 @app.get("/api/v1/agent/responses/status")
 def read_agent_response_status_by_chat(
-    chatId: str = Query(...), lang: str = Query("es", pattern="^(es|en|pt)$")
+    chatId: str = Query(...), lang: str = Query("pt", pattern="^(es|en|pt)$")
 ) -> dict[str, Any]:
     """Devuelve la solicitud más reciente asociada al IDChat2 indicado."""
     data = _load_response_status_by_chat(str(chatId).strip())
     if data is None:
-        raise HTTPException(status_code=404, detail="No existe estado para ese chatId.")
+        raise HTTPException(status_code=404, detail="Não existe um estado para esse chatId.")
     return _localize_response_status(data, lang)
 
 
@@ -3213,7 +3231,7 @@ def read_agent_response_queue_status() -> dict[str, Any]:
     try:
         return response_queue.stats()
     except redis.RedisError as exc:
-        raise HTTPException(status_code=503, detail="Redis Stream no disponible.") from exc
+        raise HTTPException(status_code=503, detail="O Redis Stream não está disponível.") from exc
 
 
 class HistoricalIngestionStartRequest(BaseModel):
@@ -3230,7 +3248,7 @@ def _require_historical_admin(
 ) -> None:
     configured = settings.HISTORICAL_INGESTION_ADMIN_KEY.strip()
     if not configured:
-        raise HTTPException(status_code=503, detail="Configura HISTORICAL_INGESTION_ADMIN_KEY.")
+        raise HTTPException(status_code=503, detail="Configure HISTORICAL_INGESTION_ADMIN_KEY.")
     if x_agent_admin_key != configured:
         raise HTTPException(status_code=401, detail="Credencial administrativa inválida.")
 
@@ -3250,7 +3268,7 @@ async def start_historical_ingestion(
         )
         instances = [instance for instance in instances if instance]
         if not instances:
-            raise HTTPException(status_code=404, detail="No hay instancias SolidSET activas.")
+            raise HTTPException(status_code=404, detail="Não existem instâncias SolidSET ativas.")
         historical_queue.set_paused(False)
         results = [
             await asyncio.to_thread(enqueue_next_batch, instance, configuration.dryRun)
@@ -3258,7 +3276,7 @@ async def start_historical_ingestion(
         ]
         return {"status":"accepted", "dryRun":configuration.dryRun, "instances":results}
     except (pymssql.Error, psycopg.Error, redis.RedisError) as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail="Não foi possível iniciar o lote de ingestão histórica.") from exc
 
 
 @app.post(
@@ -3288,7 +3306,7 @@ def approve_historical_dry_run(
 ) -> dict[str, Any]:
     instance = get_solidset_instance(code=instanceCode, source_ip=None)
     if not instance:
-        raise HTTPException(status_code=404, detail="Instancia no encontrada.")
+        raise HTTPException(status_code=404, detail="Instância não encontrada.")
     cursor = get_historical_cursor(str(instance["ID"]))
     set_historical_cursor(
         str(instance["ID"]),
@@ -3323,7 +3341,7 @@ def delete_historical_message(
     id_chat2: int, instanceCode: str = Query(...)
 ) -> dict[str, Any]:
     instance = get_solidset_instance(code=instanceCode, source_ip=None)
-    if not instance: raise HTTPException(status_code=404, detail="Instancia no encontrada.")
+    if not instance: raise HTTPException(status_code=404, detail="Instância não encontrada.")
     points = historical_points(str(instance["ID"]), id_chat2)
     if points:
         QdrantClient(url=settings.VECTOR_DB_URL).delete(
@@ -3336,12 +3354,12 @@ def delete_historical_message(
 
 @app.get("/api/v1/agent/responses/{request_id}/status")
 def read_agent_response_status(
-    request_id: str, lang: str = Query("es", pattern="^(es|en|pt)$")
+    request_id: str, lang: str = Query("pt", pattern="^(es|en|pt)$")
 ) -> dict[str, Any]:
     """Devuelve el estado de procesamiento de una respuesta automática."""
     data = _load_response_status(request_id.strip())
     if data is None:
-        raise HTTPException(status_code=404, detail="La solicitud no existe o expiró.")
+        raise HTTPException(status_code=404, detail="O pedido não existe ou expirou.")
     return _localize_response_status(data, lang)
 
 
@@ -3397,14 +3415,14 @@ async def preview_framework_notification(
         instance = _resolve_request_solidset_instance(request)
     except psycopg.Error as exc:
         raise HTTPException(
-            status_code=503, detail="No se pudo resolver la instancia SolidSET."
+            status_code=503, detail="Não foi possível determinar a instância SolidSET."
         ) from exc
     if instance is None:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Instancia SolidSET desconocida. Envía X-SolidSET-Instance "
-                "o registra la IP origen."
+                "Instância SolidSET desconhecida. Envie X-SolidSET-Instance "
+                "ou registe o endereço IP de origem."
             ),
         )
     payload["_SolidSETInstanceID"] = str(instance["ID"])
@@ -3414,7 +3432,7 @@ async def preview_framework_notification(
     if capture["errors"]:
         raise HTTPException(
             status_code=503,
-            detail=f"No se pudo procesar el mensaje: {capture['errors']} error(es).",
+            detail=f"Não foi possível processar a mensagem: {capture['errors']} erro(s).",
         )
     flat_payloads = await _process_auto_replies(candidates, preview_only=True)
     logical_payloads = [
@@ -3441,11 +3459,11 @@ async def capture_and_forward_framework_message(request: Request):
     try:
         instance = _resolve_request_solidset_instance(request)
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo resolver la instancia SolidSET.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível determinar a instância SolidSET.") from exc
     if instance is None:
         raise HTTPException(
             status_code=400,
-            detail="Instancia SolidSET desconocida. Envía X-SolidSET-Instance o registra la IP origen.",
+            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance ou registe o endereço IP de origem.",
         )
     if isinstance(payload, dict):
         payload["_SolidSETInstanceID"] = str(instance["ID"])
@@ -3456,7 +3474,7 @@ async def capture_and_forward_framework_message(request: Request):
     upstream_base = str(instance.get("NotificationUrl") or "").rstrip("/")
     if not upstream_base:
         raise HTTPException(status_code=503, detail={
-            "message": "La instancia no tiene NotificationUrl configurada para reenviar el mensaje.",
+            "message": "A instância não tem NotificationUrl configurado para reencaminhar a mensagem.",
             "capture": capture,
         })
 
@@ -3481,7 +3499,7 @@ async def capture_and_forward_framework_message(request: Request):
             )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={
-            "message": f"El mensaje fue capturado, pero no pudo reenviarse a SolidSET: {exc}",
+            "message": "A mensagem foi capturada, mas não foi possível reencaminhá-la para o SolidSET.",
             "capture": capture,
         }) from exc
 
@@ -3526,7 +3544,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
     if message.RawMessage is None and _get_payload_value(chat_payload, "rawMessage", "RawMessage") is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="RawMessage o Chat.rawMessage es obligatorio para procesar un FrameworkMessage en /dialogue.",
+            detail="RawMessage ou Chat.rawMessage é obrigatório para processar um FrameworkMessage em /dialogue.",
         )
 
     req = _framework_message_to_dialogue(message)
@@ -3544,7 +3562,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="⚠️ Por favor, escribe un mensaje para poder ayudarte."
+                agent_response="Por favor, escreva uma mensagem para que eu possa ajudar."
             )
         
         # Validar largo del mensaje (prevenir abusos)
@@ -3552,7 +3570,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message[:100] + "...",
-                agent_response="⚠️ El mensaje es demasiado largo. Por favor, reduce tu consulta a menos de 5000 caracteres."
+                agent_response="A mensagem é demasiado longa. Reduza o pedido para menos de 5000 caracteres."
             )
         
         # Detectar inyección de prompts
@@ -3560,7 +3578,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="🚫 Lo siento, no puedo procesar esa solicitud por políticas de seguridad. Si necesitas ayuda con tu consulta técnica, reformúlala de manera clara y directa."
+                agent_response="Não posso processar este pedido devido às políticas de segurança. Reformule o pedido técnico de forma clara e direta."
             )
         
         # Detectar inyección SQL
@@ -3568,7 +3586,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="🔒 He detectado un intento de inyección SQL. Solo puedo ejecutar consultas de lectura (SELECT) seguras. ¿Qué información necesitas consultar? Por favor, especifica qué datos quieres ver."
+                agent_response="Foi detetada uma tentativa de injeção SQL. Apenas posso executar consultas de leitura (SELECT) seguras. Indique os dados que pretende consultar."
             )
         
         # Detectar contenido ofensivo
@@ -3576,7 +3594,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="🤖 Por favor, mantén un tono respetuoso en la conversación. Estoy aquí para ayudarte con tus consultas técnicas sobre maquinaria y sistemas. ¿En qué puedo asistirte?"
+                agent_response="Mantenha um tom respeitador na conversa. Estou disponível para ajudar com questões técnicas sobre maquinaria e sistemas."
             )
 
         cached_response_text = _get_cached_dialogue_response(cache_key)
@@ -3609,7 +3627,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="⏳ El agente está atendiendo varias conversaciones en este momento. Intenta nuevamente en unos segundos."
+                agent_response="O agente está a processar várias conversas neste momento. Tente novamente dentro de alguns segundos."
             )
         
         # Registrar inicio del procesamiento
@@ -3672,7 +3690,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="⏱️ La consulta está tomando más tiempo de lo esperado. Intenta de nuevo en unos segundos para mantener una respuesta ágil del sistema."
+                agent_response="O pedido está a demorar mais do que o esperado. Tente novamente dentro de alguns segundos."
             )
 
         if "error" in error_holder:
@@ -3717,7 +3735,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
         return ChatConversationResponse(
             session_id=req.session_id,
             user_message=req.message,
-            agent_response=f"⚠️ Lo siento, ocurrió un error al procesar tu consulta. Por favor, intenta nuevamente o contacta al administrador del sistema. (Error: {str(e)[:100]})"
+            agent_response="Ocorreu um erro ao processar o pedido. Tente novamente ou contacte o administrador do sistema."
         )
     finally:
         if dialogue_started:
@@ -3763,13 +3781,13 @@ def submit_feedback(req: UserFeedbackRequest):
             status="ok" if learned else "warning",
             learned=learned,
             profile_updated=profile_updated,
-            reaction_signal=reaction.get("signal", "sin_senal"),
+            reaction_signal=reaction.get("signal", "sem_sinal"),
             topics=reaction.get("topics", []),
         )
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error registrando feedback del usuario: {str(e)}"
+            detail="Não foi possível registar o feedback do utilizador."
         )
 
 
@@ -3788,12 +3806,12 @@ def capture_solidset_agent_reaction(
     except (pymssql.Error, psycopg.Error) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudo resolver el mensaje reaccionado.",
+            detail="Não foi possível determinar a mensagem que recebeu a reação.",
         ) from exc
     if message is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="El chat no existe o no fue emitido por un agente IA registrado.",
+            detail="O chat não existe ou não foi enviado por um agente de IA registado.",
         )
 
     channel_id = req.IDChannel
@@ -3817,7 +3835,7 @@ def capture_solidset_agent_reaction(
     except psycopg.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudo persistir la reacción del agente.",
+            detail="Não foi possível guardar a reação ao agente.",
         ) from exc
 
     learned = False
@@ -3873,7 +3891,7 @@ def get_audio_file(file: str):
             media_type="audio/mpeg",
             filename=file
         )
-    raise HTTPException(status_code=404, detail="Archivo de audio no encontrado.")
+    raise HTTPException(status_code=404, detail="Ficheiro de áudio não encontrado.")
 
 
 @app.get("/api/v1/agent/history/{session_id}")
@@ -3932,7 +3950,7 @@ def get_chat_history(
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error recuperando historial: {str(e)}"
+            detail="Não foi possível obter o histórico."
         )
 
 
@@ -3947,12 +3965,12 @@ def clear_chat_history(session_id: str):
         return {
             "session_id": session_id, 
             "status": "cleared",
-            "message": "Historial eliminado correctamente"
+            "message": "Histórico eliminado com sucesso"
         }
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error eliminando historial: {str(e)}"
+            detail="Não foi possível eliminar o histórico."
         )
 
 
@@ -4047,7 +4065,7 @@ def get_agent_evaluation_summary():
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error construyendo resumen de evaluación: {str(e)}"
+            detail="Não foi possível criar o resumo da avaliação."
         )
 
 
@@ -4067,7 +4085,7 @@ def get_recent_notification_messages(limit: int = Query(30, ge=1, le=200)):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error obteniendo mensajes recientes de notification listener: {str(e)}"
+            detail="Não foi possível obter as mensagens recentes do serviço de notificações."
         )
 
 
@@ -4095,12 +4113,12 @@ def get_user_context(user_id: str):
             return {
                 "user_id": user_id,
                 "dynamic_profile": perfil_dinamico,
-                "error": "Usuario no encontrado o sin contexto disponible"
+                "error": "Utilizador não encontrado ou sem contexto disponível"
             }
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error obteniendo contexto del usuario: {str(e)}"
+            detail="Não foi possível obter o contexto do utilizador."
         )
 
 
@@ -4117,7 +4135,7 @@ def get_sql_retry_stats():
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error obteniendo métricas SQL: {str(e)}"
+            detail="Não foi possível obter as métricas de SQL."
         )
 
 
@@ -4131,14 +4149,14 @@ def reset_sql_retry_stats():
         current = agent.sistema_aprendizaje.get_sql_retry_stats()
         return {
             "status": "ok",
-            "message": "sql retry stats reset",
+            "message": "Estatísticas de novas tentativas de SQL repostas com sucesso",
             "previous": previous,
             "current": current,
         }
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error reseteando métricas SQL: {str(e)}"
+            detail="Não foi possível repor as métricas de SQL."
         )
 
 
@@ -4161,7 +4179,7 @@ def test_solidset_connectivity():
     if not base_url:
         return {
             "status": "error",
-            "message": "SOLIDSET_RESTAPI_BASE_URL no configurada en el entorno",
+            "message": "SOLIDSET_RESTAPI_BASE_URL não está configurado no ambiente",
             "configured": False
         }
     
@@ -4206,16 +4224,16 @@ def test_solidset_connectivity():
     
     if heartbeat_ok:
         results["overall_status"] = "healthy"
-        results["message"] = "✅ Comunicación exitosa con SolidSET API (Heartbeat OK)"
+        results["message"] = "Comunicação com a API SolidSET estabelecida com sucesso (Heartbeat OK)"
     elif swagger_ok:
         results["overall_status"] = "partial"
-        results["message"] = "⚠️ SolidSET API accesible, pero Heartbeat no responde correctamente"
+        results["message"] = "A API SolidSET está acessível, mas o Heartbeat não responde corretamente"
     elif openapi_ok:
         results["overall_status"] = "partial"
-        results["message"] = "⚠️ SolidSET API OpenAPI accesible, pero servicios principales no responden"
+        results["message"] = "O OpenAPI da API SolidSET está acessível, mas os serviços principais não respondem"
     else:
         results["overall_status"] = "unreachable"
-        results["message"] = "❌ No se pudo establecer comunicación con SolidSET API"
+        results["message"] = "Não foi possível estabelecer comunicação com a API SolidSET"
     
     return results
 
@@ -4246,7 +4264,7 @@ def test_all_connectivity():
     else:
         results["services"]["solidset_restapi"] = {
             "configured": False,
-            "error": "SOLIDSET_RESTAPI_BASE_URL no configurada"
+            "error": "SOLIDSET_RESTAPI_BASE_URL não está configurado"
         }
     
     # Test Ollama

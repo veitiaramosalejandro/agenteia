@@ -1484,3 +1484,9 @@ y agrupa las operaciones mediante etiquetas OpenAPI estables:
 
 La clasificación solo modifica la presentación y documentación OpenAPI; no
 cambia las URLs, cuerpos, respuestas ni comportamiento de los endpoints.
+
+Los mensajes humanos devueltos por la API (`detail`, `message`, errores de
+validación y diagnósticos) utilizan portugués de Portugal. Los códigos técnicos
+consumidos por clientes (`queued`, `processing`, `completed`, `failed`, etc.)
+se mantienen estables para no romper la integración con WPF. El texto generado
+por el agente conserva el idioma solicitado por el usuario.
