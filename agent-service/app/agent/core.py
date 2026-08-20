@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 import uuid
+import threading
 from urllib import error as urlerror
 from urllib.request import urlopen
 from typing import Optional, List, Dict, Any
@@ -9,7 +10,6 @@ from datetime import datetime
 
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
-from langchain_ollama import ChatOllama
 
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.identity import AgentIdentityService
@@ -42,6 +42,8 @@ from app.agent.tools import (
     #solidset_vehicle_info,
 )
 from app.config import settings
+from app.llm import create_chat_model, provider_config_from_record, provider_config_from_settings
+from app.connectors.db_client import get_agent_model_configuration, get_llm_provider_configuration
 from app.system.learning import SistemaAprendizaje
 
 
@@ -57,21 +59,10 @@ class MachiningAgent:
     """
     
     def __init__(self):
-        model_name = (settings.MODEL_NAME or "").strip() or "qwen2.5:7b"
-
-        # Configuración del LLM
-        self.llm = ChatOllama(
-            base_url=settings.OLLAMA_BASE_URL,
-            model=model_name,
-            temperature=0.5,
-            # Evita que una respuesta ordinaria monopolice el runner durante
-            # varios minutos. Puede ampliarse puntualmente desde el entorno.
-            num_predict=settings.LLM_MAX_OUTPUT_TOKENS,
-            top_p=0.9,
-            repeat_penalty=1.2,
-            client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
-            async_client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
-        )
+        self.llm_provider_config = provider_config_from_settings(settings)
+        self.llm = create_chat_model(self.llm_provider_config)
+        self._llm_cache: dict[tuple, tuple[Any, Any, Any]] = {}
+        self._llm_cache_lock = threading.Lock()
         
         # Mapa de herramientas disponibles
         self.tools_map = {
@@ -118,6 +109,35 @@ class MachiningAgent:
         self.user_context_cache = {}
         self.cache_ttl = 300  # 5 minutos
         self.web_knowledge_cache: Dict[str, tuple[datetime, str]] = {}
+
+    def clear_llm_configuration_cache(self) -> None:
+        """Fuerza que la siguiente petición vuelva a leer PostgreSQL."""
+        with self._llm_cache_lock:
+            self._llm_cache.clear()
+
+    def get_llm_for_metadata(self, metadata: Optional[dict[str, Any]] = None):
+        """Obtiene modelo/configuración por agente, con fallback seguro al entorno."""
+        resource_id = str((metadata or {}).get("agent_resource_id") or "").strip() or None
+        capability = str((metadata or {}).get("model_capability") or "general").strip()
+        try:
+            record = get_llm_provider_configuration(resource_id, capability)
+        except Exception as exc:
+            print(f"⚠️ No se pudo resolver proveedor LLM en PostgreSQL: {exc}")
+            return self.llm, self.llm_with_tools, self.llm_provider_config
+        if not record:
+            return self.llm, self.llm_with_tools, self.llm_provider_config
+        config = provider_config_from_record(record)
+        key = (
+            str(record.get("ID")), record.get("UpdatedAt"), capability, config.provider, config.model,
+            config.base_url, config.temperature, config.max_output_tokens,
+        )
+        with self._llm_cache_lock:
+            cached = self._llm_cache.get(key)
+            if cached is None:
+                model = create_chat_model(config)
+                cached = (model, model.bind_tools(list(self.tools_map.values())), config)
+                self._llm_cache = {key: cached}
+            return cached
 
     def _is_llm_connection_error(self, exc: Exception) -> bool:
         """Detecta fallos típicos de conexión al endpoint del LLM/Ollama."""
@@ -175,12 +195,17 @@ class MachiningAgent:
 
     def _build_llm_connection_error_message(self) -> str:
         """Genera mensaje de error claro cuando el LLM no está alcanzable."""
-        probe = self._probe_ollama_tags()
+        provider = self.llm_provider_config.provider
+        if provider.strip().lower().replace("-", "_") == "ollama":
+            probe = self._probe_ollama_tags()
+        else:
+            probe = "comprueba endpoint, credenciales y disponibilidad del proveedor"
         return (
             "⚠️ No pude conectar con el modelo LLM en este momento. "
-            f"URL configurada: {settings.OLLAMA_BASE_URL}. "
+            f"Proveedor: {provider}; modelo: {self.llm_provider_config.model}; "
+            f"URL configurada: {self.llm_provider_config.base_url or 'predeterminada'}. "
             f"Diagnóstico rápido: {probe}. "
-            "Verifica que Ollama esté encendido y que la URL/puerto sean correctos."
+            "Verifica que el proveedor esté disponible y correctamente configurado."
         )
 
     def _is_last_chat_message_intent(self, user_text: str) -> bool:
@@ -1506,6 +1531,18 @@ class MachiningAgent:
         metadata_identity = message_metadata or {}
         agent_resource_id = str(metadata_identity.get("agent_resource_id") or "").strip()
         agent_name = str(metadata_identity.get("agent_name") or agent_resource_id).strip()
+        try:
+            agent_model_policy = (
+                get_agent_model_configuration(agent_resource_id) if agent_resource_id else None
+            )
+        except Exception as exc:
+            agent_model_policy = None
+            print(f"⚠️ No se pudo leer la política SysAgentIAModel: {exc}")
+        training_enabled = not agent_model_policy or agent_model_policy.get("TrainingMode") != "disabled"
+        learn_from_system = not agent_model_policy or bool(agent_model_policy.get("LearnFromSystem", True))
+        learn_from_reactions = not agent_model_policy or bool(agent_model_policy.get("LearnFromReactions", True))
+        if not learn_from_reactions:
+            metadata_identity["agent_reinforcement"] = ""
         agent_private_knowledge = str(metadata_identity.get("agent_knowledge") or "").strip()
         agent_reinforcement = str(
             metadata_identity.get("agent_reinforcement") or ""
@@ -1746,7 +1783,7 @@ class MachiningAgent:
         # 4.2 Contexto RAG (documentos técnicos)
         context_query = self._normalize_context_query(user_text)
         rag_context = ""
-        if not external_query_mode and not general_conversation_mode:
+        if training_enabled and learn_from_system and not external_query_mode and not general_conversation_mode:
             rag_context = self.sistema_aprendizaje.consultar_documentacion(
                 context_query,
                 agent_resource_id=agent_resource_id or None,
@@ -1778,7 +1815,7 @@ class MachiningAgent:
         
         # 4.4 Aprendizaje relevante (actividades pasadas similares)
         aprendizaje_relevante = ""
-        if agent_resource_id and not external_query_mode and not general_conversation_mode:
+        if training_enabled and agent_resource_id and not external_query_mode and not general_conversation_mode:
             aprendizaje_relevante = self.sistema_aprendizaje.consultar_aprendizaje(
                 context_query,
                 canal_id=canal_id,
@@ -1961,13 +1998,20 @@ class MachiningAgent:
         response_text = ""
         herramientas_usadas = []
         last_tool_result = None
-        llm_for_request = self.llm_with_tools
+        request_llm, request_llm_with_tools, request_provider_config = (
+            self.get_llm_for_metadata(message_metadata)
+        )
+        llm_for_request = request_llm_with_tools
+        print(
+            f"🧠 LLM provider={request_provider_config.provider} "
+            f"model={request_provider_config.model} agent={agent_resource_id or 'default'}"
+        )
         if tool_allowlist is not None:
             allowed_tools = [
                 tool for name, tool in self.tools_map.items()
                 if name in tool_allowlist
             ]
-            llm_for_request = self.llm.bind_tools(allowed_tools) if allowed_tools else self.llm
+            llm_for_request = request_llm.bind_tools(allowed_tools) if allowed_tools else request_llm
 
         # En consultas externas se busca antes de invocar al LLM. La latencia de
         # respuesta ya no depende de que el modelo decida llamar a la herramienta.
@@ -1984,7 +2028,7 @@ class MachiningAgent:
                     f"{memoria_web_reciente}\n\n"
                     "Responde con este conocimiento. No busques de nuevo salvo que sea insuficiente."
                 )))
-                llm_for_request = self.llm
+                llm_for_request = request_llm
                 print(f"🧠 Reutilizando memoria web reciente; query={search_query[:80]!r}")
             else:
                 try:
@@ -2000,7 +2044,7 @@ class MachiningAgent:
                             f"{prefetched_web_result}\n\n"
                             "Sintetiza ahora la respuesta. No solicites otra búsqueda."
                         )))
-                        llm_for_request = self.llm
+                        llm_for_request = request_llm
                 except Exception as exc:
                     print(f"⚠️ Falló la búsqueda web previa: {exc}")
         

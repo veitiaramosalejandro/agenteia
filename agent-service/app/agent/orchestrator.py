@@ -58,6 +58,16 @@ class SolidSETOrchestrator:
 
     def _classify(self, state: AgentGraphState) -> AgentGraphState:
         user_text = state.get("user_text", "")
+        lowered = user_text.lower()
+        coding_terms = (
+            "código", "codigo", "programa", "python", "javascript", "c#", ".net",
+            "sql", "consulta", "query", "base de datos", "api", "endpoint",
+            "docker", "error", "stack trace", "función", "metodo", "método",
+        )
+        reasoning_terms = (
+            "analiza", "razona", "compara", "estrategia", "planifica", "plan de",
+            "causa raíz", "causa raiz", "por qué", "porque ocurre", "evalúa", "evalua",
+        )
         is_general = getattr(self.agent, "_is_general_conversation", lambda _text: False)
         if is_general(user_text):
             route = "general_conversation"
@@ -68,8 +78,25 @@ class SolidSETOrchestrator:
             route = "external_web"
         else:
             route = "work_sql_rag"
-        print(f"🧭 LangGraph route={route} session={state.get('session_id', '')}")
-        return {"route": route, "started_at": state.get("started_at") or perf_counter()}
+        if any(term in lowered for term in coding_terms):
+            capability = "coding"
+        elif any(term in lowered for term in reasoning_terms):
+            capability = "reasoning"
+        elif route == "external_web":
+            capability = "external_web"
+        else:
+            capability = "general"
+        metadata = dict(state.get("message_metadata") or {})
+        metadata["model_capability"] = capability
+        print(
+            f"🧭 LangGraph route={route} capability={capability} "
+            f"session={state.get('session_id', '')}"
+        )
+        return {
+            "route": route,
+            "message_metadata": metadata,
+            "started_at": state.get("started_at") or perf_counter(),
+        }
 
     @staticmethod
     def _route_after_classification(state: AgentGraphState) -> str:
@@ -149,7 +176,8 @@ class SolidSETOrchestrator:
             return response
         target = {"es": "español", "pt": "português", "en": "English"}[expected]
         try:
-            translated = self.agent.llm.invoke([
+            selected_llm, _, _ = self.agent.get_llm_for_metadata(state.get("message_metadata"))
+            translated = selected_llm.invoke([
                 SystemMessage(content=(
                     f"Translate the response to {target}. Preserve names, figures, dates, Markdown and "
                     "technical identifiers exactly. Return only the translated response."

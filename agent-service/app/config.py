@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     
     # Ollama Local Configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11434")
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+    LLM_CREDENTIAL_ENCRYPTION_KEY: str = os.getenv("LLM_CREDENTIAL_ENCRYPTION_KEY", "")
+    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.5"))
+    AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+    AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
+    AZURE_OPENAI_DEPLOYMENT: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
     MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:7b")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     EMBEDDING_VECTOR_SIZE: int = max(0, int(os.getenv("EMBEDDING_VECTOR_SIZE", "0")))

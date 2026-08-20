@@ -93,6 +93,18 @@ class OrchestratorTests(unittest.TestCase):
         response = orchestrator.invoke(session_id="s3", user_text="Consulta interna")
         self.assertNotIn("status=", response)
 
+    def test_sql_question_selects_coding_capability(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+        orchestrator.invoke(session_id="sql", user_text="Crea una consulta SQL para el canal")
+        self.assertEqual(agent.calls[0]["message_metadata"]["model_capability"], "coding")
+
+    def test_analysis_question_selects_reasoning_capability(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+        orchestrator.invoke(session_id="reason", user_text="Analiza la causa raíz del problema")
+        self.assertEqual(agent.calls[0]["message_metadata"]["model_capability"], "reasoning")
+
 
 if __name__ == "__main__":
     unittest.main()

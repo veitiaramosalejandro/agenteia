@@ -6,6 +6,10 @@ qdrant-client==1.10.0
 langchain
 langchain-community
 langchain-ollama
+# Proveedores de chat opcionales (instalar solo el que se active):
+langchain-openai       # OpenAI, Azure OpenAI y APIs OpenAI-compatible
+langchain-anthropic    # Anthropic Claude
+langchain-google-genai # Google Gemini
 langgraph>=1.0,<2.0
 python-dotenv
 gTTS
@@ -20,6 +24,7 @@ requests
 pyodbc
 pymssql
 psycopg[binary]>=3.2,<4.0
+cryptography>=42,<46
 
 pandas 
 openpyxl

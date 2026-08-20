@@ -12,7 +12,7 @@ from typing import Any, DefaultDict, Dict, List, Optional
 import httpx
 
 from app.config import settings
-from app.connectors.db_client import get_active_agent_identity_for_resource
+from app.connectors.db_client import agent_learning_enabled, get_active_agent_identity_for_resource
 from app.system.learning import SistemaAprendizaje
 from app.system.schema import Actividad
 
@@ -1169,7 +1169,7 @@ class NotificationApiListener:
             except Exception as exc:
                 owner_agent = None
                 print(f"⚠️ No se pudo resolver aprendizaje privado del agente: {exc}")
-            if owner_agent:
+            if owner_agent and agent_learning_enabled(owner_agent["IDResource"], "owner"):
                 private_metadata = dict(actividad.metadatos or {})
                 private_metadata.update({
                     "agent_resource_id": str(owner_agent["IDResource"]),

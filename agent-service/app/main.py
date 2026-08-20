@@ -34,12 +34,22 @@ from app.agent.speech import text_to_speech
 from app.agent.tools import solidset_send_chat_message
 from app.connectors.db_client import (
     configure_agent_workroom,
+    agent_learning_enabled,
+    deactivate_llm_provider_configuration,
+    ensure_llm_provider_schema,
+    ensure_agent_model_schema,
     ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
     get_agent_knowledge,
+    get_llm_provider_configuration,
+    get_agent_model_configuration,
+    get_agent_model_configurations,
     get_solidset_instance,
     list_active_solidset_instances,
+    list_llm_provider_configurations,
     save_agent_knowledge,
+    save_llm_provider_configuration,
+    save_agent_model_configuration,
     save_solidset_instance,
     save_sys_resource_ia,
     touch_agent_session,
@@ -60,6 +70,7 @@ from app.system.reaction_capture import (
     save_agent_reaction,
 )
 from app.system.schema import Actividad
+from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
@@ -749,6 +760,8 @@ def _learn_agent_interaction(
     response_text: str,
 ) -> None:
     """Guarda aprendizaje etiquetado; nunca queda visible para otro agente."""
+    if not agent_learning_enabled(agent_resource_id, "system"):
+        return
     digest = hashlib.sha256(
         f"{agent_resource_id}|{channel_id}|{session_id}|{user_text}|{response_text}".encode("utf-8")
     ).hexdigest()[:32]
@@ -893,7 +906,8 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                 print(
                     f"🤖 Generando auto-respuesta con LLM channel={channel_id} "
                     f"target={'direct:' + reply_resource if is_direct else 'channel:' + channel_id} "
-                    f"ollama={settings.OLLAMA_BASE_URL} route="
+                    f"provider={settings.LLM_PROVIDER} model={settings.MODEL_NAME} "
+                    f"base={settings.LLM_BASE_URL or settings.OLLAMA_BASE_URL} route="
                     f"{'external_web' if external_query else 'work_sql_rag'}"
                 )
                 response_text = await asyncio.to_thread(
@@ -1578,6 +1592,11 @@ async def _ciclo_notificaciones_api() -> None:
 async def startup_db_learning() -> None:
     """Lanza la tarea de aprendizaje continuo desde la base de datos."""
     if getattr(app.state, "db_study_task", None) is None:
+        try:
+            await asyncio.to_thread(ensure_llm_provider_schema)
+            await asyncio.to_thread(ensure_agent_model_schema)
+        except psycopg.Error as exc:
+            print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
         app.state.startup_connectivity = _run_startup_connectivity_checks()
         _log_startup_connectivity(app.state.startup_connectivity)
         if app.state.startup_connectivity.get("all_ok"):
@@ -1728,6 +1747,78 @@ class SolidSETInstanceStored(SolidSETInstanceConfiguration):
 class SolidSETInstanceConfigurationResponse(BaseModel):
     status: str
     configuration: SolidSETInstanceStored
+
+
+class LLMProviderConfiguration(BaseModel):
+    Code: str = Field(..., min_length=1, max_length=80)
+    Name: str = Field(..., min_length=1, max_length=255)
+    Provider: str = Field(..., min_length=1, max_length=40)
+    Model: str = Field(..., min_length=1, max_length=255)
+    BaseUrl: Optional[str] = Field(None, max_length=500)
+    APIKey: Optional[str] = Field(None, max_length=8000)
+    Temperature: float = Field(0.5, ge=0, le=2)
+    MaxOutputTokens: int = Field(1024, gt=0, le=131072)
+    TimeoutSeconds: int = Field(60, gt=0, le=3600)
+    AzureEndpoint: Optional[str] = Field(None, max_length=500)
+    AzureApiVersion: Optional[str] = Field(None, max_length=80)
+    AzureDeployment: Optional[str] = Field(None, max_length=255)
+    IDResource: Optional[uuid.UUID] = None
+    IsDefault: bool = False
+    active: bool = True
+
+    class Config:
+        extra = "forbid"
+
+
+class LLMProviderConfigurationStored(BaseModel):
+    ID: uuid.UUID
+    Code: str
+    Name: str
+    Provider: str
+    Model: str
+    BaseUrl: Optional[str] = None
+    HasAPIKey: bool
+    Temperature: float
+    MaxOutputTokens: int
+    TimeoutSeconds: int
+    AzureEndpoint: Optional[str] = None
+    AzureApiVersion: Optional[str] = None
+    AzureDeployment: Optional[str] = None
+    IDResource: Optional[uuid.UUID] = None
+    IsDefault: bool
+    active: bool
+    CreatedAt: datetime
+    UpdatedAt: datetime
+
+
+class LLMProviderConfigurationResponse(BaseModel):
+    status: str
+    configuration: LLMProviderConfigurationStored
+
+
+class AgentIAModelConfiguration(BaseModel):
+    ProviderCode: str = Field(..., min_length=1, max_length=80)
+    Role: str = Field("general", min_length=1, max_length=80)
+    LocalExecution: bool = True
+    TrainingMode: str = Field("rag_reinforcement", pattern="^(rag_reinforcement|rag_only|disabled)$")
+    LearnFromOwner: bool = True
+    LearnFromSystem: bool = True
+    LearnFromReactions: bool = True
+    Capabilities: list[str] = Field(default_factory=lambda: ["general"], min_length=1)
+    Priority: int = Field(100, ge=0, le=10000)
+    IsDefault: bool = False
+    active: bool = True
+
+    class Config:
+        extra = "forbid"
+
+
+class AgentIAModelStored(AgentIAModelConfiguration):
+    ID: uuid.UUID
+    IDResource: uuid.UUID
+    IDProviderConfiguration: uuid.UUID
+    CreatedAt: datetime
+    UpdatedAt: datetime
 
 
 class SysResourceIAIngestResponse(BaseModel):
@@ -2352,6 +2443,132 @@ def register_solidset_instance(
     )
 
 
+@app.put(
+    "/api/v1/agent/llm/providers/{code}",
+    response_model=LLMProviderConfigurationResponse,
+)
+def save_llm_provider(
+    code: str,
+    configuration: LLMProviderConfiguration,
+) -> LLMProviderConfigurationResponse:
+    """Registra/actualiza un proveedor global o específico de un agente."""
+    payload = configuration.model_dump()
+    if code.strip().lower() != payload["Code"].strip().lower():
+        raise HTTPException(status_code=422, detail="El Code de la ruta y del cuerpo deben coincidir.")
+    provider = payload["Provider"].strip().lower().replace("-", "_")
+    if provider not in ProviderRegistry.names():
+        raise HTTPException(status_code=422, detail={
+            "message": "Proveedor LLM no soportado.",
+            "available": list(ProviderRegistry.names()),
+        })
+    payload["Code"] = payload["Code"].strip()
+    payload["Name"] = payload["Name"].strip()
+    payload["Provider"] = provider
+    payload["Model"] = payload["Model"].strip()
+    for field in ("BaseUrl", "AzureEndpoint"):
+        value = str(payload.get(field) or "").strip().rstrip("/")
+        if value:
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(status_code=422, detail=f"{field} debe ser una URL HTTP(S) absoluta.")
+        payload[field] = value or None
+    if provider == "ollama" and not payload.get("BaseUrl"):
+        payload["BaseUrl"] = settings.OLLAMA_BASE_URL.rstrip("/")
+    if provider in {"openai_compatible", "local_openai"} and not payload.get("BaseUrl"):
+        raise HTTPException(status_code=422, detail="BaseUrl es obligatoria para un proveedor OpenAI compatible.")
+    if provider == "azure_openai" and not (payload.get("AzureEndpoint") or payload.get("BaseUrl")):
+        raise HTTPException(status_code=422, detail="AzureEndpoint o BaseUrl es obligatorio para Azure OpenAI.")
+    if payload.get("IDResource") is not None:
+        payload["IsDefault"] = False
+
+    # Construir el adaptador detecta dependencias o parámetros incompatibles antes de persistir.
+    try:
+        create_chat_model(LLMProviderConfig(
+            provider=provider, model=payload["Model"], base_url=payload.get("BaseUrl") or "",
+            api_key=payload.get("APIKey") or "", temperature=payload["Temperature"],
+            max_output_tokens=payload["MaxOutputTokens"], timeout_seconds=payload["TimeoutSeconds"],
+            azure_endpoint=payload.get("AzureEndpoint") or "",
+            azure_api_version=payload.get("AzureApiVersion") or "",
+            azure_deployment=payload.get("AzureDeployment") or "",
+        ))
+        saved = save_llm_provider_configuration(payload)
+    except psycopg.errors.ForeignKeyViolation as exc:
+        raise HTTPException(status_code=404, detail="El IDResource indicado no existe.") from exc
+    except (ValueError, RuntimeError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No se pudo guardar el proveedor en PostgreSQL.") from exc
+    agent.clear_llm_configuration_cache()
+    return LLMProviderConfigurationResponse(
+        status="saved", configuration=LLMProviderConfigurationStored(**saved)
+    )
+
+
+@app.get(
+    "/api/v1/agent/llm/providers",
+    response_model=list[LLMProviderConfigurationStored],
+)
+def get_llm_providers() -> list[LLMProviderConfigurationStored]:
+    """Lista configuraciones sin exponer sus claves API."""
+    try:
+        return [LLMProviderConfigurationStored(**row) for row in list_llm_provider_configurations()]
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No se pudieron consultar los proveedores.") from exc
+
+
+@app.delete("/api/v1/agent/llm/providers/{code}")
+def deactivate_llm_provider(code: str) -> dict[str, str]:
+    """Desactiva una configuración conservando su historial."""
+    try:
+        changed = deactivate_llm_provider_configuration(code.strip())
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No se pudo desactivar el proveedor.") from exc
+    if not changed:
+        raise HTTPException(status_code=404, detail="La configuración no existe.")
+    agent.clear_llm_configuration_cache()
+    return {"status": "deactivated", "code": code.strip()}
+
+
+@app.put(
+    "/api/v1/agent/solidset/agents/{agent_resource_id}/model",
+    response_model=AgentIAModelStored,
+)
+def configure_agent_model(
+    agent_resource_id: uuid.UUID,
+    configuration: AgentIAModelConfiguration,
+) -> AgentIAModelStored:
+    """Asigna a un agente el modelo y su política de mejora continua."""
+    payload = configuration.model_dump()
+    payload["ProviderCode"] = payload["ProviderCode"].strip()
+    payload["Role"] = payload["Role"].strip()
+    try:
+        saved = save_agent_model_configuration(agent_resource_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except psycopg.errors.ForeignKeyViolation as exc:
+        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No se pudo asignar el modelo al agente.") from exc
+    agent.clear_llm_configuration_cache()
+    return AgentIAModelStored(**saved)
+
+
+@app.get(
+    "/api/v1/agent/solidset/agents/{agent_resource_id}/model",
+)
+def read_agent_model(agent_resource_id: uuid.UUID) -> dict[str, Any]:
+    """Consulta todos los modelos que el router puede usar para el agente."""
+    try:
+        saved = get_agent_model_configurations(agent_resource_id)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No se pudo consultar el modelo del agente.") from exc
+    if not saved:
+        raise HTTPException(status_code=404, detail="El agente no tiene SysAgentIAModel activo.")
+    return {"IDResource": agent_resource_id, "models": saved}
+
+
 @app.post(
     "/api/v1/agent/notification/framework-message",
     response_model=SendMessageResultDTO,
@@ -2786,7 +3003,10 @@ def capture_solidset_agent_reaction(
         ) from exc
 
     learned = False
-    if changed and signal != "removed":
+    if (
+        changed and signal != "removed"
+        and agent_learning_enabled(message["IDAgentResource"], "reactions")
+    ):
         learned = bool(agent.sistema_aprendizaje.aprender_actividad(Actividad(
             id=f"agent_reaction_{req.IDChat}_{req.IDUser}_{req.IDEmoji}",
             recurso_humano_id=str(message["IDAgentResource"]),
@@ -2923,11 +3143,21 @@ def health_check():
     """
     Endpoint de salud para verificar que el servicio está funcionando.
     """
+    try:
+        db_llm = get_llm_provider_configuration()
+    except psycopg.Error:
+        db_llm = None
     return {
         "status": "healthy",
         "version": "2.0.0",
         "services": {
-            "ollama": settings.OLLAMA_BASE_URL,
+            "llm": {
+                "source": "postgresql" if db_llm else "environment_fallback",
+                "provider": (db_llm or {}).get("Provider", settings.LLM_PROVIDER),
+                "model": (db_llm or {}).get("Model", settings.MODEL_NAME),
+                "base_url": (db_llm or {}).get("BaseUrl") or settings.LLM_BASE_URL or settings.OLLAMA_BASE_URL,
+            },
+            "ollama_embeddings": settings.OLLAMA_BASE_URL,
             "qdrant": settings.VECTOR_DB_URL,
             "redis": settings.REDIS_URL
         },

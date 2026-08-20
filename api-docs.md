@@ -104,6 +104,186 @@ El funcionamiento habitual sería:
 
 # Configuración multiagente
 
+## Proveedores LLM intercambiables
+
+La lógica de SolidSET depende de una interfaz común de modelo de chat
+(`invoke` y `bind_tools`) y no instancia Ollama directamente. El registro en
+`app/llm/providers.py` incluye los identificadores:
+
+- `ollama` (implementado y activo por defecto).
+- `openai`.
+- `azure_openai`.
+- `anthropic`.
+- `gemini`.
+- `openai_compatible` o `local_openai` para servidores compatibles con la API
+  de OpenAI.
+
+Las variables siguientes son únicamente el respaldo de arranque cuando todavía
+no existe una configuración activa en PostgreSQL:
+
+```env
+LLM_PROVIDER=ollama
+MODEL_NAME=qwen2.5:3b
+LLM_BASE_URL=
+LLM_API_KEY=
+LLM_TEMPERATURE=0.5
+LLM_MAX_OUTPUT_TOKENS=1024
+LLM_REQUEST_TIMEOUT_SECONDS=900
+```
+
+Para Azure también se utilizan:
+
+```env
+AZURE_OPENAI_ENDPOINT=https://<recurso>.openai.azure.com
+AZURE_OPENAI_API_VERSION=2024-10-21
+AZURE_OPENAI_DEPLOYMENT=<deployment>
+```
+
+Los proveedores remotos cargan sus integraciones de forma diferida. Solo debe
+instalarse el paquete correspondiente cuando se active: `langchain-openai`,
+`langchain-anthropic` o `langchain-google-genai`. Si falta, el arranque informa
+el paquete exacto necesario. Las claves nunca se incluyen en salud ni logs.
+
+### Configuración persistida en PostgreSQL
+
+La tabla `SysLLMProviderConfiguration` es la fuente canónica del modelo de chat.
+Admite varias configuraciones, una predeterminada global y una configuración
+activa específica por `SysResourceIA.IDResource`. En cada conversación el router
+resuelve primero la configuración del agente solicitado y, si no existe, usa la
+global; solo entonces recurre al `.env`. Los cambios se aplican en la próxima
+petición sin reiniciar el contenedor.
+
+Las API keys se guardan cifradas con Fernet y nunca aparecen en respuestas API.
+La clave maestra se conserva como secreto de despliegue:
+
+```env
+LLM_CREDENTIAL_ENCRYPTION_KEY=<clave-fernet>
+```
+
+Se genera una vez con:
+
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+No debe cambiarse después de guardar credenciales.
+
+#### Registrar o actualizar un proveedor
+
+```http
+PUT /api/v1/agent/llm/providers/{code}
+```
+
+Ejemplo global con Ollama:
+
+```json
+{
+  "Code": "ollama-default",
+  "Name": "Ollama coordinador",
+  "Provider": "ollama",
+  "Model": "qwen2.5:3b",
+  "BaseUrl": "http://ollama-llm:11434",
+  "Temperature": 0.5,
+  "MaxOutputTokens": 1024,
+  "TimeoutSeconds": 900,
+  "IDResource": null,
+  "IsDefault": true,
+  "active": true
+}
+```
+
+Para asignar otro proveedor a un agente concreto se informa `IDResource`; en
+ese caso `IsDefault` se normaliza a `false`. Un `PUT` con `APIKey=null` conserva
+la credencial existente. Solo puede existir una configuración global
+predeterminada activa y una configuración activa por recurso.
+
+```http
+GET /api/v1/agent/llm/providers
+DELETE /api/v1/agent/llm/providers/{code}
+```
+
+El listado devuelve `HasAPIKey`, pero nunca `APIKey`. `DELETE` realiza una baja
+lógica (`active=false`).
+
+Ollama continúa siendo necesario para los embeddings de Qdrant aunque el
+modelo de conversación sea remoto. `GET /api/v1/agent/health` expone proveedor,
+modelo, URL y `source=postgresql|environment_fallback` separadamente de
+`ollama_embeddings`.
+
+### Modelo asignado a cada agente: SysAgentIAModel
+
+La selección autoritativa de SolidSET continúa siendo `Chat.destiny[].talkWithAgent=true`.
+El `IDResource` seleccionado puede tener varias filas activas en `SysAgentIAModel`.
+El router clasifica cada mensaje y elige una fila cuya colección `Capabilities`
+contenga la capacidad requerida. Si ninguna coincide, usa `IsDefault=true` y,
+finalmente, el proveedor global predeterminado.
+
+```text
+talkWithAgent
+      -> SysResourceIA.IDResource
+      -> clasificación de la pregunta
+      -> SysAgentIAModel.Capabilities
+      -> IDProviderConfiguration seleccionado
+      -> SysLLMProviderConfiguration
+      -> modelo de chat
+      -> respuesta con identidad del recurso agente
+```
+
+Asignar o consultar el modelo de un agente:
+
+```http
+PUT /api/v1/agent/solidset/agents/{IDResource}/model
+GET /api/v1/agent/solidset/agents/{IDResource}/model
+```
+
+```json
+{
+  "ProviderCode": "ollama-default",
+  "Role": "general",
+  "LocalExecution": true,
+  "TrainingMode": "rag_reinforcement",
+  "LearnFromOwner": true,
+  "LearnFromSystem": true,
+  "LearnFromReactions": true,
+  "Capabilities": ["coding", "sql", "technical"],
+  "Priority": 20,
+  "IsDefault": false,
+  "active": true
+}
+```
+
+Capacidades iniciales:
+
+- `general` y `external_web` → `qwen2.5:3b`.
+- `coding`, `sql` y `technical` → `qwen2.5-coder:3b`.
+- `reasoning`, `planning` y `analysis` → `llama3.2:3b`.
+
+La identidad, sesión, memoria, conocimiento privado y login SolidSET permanecen
+asociados al mismo `IDResource`; solo cambia el modelo que genera ese turno.
+
+`TrainingMode` admite `rag_reinforcement`, `rag_only` y `disabled`. La mejora
+actual no modifica los pesos del modelo: utiliza conocimiento vectorial aislado,
+mensajes del recurso propietario, conocimiento general permitido, memoria de
+conversación y recompensas derivadas de reacciones. Esta estrategia puede operar
+continuamente sin detener Ollama. Un futuro fine-tuning de pesos debe ejecutarse
+como proceso separado, versionar el modelo resultante y registrarlo como una
+nueva configuración antes de activarlo.
+
+`LocalExecution=true` solo es válido para `ollama`, `local_openai` o un endpoint
+`openai_compatible` desplegado en infraestructura propia. Los modelos oficiales
+de OpenAI, Azure OpenAI, Anthropic y Gemini son remotos; guardar su configuración
+en PostgreSQL no convierte esos modelos propietarios en modelos locales.
+
+Para agregar otro motor basta implementar `ChatProvider.create_model()` y
+registrarlo mediante `ProviderRegistry.register()`. El router, LangGraph,
+herramientas, memoria y endpoints SolidSET permanecen sin cambios.
+
+La selección local vigente fue calculada con `llmfit` y está documentada en
+`docs/llmfit-model-selection.md`: `qwen2.5:3b` para coordinación/chat,
+`qwen2.5-coder:3b` para código y SQL, `Phi-4-mini-reasoning` como razonador
+opcional secuencial y `nomic-embed-text` para conservar la colección actual.
+`Qwen3-Embedding-0.6B` queda reservado para una migración con reindexado.
+
 ## 0. Registrar una instancia SolidSET
 
 ```http
