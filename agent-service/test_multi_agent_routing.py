@@ -41,9 +41,11 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
 
         current = _load_response_status("request-1")
         self.assertEqual(current["status"], "completed")
+        self.assertEqual(current["code"], 5)
         self.assertEqual(current["displayMessage"], "Respondido")
         self.assertEqual(current["responseCount"], 1)
         self.assertEqual(current["agents"][0]["status"], "searching")
+        self.assertEqual(current["agents"][0]["code"], 2)
         self.assertTrue(current["completed"])
 
         english = _localize_response_status(current, "en")

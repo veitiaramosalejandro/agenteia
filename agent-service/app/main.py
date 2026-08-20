@@ -220,6 +220,17 @@ _RESPONSE_DISPLAY_MESSAGES = {
     "cancelled": {"es": "Cancelado", "en": "Cancelled", "pt": "Cancelado"},
 }
 
+_RESPONSE_STATUS_CODES = {
+    "queued": 0,
+    "processing": 1,
+    "searching": 2,
+    "thinking": 3,
+    "sending": 4,
+    "completed": 5,
+    "failed": 6,
+    "cancelled": 7,
+}
+
 
 def _response_display_messages(status_name: str) -> dict[str, str]:
     messages = _RESPONSE_DISPLAY_MESSAGES.get(status_name)
@@ -232,11 +243,17 @@ def _localize_response_status(data: dict[str, Any], language: str) -> dict[str, 
     localized = json.loads(json.dumps(data, ensure_ascii=False))
     lang = language if language in {"es", "en", "pt"} else "es"
     messages = _response_display_messages(str(localized.get("status") or ""))
+    localized["code"] = _RESPONSE_STATUS_CODES.get(
+        str(localized.get("status") or ""), -1
+    )
     localized["displayMessages"] = messages
     localized["displayMessage"] = messages[lang]
     localized["language"] = lang
     for agent_state in localized.get("agents") or []:
         agent_messages = _response_display_messages(str(agent_state.get("status") or ""))
+        agent_state["code"] = _RESPONSE_STATUS_CODES.get(
+            str(agent_state.get("status") or ""), -1
+        )
         agent_state["displayMessages"] = agent_messages
         agent_state["displayMessage"] = agent_messages[lang]
     return localized
@@ -315,6 +332,7 @@ def _create_response_status(request_id: str, chat_id: str, candidate_count: int)
         "requestId": request_id,
         "chatId": chat_id or None,
         "status": "queued",
+        "code": _RESPONSE_STATUS_CODES["queued"],
         "displayMessage": _RESPONSE_DISPLAY_MESSAGES["queued"]["es"],
         "displayMessages": _response_display_messages("queued"),
         "completed": False,
@@ -359,6 +377,7 @@ def _update_response_status(
             agents.append(agent_state)
         agent_state.update({
             "status": status_name,
+            "code": _RESPONSE_STATUS_CODES.get(status_name, -1),
             "displayMessage": display,
             "displayMessages": display_messages,
             "updatedAt": now,
@@ -366,6 +385,7 @@ def _update_response_status(
         })
     data.update({
         "status": status_name,
+        "code": _RESPONSE_STATUS_CODES.get(status_name, -1),
         "displayMessage": display,
         "displayMessages": display_messages,
         "updatedAt": now,

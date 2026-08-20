@@ -780,16 +780,16 @@ Los estados se guardan temporalmente en Redis durante
 incluye además `displayMessages` con las tres traducciones para que WPF pueda
 cambiar el idioma sin volver a consultar la API.
 
-| Estado | Español | English | Português |
-|---|---|---|---|
-| `queued` | `Esperando…` | `Waiting…` | `Aguardando…` |
-| `processing` | `Procesando…` | `Processing…` | `Processando…` |
-| `searching` | `Buscando información…` | `Searching for information…` | `Procurando informações…` |
-| `thinking` | `Pensando…` | `Thinking…` | `Pensando…` |
-| `sending` | `Enviando respuesta…` | `Sending response…` | `Enviando resposta…` |
-| `completed` | `Respondido` | `Answered` | `Respondido` |
-| `failed` | `No se pudo responder` | `Unable to respond` | `Não foi possível responder` |
-| `cancelled` | `Cancelado` | `Cancelled` | `Cancelado` |
+| Code | Estado | Español | English | Português |
+|---:|---|---|---|---|
+| `0` | `queued` | `Esperando…` | `Waiting…` | `Aguardando…` |
+| `1` | `processing` | `Procesando…` | `Processing…` | `Processando…` |
+| `2` | `searching` | `Buscando información…` | `Searching for information…` | `Procurando informações…` |
+| `3` | `thinking` | `Pensando…` | `Thinking…` | `Pensando…` |
+| `4` | `sending` | `Enviando respuesta…` | `Sending response…` | `Enviando resposta…` |
+| `5` | `completed` | `Respondido` | `Answered` | `Respondido` |
+| `6` | `failed` | `No se pudo responder` | `Unable to respond` | `Não foi possível responder` |
+| `7` | `cancelled` | `Cancelado` | `Cancelled` | `Cancelado` |
 
 La respuesta de estado incluye `agents` para mostrar cada agente por separado,
 `stageHistory`, `responseCount`, `createdAt`, `updatedAt`, `completedAt` y
