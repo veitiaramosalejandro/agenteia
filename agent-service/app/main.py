@@ -194,6 +194,178 @@ _auto_reply_seen_fingerprints: "OrderedDict[str, float]" = OrderedDict()
 _auto_reply_max_seen = 2000
 _auto_reply_background_tasks: set[asyncio.Task] = set()
 _auto_reply_followups: dict[str, float] = {}
+_response_status_lock = threading.Lock()
+_response_status_fallback: dict[str, dict[str, Any]] = {}
+
+_RESPONSE_DISPLAY_MESSAGES = {
+    "queued": {"es": "Esperando…", "en": "Waiting…", "pt": "Aguardando…"},
+    "processing": {"es": "Procesando…", "en": "Processing…", "pt": "Processando…"},
+    "searching": {
+        "es": "Buscando información…",
+        "en": "Searching for information…",
+        "pt": "Procurando informações…",
+    },
+    "thinking": {"es": "Pensando…", "en": "Thinking…", "pt": "Pensando…"},
+    "sending": {
+        "es": "Enviando respuesta…",
+        "en": "Sending response…",
+        "pt": "Enviando resposta…",
+    },
+    "completed": {"es": "Respondido", "en": "Answered", "pt": "Respondido"},
+    "failed": {
+        "es": "No se pudo responder",
+        "en": "Unable to respond",
+        "pt": "Não foi possível responder",
+    },
+    "cancelled": {"es": "Cancelado", "en": "Cancelled", "pt": "Cancelado"},
+}
+
+
+def _response_display_messages(status_name: str) -> dict[str, str]:
+    messages = _RESPONSE_DISPLAY_MESSAGES.get(status_name)
+    if messages:
+        return dict(messages)
+    return {"es": status_name, "en": status_name, "pt": status_name}
+
+
+def _localize_response_status(data: dict[str, Any], language: str) -> dict[str, Any]:
+    localized = json.loads(json.dumps(data, ensure_ascii=False))
+    lang = language if language in {"es", "en", "pt"} else "es"
+    messages = _response_display_messages(str(localized.get("status") or ""))
+    localized["displayMessages"] = messages
+    localized["displayMessage"] = messages[lang]
+    localized["language"] = lang
+    for agent_state in localized.get("agents") or []:
+        agent_messages = _response_display_messages(str(agent_state.get("status") or ""))
+        agent_state["displayMessages"] = agent_messages
+        agent_state["displayMessage"] = agent_messages[lang]
+    return localized
+
+
+def _response_status_key(request_id: str) -> str:
+    return f"machining:agent-response:v1:{request_id}"
+
+
+def _response_chat_key(chat_id: str) -> str:
+    return f"machining:agent-response-chat:v1:{chat_id}"
+
+
+def _utc_status_timestamp() -> str:
+    return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+
+
+def _save_response_status(data: dict[str, Any]) -> None:
+    request_id = str(data["requestId"])
+    ttl = settings.AGENT_RESPONSE_STATUS_TTL_SECONDS
+    serialized = json.dumps(data, ensure_ascii=False)
+    try:
+        _dialogue_redis.setex(_response_status_key(request_id), ttl, serialized)
+        chat_id = str(data.get("chatId") or "").strip()
+        if chat_id:
+            _dialogue_redis.setex(_response_chat_key(chat_id), ttl, request_id)
+    except redis.RedisError:
+        with _response_status_lock:
+            _response_status_fallback[request_id] = dict(data)
+
+
+def _load_response_status(request_id: str) -> Optional[dict[str, Any]]:
+    try:
+        raw = _dialogue_redis.get(_response_status_key(request_id))
+        return json.loads(raw) if raw else None
+    except (redis.RedisError, json.JSONDecodeError):
+        with _response_status_lock:
+            value = _response_status_fallback.get(request_id)
+            return dict(value) if value else None
+
+
+def _load_response_status_by_chat(chat_id: str) -> Optional[dict[str, Any]]:
+    try:
+        request_id = _dialogue_redis.get(_response_chat_key(chat_id))
+    except redis.RedisError:
+        with _response_status_lock:
+            request_id = next(
+                (
+                    key for key, value in reversed(list(_response_status_fallback.items()))
+                    if str(value.get("chatId") or "") == chat_id
+                ),
+                None,
+            )
+    return _load_response_status(str(request_id)) if request_id else None
+
+
+def _create_response_status(request_id: str, chat_id: str, candidate_count: int) -> dict[str, Any]:
+    now = _utc_status_timestamp()
+    data = {
+        "requestId": request_id,
+        "chatId": chat_id or None,
+        "status": "queued",
+        "displayMessage": _RESPONSE_DISPLAY_MESSAGES["queued"]["es"],
+        "displayMessages": _response_display_messages("queued"),
+        "completed": False,
+        "createdAt": now,
+        "updatedAt": now,
+        "completedAt": None,
+        "candidateCount": candidate_count,
+        "responseCount": 0,
+        "error": None,
+        "agents": [],
+        "stageHistory": [{"status": "queued", "at": now}],
+    }
+    _save_response_status(data)
+    return data
+
+
+def _update_response_status(
+    request_id: str,
+    status_name: str,
+    *,
+    agent_resource_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    error: Optional[str] = None,
+    response_count: Optional[int] = None,
+) -> None:
+    if not request_id:
+        return
+    data = _load_response_status(request_id)
+    if data is None:
+        return
+    now = _utc_status_timestamp()
+    display_messages = _response_display_messages(status_name)
+    display = display_messages["es"]
+    if agent_resource_id:
+        agents = data.setdefault("agents", [])
+        agent_state = next(
+            (item for item in agents if item.get("agentResourceId") == agent_resource_id),
+            None,
+        )
+        if agent_state is None:
+            agent_state = {"agentResourceId": agent_resource_id, "name": agent_name or ""}
+            agents.append(agent_state)
+        agent_state.update({
+            "status": status_name,
+            "displayMessage": display,
+            "displayMessages": display_messages,
+            "updatedAt": now,
+            "error": error,
+        })
+    data.update({
+        "status": status_name,
+        "displayMessage": display,
+        "displayMessages": display_messages,
+        "updatedAt": now,
+        "completed": status_name in {"completed", "failed", "cancelled"},
+        "error": error,
+    })
+    if response_count is not None:
+        data["responseCount"] = response_count
+    if data["completed"]:
+        data["completedAt"] = now
+    else:
+        data["completedAt"] = None
+    history = data.setdefault("stageHistory", [])
+    if not history or history[-1].get("status") != status_name:
+        history.append({"status": status_name, "at": now, "agentResourceId": agent_resource_id})
+    _save_response_status(data)
 
 
 def _auto_reply_seen(fingerprint: str) -> bool:
@@ -303,7 +475,7 @@ def _message_mentions_agent(raw_text: str) -> bool:
     )
 
 
-def _schedule_auto_replies(candidates: list[dict]) -> None:
+def _schedule_auto_replies(candidates: list[dict], request_id: str = "") -> None:
     """Mantiene una referencia fuerte y registra fallos de la tarea en background."""
     if not candidates:
         return
@@ -311,6 +483,9 @@ def _schedule_auto_replies(candidates: list[dict]) -> None:
         f"🤖 Auto-respuesta encolada; candidatos={len(candidates)}",
         flush=True,
     )
+    if request_id:
+        for candidate in candidates:
+            candidate["response_request_id"] = request_id
     task = asyncio.create_task(_process_auto_replies(candidates))
     _auto_reply_background_tasks.add(task)
 
@@ -320,8 +495,10 @@ def _schedule_auto_replies(candidates: list[dict]) -> None:
             sent = done.result()
             print(f"🤖 Procesamiento de auto-respuesta finalizado; enviadas={sent}")
         except asyncio.CancelledError:
+            _update_response_status(request_id, "cancelled")
             print("⚠️ Procesamiento de auto-respuesta cancelado")
         except Exception as exc:
+            _update_response_status(request_id, "failed", error=str(exc))
             print(f"❌ Error no controlado procesando auto-respuesta: {exc}")
 
     task.add_done_callback(_completed)
@@ -935,22 +1112,45 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     return _auto_reply_rejection_reason(candidate) is None
 
 
-async def _process_auto_replies(candidates: list[dict]) -> int:
+async def _process_auto_replies(
+    candidates: list[dict], *, preview_only: bool = False
+) -> int | list[dict[str, Any]]:
     print(
         f"🤖 Iniciando procesamiento de auto-respuesta; candidatos={len(candidates)}",
         flush=True,
     )
-    if not settings.SOLIDSET_AUTO_REPLY_ENABLED:
+    response_request_id = str(
+        next(
+            (
+                item.get("response_request_id")
+                for item in candidates
+                if item.get("response_request_id")
+            ),
+            "",
+        )
+    )
+    if not preview_only and not settings.SOLIDSET_AUTO_REPLY_ENABLED:
+        _update_response_status(
+            response_request_id, "failed", error="La auto-respuesta está desactivada."
+        )
         return 0
-    if not settings.SOLIDSET_USER_ACTIONS_ENABLED:
+    if not preview_only and not settings.SOLIDSET_USER_ACTIONS_ENABLED:
+        _update_response_status(
+            response_request_id,
+            "failed",
+            error="El envío de acciones a SolidSET está desactivado.",
+        )
         print("⚠️ Auto-reply SOLIDSET activo en config, pero SOLIDSET_USER_ACTIONS_ENABLED=false. No se enviarán respuestas.")
         return 0
 
+    _update_response_status(response_request_id, "processing")
     candidates = _route_candidates_to_selected_agents(candidates)
     print(
         f"🤖 Enrutamiento de auto-respuesta completado; ejecuciones={len(candidates)}",
         flush=True,
     )
+    if response_request_id and not candidates:
+        _update_response_status(response_request_id, "completed", response_count=0)
     # Una selección explícita de SolidSET prevalece sobre el límite histórico
     # de una sola autorrespuesta, manteniendo un techo defensivo por mensaje.
     max_replies = min(
@@ -958,6 +1158,7 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         max(1, settings.SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE, len(candidates)),
     )
     sent = 0
+    preview_payloads: list[dict[str, Any]] = []
     local_seen = set()
 
     for candidate in candidates:
@@ -1014,6 +1215,13 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         agent_resource_id = str(candidate.get("agent_resource_id") or "").strip()
         agent_identity_id = str(candidate.get("agent_identity_id") or "").strip()
         agent_name = str(candidate.get("agent_name") or agent_resource_id).strip()
+        status_agent_id = agent_identity_id or agent_resource_id
+        _update_response_status(
+            response_request_id,
+            "processing",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+        )
         conversation_id = str(
             candidate.get("chat_id")
             or candidate.get("agent_session_id")
@@ -1040,9 +1248,23 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
         )
         if response_text is None:
             response_text = _weather_location_prompt(incoming_text)
+        if response_text is not None:
+            _update_response_status(
+                response_request_id,
+                "thinking",
+                agent_resource_id=status_agent_id,
+                agent_name=agent_name,
+            )
         if response_text is None:
             try:
                 external_query = _is_external_information_query(incoming_text)
+                if external_query:
+                    _update_response_status(
+                        response_request_id,
+                        "searching",
+                        agent_resource_id=status_agent_id,
+                        agent_name=agent_name,
+                    )
                 allowed_tools = (
                     {"google_web_search"}
                     if external_query
@@ -1054,6 +1276,12 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     f"provider={settings.LLM_PROVIDER} model={settings.MODEL_NAME} "
                     f"base={settings.LLM_BASE_URL or settings.OLLAMA_BASE_URL} route="
                     f"{'external_web' if external_query else 'work_sql_rag'}"
+                )
+                _update_response_status(
+                    response_request_id,
+                    "thinking",
+                    agent_resource_id=status_agent_id,
+                    agent_name=agent_name,
                 )
                 response_text = await asyncio.to_thread(
                     orchestrator.invoke,
@@ -1072,6 +1300,13 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     auto_reply_mode=True,
                 )
             except Exception as exc:
+                _update_response_status(
+                    response_request_id,
+                    "failed",
+                    agent_resource_id=status_agent_id,
+                    agent_name=agent_name,
+                    error=str(exc),
+                )
                 print(f"⚠️ Error generando auto-respuesta para canal {channel_id}: {exc}")
                 continue
 
@@ -1083,6 +1318,12 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
             )
 
         try:
+            _update_response_status(
+                response_request_id,
+                "sending",
+                agent_resource_id=status_agent_id,
+                agent_name=agent_name,
+            )
             print(
                 f"📤 Enviando auto-respuesta a SolidSET "
                 f"base={candidate.get('solidset_base_url') or '-'} "
@@ -1110,11 +1351,23 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                     "agent_chat_login_id": candidate.get("agent_chat_login"),
                     "human_chat_resource_name": candidate.get("reply_resource_name"),
                     "solidset_base_url": candidate.get("solidset_base_url"),
+                    "preview_only": preview_only,
                 },
             )
             send_result_text = str(send_result)
+            if preview_only:
+                preview_payloads.append(json.loads(send_result_text))
+                sent += 1
+                continue
             if send_result_text.startswith("✅"):
                 sent += 1
+                _update_response_status(
+                    response_request_id,
+                    "completed",
+                    agent_resource_id=status_agent_id,
+                    agent_name=agent_name,
+                    response_count=sent,
+                )
                 _remember_auto_reply_fingerprint(fingerprint)
                 _remember_auto_reply_followup(candidate)
                 print(
@@ -1160,11 +1413,34 @@ async def _process_auto_replies(candidates: list[dict]) -> int:
                         flush=True,
                     )
             else:
+                _update_response_status(
+                    response_request_id,
+                    "failed",
+                    agent_resource_id=status_agent_id,
+                    agent_name=agent_name,
+                    error=send_result_text,
+                    response_count=sent,
+                )
                 print(f"⚠️ Auto-reply no enviado en canal {channel_id}: {send_result_text}")
         except Exception as exc:
+            _update_response_status(
+                response_request_id,
+                "failed",
+                agent_resource_id=status_agent_id,
+                agent_name=agent_name,
+                error=str(exc),
+                response_count=sent,
+            )
             print(f"⚠️ Error enviando auto-respuesta a SOLIDSET (canal {channel_id}): {exc}")
 
-    return sent
+    if response_request_id and not preview_only:
+        _update_response_status(
+            response_request_id,
+            "completed" if sent > 0 or not candidates else "failed",
+            error=None if sent > 0 or not candidates else "Ningún agente pudo enviar la respuesta.",
+            response_count=sent,
+        )
+    return preview_payloads if preview_only else sent
 
 
 def _extract_host_port_from_url(raw_url: str, default_port: int) -> tuple[Optional[str], int]:
@@ -2145,6 +2421,9 @@ class SendMessageResultDTO(BaseModel):
     Result: int
     Message: FrameworkMessageDTO
     Error: Optional[str] = None
+    requestId: Optional[str] = None
+    status: Optional[str] = None
+    statusUrl: Optional[str] = None
 
 
 def _get_payload_value(payload: Optional[dict[str, Any]], *keys: str) -> Any:
@@ -2751,19 +3030,145 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
     capture = notification_listener.capture_realtime_payload(payload)
     candidates = capture.get("auto_reply_candidates") or []
     _attach_solidset_instance(candidates, instance)
+    request_id = str(uuid.uuid4())
+    chat_id = str(next((item.get("chat_id") for item in candidates if item.get("chat_id")), ""))
+    _create_response_status(request_id, chat_id, len(candidates))
     if candidates:
-        _schedule_auto_replies(candidates)
+        _schedule_auto_replies(candidates, request_id)
+    else:
+        _update_response_status(request_id, "completed", response_count=0)
     if capture["errors"]:
+        _update_response_status(
+            request_id,
+            "failed",
+            error=f"No se pudo indexar el mensaje: {capture['errors']} error(es).",
+        )
         return SendMessageResultDTO(
             Result=2,  # UnexpectedException
             Message=message,
             Error=f"No se pudo indexar el mensaje en Qdrant: {capture['errors']} error(es).",
+            requestId=request_id,
+            status="failed",
+            statusUrl=f"/api/v1/agent/responses/{request_id}/status",
         )
     print(
         f"📥 FrameworkMessage aprendido={capture['learned']} "
         f"omitido={capture['skipped']} respuestas_programadas={len(candidates)}"
     )
-    return SendMessageResultDTO(Result=0, Message=message, Error=None)
+    return SendMessageResultDTO(
+        Result=0,
+        Message=message,
+        Error=None,
+        requestId=request_id,
+        status="queued" if candidates else "completed",
+        statusUrl=f"/api/v1/agent/responses/{request_id}/status",
+    )
+
+
+@app.get("/api/v1/agent/responses/status")
+def read_agent_response_status_by_chat(
+    chatId: str = Query(...), lang: str = Query("es", pattern="^(es|en|pt)$")
+) -> dict[str, Any]:
+    """Devuelve la solicitud más reciente asociada al IDChat2 indicado."""
+    data = _load_response_status_by_chat(str(chatId).strip())
+    if data is None:
+        raise HTTPException(status_code=404, detail="No existe estado para ese chatId.")
+    return _localize_response_status(data, lang)
+
+
+@app.get("/api/v1/agent/responses/{request_id}/status")
+def read_agent_response_status(
+    request_id: uuid.UUID, lang: str = Query("es", pattern="^(es|en|pt)$")
+) -> dict[str, Any]:
+    """Devuelve el estado de procesamiento de una respuesta automática."""
+    data = _load_response_status(str(request_id))
+    if data is None:
+        raise HTTPException(status_code=404, detail="La solicitud no existe o expiró.")
+    return _localize_response_status(data, lang)
+
+
+def _inflate_solidset_form_payload(form_payload: dict[str, Any]) -> dict[str, Any]:
+    """Convierte las claves de SendMessageForm en el JSON lógico de SolidSET."""
+    result: dict[str, Any] = {}
+    token_pattern = re.compile(r"([^.\[\]]+)|\[([^\]]+)\]")
+    for flat_key, raw_value in form_payload.items():
+        tokens: list[str | int] = []
+        for match in token_pattern.finditer(str(flat_key)):
+            token = match.group(1) if match.group(1) is not None else match.group(2)
+            tokens.append(int(token) if str(token).isdigit() else str(token))
+        if not tokens:
+            continue
+        value = raw_value
+        if flat_key == "ExtraData" and isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+        elif isinstance(value, str) and value.lower() in {"true", "false"}:
+            value = value.lower() == "true"
+
+        current: Any = result
+        for index, token in enumerate(tokens):
+            last = index == len(tokens) - 1
+            next_token = None if last else tokens[index + 1]
+            if isinstance(token, int):
+                while len(current) <= token:
+                    current.append(None)
+                if last:
+                    current[token] = value
+                elif current[token] is None:
+                    current[token] = [] if isinstance(next_token, int) else {}
+                current = current[token]
+            else:
+                if last:
+                    current[token] = value
+                else:
+                    if token not in current:
+                        current[token] = [] if isinstance(next_token, int) else {}
+                    current = current[token]
+    return result
+
+
+@app.post("/api/v1/agent/notification/framework-message/preview")
+async def preview_framework_notification(
+    message: FrameworkMessageDTO, request: Request
+) -> dict[str, Any]:
+    """Genera la respuesta y devuelve su payload sin enviarlo a SolidSET."""
+    payload = message.model_dump(mode="json")
+    try:
+        instance = _resolve_request_solidset_instance(request)
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=503, detail="No se pudo resolver la instancia SolidSET."
+        ) from exc
+    if instance is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Instancia SolidSET desconocida. Envía X-SolidSET-Instance "
+                "o registra la IP origen."
+            ),
+        )
+    payload["_SolidSETInstanceID"] = str(instance["ID"])
+    capture = notification_listener.capture_realtime_payload(payload)
+    candidates = capture.get("auto_reply_candidates") or []
+    _attach_solidset_instance(candidates, instance)
+    if capture["errors"]:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se pudo procesar el mensaje: {capture['errors']} error(es).",
+        )
+    flat_payloads = await _process_auto_replies(candidates, preview_only=True)
+    logical_payloads = [
+        _inflate_solidset_form_payload(item) for item in flat_payloads
+    ]
+    return {
+        "Result": 0,
+        "Learned": capture["learned"],
+        "Skipped": capture["skipped"],
+        "PayloadCount": len(logical_payloads),
+        "Payloads": logical_payloads,
+    }
 
 @app.post("/api/v1/agent/notification/frameworkHub/SendMessage")
 async def capture_and_forward_framework_message(request: Request):

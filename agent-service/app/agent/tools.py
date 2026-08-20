@@ -1030,6 +1030,7 @@ def solidset_send_chat_message(
     agent_chat_login_id: Optional[str] = None,
     human_chat_resource_name: Optional[str] = None,
     solidset_base_url: Optional[str] = None,
+    preview_only: bool = False,
 ) -> str:
     """
     ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
@@ -1210,6 +1211,10 @@ def solidset_send_chat_message(
             form_payload["Chat.Destiny[1].IDChannel"] = channel
             form_payload["Chat.Destiny[1].Sequence"] = 1
     print(form_payload, flush=True)
+    if preview_only:
+        # Devuelve exactamente los campos de formulario que se enviarían a
+        # SendMessageForm, sin autenticar ni efectuar ninguna llamada externa.
+        return json.dumps(form_payload, ensure_ascii=False)
     request_sender = _solidset_request_as_agent if agent_resource_id else _solidset_request_authenticated    
     request_args: dict[str, Any] = {
         "method": "POST",

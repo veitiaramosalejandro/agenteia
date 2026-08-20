@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     # Redis Cache / Memory
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")
+    AGENT_RESPONSE_STATUS_TTL_SECONDS: int = max(
+        600, int(os.getenv("AGENT_RESPONSE_STATUS_TTL_SECONDS", "1800"))
+    )
     AGENT_TEMPORAL_STATE_TTL_SECONDS: int = max(
         300, int(os.getenv("AGENT_TEMPORAL_STATE_TTL_SECONDS", "3600"))
     )

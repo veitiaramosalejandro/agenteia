@@ -7,6 +7,30 @@ from app.agent.tools import _solidset_login, _solidset_request_as_agent, solidse
 
 
 class SolidsetSendChatMessageTests(unittest.TestCase):
+    @patch("app.agent.tools._solidset_request_as_agent")
+    def test_preview_returns_payload_without_calling_solidset(self, request_mock):
+        result = solidset_send_chat_message.invoke(
+            {
+                "canal_id": "channel-123",
+                "mensaje": "Respuesta previa",
+                "recurso_id": "human-resource",
+                "recurso_login_id": "owner-login",
+                "confirm": True,
+                "generated_by_ia": True,
+                "agent_resource_id": "human-resource",
+                "agent_identity_id": "agent-resource",
+                "agent_chat_resource_name": "Dev17 [IA]",
+                "agent_chat_login_id": "owner-login",
+                "human_chat_resource_name": "Alejandro Veitia",
+                "preview_only": True,
+            }
+        )
+
+        request_mock.assert_not_called()
+        payload = __import__("json").loads(result)
+        self.assertEqual(payload["Sender.Resource"], "agent-resource")
+        self.assertEqual(payload["Chat.Destiny[1].IDResource"], "human-resource")
+
     @patch("app.agent.tools.get_solidset_login_for_active_agent")
     def test_login_rejects_resource_without_active_agent(self, login_lookup):
         login_lookup.return_value = None

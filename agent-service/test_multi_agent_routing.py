@@ -4,6 +4,11 @@ from uuid import uuid4
 
 from app.main import (
     MultiAgentDialogueRequest,
+    _create_response_status,
+    _inflate_solidset_form_payload,
+    _load_response_status,
+    _localize_response_status,
+    _update_response_status,
     _route_candidates_to_selected_agents,
     handle_multi_agent_dialogue,
     notification_listener,
@@ -11,6 +16,56 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    @patch("app.main._dialogue_redis")
+    def test_response_status_tracks_agent_stages(self, redis_mock):
+        storage = {}
+        redis_mock.setex.side_effect = lambda key, ttl, value: storage.__setitem__(key, value)
+        redis_mock.get.side_effect = lambda key: storage.get(key)
+
+        created = _create_response_status("request-1", "1823877", 1)
+        self.assertEqual(created["status"], "queued")
+        _update_response_status(
+            "request-1",
+            "searching",
+            agent_resource_id="agent-1",
+            agent_name="Dev17 [IA]",
+        )
+        _update_response_status("request-1", "completed", response_count=1)
+
+        current = _load_response_status("request-1")
+        self.assertEqual(current["status"], "completed")
+        self.assertEqual(current["displayMessage"], "Respondido")
+        self.assertEqual(current["responseCount"], 1)
+        self.assertEqual(current["agents"][0]["status"], "searching")
+        self.assertTrue(current["completed"])
+
+        english = _localize_response_status(current, "en")
+        portuguese = _localize_response_status(current, "pt")
+        self.assertEqual(english["displayMessage"], "Answered")
+        self.assertEqual(portuguese["displayMessage"], "Respondido")
+        self.assertEqual(
+            english["displayMessages"],
+            {"es": "Respondido", "en": "Answered", "pt": "Respondido"},
+        )
+
+    def test_inflates_preview_form_as_nested_solidset_payload(self):
+        payload = _inflate_solidset_form_payload({
+            "Sender.Resource": "agent-resource",
+            "Info[generated_by_ia]": "1",
+            "ExtraData": '{"meeting_id":"meeting-1"}',
+            "Chat.Destiny[0].IDResource": "agent-resource",
+            "Chat.Destiny[0].TalkWithAgent": "true",
+            "Chat.Destiny[1].IDResource": "human-resource",
+            "Chat.Destiny[1].Type": 2,
+        })
+
+        self.assertEqual(payload["Sender"]["Resource"], "agent-resource")
+        self.assertEqual(payload["ExtraData"]["meeting_id"], "meeting-1")
+        self.assertTrue(payload["Chat"]["Destiny"][0]["TalkWithAgent"])
+        self.assertEqual(
+            payload["Chat"]["Destiny"][1]["IDResource"], "human-resource"
+        )
+
     def setUp(self):
         self.mapping_verifier = patch(
             "app.main.verify_and_sync_solidset_agent_mapping",

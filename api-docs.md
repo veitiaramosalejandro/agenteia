@@ -741,6 +741,71 @@ POST /api/v1/agent/notification/framework-message
 
 Recibe directamente un `FrameworkMessage` de SolidSET.
 
+La respuesta conserva `Result`, `Message` y `Error`, y añade los datos para
+seguir el trabajo asíncrono:
+
+```json
+{
+  "Result": 0,
+  "requestId": "8e025a6b-25cb-4f95-997f-f7f66bb471b3",
+  "status": "queued",
+  "statusUrl": "/api/v1/agent/responses/8e025a6b-25cb-4f95-997f-f7f66bb471b3/status"
+}
+```
+
+El cliente WPF debe conservar `requestId`, mostrar un indicador indeterminado y
+consultar `statusUrl` cada 1–2 segundos hasta que `completed=true`.
+
+### Consultar el estado de una respuesta
+
+```http
+GET /api/v1/agent/responses/{requestId}/status?lang=es
+```
+
+Como recuperación alternativa usando el mensaje original:
+
+```http
+GET /api/v1/agent/responses/status?chatId={IDChat2}&lang=es
+```
+
+Los estados se guardan temporalmente en Redis durante
+`AGENT_RESPONSE_STATUS_TTL_SECONDS` (1800 segundos por defecto):
+
+`lang` admite `es`, `en` y `pt`; el valor predeterminado es `es`. Cada respuesta
+incluye además `displayMessages` con las tres traducciones para que WPF pueda
+cambiar el idioma sin volver a consultar la API.
+
+| Estado | Español | English | Português |
+|---|---|---|---|
+| `queued` | `Esperando…` | `Waiting…` | `Aguardando…` |
+| `processing` | `Procesando…` | `Processing…` | `Processando…` |
+| `searching` | `Buscando información…` | `Searching for information…` | `Procurando informações…` |
+| `thinking` | `Pensando…` | `Thinking…` | `Pensando…` |
+| `sending` | `Enviando respuesta…` | `Sending response…` | `Enviando resposta…` |
+| `completed` | `Respondido` | `Answered` | `Respondido` |
+| `failed` | `No se pudo responder` | `Unable to respond` | `Não foi possível responder` |
+| `cancelled` | `Cancelado` | `Cancelled` | `Cancelado` |
+
+La respuesta de estado incluye `agents` para mostrar cada agente por separado,
+`stageHistory`, `responseCount`, `createdAt`, `updatedAt`, `completedAt` y
+`error`. El polling debe finalizar al recibir `completed`, `failed` o
+`cancelled` (todos devuelven `completed=true`). Un HTTP 404 significa que el
+`requestId` no existe o ya expiró.
+
+### Previsualizar la respuesta sin enviarla
+
+```http
+POST /api/v1/agent/notification/framework-message/preview
+```
+
+Recibe el mismo `FrameworkMessage`, resuelve la instancia y los agentes
+seleccionados, genera sus respuestas y construye exactamente el payload que se
+enviaría a SolidSET, pero no realiza login ni llama a `Chat/SendMessageForm`.
+La respuesta contiene `Payloads`, una lista porque un mensaje puede seleccionar
+varios agentes. Cada elemento se devuelve como JSON anidado con `Sender`,
+`Destiny`, `ExtraData`, `Info` y `Chat`. `PayloadCount=0` indica que ningún
+agente activo y verificado debía responder.
+
 Funciones:
 
 - Normaliza el mensaje.
