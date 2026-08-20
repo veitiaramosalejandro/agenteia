@@ -5,6 +5,7 @@ from uuid import uuid4
 from app.main import (
     MultiAgentDialogueRequest,
     _create_response_status,
+    _framework_message_chat_id,
     _inflate_solidset_form_payload,
     _load_response_status,
     _localize_response_status,
@@ -16,6 +17,12 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    def test_framework_request_id_uses_chat_id(self):
+        self.assertEqual(
+            _framework_message_chat_id({"Chat": {"idChat2": 1824911}}, []),
+            "1824911",
+        )
+
     @patch("app.main._dialogue_redis")
     def test_response_status_tracks_agent_stages(self, redis_mock):
         storage = {}

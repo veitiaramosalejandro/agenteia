@@ -747,11 +747,16 @@ seguir el trabajo asíncrono:
 ```json
 {
   "Result": 0,
-  "requestId": "8e025a6b-25cb-4f95-997f-f7f66bb471b3",
+  "requestId": "1824911",
   "status": "queued",
-  "statusUrl": "/api/v1/agent/responses/8e025a6b-25cb-4f95-997f-f7f66bb471b3/status"
+  "statusUrl": "/api/v1/agent/responses/1824911/status"
 }
 ```
+
+`requestId` corresponde directamente a `Chat.IDChat2`, convertido a texto. De
+esta manera WPF puede relacionar el loading y los estados con el mensaje que ya
+conoce. Solo las notificaciones técnicas sin `IDChat2` reciben un UUID temporal
+de contingencia.
 
 El cliente WPF debe conservar `requestId`, mostrar un indicador indeterminado y
 consultar `statusUrl` cada 1–2 segundos hasta que `completed=true`.

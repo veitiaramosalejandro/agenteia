@@ -250,6 +250,22 @@ def _response_chat_key(chat_id: str) -> str:
     return f"machining:agent-response-chat:v1:{chat_id}"
 
 
+def _framework_message_chat_id(
+    payload: dict[str, Any], candidates: list[dict[str, Any]]
+) -> str:
+    candidate_chat_id = next(
+        (item.get("chat_id") for item in candidates if item.get("chat_id")), ""
+    )
+    chat_payload = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    chat_payload_lower = {str(key).lower(): value for key, value in chat_payload.items()}
+    return str(
+        candidate_chat_id
+        or chat_payload_lower.get("idchat2")
+        or chat_payload_lower.get("idchat")
+        or ""
+    ).strip()
+
+
 def _utc_status_timestamp() -> str:
     return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
 
@@ -3030,8 +3046,10 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
     capture = notification_listener.capture_realtime_payload(payload)
     candidates = capture.get("auto_reply_candidates") or []
     _attach_solidset_instance(candidates, instance)
-    request_id = str(uuid.uuid4())
-    chat_id = str(next((item.get("chat_id") for item in candidates if item.get("chat_id")), ""))
+    chat_id = _framework_message_chat_id(payload, candidates)
+    # IDChat2 es la referencia compartida con WPF/SolidSET. Solo se genera un
+    # UUID defensivo para notificaciones técnicas que no contienen chat.
+    request_id = chat_id or str(uuid.uuid4())
     _create_response_status(request_id, chat_id, len(candidates))
     if candidates:
         _schedule_auto_replies(candidates, request_id)
@@ -3078,10 +3096,10 @@ def read_agent_response_status_by_chat(
 
 @app.get("/api/v1/agent/responses/{request_id}/status")
 def read_agent_response_status(
-    request_id: uuid.UUID, lang: str = Query("es", pattern="^(es|en|pt)$")
+    request_id: str, lang: str = Query("es", pattern="^(es|en|pt)$")
 ) -> dict[str, Any]:
     """Devuelve el estado de procesamiento de una respuesta automática."""
-    data = _load_response_status(str(request_id))
+    data = _load_response_status(request_id.strip())
     if data is None:
         raise HTTPException(status_code=404, detail="La solicitud no existe o expiró.")
     return _localize_response_status(data, lang)
