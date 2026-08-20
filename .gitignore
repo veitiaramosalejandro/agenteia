@@ -11,3 +11,4 @@ certbot/internal/*.csr
 certbot/internal/*.srl
 certbot/conf/
 certbot/www/
+.env.production
