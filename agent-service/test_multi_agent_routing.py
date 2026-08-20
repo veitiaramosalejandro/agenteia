@@ -1,10 +1,13 @@
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
+from fastapi import Request
 
 from app.main import (
     MultiAgentDialogueRequest,
+    FrameworkMessageDTO,
     _create_response_status,
+    _framework_message_chat_id,
     _inflate_solidset_form_payload,
     _load_response_status,
     _localize_response_status,
@@ -12,10 +15,39 @@ from app.main import (
     _route_candidates_to_selected_agents,
     handle_multi_agent_dialogue,
     notification_listener,
+    receive_framework_notification,
 )
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    async def test_framework_endpoint_only_enqueues_original_message(self):
+        message = FrameworkMessageDTO(
+            RawMessage="Hola",
+            Chat={"idChat2": 1824918, "rawMessage": "Hola"},
+        )
+        request = Request({"type": "http", "headers": [], "client": ("127.0.0.1", 1)})
+        instance = {"ID": str(uuid4()), "BaseUrl": "http://solidset", "active": True}
+        with (
+            patch("app.main._resolve_request_solidset_instance", return_value=instance),
+            patch("app.main._enqueue_auto_replies", return_value="1-0") as enqueue,
+            patch("app.main._create_response_status"),
+            patch("app.main.save_agent_response_audit"),
+            patch.object(notification_listener, "capture_realtime_payload") as capture,
+            patch("app.main.settings.AGENT_RESPONSE_QUEUE_ENABLED", True),
+        ):
+            response = await receive_framework_notification(message, request)
+
+        self.assertEqual(response.requestId, "1824918")
+        self.assertEqual(response.status, "queued")
+        enqueue.assert_called_once()
+        capture.assert_not_called()
+
+    def test_framework_request_id_uses_chat_id(self):
+        self.assertEqual(
+            _framework_message_chat_id({"Chat": {"idChat2": 1824911}}, []),
+            "1824911",
+        )
+
     @patch("app.main._dialogue_redis")
     def test_response_status_tracks_agent_stages(self, redis_mock):
         storage = {}
@@ -34,9 +66,11 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
 
         current = _load_response_status("request-1")
         self.assertEqual(current["status"], "completed")
+        self.assertEqual(current["code"], 5)
         self.assertEqual(current["displayMessage"], "Respondido")
         self.assertEqual(current["responseCount"], 1)
         self.assertEqual(current["agents"][0]["status"], "searching")
+        self.assertEqual(current["agents"][0]["code"], 2)
         self.assertTrue(current["completed"])
 
         english = _localize_response_status(current, "en")

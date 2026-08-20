@@ -45,7 +45,26 @@ class Settings(BaseSettings):
     # Redis Cache / Memory
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")
     AGENT_RESPONSE_STATUS_TTL_SECONDS: int = max(
-        600, int(os.getenv("AGENT_RESPONSE_STATUS_TTL_SECONDS", "1800"))
+        600, int(os.getenv("AGENT_RESPONSE_STATUS_TTL_SECONDS", "86400"))
+    )
+    AGENT_RESPONSE_QUEUE_ENABLED: bool = _env_bool("AGENT_RESPONSE_QUEUE_ENABLED", "true")
+    AGENT_RESPONSE_STREAM: str = os.getenv(
+        "AGENT_RESPONSE_STREAM", "machining:agent-responses:v1"
+    )
+    AGENT_RESPONSE_CONSUMER_GROUP: str = os.getenv(
+        "AGENT_RESPONSE_CONSUMER_GROUP", "agent-response-workers-v1"
+    )
+    AGENT_RESPONSE_STREAM_MAXLEN: int = max(
+        10000, int(os.getenv("AGENT_RESPONSE_STREAM_MAXLEN", "100000"))
+    )
+    AGENT_RESPONSE_MAX_RETRIES: int = max(
+        0, min(10, int(os.getenv("AGENT_RESPONSE_MAX_RETRIES", "3")))
+    )
+    AGENT_RESPONSE_CLAIM_IDLE_MS: int = max(
+        30000, int(os.getenv("AGENT_RESPONSE_CLAIM_IDLE_MS", "300000"))
+    )
+    AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS: int = max(
+        10, int(os.getenv("AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS", "15"))
     )
     AGENT_TEMPORAL_STATE_TTL_SECONDS: int = max(
         300, int(os.getenv("AGENT_TEMPORAL_STATE_TTL_SECONDS", "3600"))

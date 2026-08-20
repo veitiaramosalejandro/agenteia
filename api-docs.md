@@ -741,17 +741,31 @@ POST /api/v1/agent/notification/framework-message
 
 Recibe directamente un `FrameworkMessage` de SolidSET.
 
+En el modo predeterminado `AGENT_RESPONSE_QUEUE_ENABLED=true`, este endpoint
+solo valida la instancia, toma `Chat.IDChat2`, crea el estado y publica el
+mensaje original en Redis Stream. Devuelve inmediatamente; la captura Qdrant,
+selección del agente, LLM y envío a SolidSET se ejecutan en `agent-worker`.
+La confirmación HTTP es `202 Accepted`.
+La resolución de `SysSolidSETInstance` se conserva 60 segundos en memoria para
+evitar una consulta PostgreSQL por cada petición durante picos de carga; guardar
+una configuración de instancia invalida inmediatamente esa caché.
+
 La respuesta conserva `Result`, `Message` y `Error`, y añade los datos para
 seguir el trabajo asíncrono:
 
 ```json
 {
   "Result": 0,
-  "requestId": "8e025a6b-25cb-4f95-997f-f7f66bb471b3",
+  "requestId": "1824911",
   "status": "queued",
-  "statusUrl": "/api/v1/agent/responses/8e025a6b-25cb-4f95-997f-f7f66bb471b3/status"
+  "statusUrl": "/api/v1/agent/responses/1824911/status"
 }
 ```
+
+`requestId` corresponde directamente a `Chat.IDChat2`, convertido a texto. De
+esta manera WPF puede relacionar el loading y los estados con el mensaje que ya
+conoce. Solo las notificaciones técnicas sin `IDChat2` reciben un UUID temporal
+de contingencia.
 
 El cliente WPF debe conservar `requestId`, mostrar un indicador indeterminado y
 consultar `statusUrl` cada 1–2 segundos hasta que `completed=true`.
@@ -769,28 +783,78 @@ GET /api/v1/agent/responses/status?chatId={IDChat2}&lang=es
 ```
 
 Los estados se guardan temporalmente en Redis durante
-`AGENT_RESPONSE_STATUS_TTL_SECONDS` (1800 segundos por defecto):
+`AGENT_RESPONSE_STATUS_TTL_SECONDS` (86400 segundos por defecto):
 
 `lang` admite `es`, `en` y `pt`; el valor predeterminado es `es`. Cada respuesta
 incluye además `displayMessages` con las tres traducciones para que WPF pueda
 cambiar el idioma sin volver a consultar la API.
 
-| Estado | Español | English | Português |
-|---|---|---|---|
-| `queued` | `Esperando…` | `Waiting…` | `Aguardando…` |
-| `processing` | `Procesando…` | `Processing…` | `Processando…` |
-| `searching` | `Buscando información…` | `Searching for information…` | `Procurando informações…` |
-| `thinking` | `Pensando…` | `Thinking…` | `Pensando…` |
-| `sending` | `Enviando respuesta…` | `Sending response…` | `Enviando resposta…` |
-| `completed` | `Respondido` | `Answered` | `Respondido` |
-| `failed` | `No se pudo responder` | `Unable to respond` | `Não foi possível responder` |
-| `cancelled` | `Cancelado` | `Cancelled` | `Cancelado` |
+| Code | Estado | Español | English | Português |
+|---:|---|---|---|---|
+| `0` | `queued` | `Esperando…` | `Waiting…` | `Aguardando…` |
+| `1` | `processing` | `Procesando…` | `Processing…` | `Processando…` |
+| `2` | `searching` | `Buscando información…` | `Searching for information…` | `Procurando informações…` |
+| `3` | `thinking` | `Pensando…` | `Thinking…` | `Pensando…` |
+| `4` | `sending` | `Enviando respuesta…` | `Sending response…` | `Enviando resposta…` |
+| `5` | `completed` | `Respondido` | `Answered` | `Respondido` |
+| `6` | `failed` | `No se pudo responder` | `Unable to respond` | `Não foi possível responder` |
+| `7` | `cancelled` | `Cancelado` | `Cancelled` | `Cancelado` |
 
 La respuesta de estado incluye `agents` para mostrar cada agente por separado,
 `stageHistory`, `responseCount`, `createdAt`, `updatedAt`, `completedAt` y
 `error`. El polling debe finalizar al recibir `completed`, `failed` o
 `cancelled` (todos devuelven `completed=true`). Un HTTP 404 significa que el
 `requestId` no existe o ya expiró.
+
+### Cola durable y escalado de workers
+
+La cola usa Redis Streams con consumer group. Un mensaje solo se confirma con
+`XACK` después de terminar; los mensajes abandonados por un worker se recuperan
+con `XAUTOCLAIM`. Los fallos se reencolan hasta
+`AGENT_RESPONSE_MAX_RETRIES`; después quedan en estado `failed` y PostgreSQL
+conserva el error.
+
+```env
+AGENT_RESPONSE_QUEUE_ENABLED=true
+AGENT_RESPONSE_STREAM=machining:agent-responses:v1
+AGENT_RESPONSE_CONSUMER_GROUP=agent-response-workers-v1
+AGENT_RESPONSE_STREAM_MAXLEN=100000
+AGENT_RESPONSE_MAX_RETRIES=3
+AGENT_RESPONSE_CLAIM_IDLE_MS=300000
+AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS=15
+AGENT_RESPONSE_STATUS_TTL_SECONDS=86400
+```
+
+`XREADGROUP` espera hasta 5 segundos. Un `redis.exceptions.TimeoutError` durante
+esa espera se interpreta como cola vacía y el worker continúa. Otros errores
+temporales de Redis provocan una reconexión automática cada 2 segundos; no
+finalizan el proceso del worker.
+
+La tabla PostgreSQL `SysAgentIAResponseAudit` conserva `RequestID`, `IDChat2`,
+payload original, estado, código, cantidad de respuestas, resultado resumido,
+error y marcas temporales.
+
+Para aumentar capacidad sin modificar la API:
+
+```powershell
+docker compose -f docker-compose-prod.yml up -d --scale agent-worker=4
+```
+
+El número efectivo de workers debe respetar la capacidad de Ollama/GPU. Redis
+puede aceptar una cola muy superior a la concurrencia del modelo, pero aumentar
+workers por encima de `OLLAMA_NUM_PARALLEL` solo aumenta la espera en Ollama.
+Nginx limita por IP a 100 solicitudes/s (burst 200) y por
+`X-SolidSET-Instance` a 200 solicitudes/s (burst 500), devolviendo HTTP 429 al
+superar esos límites.
+
+Las métricas de cola están disponibles en:
+
+```http
+GET /api/v1/agent/responses/queue/status
+```
+
+Devuelve `length`, `pending`, `consumers` y `lag`, necesarios para decidir si se
+deben aumentar los workers.
 
 ### Previsualizar la respuesta sin enviarla
 
