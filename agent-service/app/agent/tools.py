@@ -1110,13 +1110,12 @@ def solidset_send_chat_message(
         form_payload["Info[meeting_mirror_general]"] = "1"
     if generated_by_ia:
         form_payload["Info[generated_by_ia]"] = "1"
-        visual_resource_id = str(
+        sender_agent_resource_id = str(
             agent_identity_id or agent_resource_id or ""
         ).strip()
-        if visual_resource_id:
-            # En autorrespuestas se publica SysResourceIA.ID para que SolidSET
-            # no confunda al agente con el recurso humano autenticado.
-            form_payload["Info[agent_resource_id]"] = visual_resource_id
+        selected_agent_resource_id = str(agent_resource_id or "").strip()
+        if sender_agent_resource_id:
+            form_payload["Info[agent_resource_id]"] = sender_agent_resource_id
         if agent_identity_id:
             visual_agent_id = str(agent_identity_id).strip()
             # Identidad lógica de la autorrespuesta. SolidSET autentica y persiste
@@ -1125,11 +1124,11 @@ def solidset_send_chat_message(
             form_payload["Info[id_agent_ia]"] = visual_agent_id
             form_payload["Info[agent_id]"] = visual_agent_id
             form_payload["IDAgentIA"] = visual_agent_id
-        if visual_resource_id and channel and resource:
+        if sender_agent_resource_id and selected_agent_resource_id and channel and resource:
             # La UI de SolidSET pinta From/To desde Chat, no solo desde Destiny.
             # Para una autorrespuesta se invierten explícitamente los roles:
             # agente lógico type=1 (origen) -> humano type=2 (destino).
-            form_payload["Chat.IDSenderResource"] = visual_resource_id
+            form_payload["Chat.IDSenderResource"] = sender_agent_resource_id
             if agent_chat_login_id:
                 form_payload["Chat.IDSender"] = str(agent_chat_login_id).strip()
             form_payload["Chat.IDWorkRoom"] = channel
@@ -1139,7 +1138,10 @@ def solidset_send_chat_message(
             form_payload["Chat.Kind"] = 60 if meeting else 0
             if agent_chat_login_id:
                 form_payload["Chat.Destiny[0].IDLogin"] = str(agent_chat_login_id).strip()
-            form_payload["Chat.Destiny[0].IDResource"] = visual_resource_id
+            # El participante IA conserva el IDResource humano que SolidSET
+            # envió con talkWithAgent=true. El recurso Software se utiliza solo
+            # como remitente técnico en Chat.IDSenderResource/IDAgentIA.
+            form_payload["Chat.Destiny[0].IDResource"] = selected_agent_resource_id
             form_payload["Chat.Destiny[0].ResourceName"] = (
                 str(agent_chat_resource_name or "").strip() or "Agente IA"
             )

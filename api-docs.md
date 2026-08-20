@@ -297,7 +297,7 @@ Chat.IDWorkRoom = IDWorkRoom
 Chat.IDMeeting = meeting válido (si existe)
 Chat.RawMessage = respuesta
 Chat.Kind = 60 en meeting; 0 en un canal normal
-Chat.Destiny[0] = agente, Type=1, TalkWithAgent=true
+Chat.Destiny[0] = agente, IDResource=SysResourceIA.IDResource, Type=1, TalkWithAgent=true
 Chat.Destiny[1] = recurso humano, Type=2
 ```
 
@@ -307,11 +307,14 @@ dirección del mensaje original `From: humano To: agente [IA]`.
 `SysResourceIA.IDResource` identifica al recurso humano propietario y se usa
 para seleccionar el agente, resolver su login, memoria y conocimiento.
 `SysResourceIA.IDAgentResource` identifica al recurso software que representa
-al agente en SolidSET y procede de
-`dbo.SysResource2Agent.IDAgentResource`. Nunca se utiliza el UUID interno
-`SysResourceIA.ID` como remitente de SolidSET. Si un agente activo todavía no
-tiene `IDAgentResource`, la respuesta se omite para no publicarla con la
-identidad del humano.
+al remitente técnico del agente en SolidSET y procede de
+`dbo.SysResource2Agent.IDAgentResource`; se usa en `Chat.IDSenderResource` y
+`IDAgentIA`, pero no en `Chat.Destiny[0].IDResource`. Este último conserva
+`SysResourceIA.IDResource`, exactamente como llegó en el destino
+`talkWithAgent=true`, junto con el nombre visible terminado en `[IA]`. Nunca se
+utiliza el UUID interno `SysResourceIA.ID` como participante de SolidSET. Si un
+agente activo todavía no tiene `IDAgentResource`, la respuesta se omite para no
+publicarla con una identidad técnica incorrecta.
 
 `TrainingMode` admite `rag_reinforcement`, `rag_only` y `disabled`. La mejora
 actual no modifica los pesos del modelo: utiliza conocimiento vectorial aislado,

@@ -798,6 +798,18 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             agent_chat_destination = _selected_agent_chat_destination(
                 candidate, agent_resource_id
             )
+            agent_chat_resource_name = str(
+                agent_chat_destination.get("resource_name") or ""
+            ).strip()
+            if not agent_chat_resource_name:
+                configured_resource_name = str(
+                    configured_agent.get("Name") or "Agente IA"
+                ).strip()
+                agent_chat_resource_name = (
+                    configured_resource_name
+                    if configured_resource_name.lower().endswith("[ia]")
+                    else f"{configured_resource_name} [IA]"
+                )
             try:
                 private_knowledge = get_agent_knowledge(agent_resource_id, channel_id)
             except (ValueError, psycopg.Error) as exc:
@@ -827,7 +839,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 "reply_resource": human_destination.get("resource", ""),
                 "reply_login": human_destination.get("login", ""),
                 "reply_resource_name": human_destination.get("resource_name", ""),
-                "agent_chat_resource_name": agent_chat_destination.get("resource_name", ""),
+                "agent_chat_resource_name": agent_chat_resource_name,
                 "agent_chat_login": agent_chat_destination.get("login", ""),
                 "reply_destiny_inverted": True,
             })

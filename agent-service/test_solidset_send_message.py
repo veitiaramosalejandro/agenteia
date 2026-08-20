@@ -128,7 +128,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         )
         self.assertEqual(
             form["Chat.Destiny[0].IDResource"],
-            "2555288c-44c7-4209-95f2-3de98f0f416d",
+            "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
         )
         self.assertEqual(form["Chat.Destiny[0].ResourceName"], "Dev17 [IA]")
         self.assertEqual(form["Chat.Destiny[0].TalkWithAgent"], "true")
