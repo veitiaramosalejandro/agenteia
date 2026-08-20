@@ -14,6 +14,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
     def test_talk_with_agent_selects_only_explicit_ai_destination(self):
         room_id = uuid4()
         sender_resource = uuid4()
+        sender_login = uuid4()
         selected_agent = uuid4()
         unselected_agent = uuid4()
         candidate = {
@@ -27,6 +28,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                 "Chat": {
                     "destiny": [
                         {
+                            "iDLogin": str(sender_login),
                             "iDResource": str(sender_resource),
                             "type": 1,
                             "sequence": 0,
@@ -62,6 +64,9 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         assign.assert_called_once_with(str(room_id), [str(selected_agent)])
         registry.assert_called_once_with(str(room_id), [str(selected_agent)])
         self.assertEqual([str(selected_agent)], [item["agent_resource_id"] for item in routed])
+        self.assertEqual(str(sender_resource), routed[0]["reply_resource"])
+        self.assertEqual(str(sender_login), routed[0]["reply_login"])
+        self.assertTrue(routed[0]["reply_destiny_inverted"])
 
     def test_talk_with_agent_false_prevents_legacy_fallback(self):
         room_id = uuid4()
@@ -347,6 +352,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         with (
             patch("app.main.get_active_agents_for_workroom", return_value=configured),
             patch("app.main.get_agent_knowledge", return_value="Conocimiento privado"),
+            patch("app.main.get_agent_reinforcement_context", return_value=""),
             patch("app.main.touch_agent_session"),
             patch("app.main.orchestrator.invoke", side_effect=invoke),
             patch("app.main._learn_agent_interaction"),

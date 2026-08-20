@@ -1064,8 +1064,10 @@ def solidset_send_chat_message(
     if channel:
         form_payload["Destiny.WorkRoom"] = channel
     if channel and resource:
-        # Mensaje dirigido dentro de un canal: reproducir AddressSpec.Dests
-        # del FrameworkMessage original para que aparezca en ese workRoom.
+        # Inversión explícita del Chat.destiny original:
+        # solicitud humano(type=1) -> IA(type=2), respuesta IA -> humano.
+        # SolidSET obtiene el origen IA desde la sesión y las marcas Info; aquí
+        # el humano queda como destinatario dirigido Kind/Type=2.
         if resource_login:
             form_payload["Destiny.Dests[0].Login"] = resource_login
         form_payload["Destiny.Dests[0].Resource"] = resource

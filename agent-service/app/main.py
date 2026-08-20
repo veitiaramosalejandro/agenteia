@@ -653,6 +653,45 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     return list(dict.fromkeys(value for value in selected if value))
 
 
+def _human_reply_destination(candidate: dict) -> dict[str, str]:
+    """Resuelve el type=1 de Chat.destiny al invertir humano -> IA en la respuesta."""
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    chat_lower = {str(key).lower(): value for key, value in chat.items()}
+    destinations = chat_lower.get("destiny")
+    sender_resource = str(candidate.get("sender_resource") or "").strip()
+    humans: list[tuple[int, dict[str, str]]] = []
+    if isinstance(destinations, list):
+        for destination in destinations:
+            if not isinstance(destination, dict):
+                continue
+            lowered = {str(key).lower(): value for key, value in destination.items()}
+            try:
+                destination_type = int(lowered.get("type"))
+            except (TypeError, ValueError):
+                continue
+            if destination_type != 1:
+                continue
+            resource = str(lowered.get("idresource") or lowered.get("resource") or "").strip()
+            login = str(lowered.get("idlogin") or lowered.get("login") or "").strip()
+            if not resource:
+                continue
+            try:
+                sequence = int(lowered.get("sequence") or 0)
+            except (TypeError, ValueError):
+                sequence = 0
+            # Si existe más de un humano, el autor del mensaje tiene prioridad.
+            priority = -1 if sender_resource and resource.lower() == sender_resource.lower() else sequence
+            humans.append((priority, {"resource": resource, "login": login}))
+    if humans:
+        humans.sort(key=lambda item: item[0])
+        return humans[0][1]
+    return {
+        "resource": sender_resource,
+        "login": str(candidate.get("sender_login") or "").strip(),
+    }
+
+
 def _agent_visible_name(configured_agent: dict[str, Any]) -> str:
     """Construye la identidad pública del agente desde el nombre de su login."""
     resource_id = str(configured_agent.get("IDResource") or "").strip()
@@ -719,6 +758,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
         for configured_agent in configured_agents:
             agent_resource_id = str(configured_agent["IDResource"])
             routed_candidate = dict(candidate)
+            human_destination = _human_reply_destination(candidate)
             try:
                 private_knowledge = get_agent_knowledge(agent_resource_id, channel_id)
             except (ValueError, psycopg.Error) as exc:
@@ -743,9 +783,10 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 # invertir la conversación: agente autenticado -> autor original.
                 # La detección inicial de ``is_direct`` solo conoce la identidad
                 # global configurada y puede no reconocer agentes dinámicos.
-                "is_direct": bool(str(candidate.get("sender_resource") or "").strip()),
-                "reply_resource": str(candidate.get("sender_resource") or "").strip(),
-                "reply_login": str(candidate.get("sender_login") or "").strip(),
+                "is_direct": bool(human_destination.get("resource")),
+                "reply_resource": human_destination.get("resource", ""),
+                "reply_login": human_destination.get("login", ""),
+                "reply_destiny_inverted": True,
             })
             routed.append(routed_candidate)
     return routed

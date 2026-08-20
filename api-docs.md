@@ -261,6 +261,26 @@ Capacidades iniciales:
 La identidad, sesión, memoria, conocimiento privado y login SolidSET permanecen
 asociados al mismo `IDResource`; solo cambia el modelo que genera ese turno.
 
+### Inversión del destinatario al responder
+
+Cuando `Chat.destiny` contiene el recurso humano `type=1` y el agente solicitado
+`type=2, talkWithAgent=true`, el primero selecciona el destinatario de respuesta
+y el segundo selecciona el agente emisor. El formulario enviado a SolidSET queda
+lógicamente invertido como agente → humano:
+
+```text
+Destiny.WorkRoom = Chat.destiny[].idChannel
+Destiny.Dests[0].Login = Chat.destiny[type=1].idLogin
+Destiny.Dests[0].Resource = Chat.destiny[type=1].idResource
+Destiny.Dests[0].Kind = 2
+Destiny.Dests[0].Type = 2
+```
+
+La API usa las claves planas `Destiny.Dests[0].*` porque `/Chat/SendMessageForm`
+recibe formulario; el model binder de SolidSET lo convierte al objeto anidado
+`Destiny.Dests`. `talkWithAgent` no se reenvía en la respuesta para evitar que
+la respuesta generada vuelva a activar al agente.
+
 `TrainingMode` admite `rag_reinforcement`, `rag_only` y `disabled`. La mejora
 actual no modifica los pesos del modelo: utiliza conocimiento vectorial aislado,
 mensajes del recurso propietario, conocimiento general permitido, memoria de
