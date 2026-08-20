@@ -301,10 +301,15 @@ Chat.IDSender = login del propietario del agente, si existe; si no, se omite
 Chat.IDWorkRoom = IDWorkRoom
 Chat.IDMeeting = meeting válido (si existe)
 Chat.RawMessage = respuesta
-Chat.Kind = 60 en meeting; 0 en un canal normal
+Chat.Kind = 60
 Chat.Destiny[0] = agente, Type=1, TalkWithAgent=true
 Chat.Destiny[1] = recurso humano, Type=2
 ```
+
+El sobre de respuesta declara además `Sender.Resource=IDAgentResource`,
+`Sender.Login=login del propietario` cuando existe y mantiene
+`Sender.Session`/`Sender.WorkRoom` en GUID cero. El canal de entrega se indica
+en `Destiny.WorkRoom`; su único destino es el recurso humano con `Kind=2`.
 
 Así la UI recibe `From: agente [IA] To: humano`, en lugar de reutilizar la
 dirección del mensaje original `From: humano To: agente [IA]`.

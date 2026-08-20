@@ -168,9 +168,21 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
             form["Chat.IDSenderResource"],
             "2555288c-44c7-4209-95f2-3de98f0f416d",
         )
+        self.assertEqual(
+            form["Sender.Resource"], "2555288c-44c7-4209-95f2-3de98f0f416d"
+        )
+        self.assertEqual(
+            form["Sender.Login"], "1790fc78-023d-4506-a7e8-5c030e9386d1"
+        )
+        self.assertEqual(
+            form["Sender.Session"], "00000000-0000-0000-0000-000000000000"
+        )
+        self.assertEqual(
+            form["Sender.WorkRoom"], "00000000-0000-0000-0000-000000000000"
+        )
         self.assertEqual(form["Chat.IDWorkRoom"], "channel-123")
         self.assertEqual(form["Chat.RawMessage"], "Respuesta del agente")
-        self.assertEqual(form["Chat.Kind"], 0)
+        self.assertEqual(form["Chat.Kind"], 60)
         self.assertEqual(
             form["Chat.IDSender"], "1790fc78-023d-4506-a7e8-5c030e9386d1"
         )

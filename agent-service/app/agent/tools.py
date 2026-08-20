@@ -1166,6 +1166,15 @@ def solidset_send_chat_message(
             # La UI de SolidSET pinta From/To desde Chat, no solo desde Destiny.
             # Para una autorrespuesta se invierten explícitamente los roles:
             # agente lógico type=1 (origen) -> humano type=2 (destino).
+            empty_guid = "00000000-0000-0000-0000-000000000000"
+            # El sobre FrameworkMessage debe declarar también al agente como
+            # remitente. La sesión y el workroom del Sender permanecen vacíos;
+            # el canal real se expresa en Destiny.WorkRoom y Chat.IDWorkRoom.
+            form_payload["Sender.Resource"] = sender_agent_resource_id
+            if agent_chat_login_id:
+                form_payload["Sender.Login"] = str(agent_chat_login_id).strip()
+            form_payload["Sender.Session"] = empty_guid
+            form_payload["Sender.WorkRoom"] = empty_guid
             form_payload["Chat.IDSenderResource"] = sender_agent_resource_id
             # IDSender es el login del propietario del agente, nunca un GUID de
             # recurso. Si no existe login se omite y SolidSET lo resuelve desde
@@ -1176,7 +1185,7 @@ def solidset_send_chat_message(
             if meeting:
                 form_payload["Chat.IDMeeting"] = meeting
             form_payload["Chat.RawMessage"] = text
-            form_payload["Chat.Kind"] = 60 if meeting else 0
+            form_payload["Chat.Kind"] = 60
             if agent_chat_login_id:
                 form_payload["Chat.Destiny[0].IDLogin"] = str(agent_chat_login_id).strip()
             # El From siempre utiliza el IDAgentResource verificado contra
