@@ -1171,7 +1171,7 @@ def solidset_send_chat_message(
             sender_login_id = str(agent_chat_login_id or resource_login or "").strip()
             if sender_login_id:
                 form_payload["Chat.IDSenderResource"] = sender_login_id
-            form_payload["Chat.IDSender"] = selected_agent_resource_id
+            form_payload["Chat.IDSender"] = sender_agent_resource_id
             form_payload["Chat.IDWorkRoom"] = channel
             if meeting:
                 form_payload["Chat.IDMeeting"] = meeting
