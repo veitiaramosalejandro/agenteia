@@ -11,6 +11,59 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.mapping_verifier = patch(
+            "app.main.verify_and_sync_solidset_agent_mapping",
+            side_effect=lambda human_id, expected_id=None: {
+                "verified": True,
+                "matchesExpected": True,
+                "IDHumanResource": human_id,
+                "IDAgentResource": expected_id or human_id,
+                "changed": False,
+            },
+        )
+        self.verify_mapping = self.mapping_verifier.start()
+        self.addCleanup(self.mapping_verifier.stop)
+
+    def test_inactive_sql_agent_mapping_blocks_response(self):
+        room_id = uuid4()
+        human_agent = uuid4()
+        cached_agent = uuid4()
+        self.verify_mapping.side_effect = None
+        self.verify_mapping.return_value = {
+            "verified": False,
+            "matchesExpected": False,
+            "IDHumanResource": human_agent,
+            "IDAgentResource": None,
+            "changed": True,
+        }
+        candidate = {
+            "fingerprint": "inactive-sql-agent",
+            "channel_id": str(room_id),
+            "payload": {
+                "Chat": {
+                    "destiny": [{
+                        "idResource": str(human_agent),
+                        "type": 2,
+                        "talkWithAgent": True,
+                    }],
+                },
+            },
+        }
+        configured = [{
+            "IDResource": human_agent,
+            "IDAgentResource": cached_agent,
+            "Name": "Agente obsoleto",
+        }]
+        with (
+            patch("app.main.ensure_payload_agent_workroom_assignments", return_value=0),
+            patch("app.main.get_active_agents_for_workroom", return_value=configured),
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        self.assertEqual([], routed)
+        self.verify_mapping.assert_called_once_with(str(human_agent))
+
     def test_talk_with_agent_selects_only_explicit_ai_destination(self):
         room_id = uuid4()
         sender_resource = uuid4()
@@ -304,7 +357,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, len(routed))
         self.assertEqual(str(owner_resource), routed[0]["agent_resource_id"])
-        self.assertEqual(str(agent_identity), routed[0]["agent_identity_id"])
+        self.assertEqual(str(owner_resource), routed[0]["agent_identity_id"])
         self.assertEqual("Asistente IA Alejandro Veitia", routed[0]["agent_name"])
 
     def test_routes_only_active_selected_agents_returned_by_registry(self):

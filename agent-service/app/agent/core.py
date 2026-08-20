@@ -1185,17 +1185,40 @@ class MachiningAgent:
         text = self._normalize_context_query(user_text)
         if not re.search(r"\b(?:cu[aá]nt(?:o|os|a|as)|quant(?:o|os|a|as)|how\s+many)\b", text, flags=re.IGNORECASE):
             return None
-        match = re.search(
-            r"\b(?:recursos?|users?|utilizadores?|usuários?)\s+(.+?)"
-            r"(?=\s+(?:existen?|existem|hay|are|in|no|na|en\s+el|en\s+la|del\s+sistema)\b|[?¿.,]|$)",
+        # Un cuantificador no basta: «cuántas Champions» o «cuántos goles» no
+        # son consultas de recursos de SOLIDSET. Exigimos el sustantivo del
+        # dominio antes de habilitar la consulta SQL especializada.
+        if not re.search(
+            r"\b(?:recursos?|users?|utilizadores?|usuários?)\b",
+            text,
+            flags=re.IGNORECASE,
+        ):
+            return None
+        english_match = re.search(
+            r"\bhow\s+many(?:\s+(.+?))?\s+users?\b",
             text,
             flags=re.IGNORECASE,
         )
-        if not match:
-            match = re.search(r"\bhow\s+many\s+(.+?)\s+users?\b", text, flags=re.IGNORECASE)
-        if not match:
-            return ""
-        term = " ".join(match.group(1).strip().split())
+        if english_match:
+            term = " ".join((english_match.group(1) or "").strip().split())
+            return term[:80]
+
+        noun_match = re.search(
+            r"\b(?:recursos?|utilizadores?|usuários?|users?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not noun_match:
+            return None
+        tail = text[noun_match.end():].strip(" ¿?.,")
+        stop = re.search(
+            r"\b(?:existen?|existem|hay|are|in|no|na|en\s+el|en\s+la|del\s+sistema)\b",
+            tail,
+            flags=re.IGNORECASE,
+        )
+        if stop:
+            tail = tail[:stop.start()]
+        term = " ".join(tail.strip(" ¿?.,").split())
         return term[:80]
 
     def _resolve_resource_count_from_db(self, user_text: str) -> Optional[str]:

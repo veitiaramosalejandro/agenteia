@@ -64,6 +64,69 @@ LOGIN_QUERY = """
 """
 
 
+def verify_and_sync_solidset_agent_mapping(
+    human_resource_id: UUID | str,
+    expected_agent_resource_id: UUID | str | None = None,
+) -> dict[str, object]:
+    """Verifica en SQL Server la relación IA activa y actualiza su réplica local."""
+    human_id = UUID(str(human_resource_id))
+    expected_id = (
+        UUID(str(expected_agent_resource_id))
+        if expected_agent_resource_id
+        else None
+    )
+    with pymssql.connect(
+        **settings.sql_server_connection_options(),
+        user=settings.SQL_SERVER_USER,
+        password=settings.SQL_SERVER_PASSWORD,
+        database=settings.SQL_SERVER_DB,
+        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
+    ) as source_connection:
+        source_cursor = source_connection.cursor(as_dict=True)
+        source_cursor.execute(
+            """
+            SELECT TOP 1 IDAgentResource
+            FROM dbo.SysResource2Agent WITH (NOLOCK)
+            WHERE IDHumanResource = %s AND Active = 1
+            ORDER BY CreatedUtc DESC
+            """,
+            (str(human_id),),
+        )
+        source_row = source_cursor.fetchone()
+
+    verified_agent_id = (
+        UUID(str(source_row.get("IDAgentResource")))
+        if source_row and source_row.get("IDAgentResource")
+        else None
+    )
+    with _postgres_connection() as target_connection:
+        with target_connection.cursor() as target_cursor:
+            target_cursor.execute(
+                '''
+                UPDATE public."SysResourceIA"
+                SET "IDAgentResource" = %s,
+                    active = %s,
+                    "Stamp" = %s
+                WHERE "IDResource" = %s
+                ''',
+                (verified_agent_id, bool(verified_agent_id), datetime.now(), human_id),
+            )
+            local_agent_exists = target_cursor.rowcount == 1
+
+    return {
+        "verified": bool(local_agent_exists and verified_agent_id),
+        "matchesExpected": bool(
+            verified_agent_id and (
+                expected_id is None or verified_agent_id == expected_id
+            )
+        ),
+        "IDHumanResource": human_id,
+        "IDAgentResource": verified_agent_id,
+        "changed": expected_id != verified_agent_id,
+    }
+
+
 def ingest_solidset_logins() -> dict[str, int]:
     """Sincroniza cuentas SolidSET para autenticar al agente de cada recurso."""
     with pymssql.connect(

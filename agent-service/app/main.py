@@ -62,6 +62,7 @@ from app.system.resource_ingest import (
     ingest_solidset_logins,
     ingest_solidset_resources,
     ingest_solidset_workrooms,
+    verify_and_sync_solidset_agent_mapping,
 )
 from app.system.reaction_capture import (
     classify_reaction,
@@ -776,6 +777,34 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
         selected = _selected_agent_resource_ids(candidate)
         if not channel_id or not selected:
             continue
+        verified_mappings: dict[str, str] = {}
+        for selected_resource_id in selected:
+            try:
+                verification = verify_and_sync_solidset_agent_mapping(
+                    selected_resource_id
+                )
+            except (ValueError, pymssql.Error, psycopg.Error) as exc:
+                print(
+                    "⚠️ Agente omitido: no se pudo verificar SysResource2Agent "
+                    f"IDHumanResource={selected_resource_id}: {exc}"
+                )
+                continue
+            verified_agent_id = str(
+                verification.get("IDAgentResource") or ""
+            ).strip()
+            if not verification.get("verified") or not verified_agent_id:
+                print(
+                    "⚠️ Agente omitido: no existe relación activa en dbo.SysResource2Agent "
+                    f"para IDHumanResource={selected_resource_id}"
+                )
+                continue
+            verified_mappings[str(selected_resource_id).lower()] = verified_agent_id
+        selected = [
+            resource_id for resource_id in selected
+            if str(resource_id).lower() in verified_mappings
+        ]
+        if not selected:
+            continue
         try:
             ensure_payload_agent_workroom_assignments(channel_id, selected)
             configured_agents = get_active_agents_for_workroom(channel_id, selected)
@@ -784,12 +813,22 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             continue
         for configured_agent in configured_agents:
             agent_resource_id = str(configured_agent["IDResource"])
-            solidset_agent_resource_id = str(
+            cached_agent_resource_id = str(
                 configured_agent.get("IDAgentResource") or ""
             ).strip()
+            solidset_agent_resource_id = verified_mappings.get(
+                agent_resource_id.lower(), ""
+            )
+            if cached_agent_resource_id != solidset_agent_resource_id:
+                print(
+                    "🔄 Identidad IA actualizada antes de responder "
+                    f"human={agent_resource_id} "
+                    f"previous={cached_agent_resource_id or '-'} "
+                    f"current={solidset_agent_resource_id or '-'}"
+                )
             if not solidset_agent_resource_id:
                 print(
-                    "⚠️ Agente omitido: falta IDAgentResource de dbo.SysResource2Agent "
+                    "⚠️ Agente omitido: no existe relación activa en dbo.SysResource2Agent "
                     f"para IDHumanResource={agent_resource_id}"
                 )
                 continue
@@ -2356,6 +2395,14 @@ async def handle_multi_agent_dialogue(
     async def execute_one(configured_agent: dict[str, Any]) -> MultiAgentAnswer:
         agent_resource_id = str(configured_agent["IDResource"])
         agent_identity_id = str(configured_agent.get("IDAgentResource") or "").strip()
+        if not agent_identity_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "El recurso humano seleccionado no tiene IDAgentResource "
+                    "sincronizado desde dbo.SysResource2Agent."
+                ),
+            )
         agent_name = _agent_visible_name(configured_agent)
         isolated_session = (
             f"solidset:agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
@@ -2419,7 +2466,7 @@ async def handle_multi_agent_dialogue(
             ))
             sent = send_detail.startswith("✅")
         return MultiAgentAnswer(
-            IDAgentResource=uuid.UUID(agent_resource_id),
+            IDAgentResource=uuid.UUID(agent_identity_id),
             AgentName=agent_name,
             response=response_text,
             sent=sent,

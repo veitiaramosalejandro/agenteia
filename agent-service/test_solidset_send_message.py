@@ -29,6 +29,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self, client_class, login_lookup
     ):
         login_lookup.return_value = {
+            "IDLogin": "3d2d097f-34c1-4cf7-acd5-067453381511",
             "Username": "agent.user",
             "Password": "secret-value",
         }
@@ -45,6 +46,7 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
 
         response, base, error = _solidset_request_as_agent(
             agent_resource_id="ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+            agent_login_id="3d2d097f-34c1-4cf7-acd5-067453381511",
             method="POST",
             endpoint="/Chat/SendMessageForm",
             form_payload={"RawMessage": "Agente Dev17: respuesta"},
@@ -61,6 +63,48 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         self.assertEqual(login_call.kwargs["data"]["PasswordEncrypted"], "true")
         self.assertEqual(login_call.kwargs["data"]["TimezoneId"], "GMT Standard Time")
         self.assertNotIn("Resources[0]", login_call.kwargs["data"])
+        login_lookup.assert_called_once_with(
+            "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+            preferred_login_id="3d2d097f-34c1-4cf7-acd5-067453381511",
+        )
+
+    @patch("app.system.resource_ingest.ingest_solidset_logins")
+    @patch("app.agent.tools.get_solidset_login_for_active_agent")
+    def test_rejected_login_resynchronizes_and_retries_once(
+        self, login_lookup, sync_logins
+    ):
+        login_lookup.side_effect = [
+            {
+                "IDLogin": "old-login",
+                "Username": "agent.user",
+                "Password": "old-password",
+            },
+            {
+                "IDLogin": "3d2d097f-34c1-4cf7-acd5-067453381511",
+                "Username": "agent.user",
+                "Password": "new-password",
+            },
+        ]
+        sync_logins.return_value = {"updated": 1, "inserted": 0}
+        rejected = MagicMock(status_code=200)
+        rejected.json.return_value = {"Success": False}
+        accepted = MagicMock(status_code=200, headers={})
+        accepted.json.return_value = {"Success": True}
+        client = MagicMock()
+        client.post.side_effect = [rejected, accepted]
+
+        authenticated, endpoint, _ = _solidset_login(
+            client,
+            "http://solidset.local",
+            agent_resource_id="ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+            agent_login_id="3d2d097f-34c1-4cf7-acd5-067453381511",
+        )
+
+        self.assertTrue(authenticated)
+        self.assertEqual(endpoint, "/User/LoginJson")
+        sync_logins.assert_called_once_with()
+        self.assertEqual(client.post.call_count, 2)
+        self.assertEqual(client.post.call_args.kwargs["data"]["Password"], "new-password")
 
     @patch("app.agent.tools.settings.SOLIDSET_USER_ACTIONS_ENABLED", True)
     @patch("app.agent.tools._solidset_request_authenticated")
@@ -98,6 +142,10 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
             "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
         )
         self.assertEqual(
+            agent_request_mock.call_args.kwargs["agent_login_id"],
+            "1790fc78-023d-4506-a7e8-5c030e9386d1",
+        )
+        self.assertEqual(
             agent_request_mock.call_args.kwargs["solidset_base_url"],
             "http://solidset.local",
         )
@@ -118,17 +166,17 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         )
         self.assertEqual(
             form["Chat.IDSenderResource"],
-            "2555288c-44c7-4209-95f2-3de98f0f416d",
+            "1790fc78-023d-4506-a7e8-5c030e9386d1",
         )
         self.assertEqual(form["Chat.IDWorkRoom"], "channel-123")
         self.assertEqual(form["Chat.RawMessage"], "Respuesta del agente")
         self.assertEqual(form["Chat.Kind"], 0)
         self.assertEqual(
-            form["Chat.IDSender"], "1790fc78-023d-4506-a7e8-5c030e9386d1"
+            form["Chat.IDSender"], "ce0e837a-fe28-47ae-9ba0-8841fe042ca8"
         )
         self.assertEqual(
             form["Chat.Destiny[0].IDResource"],
-            "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+            "2555288c-44c7-4209-95f2-3de98f0f416d",
         )
         self.assertEqual(form["Chat.Destiny[0].ResourceName"], "Dev17 [IA]")
         self.assertEqual(form["Chat.Destiny[0].TalkWithAgent"], "true")

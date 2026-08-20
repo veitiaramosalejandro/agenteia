@@ -456,8 +456,12 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
     return dict(saved)
 
 
-def get_solidset_login_for_active_agent(resource_id: UUID | str) -> dict[str, Any] | None:
+def get_solidset_login_for_active_agent(
+    resource_id: UUID | str,
+    preferred_login_id: UUID | str | None = None,
+) -> dict[str, Any] | None:
     """Obtiene internamente la cuenta de un agente activo; nunca exponer este resultado por API."""
+    preferred = UUID(str(preferred_login_id)) if preferred_login_id else None
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -477,10 +481,11 @@ def get_solidset_login_for_active_agent(resource_id: UUID | str) -> dict[str, An
                   AND r.active = true
                   AND NULLIF(l."Username", '') IS NOT NULL
                   AND NULLIF(l."Password", '') IS NOT NULL
-                ORDER BY l."IDLogin"
+                ORDER BY CASE WHEN l."IDLogin" = %s THEN 0 ELSE 1 END,
+                         l."IDLogin"
                 LIMIT 1
                 ''',
-                (UUID(str(resource_id)),),
+                (UUID(str(resource_id)), preferred),
             )
             row = cursor.fetchone()
             return dict(row) if row is not None else None

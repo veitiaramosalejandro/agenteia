@@ -287,17 +287,22 @@ recibe formulario; el model binder de SolidSET lo convierte al objeto anidado
 `Destiny.Dests`. `talkWithAgent` no se reenvía en la respuesta para evitar que
 la respuesta generada vuelva a activar al agente.
 
+Las consultas directas de conteo en SQL Server solo se habilitan cuando la
+pregunta contiene explícitamente `recurso(s)`, `usuario(s)` o sus equivalentes
+portugués/inglés. Un cuantificador aislado, por ejemplo «cuántas Champions», no
+activa SQL y continúa por el proveedor de conocimiento externo correspondiente.
+
 Además se envía el bloque `Chat` que utiliza el cliente SolidSET para pintar
 `From` y `To`. En una conversación con el agente propio queda:
 
 ```text
-Chat.IDSenderResource = SysResourceIA.IDAgentResource
-Chat.IDSender = login propietario del recurso humano
+Chat.IDSenderResource = IDLogin propietario (campo invertido para SolidSET)
+Chat.IDSender = SysResourceIA.IDResource (campo invertido para SolidSET)
 Chat.IDWorkRoom = IDWorkRoom
 Chat.IDMeeting = meeting válido (si existe)
 Chat.RawMessage = respuesta
 Chat.Kind = 60 en meeting; 0 en un canal normal
-Chat.Destiny[0] = agente, IDResource=SysResourceIA.IDResource, Type=1, TalkWithAgent=true
+Chat.Destiny[0] = agente, Type=1, TalkWithAgent=true
 Chat.Destiny[1] = recurso humano, Type=2
 ```
 
@@ -308,13 +313,18 @@ dirección del mensaje original `From: humano To: agente [IA]`.
 para seleccionar el agente, resolver su login, memoria y conocimiento.
 `SysResourceIA.IDAgentResource` identifica al recurso software que representa
 al remitente técnico del agente en SolidSET y procede de
-`dbo.SysResource2Agent.IDAgentResource`; se usa en `Chat.IDSenderResource` y
-`IDAgentIA`, pero no en `Chat.Destiny[0].IDResource`. Este último conserva
-`SysResourceIA.IDResource`, exactamente como llegó en el destino
-`talkWithAgent=true`, junto con el nombre visible terminado en `[IA]`. Nunca se
-utiliza el UUID interno `SysResourceIA.ID` como participante de SolidSET. Si un
-agente activo todavía no tiene `IDAgentResource`, la respuesta se omite para no
-publicarla con una identidad técnica incorrecta.
+`dbo.SysResource2Agent.IDAgentResource`; se usa en `IDAgentIA` y como identidad
+técnica. También identifica siempre al participante From mediante
+`Chat.Destiny[0].IDResource`, incluso cuando el propietario conversa con su
+propia IA. `Chat.Destiny[1]` contiene exclusivamente el recurso humano
+destinatario. Por contrato del
+receptor, `Chat.IDSender` contiene ese
+`IDResource` humano y `Chat.IDSenderResource` contiene su `IDLogin`; ambos se
+invierten respecto a los nombres que traía el FrameworkMessage. Nunca se utiliza
+el UUID interno `SysResourceIA.ID` como
+participante de SolidSET. Si un agente activo todavía no tiene
+`IDAgentResource`, la respuesta se omite para no publicarla con una identidad
+técnica incorrecta.
 
 `TrainingMode` admite `rag_reinforcement`, `rag_only` y `disabled`. La mejora
 actual no modifica los pesos del modelo: utiliza conocimiento vectorial aislado,
@@ -546,8 +556,15 @@ Mapeo:
 SysResources.DisplayName → SysResourceIA.Name
 SysResources.ResourceId  → SysResourceIA.IDResource
 SysResources.ActiveIDLogin2Resource → SysResourceIA.ActiveIDLogin2Resource
+SysResource2Agent.IDHumanResource → SysResourceIA.IDResource
 SysResource2Agent.IDAgentResource → SysResourceIA.IDAgentResource
 ```
+
+`SysResourceIA.ID` continúa siendo la clave interna autogenerada de PostgreSQL.
+No se devuelve como identidad del agente SolidSET. Siempre que un contrato de
+respuesta expone `IDAgentResource`, devuelve el GUID sincronizado desde
+`dbo.SysResource2Agent.IDAgentResource`; `IDResource` conserva el GUID del
+recurso humano propietario.
 
 La sincronización es idempotente:
 
@@ -669,7 +686,15 @@ Mapeo adicional:
 dbo.SysLogin.FullName → PostgreSQL SysLogin.FullName
 ```
 
-Al enviar una respuesta automática o multiagente, el router entrega el `agent_resource_id` seleccionado al método `_solidset_login`. Este método busca una cuenta cuyo `SysLogin.LastIDResource` coincida con `SysResourceIA.IDResource` y, antes de autenticar, exige que `SysResourceIA.active=true`. Después inicia una sesión independiente con `POST /User/LoginJson` y publica el mensaje con las cookies de esa misma sesión.
+Al enviar una respuesta automática o multiagente, el router entrega el
+`agent_resource_id` y el `IDLogin` seleccionado en `Chat.destiny` al método
+`_solidset_login`. Este método exige que `SysResourceIA.active=true`, busca las
+cuentas relacionadas por `ActiveIDLogin2Resource` y prioriza exactamente ese
+`IDLogin`; así evita escoger una fila histórica mediante un orden arbitrario.
+Después inicia una sesión independiente con `POST /User/LoginJson` y publica el
+mensaje con las cookies de esa misma sesión. Si SolidSET devuelve HTTP 200 con
+`Success=false`, la API resincroniza `dbo.SysLogin` hacia PostgreSQL y reintenta
+una sola vez, cubriendo cambios recientes de ID o contraseña sin crear bucles.
 
 La autenticación del agente envía internamente:
 
@@ -736,6 +761,18 @@ La nueva señal canónica es `Chat.destiny[].talkWithAgent`. Si el campo aparece
 
 Solo responde el recurso seleccionado si existe en `SysResourceIA`, tiene `active=true` y está habilitado para el canal. Una lista auxiliar `SelectedAgentResourceIds` no puede añadir otros agentes cuando el payload contiene una selección autoritativa.
 
+Inmediatamente antes de crear cada ejecución, la API consulta de forma dirigida
+`dbo.SysResource2Agent` por `IDHumanResource` y exige una relación `Active=1`.
+El `IDAgentResource` obtenido se sincroniza en `SysResourceIA` y sustituye
+cualquier valor local anterior. La misma comprobación sincroniza `active=true`
+cuando existe una relación activa y `active=false` cuando no existe. Se ejecuta
+antes del filtro local de agentes/canales, evitando que un valor PostgreSQL
+obsoleto impida responder a un agente confirmado por SQL Server. La ausencia
+del agente en SQL Server prevalece
+sobre cualquier configuración o caché existente en PostgreSQL: si SQL Server no
+confirma la relación, está inactiva o la verificación falla, ese agente se omite
+y no se genera ni se envía ninguna respuesta a SolidSET.
+
 La respuesta invierte siempre la relación del mensaje original. Si la entrada es `Alejandro -> Víctor`, el agente inicia sesión con la cuenta de Víctor y publica `Víctor -> Alejandro`: `Destiny.WorkRoom` conserva el canal y `Destiny.Dests[0].Resource`/`Login` contienen el recurso y login del autor original. Esta inversión se aplica después de seleccionar el agente, porque la detección inicial solo puede conocer una identidad global y no todos los agentes dinámicos registrados.
 
 En el formulario de respuesta se envían `Destiny.Dests[0].Type=2` y `Destiny.Dests[0].Kind=2` para que las versiones nuevas y anteriores de SolidSET reconozcan la intervención de IA.
@@ -748,7 +785,14 @@ Un mensaje humano puede tener el mismo `Sender.resource` que el agente configura
 
 En un chat privado propio (`Chat.channels[].channelKind=1`) es válido conversar con el agente asociado al mismo recurso del usuario. Cuando `Destiny.dests` está vacío, el router toma exclusivamente `Chat.destiny[].idResource` con `type=1` como propietario del canal privado. Ese recurso todavía debe existir como agente activo. Esta excepción solo aplica a chats privados y no altera la regla de meetings, donde `type=1` es el autor y nunca responde.
 
-Cuando el propietario y el agente comparten el mismo `IDResource`, la respuesta conserva `SysResourceIA.IDResource` para login y permisos y envía `SysResourceIA.ID` como identidad lógica en `Info[agent_resource_id]`, `IDAgentIA`, `Info[id_agent_ia]` e `Info[agent_id]`. No se intenta sustituir `Sender` desde el formulario: SolidSET llama `St_SendMessageSync(req, currentL, currentS, currentR)` y persiste el remitente de la sesión autenticada.
+Cuando el propietario conversa con su propia IA, la respuesta conserva
+`SysResourceIA.IDResource` para login, permisos y el participante To humano.
+El participante From y la identidad lógica enviada en
+`Info[agent_resource_id]`, `IDAgentIA`, `Info[id_agent_ia]` e `Info[agent_id]`
+usan siempre `SysResourceIA.IDAgentResource`, sincronizada desde
+`dbo.SysResource2Agent.IDAgentResource`; nunca se utiliza la clave interna
+`SysResourceIA.ID`. SolidSET persiste el remitente efectivo desde la sesión
+autenticada mediante `St_SendMessageSync(req, currentL, currentS, currentR)`.
 
 Para mostrar una autorrespuesta a la izquierda, el cliente SolidSET debe considerar la marca de agente al calcular `ChatView.FromSelf`: si `Info[generated_by_ia]=1` y `Info[id_agent_ia]` contiene un UUID distinto, el mensaje debe tratarse visualmente como `FromSelf=false`, aunque `Chat.IDSender`/`IDSenderResource` coincidan con el usuario autenticado. La alternativa estructural es registrar para cada agente un login y recurso SolidSET independientes; en ese caso no se necesita una excepción visual.
 

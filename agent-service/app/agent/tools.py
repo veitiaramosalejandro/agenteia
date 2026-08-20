@@ -259,7 +259,9 @@ def _solidset_login(
     client: httpx.Client,
     base_url: str,
     agent_resource_id: Optional[str] = None,
+    agent_login_id: Optional[str] = None,
     host_header: Optional[str] = None,
+    allow_sync_retry: bool = True,
 ) -> tuple[bool, str, str]:
     """Autentica la identidad global o la cuenta del recurso agente solicitado."""
     if agent_resource_id:
@@ -269,7 +271,10 @@ def _solidset_login(
             flush=True,
         )
         try:
-            login = get_solidset_login_for_active_agent(agent_resource_id)
+            login = get_solidset_login_for_active_agent(
+                agent_resource_id,
+                preferred_login_id=agent_login_id,
+            )
         except Exception as exc:
             print(f"❌ No se pudo leer SysLogin del agente: {exc}", flush=True)
             return False, "", ""
@@ -280,9 +285,16 @@ def _solidset_login(
             return False, "", ""
         username = str(login.get("Username") or "").strip()
         password = str(login.get("Password") or "")
+        selected_login_id = str(login.get("IDLogin") or "").strip()
         if not username or not password:
             print("❌ SysLogin no contiene Username/Password utilizables", flush=True)
             return False, "", ""
+        print(
+            "🔐 SysLogin seleccionado "
+            f"id_login={selected_login_id or '-'} username={username} "
+            f"preferred={str(agent_login_id or '-').strip()}",
+            flush=True,
+        )
 
         login_payload = {
             "UserName": username,
@@ -324,6 +336,30 @@ def _solidset_login(
                         f"❌ LoginJson rechazado: {str(result)[:300]}",
                         flush=True,
                     )
+                    if allow_sync_retry:
+                        try:
+                            from app.system.resource_ingest import ingest_solidset_logins
+
+                            sync_result = ingest_solidset_logins()
+                            print(
+                                "🔄 SysLogin resincronizado después del rechazo "
+                                f"updated={sync_result.get('updated', 0)} "
+                                f"inserted={sync_result.get('inserted', 0)}",
+                                flush=True,
+                            )
+                            return _solidset_login(
+                                client,
+                                base_url,
+                                agent_resource_id=agent_resource_id,
+                                agent_login_id=agent_login_id,
+                                host_header=host_header,
+                                allow_sync_retry=False,
+                            )
+                        except Exception as sync_exc:
+                            print(
+                                f"❌ No se pudo resincronizar SysLogin: {sync_exc}",
+                                flush=True,
+                            )
                     return False, "", ""
             return True, "/User/LoginJson", _solidset_extract_access_key(response)
         except Exception as exc:
@@ -475,6 +511,7 @@ def _solidset_request_authenticated(
 def _solidset_request_as_agent(
     *,
     agent_resource_id: str,
+    agent_login_id: Optional[str] = None,
     method: str,
     endpoint: str,
     form_payload: Optional[dict[str, Any]] = None,
@@ -512,6 +549,7 @@ def _solidset_request_as_agent(
                     client,
                     base,
                     agent_resource_id=agent_resource_id,
+                    agent_login_id=agent_login_id,
                     host_header=logical_host or None,
                 )
                 if not authenticated:
@@ -1128,9 +1166,12 @@ def solidset_send_chat_message(
             # La UI de SolidSET pinta From/To desde Chat, no solo desde Destiny.
             # Para una autorrespuesta se invierten explícitamente los roles:
             # agente lógico type=1 (origen) -> humano type=2 (destino).
-            form_payload["Chat.IDSenderResource"] = sender_agent_resource_id
-            if agent_chat_login_id:
-                form_payload["Chat.IDSender"] = str(agent_chat_login_id).strip()
+            # Contrato requerido por el receptor SolidSET: estos dos campos se
+            # envían invertidos respecto al FrameworkMessage entrante.
+            sender_login_id = str(agent_chat_login_id or resource_login or "").strip()
+            if sender_login_id:
+                form_payload["Chat.IDSenderResource"] = sender_login_id
+            form_payload["Chat.IDSender"] = selected_agent_resource_id
             form_payload["Chat.IDWorkRoom"] = channel
             if meeting:
                 form_payload["Chat.IDMeeting"] = meeting
@@ -1138,10 +1179,10 @@ def solidset_send_chat_message(
             form_payload["Chat.Kind"] = 60 if meeting else 0
             if agent_chat_login_id:
                 form_payload["Chat.Destiny[0].IDLogin"] = str(agent_chat_login_id).strip()
-            # El participante IA conserva el IDResource humano que SolidSET
-            # envió con talkWithAgent=true. El recurso Software se utiliza solo
-            # como remitente técnico en Chat.IDSenderResource/IDAgentIA.
-            form_payload["Chat.Destiny[0].IDResource"] = selected_agent_resource_id
+            # El From siempre utiliza el IDAgentResource verificado contra
+            # dbo.SysResource2Agent. El recurso humano queda exclusivamente
+            # como destinatario Type=2 en Destiny[1].
+            form_payload["Chat.Destiny[0].IDResource"] = sender_agent_resource_id
             form_payload["Chat.Destiny[0].ResourceName"] = (
                 str(agent_chat_resource_name or "").strip() or "Agente IA"
             )
@@ -1171,6 +1212,7 @@ def solidset_send_chat_message(
     }
     if agent_resource_id:
         request_args["agent_resource_id"] = str(agent_resource_id).strip()
+        request_args["agent_login_id"] = str(agent_chat_login_id or "").strip() or None
         request_args["solidset_base_url"] = str(solidset_base_url or "").strip()
     response, base, error = request_sender(**request_args)
     if response is None:

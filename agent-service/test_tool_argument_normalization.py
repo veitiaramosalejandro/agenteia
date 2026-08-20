@@ -48,6 +48,16 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         term = self.agent._extract_resource_count_term("Explica qué es un recurso Dev")
         self.assertIsNone(term)
 
+    def test_unrelated_count_does_not_trigger_resource_sql_query(self):
+        term = self.agent._extract_resource_count_term(
+            "Cuantas champion tiene el Real Madrid ganadas?"
+        )
+        self.assertIsNone(term)
+
+    def test_global_resource_count_keeps_direct_sql_query(self):
+        term = self.agent._extract_resource_count_term("¿Cuántos recursos hay?")
+        self.assertEqual(term, "")
+
     def test_channel_names_question_uses_direct_sql_route(self):
         self.assertTrue(
             self.agent._is_channel_names_intent(
