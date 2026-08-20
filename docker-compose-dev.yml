@@ -118,6 +118,37 @@ services:
     networks:
       - machining-network
 
+  historical-worker:
+    image: agent-service:0.0.1
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "app.historical.worker"]
+    env_file: [.env]
+    environment:
+      RUNNING_IN_DOCKER: "1"
+      OLLAMA_BASE_URL: http://ollama-llm:11434
+      VECTOR_DB_URL: http://vector-db:6333
+      POSTGRES_HOST: timescaledb
+      REDIS_URL: redis://redis-cache:6379
+      SQL_SERVER_HOST: ${SQL_SERVER_DOCKER_HOST:-host.docker.internal}
+      SQL_SERVER_INSTANCE: ${SQL_SERVER_INSTANCE-SQL2017DEV}
+      SQL_SERVER_PORT: ${SQL_SERVER_DOCKER_PORT:-1433}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["./agent-service:/app", "./data:/app/data"]
+    depends_on:
+      ollama-llm: {condition: service_healthy}
+      timescaledb: {condition: service_healthy}
+      redis-cache: {condition: service_healthy}
+      vector-db: {condition: service_healthy}
+    networks: [machining-network]
+
+  historical-producer:
+    extends:
+      service: historical-worker
+    command: ["python", "-m", "app.historical.producer"]
+
   # 3. Servidor de Modelos Locales (Ollama)
   ollama-llm:
     image: ollama/ollama:latest

@@ -1395,3 +1395,72 @@ recurso agente almacenado en PostgreSQL.
 Qdrant dispone de una comprobación TCP de salud. El agente no comienza hasta
 que `vector-db:6333` acepta conexiones, evitando que la creación inicial de la
 colección `machining_docs` falle por una carrera de arranque.
+## Ingesta retroactiva de conocimiento SolidSET
+
+La ingesta histórica es independiente de las respuestas en tiempo real. Lee
+`dbo.SysChat` incrementalmente por `IDChat2`, resuelve el autor real mediante
+`SysChat2SysResource.IDLogin = SysChat.IDSender`, aplica privacidad y publica
+lotes en `machining:historical-ingestion:v1`.
+
+Por seguridad comienza desactivada y en modo simulación:
+
+```env
+HISTORICAL_INGESTION_ENABLED=false
+HISTORICAL_INGESTION_DRY_RUN=true
+HISTORICAL_INGESTION_BATCH_SIZE=500
+HISTORICAL_INGESTION_STREAM=machining:historical-ingestion:v1
+HISTORICAL_INGESTION_GROUP=historical-workers-v1
+HISTORICAL_INGESTION_STREAM_MAXLEN=10000
+HISTORICAL_INGESTION_MAX_RETRIES=3
+HISTORICAL_INGESTION_CLAIM_IDLE_MS=900000
+HISTORICAL_INGESTION_POLL_SECONDS=60
+HISTORICAL_INGESTION_ADMIN_KEY=<secreto-administrativo>
+DB_INGEST_CONNECT_TIMEOUT_SECONDS=15
+DB_INGEST_QUERY_TIMEOUT_SECONDS=120
+```
+
+`DB_INGEST_CONNECT_TIMEOUT_SECONDS` limita la apertura de conexión con SQL
+Server y `DB_INGEST_QUERY_TIMEOUT_SECONDS` limita cada lote de extracción.
+
+Todas las operaciones requieren la cabecera `X-Agent-Admin-Key`, cuyo valor
+debe ser exactamente el configurado en `HISTORICAL_INGESTION_ADMIN_KEY`.
+La cabecera está declarada en OpenAPI y aparece como campo obligatorio en
+Swagger. Si se omite, la API devuelve `422`; si no coincide, devuelve `401`.
+
+```http
+POST /api/v1/agent/historical-ingestion/start
+POST /api/v1/agent/historical-ingestion/pause
+POST /api/v1/agent/historical-ingestion/resume
+POST /api/v1/agent/historical-ingestion/approve-dry-run?instanceCode=local-solidset
+GET  /api/v1/agent/historical-ingestion/status
+GET  /api/v1/agent/historical-ingestion/batches?limit=50
+DELETE /api/v1/agent/historical-ingestion/messages/{idChat2}?instanceCode=local-solidset
+```
+
+El cuerpo de `start` es:
+
+```json
+{"instanceCode":"local-solidset","dryRun":true}
+```
+
+El `dryRun` normaliza, rechaza secretos y valida scopes sin generar embeddings
+ni avanzar `LastIDChat2`. Tras revisar auditoría se llama a
+`approve-dry-run`, y después a `start` con `dryRun=false`.
+
+Los mensajes IA, secretos, mensajes vacíos y registros sin autor/canal se
+rechazan. El conocimiento se duplica de forma controlada por agente con scope
+`owner` o `workroom`; `global` permanece deshabilitado hasta confirmar en SQL
+Server un campo fiable de visibilidad pública. Los puntos Qdrant incluyen
+`agent_resource_id`, `canal_id`, `scope`, `id_chat2` y `content_hash`, de forma
+compatible con los filtros RAG existentes.
+
+PostgreSQL conserva cursores, auditoría de lotes y la relación exacta entre
+`IDChat2` y `QdrantPointID`. El endpoint DELETE borra los puntos y marca los
+documentos como eliminados.
+
+Servicios Docker:
+
+```powershell
+docker compose -f docker-compose-prod.yml up -d historical-worker historical-producer
+docker compose -f docker-compose-prod.yml up -d --scale historical-worker=2
+```

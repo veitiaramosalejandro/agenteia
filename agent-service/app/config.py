@@ -66,6 +66,30 @@ class Settings(BaseSettings):
     AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS: int = max(
         10, int(os.getenv("AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS", "15"))
     )
+    HISTORICAL_INGESTION_ENABLED: bool = _env_bool("HISTORICAL_INGESTION_ENABLED", "false")
+    HISTORICAL_INGESTION_DRY_RUN: bool = _env_bool("HISTORICAL_INGESTION_DRY_RUN", "true")
+    HISTORICAL_INGESTION_BATCH_SIZE: int = max(
+        10, min(2000, int(os.getenv("HISTORICAL_INGESTION_BATCH_SIZE", "500")))
+    )
+    HISTORICAL_INGESTION_STREAM: str = os.getenv(
+        "HISTORICAL_INGESTION_STREAM", "machining:historical-ingestion:v1"
+    )
+    HISTORICAL_INGESTION_GROUP: str = os.getenv(
+        "HISTORICAL_INGESTION_GROUP", "historical-workers-v1"
+    )
+    HISTORICAL_INGESTION_STREAM_MAXLEN: int = max(
+        1000, int(os.getenv("HISTORICAL_INGESTION_STREAM_MAXLEN", "10000"))
+    )
+    HISTORICAL_INGESTION_MAX_RETRIES: int = max(
+        0, min(10, int(os.getenv("HISTORICAL_INGESTION_MAX_RETRIES", "3")))
+    )
+    HISTORICAL_INGESTION_CLAIM_IDLE_MS: int = max(
+        60000, int(os.getenv("HISTORICAL_INGESTION_CLAIM_IDLE_MS", "900000"))
+    )
+    HISTORICAL_INGESTION_POLL_SECONDS: int = max(
+        10, int(os.getenv("HISTORICAL_INGESTION_POLL_SECONDS", "60"))
+    )
+    HISTORICAL_INGESTION_ADMIN_KEY: str = os.getenv("HISTORICAL_INGESTION_ADMIN_KEY", "")
     AGENT_TEMPORAL_STATE_TTL_SECONDS: int = max(
         300, int(os.getenv("AGENT_TEMPORAL_STATE_TTL_SECONDS", "3600"))
     )
@@ -93,7 +117,12 @@ class Settings(BaseSettings):
     DB_STUDY_INTERVAL_SECONDS: int = int(os.getenv("DB_STUDY_INTERVAL_SECONDS", "3600"))
     DB_STUDY_IDLE_CHECK_SECONDS: int = int(os.getenv("DB_STUDY_IDLE_CHECK_SECONDS", "10"))
     DB_STUDY_MAX_RUN_SECONDS: int = int(os.getenv("DB_STUDY_MAX_RUN_SECONDS", "900"))
-    DB_INGEST_CONNECT_TIMEOUT_SECONDS: int = int(os.getenv("DB_INGEST_CONNECT_TIMEOUT_SECONDS", "5"))
+    DB_INGEST_CONNECT_TIMEOUT_SECONDS: int = max(
+        1, int(os.getenv("DB_INGEST_CONNECT_TIMEOUT_SECONDS", "15"))
+    )
+    DB_INGEST_QUERY_TIMEOUT_SECONDS: int = max(
+        1, int(os.getenv("DB_INGEST_QUERY_TIMEOUT_SECONDS", "120"))
+    )
     DB_INGEST_CONNECT_RETRIES: int = int(os.getenv("DB_INGEST_CONNECT_RETRIES", "2"))
     DIALOGUE_MAX_CONCURRENT: int = int(os.getenv("DIALOGUE_MAX_CONCURRENT", "1"))
     DIALOGUE_ADMISSION_TIMEOUT_SECONDS: int = int(os.getenv("DIALOGUE_ADMISSION_TIMEOUT_SECONDS", "2"))

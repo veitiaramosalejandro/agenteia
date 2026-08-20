@@ -11,6 +11,8 @@ import httpx
 import psycopg
 import pymssql
 import redis
+from qdrant_client import QdrantClient
+from qdrant_client.models import PointIdsList
 from contextlib import suppress
 from collections import OrderedDict
 from datetime import datetime
@@ -19,7 +21,7 @@ from typing import Any, Optional
 from urllib import error as urlerror
 from urllib.parse import urlparse
 from urllib.request import Request as URLRequest, urlopen
-from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,6 +78,17 @@ from app.system.reaction_capture import (
 from app.system.schema import Actividad
 from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
 from app.response_queue import AgentResponseQueue
+from app.historical.producer import enqueue_next_batch
+from app.historical.queue import HistoricalQueue
+from app.historical.store import (
+    ensure_schema as ensure_historical_schema,
+    get_cursor as get_historical_cursor,
+    historical_points,
+    list_audits as list_historical_audits,
+    list_cursors as list_historical_cursors,
+    mark_historical_deleted,
+    set_cursor as set_historical_cursor,
+)
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
@@ -198,6 +211,7 @@ agent = MachiningAgent()
 orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
 response_queue = AgentResponseQueue()
+historical_queue = HistoricalQueue()
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
@@ -2099,6 +2113,7 @@ async def startup_db_learning() -> None:
             await asyncio.to_thread(ensure_solidset_agent_resource_schema)
             await asyncio.to_thread(ensure_agent_model_schema)
             await asyncio.to_thread(ensure_agent_response_audit_schema)
+            await asyncio.to_thread(ensure_historical_schema)
         except psycopg.Error as exc:
             print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
         app.state.startup_connectivity = _run_startup_connectivity_checks()
@@ -3182,6 +3197,124 @@ def read_agent_response_queue_status() -> dict[str, Any]:
         return response_queue.stats()
     except redis.RedisError as exc:
         raise HTTPException(status_code=503, detail="Redis Stream no disponible.") from exc
+
+
+class HistoricalIngestionStartRequest(BaseModel):
+    instanceCode: Optional[str] = None
+    dryRun: bool = True
+
+
+def _require_historical_admin(
+    x_agent_admin_key: str = Header(
+        ...,
+        alias="X-Agent-Admin-Key",
+        description="Clave configurada en HISTORICAL_INGESTION_ADMIN_KEY.",
+    ),
+) -> None:
+    configured = settings.HISTORICAL_INGESTION_ADMIN_KEY.strip()
+    if not configured:
+        raise HTTPException(status_code=503, detail="Configura HISTORICAL_INGESTION_ADMIN_KEY.")
+    if x_agent_admin_key != configured:
+        raise HTTPException(status_code=401, detail="Credencial administrativa inválida.")
+
+
+@app.post(
+    "/api/v1/agent/historical-ingestion/start",
+    status_code=202,
+    dependencies=[Depends(_require_historical_admin)],
+)
+async def start_historical_ingestion(
+    configuration: HistoricalIngestionStartRequest,
+) -> dict[str, Any]:
+    try:
+        instances = (
+            [get_solidset_instance(code=configuration.instanceCode, source_ip=None)]
+            if configuration.instanceCode else list_active_solidset_instances()
+        )
+        instances = [instance for instance in instances if instance]
+        if not instances:
+            raise HTTPException(status_code=404, detail="No hay instancias SolidSET activas.")
+        historical_queue.set_paused(False)
+        results = [
+            await asyncio.to_thread(enqueue_next_batch, instance, configuration.dryRun)
+            for instance in instances
+        ]
+        return {"status":"accepted", "dryRun":configuration.dryRun, "instances":results}
+    except (pymssql.Error, psycopg.Error, redis.RedisError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/v1/agent/historical-ingestion/pause",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def pause_historical_ingestion() -> dict[str, Any]:
+    historical_queue.set_paused(True)
+    return {"status":"paused"}
+
+
+@app.post(
+    "/api/v1/agent/historical-ingestion/resume",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def resume_historical_ingestion() -> dict[str, Any]:
+    historical_queue.set_paused(False)
+    return {"status":"running"}
+
+
+@app.post(
+    "/api/v1/agent/historical-ingestion/approve-dry-run",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def approve_historical_dry_run(
+    instanceCode: str = Query(...)
+) -> dict[str, Any]:
+    instance = get_solidset_instance(code=instanceCode, source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instancia no encontrada.")
+    cursor = get_historical_cursor(str(instance["ID"]))
+    set_historical_cursor(
+        str(instance["ID"]),
+        int(cursor["LastIDChat2"]),
+        cursor.get("LastStamp"),
+        "idle",
+    )
+    return {"status":"approved", "lastIDChat2":int(cursor["LastIDChat2"])}
+
+
+@app.get(
+    "/api/v1/agent/historical-ingestion/status",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def historical_ingestion_status() -> dict[str, Any]:
+    return {"queue":historical_queue.stats(), "cursors":list_historical_cursors()}
+
+
+@app.get(
+    "/api/v1/agent/historical-ingestion/batches",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def historical_ingestion_batches(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+    return {"items":list_historical_audits(limit)}
+
+
+@app.delete(
+    "/api/v1/agent/historical-ingestion/messages/{id_chat2}",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def delete_historical_message(
+    id_chat2: int, instanceCode: str = Query(...)
+) -> dict[str, Any]:
+    instance = get_solidset_instance(code=instanceCode, source_ip=None)
+    if not instance: raise HTTPException(status_code=404, detail="Instancia no encontrada.")
+    points = historical_points(str(instance["ID"]), id_chat2)
+    if points:
+        QdrantClient(url=settings.VECTOR_DB_URL).delete(
+            collection_name=settings.VECTOR_COLLECTION_NAME,
+            points_selector=PointIdsList(points=points), wait=True,
+        )
+    deleted = mark_historical_deleted(str(instance["ID"]), id_chat2)
+    return {"status":"deleted", "idChat2":id_chat2, "documents":deleted}
 
 
 @app.get("/api/v1/agent/responses/{request_id}/status")
