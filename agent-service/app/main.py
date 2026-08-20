@@ -997,7 +997,7 @@ def _agent_visible_name(configured_agent: dict[str, Any]) -> str:
     full_name = str(configured_agent.get("FullName") or "").strip()
     fallback = str(configured_agent.get("Name") or resource_id).strip()
     identity = full_name or fallback or resource_id
-    return f"Asistente IA {identity}".strip()
+    return f"{identity}".strip()
 
 
 def _payload_participant_resource_ids(candidate: dict) -> list[str]:

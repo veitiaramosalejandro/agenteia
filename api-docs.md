@@ -714,7 +714,7 @@ Resources[0]      = SysResourceIA.IDResource
 
 `SysLogin.Password` es el HMAC ya generado por SolidSET, no una contraseña reversible. `PasswordEncrypted=true` hace que el método de SolidSET omita `GenerateHMAC` y compare directamente ese valor. `Resources[0]` obliga a registrar la sesión con el recurso agente solicitado cuando el login dispone de varios recursos. Si el recurso no es un agente activo, no tiene una cuenta válida o `LoginJson` rechaza el acceso, el envío falla explícitamente y no utiliza la identidad global configurada en `.env`.
 
-La respuesta publicada usa `SysLogin.FullName` y conserva una identificación visible con el formato `Asistente IA {FullName}: respuesta`; por ejemplo, `Asistente IA Alejandro Veitia: ...`. SolidSET muestra además como emisor el login propio del recurso. Si excepcionalmente `FullName` está vacío, se utiliza `SysResourceIA.Name` como respaldo.
+La respuesta publicada usa `SysLogin.FullName` y conserva una identificación visible con el formato `{FullName}: respuesta`; por ejemplo, `Alejandro Veitia: ...`. SolidSET muestra además como emisor el login propio del recurso. Si excepcionalmente `FullName` está vacío, se utiliza `SysResourceIA.Name` como respaldo.
 
 La respuesta contiene únicamente contadores; nunca devuelve ni registra `Password` o `Salt`:
 
@@ -1120,7 +1120,7 @@ Respuesta:
   "reward": 1.0,
   "IDChat": 1822812,
   "IDAgentResource": "272700d8-d1ba-46a6-a121-b76fce8ecb9f",
-  "AgentName": "Asistente IA Victor Vargas"
+  "AgentName": "Victor Vargas"
 }
 ```
 
