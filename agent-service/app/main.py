@@ -16,6 +16,7 @@ from qdrant_client.models import PointIdsList
 from contextlib import suppress
 from collections import OrderedDict
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from time import perf_counter, time
 from typing import Any, Optional
 from urllib import error as urlerror
@@ -194,6 +195,21 @@ def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | Non
 
 def _attach_solidset_instance(candidates: list[dict], instance: dict[str, Any]) -> None:
     for candidate in candidates:
+        payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+        regional_sources = []
+        for source_name in ("Info", "TimeData", "UserData"):
+            source = payload.get(source_name)
+            if isinstance(source, dict):
+                regional_sources.append({str(key).lower(): value for key, value in source.items()})
+
+        def regional_value(*keys: str) -> str:
+            for source in regional_sources:
+                for key in keys:
+                    value = source.get(key.lower())
+                    if value not in (None, ""):
+                        return str(value).strip()
+            return ""
+
         original_fingerprint = str(candidate.get("fingerprint") or "")
         candidate["fingerprint"] = f"{instance['ID']}:{original_fingerprint}"
         candidate["solidset_instance_id"] = str(instance["ID"])
@@ -202,6 +218,26 @@ def _attach_solidset_instance(candidates: list[dict], instance: dict[str, Any]) 
         candidate["solidset_notification_url"] = str(
             instance.get("NotificationUrl") or ""
         ).rstrip("/")
+        candidate["country_code"] = (
+            regional_value("country_code", "countryCode", "country")
+            or str(instance.get("CountryCode") or "PT")
+        ).upper()
+        candidate["locale"] = (
+            regional_value("locale", "culture", "language_tag")
+            or str(instance.get("Locale") or "pt-PT")
+        )
+        requested_time_zone = regional_value(
+            "time_zone", "timeZone", "timezone", "iana_time_zone", "ianaTimeZone"
+        )
+        if requested_time_zone:
+            try:
+                ZoneInfo(requested_time_zone)
+            except (ZoneInfoNotFoundError, ValueError):
+                requested_time_zone = ""
+        candidate["time_zone"] = (
+            requested_time_zone
+            or str(instance.get("TimeZone") or "Europe/Lisbon")
+        )
 
 
 @app.middleware("http")
@@ -725,6 +761,76 @@ def _weather_location_prompt(raw_text: str) -> Optional[str]:
     if any(term in text for term in ("previsão", "previsao", "meteorologia", "hoje")):
         return "Para qual cidade ou localidade você quer consultar o tempo?"
     return "¿De qué ciudad o localidad quieres conocer el tiempo?"
+
+
+def _local_temporal_response(
+    raw_text: str,
+    *,
+    time_zone: str,
+    locale: str,
+    country_code: str,
+) -> Optional[str]:
+    """Answers local date/time questions without allowing the LLM to invent a place."""
+    text = " ".join((raw_text or "").strip().lower().split())
+    asks_date = any(phrase in text for phrase in (
+        "que dia é hoje", "que dia e hoje", "qual é a data", "qual e a data",
+        "data de hoje", "qué día es hoy", "que día es hoy", "fecha de hoy",
+        "what day is today", "what is today's date", "today's date",
+    ))
+    asks_time = any(phrase in text for phrase in (
+        "que horas são", "que horas sao", "hora atual", "hora local",
+        "qué hora es", "que hora es", "hora actual", "what time is it",
+        "current time", "local time",
+    ))
+    if not asks_date and not asks_time:
+        return None
+    try:
+        local_now = datetime.now(ZoneInfo(time_zone))
+    except (ZoneInfoNotFoundError, ValueError):
+        local_now = datetime.now(ZoneInfo("UTC"))
+        time_zone = "UTC"
+
+    language = (locale or "pt-PT").split("-", 1)[0].lower()
+    country_names = {
+        "PT": {"pt": "Portugal", "es": "Portugal", "en": "Portugal"},
+        "ES": {"pt": "Espanha", "es": "España", "en": "Spain"},
+        "BR": {"pt": "Brasil", "es": "Brasil", "en": "Brazil"},
+    }
+    country = country_names.get(country_code.upper(), {}).get(language, country_code.upper())
+    weekdays = {
+        "pt": ("segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"),
+        "es": ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"),
+        "en": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+    }
+    months = {
+        "pt": ("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"),
+        "es": ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"),
+        "en": ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"),
+    }
+    language = language if language in weekdays else "en"
+    weekday = weekdays[language][local_now.weekday()]
+    month = months[language][local_now.month - 1]
+    clock = local_now.strftime("%H:%M")
+    if language == "pt":
+        date_text = f"Hoje é {weekday}, {local_now.day} de {month} de {local_now.year}"
+        time_text = f"A hora local é {clock}"
+        suffix = f"em {country} (fuso horário {time_zone})"
+        return f"{date_text} e são {clock}, {suffix}." if asks_date and asks_time else (
+            f"{date_text}, {suffix}." if asks_date else f"{time_text}, {suffix}."
+        )
+    if language == "es":
+        date_text = f"Hoy es {weekday}, {local_now.day} de {month} de {local_now.year}"
+        time_text = f"La hora local es {clock}"
+        suffix = f"en {country} (zona horaria {time_zone})"
+        return f"{date_text} y son las {clock}, {suffix}." if asks_date and asks_time else (
+            f"{date_text}, {suffix}." if asks_date else f"{time_text}, {suffix}."
+        )
+    date_text = f"Today is {weekday}, {month} {local_now.day}, {local_now.year}"
+    time_text = f"The local time is {clock}"
+    suffix = f"in {country} ({time_zone})"
+    return f"{date_text}, and the time is {clock} {suffix}." if asks_date and asks_time else (
+        f"{date_text} {suffix}." if asks_date else f"{time_text} {suffix}."
+    )
 
 
 def _direct_courtesy_response(
@@ -1394,6 +1500,9 @@ async def _process_auto_replies(
             "agent_knowledge": candidate.get("agent_knowledge"),
             "agent_reinforcement": candidate.get("agent_reinforcement"),
             "workroom_id": channel_id,
+            "country_code": candidate.get("country_code") or "PT",
+            "locale": candidate.get("locale") or "pt-PT",
+            "time_zone": candidate.get("time_zone") or "Europe/Lisbon",
         }
         if not incoming_text or (not channel_id and not reply_resource):
             continue
@@ -1436,6 +1545,13 @@ async def _process_auto_replies(
             if is_direct
             else None
         )
+        if response_text is None:
+            response_text = _local_temporal_response(
+                incoming_text,
+                time_zone=str(candidate.get("time_zone") or "Europe/Lisbon"),
+                locale=str(candidate.get("locale") or "pt-PT"),
+                country_code=str(candidate.get("country_code") or "PT"),
+            )
         if response_text is None:
             response_text = _weather_location_prompt(incoming_text)
         if response_text is not None:
@@ -2350,6 +2466,9 @@ class SolidSETInstanceConfiguration(BaseModel):
     BaseUrl: str = Field(..., min_length=8, max_length=500)
     NotificationUrl: Optional[str] = Field(None, max_length=500)
     SourceIP: Optional[str] = Field(None, max_length=255)
+    CountryCode: str = Field("PT", min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")
+    Locale: str = Field("pt-PT", min_length=2, max_length=20, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+    TimeZone: str = Field("Europe/Lisbon", min_length=1, max_length=80)
     active: bool = True
 
     class Config:
@@ -3068,6 +3187,17 @@ def register_solidset_instance(
     payload["Code"] = payload["Code"].strip()
     payload["Name"] = payload["Name"].strip()
     payload["SourceIP"] = str(payload.get("SourceIP") or "").strip() or None
+    payload["CountryCode"] = payload["CountryCode"].strip().upper()
+    language, *locale_parts = payload["Locale"].strip().split("-")
+    payload["Locale"] = "-".join([language.lower(), *[part.upper() for part in locale_parts]])
+    payload["TimeZone"] = payload["TimeZone"].strip()
+    try:
+        ZoneInfo(payload["TimeZone"])
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="TimeZone deve ser um identificador IANA válido, por exemplo Europe/Lisbon.",
+        ) from exc
     try:
         saved = save_solidset_instance(payload)
         with _solidset_instance_cache_lock:
@@ -3463,6 +3593,12 @@ async def suggest_chat_question_response(
             "workroom_id": context["workroom_id"],
             "recipient_count": 1,
             "importance": int(message.Importance or 0),
+            "country_code": str(_get_payload_value(message.Info, "country_code") or "PT"),
+            "locale": str(_get_payload_value(message.Info, "locale") or "pt-PT"),
+            "time_zone": str(
+                _get_payload_value(message.Info, "time_zone", "timezone")
+                or "Europe/Lisbon"
+            ),
         }
         _update_response_status(
             request_id,

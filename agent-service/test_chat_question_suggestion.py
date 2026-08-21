@@ -1,6 +1,10 @@
 import unittest
 
-from app.main import _chat_question_suggestion_context
+from app.main import (
+    _attach_solidset_instance,
+    _chat_question_suggestion_context,
+    _local_temporal_response,
+)
 from app.agent.orchestrator import SolidSETOrchestrator
 
 
@@ -68,6 +72,40 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         })
 
         self.assertEqual("work_sql_rag", result["route"])
+
+    def test_portugal_date_uses_configured_region(self):
+        response = _local_temporal_response(
+            "Que dia é hoje?",
+            time_zone="Europe/Lisbon",
+            locale="pt-PT",
+            country_code="PT",
+        )
+
+        self.assertIsNotNone(response)
+        self.assertIn("Portugal", response)
+        self.assertIn("Europe/Lisbon", response)
+        self.assertNotIn("Brasília", response)
+
+    def test_payload_region_overrides_instance_default(self):
+        candidates = [{"fingerprint": "message-1", "payload": {
+            "Info": {
+                "country_code": "ES",
+                "locale": "es-ES",
+                "time_zone": "Europe/Madrid",
+            }
+        }}]
+        _attach_solidset_instance(candidates, {
+            "ID": "instance-1",
+            "Code": "solidset-pt",
+            "BaseUrl": "http://solidset.local",
+            "CountryCode": "PT",
+            "Locale": "pt-PT",
+            "TimeZone": "Europe/Lisbon",
+        })
+
+        self.assertEqual("ES", candidates[0]["country_code"])
+        self.assertEqual("es-ES", candidates[0]["locale"])
+        self.assertEqual("Europe/Madrid", candidates[0]["time_zone"])
 
 
 if __name__ == "__main__":

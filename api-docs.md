@@ -370,11 +370,36 @@ Registra o actualiza por `Code` las URLs que antes se seleccionaban desde `.env`
   "BaseUrl": "http://192.168.10.20:52130",
   "NotificationUrl": "http://192.168.10.20:52131",
   "SourceIP": "192.168.10.20",
+  "CountryCode": "PT",
+  "Locale": "pt-PT",
+  "TimeZone": "Europe/Lisbon",
   "active": true
 }
 ```
 
 La configuración se guarda en PostgreSQL `SysSolidSETInstance`. Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`; si encuentra alguna, actualiza esa misma fila y conserva su `ID`. La respuesta indica `status=created` o `status=updated`. Existen índices únicos normalizados para impedir duplicados incluso con diferencias de mayúsculas o una barra final en la URL. `BaseUrl` se utiliza para `/User/LoginJson`, consultas y respuestas; `NotificationUrl` se utiliza únicamente para reenviar al servicio de notificaciones correspondiente.
+
+`CountryCode`, `Locale` y `TimeZone` definen el contexto regional de las
+respuestas. `TimeZone` debe ser una zona IANA válida, como `Europe/Lisbon`, y
+`Locale` utiliza formato BCP 47, como `pt-PT`. Las instalaciones existentes se
+migran automáticamente con `PT`, `pt-PT` y `Europe/Lisbon`. No se geolocaliza la
+IP privada ni se deduce el país a partir del idioma: esos métodos no son fiables
+detrás de NAT, VPN o Docker.
+
+El agente recibe estos valores en todas las respuestas de esa instancia. Para
+`pt-PT` emplea vocabulario y ortografía de Portugal. Las consultas explícitas de
+fecha u hora (`Que dia é hoje?`, `Que horas são?`) se calculan directamente con
+`TimeZone`, sin pedir al LLM que adivine la ubicación; por ello no puede responder
+con la hora de Brasilia cuando la instancia está configurada en Portugal.
+
+Si el cliente conoce la ubicación efectiva del recurso —por ejemplo, porque el
+usuario está temporalmente en otro país— puede incluir en `Info`, `TimeData` o
+`UserData` los campos `country_code`, `locale` y `time_zone`. Estos valores
+específicos del mensaje tienen prioridad sobre la instancia; una zona IANA no
+válida se descarta. Cuando el payload no los incluye, se usa la configuración de
+`SysSolidSETInstance`. La IP observada por la API corresponde normalmente al
+servidor SolidSET o al proxy, no al equipo WPF, por lo que no se usa para ubicar
+al recurso.
 
 Cada SolidSET debe llamar los endpoints de entrada con:
 

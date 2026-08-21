@@ -1963,6 +1963,19 @@ class MachiningAgent:
                 f"destinatarios={message_metadata.get('recipient_count', 0)}, "
                 f"importance={message_metadata.get('importance', 0)}."
             )
+            country_code = str(message_metadata.get("country_code") or "").strip()
+            locale = str(message_metadata.get("locale") or "").strip()
+            time_zone = str(message_metadata.get("time_zone") or "").strip()
+            if country_code or locale or time_zone:
+                system_prompt += (
+                    "\n\n=== CONTEXTO REGIONAL VERIFICADO ===\n"
+                    f"País: {country_code or 'no disponible'}\n"
+                    f"Locale: {locale or 'no disponible'}\n"
+                    f"Zona horaria IANA: {time_zone or 'no disponible'}\n"
+                    "Adapta vocabulario, ortografía, fechas y horas a este contexto. "
+                    "Para pt-PT usa portugués europeo, no portugués brasileño. No deduzcas "
+                    "otra ubicación por el idioma ni menciones una ciudad que no haya sido proporcionada."
+                )
             quoted_message = str(
                 message_metadata.get("quoted_message") or ""
             ).strip()
