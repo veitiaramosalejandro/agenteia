@@ -877,16 +877,35 @@ contexto de refuerzo del agente propio del solicitante. No utiliza el agente del
 autor citado, no consulta Internet y trata el texto citado como datos no
 confiables.
 
-Si termina correctamente devuelve HTTP 200 con `Content-Type: text/plain` y
-únicamente el texto apto para asignar a `RawMessage`:
+La operación de sugerencia solo es válida cuando `Chat.RawMessage` está vacío.
+El texto que debe contestarse procede de `Chat.chatQuestion.RawMessage`; si el
+mensaje actual ya contiene texto, el endpoint devuelve HTTP 422 para evitar que
+una respuesta escrita por el usuario sea sustituida.
 
-```text
-Gracias por la información. Revisaré esos puntos y te confirmaré el resultado.
+Si termina correctamente devuelve HTTP 200 con una lista JSON de alternativas
+independientes. El modelo intenta producir tres variantes —directa, breve y
+colaborativa— en el mismo idioma del mensaje citado:
+
+```json
+{
+  "requestId": "1824995",
+  "questionChatId": "1824994",
+  "status": "completed",
+  "code": 5,
+  "language": "pt",
+  "suggestions": [
+    {"id": "1", "text": "Obrigado pela informação. Vou confirmar esse ponto."},
+    {"id": "2", "text": "Entendido, obrigado."},
+    {"id": "3", "text": "Obrigado. Pretende que validemos este ponto em conjunto?"}
+  ],
+  "statusUrl": "/api/v1/agent/responses/1824995/status"
+}
 ```
 
-No devuelve JSON, nombre del agente, prefijo, comillas ni payload de envío. Para
-mostrar progreso mientras la llamada está abierta, WPF puede consultar en
-paralelo:
+Cada `text` es apto para asignarse a `RawMessage`; no contiene nombre del
+agente, prefijo ni payload de envío. La selección pertenece exclusivamente al
+cliente y este endpoint nunca publica ninguna alternativa en SolidSET. Para
+mostrar progreso mientras la llamada está abierta, WPF puede consultar en paralelo:
 
 ```http
 GET /api/v1/agent/responses/{Chat.IDChat2}/status?lang=es
@@ -894,7 +913,9 @@ GET /api/v1/agent/responses/{Chat.IDChat2}/status?lang=es
 
 La secuencia normal es `queued` → `processing` → `searching` → `thinking` →
 `completed`. No aparece `sending`, porque este endpoint nunca publica el texto
-en SolidSET. Los errores de validación devuelven HTTP 422; la ausencia de un
+en SolidSET. Al completarse, el estado incluye también `result.questionChatId`,
+`result.language` y `result.suggestions`, de modo que el cliente puede recuperar
+las alternativas aunque se cierre la petición POST. Los errores de validación devuelven HTTP 422; la ausencia de un
 agente propio activo devuelve HTTP 404; las dependencias o la generación no
 disponibles devuelven HTTP 503 y dejan el estado en `failed`.
 

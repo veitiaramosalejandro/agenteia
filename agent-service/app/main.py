@@ -455,6 +455,7 @@ def _update_response_status(
     agent_name: Optional[str] = None,
     error: Optional[str] = None,
     response_count: Optional[int] = None,
+    result: Optional[dict[str, Any]] = None,
 ) -> None:
     if not request_id:
         return
@@ -492,6 +493,8 @@ def _update_response_status(
     })
     if response_count is not None:
         data["responseCount"] = response_count
+    if result is not None:
+        data["result"] = result
     if data["completed"]:
         data["completedAt"] = now
     else:
@@ -2783,6 +2786,21 @@ class SendMessageResultDTO(BaseModel):
     statusUrl: Optional[str] = None
 
 
+class ChatQuestionSuggestionItem(BaseModel):
+    id: str
+    text: str
+
+
+class ChatQuestionSuggestionResponse(BaseModel):
+    requestId: str
+    questionChatId: str
+    status: str
+    code: int
+    language: str
+    suggestions: list[ChatQuestionSuggestionItem]
+    statusUrl: str
+
+
 def _get_payload_value(payload: Optional[dict[str, Any]], *keys: str) -> Any:
     """Obtiene un valor de un objeto FrameworkMessage sin depender del casing."""
     if not isinstance(payload, dict):
@@ -3604,14 +3622,47 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
     }
 
 
+def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
+    """Normalizes model output into distinct, user-selectable suggestions."""
+    text = str(raw_response or "").strip()
+    if not text:
+        return []
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.I | re.S)
+    if fenced:
+        text = fenced.group(1).strip()
+    values: list[Any] = []
+    try:
+        decoded = json.loads(text)
+        if isinstance(decoded, list):
+            values = decoded
+        elif isinstance(decoded, dict):
+            values = decoded.get("suggestions") or decoded.get("sugestoes") or []
+    except json.JSONDecodeError:
+        values = re.split(r"\n\s*(?:---SUGGESTION---|\d+[.)]\s+)", text)
+
+    suggestions: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("text") or value.get("response") or value.get("suggestion")
+        candidate = str(value or "").strip().strip('"')
+        normalized = re.sub(r"\s+", " ", candidate).casefold()
+        if not candidate or normalized in seen:
+            continue
+        seen.add(normalized)
+        suggestions.append(candidate)
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
 @app.post(
     "/api/v1/agent/notification/chat-question/suggest-response",
-    response_class=PlainTextResponse,
+    response_model=ChatQuestionSuggestionResponse,
     summary="Suggest a response to a quoted SolidSET chat message",
     responses={
         200: {
-            "description": "RawMessage suggestion only.",
-            "content": {"text/plain": {"schema": {"type": "string"}}},
+            "description": "Independent response suggestions for user selection.",
         },
         404: {"description": "The requester's own AI agent is not active."},
         422: {"description": "The FrameworkMessage lacks required chat context."},
@@ -3621,10 +3672,15 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
 async def suggest_chat_question_response(
     message: FrameworkMessageDTO,
     request: Request,
-) -> PlainTextResponse:
-    """Returns only a RawMessage suggestion grounded in the requester's own agent."""
+) -> ChatQuestionSuggestionResponse:
+    """Returns suggestions grounded in the requester's agent without sending them."""
     payload = message.model_dump(mode="json")
     context = _chat_question_suggestion_context(payload)
+    chat_payload = _get_payload_value(payload, "Chat", "chat")
+    chat_payload = chat_payload if isinstance(chat_payload, dict) else {}
+    current_message = str(
+        _get_payload_value(chat_payload, "rawMessage", "RawMessage") or ""
+    ).strip()
     request_id = context["request_id"]
     if not request_id:
         raise HTTPException(
@@ -3635,6 +3691,14 @@ async def suggest_chat_question_response(
         raise HTTPException(
             status_code=422,
             detail="Chat.chatQuestion deve conter IDChat2 e RawMessage.",
+        )
+    if current_message:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Chat.RawMessage deve estar vazio para solicitar sugestões; "
+                "o texto a responder deve estar em Chat.chatQuestion.RawMessage."
+            ),
         )
     if not context["requester_resource"]:
         raise HTTPException(
@@ -3693,6 +3757,7 @@ async def suggest_chat_question_response(
         )
         metadata = {
             "response_suggestion_mode": True,
+            "response_suggestion_count": 3,
             "chat_id": request_id,
             "quoted_chat_id": context["quoted_chat_id"],
             "quoted_message": context["quoted_message"],
@@ -3726,7 +3791,7 @@ async def suggest_chat_question_response(
             f"session:{context['session_id'] or request_id}:"
             f"question:{context['quoted_chat_id']}"
         )
-        suggestion = await asyncio.to_thread(
+        raw_suggestions = await asyncio.to_thread(
             _invoke_orchestrator_for_instance,
             str(solidset_instance["Code"]),
             session_id=scoped_session,
@@ -3741,17 +3806,37 @@ async def suggest_chat_question_response(
             tool_allowlist=set(),
             auto_reply_mode=True,
         )
-        suggestion = str(suggestion or "").strip()
-        if not suggestion:
-            raise RuntimeError("O modelo não gerou uma sugestão de resposta.")
+        suggestions = _parse_chat_question_suggestions(raw_suggestions, limit=3)
+        if not suggestions:
+            raise RuntimeError("O modelo não gerou sugestões de resposta.")
+        language = agent._detect_user_language(context["quoted_message"])
+        result = {
+            "questionChatId": context["quoted_chat_id"],
+            "language": language,
+            "suggestions": [
+                {"id": str(index), "text": text}
+                for index, text in enumerate(suggestions, start=1)
+            ],
+        }
         _update_response_status(
             request_id,
             "completed",
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
-            response_count=1,
+            response_count=len(suggestions),
+            result=result,
         )
-        return PlainTextResponse(content=suggestion)
+        return ChatQuestionSuggestionResponse(
+            requestId=request_id,
+            questionChatId=context["quoted_chat_id"],
+            status="completed",
+            code=_RESPONSE_STATUS_CODES["completed"],
+            language=language,
+            suggestions=[
+                ChatQuestionSuggestionItem(**item) for item in result["suggestions"]
+            ],
+            statusUrl=f"/api/v1/agent/responses/{request_id}/status",
+        )
     except LookupError as exc:
         _update_response_status(
             request_id,
