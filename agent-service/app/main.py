@@ -790,7 +790,9 @@ def _local_temporal_response(
         local_now = datetime.now(ZoneInfo("UTC"))
         time_zone = "UTC"
 
-    language = (locale or "pt-PT").split("-", 1)[0].lower()
+    # The incoming message always decides the response language. Locale only
+    # selects regional conventions within that language (for example pt-PT).
+    language = agent._detect_user_language(raw_text)
     country_names = {
         "PT": {"pt": "Portugal", "es": "Portugal", "en": "Portugal"},
         "ES": {"pt": "Espanha", "es": "España", "en": "Spain"},

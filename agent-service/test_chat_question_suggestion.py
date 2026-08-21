@@ -86,6 +86,19 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertIn("Europe/Lisbon", response)
         self.assertNotIn("Brasília", response)
 
+    def test_english_time_keeps_english_with_portugal_locale(self):
+        response = _local_temporal_response(
+            "What time is it?",
+            time_zone="Europe/Lisbon",
+            locale="pt-PT",
+            country_code="PT",
+        )
+
+        self.assertIsNotNone(response)
+        self.assertTrue(response.startswith("The local time is"))
+        self.assertIn("Portugal", response)
+        self.assertNotIn("A hora local", response)
+
     def test_payload_region_overrides_instance_default(self):
         candidates = [{"fingerprint": "message-1", "payload": {
             "Info": {

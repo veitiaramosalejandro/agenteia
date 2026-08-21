@@ -392,6 +392,11 @@ fecha u hora (`Que dia é hoje?`, `Que horas são?`) se calculan directamente co
 `TimeZone`, sin pedir al LLM que adivine la ubicación; por ello no puede responder
 con la hora de Brasilia cuando la instancia está configurada en Portugal.
 
+El idioma de la pregunta siempre tiene prioridad sobre `Locale`: una pregunta
+en inglés recibe una respuesta en inglés aunque la instancia use `pt-PT`; una
+pregunta en español recibe español. `Locale` solo determina la variante regional
+cuando el idioma coincide y nunca obliga a traducir la respuesta al portugués.
+
 Si el cliente conoce la ubicación efectiva del recurso —por ejemplo, porque el
 usuario está temporalmente en otro país— puede incluir en `Info`, `TimeData` o
 `UserData` los campos `country_code`, `locale` y `time_zone`. Estos valores

@@ -1972,8 +1972,10 @@ class MachiningAgent:
                     f"País: {country_code or 'no disponible'}\n"
                     f"Locale: {locale or 'no disponible'}\n"
                     f"Zona horaria IANA: {time_zone or 'no disponible'}\n"
-                    "Adapta vocabulario, ortografía, fechas y horas a este contexto. "
-                    "Para pt-PT usa portugués europeo, no portugués brasileño. No deduzcas "
+                    "El idioma del mensaje del usuario tiene prioridad absoluta: responde siempre "
+                    "en ese mismo idioma. Usa Locale solo para adaptar vocabulario, ortografía, "
+                    "fechas y horas cuando coincida con el idioma solicitado. Para mensajes en "
+                    "portugués con pt-PT usa portugués europeo, no portugués brasileño. No deduzcas "
                     "otra ubicación por el idioma ni menciones una ciudad que no haya sido proporcionada."
                 )
             quoted_message = str(
