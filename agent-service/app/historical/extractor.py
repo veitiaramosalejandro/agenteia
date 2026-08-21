@@ -44,7 +44,7 @@ SELECT TOP (%s)
  cw.IDWorkRoom, w.Code AS WorkRoomCode, w.Name AS WorkRoomName, w.Kind AS WorkRoomKind,
  l.FullName, r.DisplayName AS ResourceName,
  CASE WHEN agent.IDAgentResource IS NULL THEN 0 ELSE 1 END AS GeneratedByIA,
- c.IDMeeting
+ __MEETING_EXPRESSION__ AS IDMeeting
 FROM dbo.SysChat c WITH (NOLOCK)
 OUTER APPLY (
  SELECT TOP (1) rel.IDResource
@@ -102,8 +102,15 @@ def extract_agent_chat_batch(
         placeholders = ",".join("%s" for _ in valid_rooms)
         room_clause = f" OR cw.IDWorkRoom IN ({placeholders})"
         parameters.extend(valid_rooms)
-    query = AGENT_CHAT_QUERY % ("%s", "%s", "%s", "%s", room_clause)
     with connect_solidset_sql(instance, as_dict=True) as conn, conn.cursor(as_dict=True) as cur:
+        cur.execute('''SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='SysChat' AND COLUMN_NAME='IDMeeting' ''')
+        meeting_column = cur.fetchone()
+        meeting_expression = "c.IDMeeting" if meeting_column else "NULL"
+        query = (
+            AGENT_CHAT_QUERY.replace("__MEETING_EXPRESSION__", meeting_expression)
+            % ("%s", "%s", "%s", "%s", room_clause)
+        )
         cur.execute(query, tuple(parameters))
         return [dict(row) for row in (cur.fetchall() or [])]
 
@@ -122,17 +129,23 @@ def extract_agent_task_batch(
 ) -> list[dict[str, Any]]:
     """Discovers the installed SysTask schema and reads only resource-related tasks."""
     with connect_solidset_sql(instance, as_dict=True) as conn, conn.cursor(as_dict=True) as cur:
-        cur.execute('''SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        cur.execute('''SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
           WHERE TABLE_SCHEMA='dbo' AND (TABLE_NAME='SysTask' OR TABLE_NAME LIKE '%Task%')''')
         schema: dict[str, dict[str, str]] = {}
+        schema_types: dict[str, dict[str, str]] = {}
         for item in cur.fetchall() or []:
             table = str(item["TABLE_NAME"])
             column = str(item["COLUMN_NAME"])
             schema.setdefault(table, {})[column.lower()] = column
+            schema_types.setdefault(table, {})[column.lower()] = str(item.get("DATA_TYPE") or "").lower()
         task_columns = schema.get("SysTask") or {}
+        task_types = schema_types.get("SysTask") or {}
         id_column = task_columns.get("idtask")
         if not id_column:
             print("ℹ️ Ingestão histórica SysTask omitida: IDTask não encontrado", flush=True)
+            return []
+        if task_types.get("idtask") not in {"tinyint", "smallint", "int", "bigint", "numeric", "decimal"}:
+            print("ℹ️ Ingestão histórica SysTask omitida: IDTask não é incremental numérico", flush=True)
             return []
 
         resource_candidates = (
@@ -143,11 +156,11 @@ def extract_agent_task_batch(
         predicates: list[str] = []
         params: list[Any] = [batch_size, last_id_task]
         for key in resource_candidates:
-            if key in task_columns:
+            if key in task_columns and task_types.get(key) == "uniqueidentifier":
                 predicates.append(f"t.{_quoted(task_columns[key])}=%s")
                 params.append(resource_id)
         for key in login_candidates:
-            if key in task_columns:
+            if key in task_columns and task_types.get(key) == "uniqueidentifier":
                 predicates.append(
                     f"EXISTS (SELECT 1 FROM dbo.SysLogin login WITH (NOLOCK) "
                     f"WHERE login.IDLogin=t.{_quoted(task_columns[key])} "
@@ -160,12 +173,13 @@ def extract_agent_task_batch(
                 continue
             relation_predicates: list[str] = []
             relation_params: list[Any] = []
+            relation_types = schema_types.get(table_name) or {}
             for key in resource_candidates:
-                if key in columns:
+                if key in columns and relation_types.get(key) == "uniqueidentifier":
                     relation_predicates.append(f"rel.{_quoted(columns[key])}=%s")
                     relation_params.append(resource_id)
             for key in login_candidates:
-                if key in columns:
+                if key in columns and relation_types.get(key) == "uniqueidentifier":
                     relation_predicates.append(
                         f"EXISTS (SELECT 1 FROM dbo.SysLogin login WITH (NOLOCK) "
                         f"WHERE login.IDLogin=rel.{_quoted(columns[key])} "

@@ -1535,12 +1535,19 @@ El cursor de chat lee `dbo.SysChat` incrementalmente por `IDChat2` e incluye
 únicamente mensajes que el recurso escribió, recibió como participante o puede
 consultar por sus relaciones activas de `SysChatIAResource`. Los documentos se
 clasifican como `owner`, `workroom`, `private` o `meeting`.
+`SysChat.IDMeeting` es opcional según la instalación. Antes de extraer, el
+productor consulta `INFORMATION_SCHEMA.COLUMNS`; si no existe, proyecta
+`NULL AS IDMeeting` y continúa sin clasificar esos mensajes como meeting.
 
 El cursor de tareas descubre las columnas instaladas de `dbo.SysTask` y sus
 tablas relacionales. Solo extrae tareas donde el recurso aparece como creador,
 responsable, propietario, asignado o participante. Si la instalación no expone
 `IDTask` o una relación verificable con recursos, esta fuente se omite de forma
 segura y nunca se convierte en conocimiento global.
+El descubrimiento incluye `DATA_TYPE`: únicamente columnas
+`uniqueidentifier` pueden relacionarse con un recurso o login. Columnas
+homónimas `tinyint`, `int` u otros tipos se ignoran, y `IDTask` debe ser un
+identificador incremental numérico.
 
 Por seguridad comienza desactivada y en modo simulación:
 
