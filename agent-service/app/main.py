@@ -1443,7 +1443,7 @@ async def _process_auto_replies(
                 solidset_send_chat_message.invoke,
                 {
                     "canal_id": channel_id,
-                    "mensaje": f"{agent_name}: {response_text}",
+                    "mensaje": f"{response_text}",
                     "confirm": True,
                     "recurso_id": reply_resource if is_direct else None,
                     "recurso_login_id": reply_login if is_direct else None,
