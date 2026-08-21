@@ -33,3 +33,29 @@ def normalize_historical_message(row: dict[str, Any]) -> tuple[dict[str, Any] | 
     normalized["NormalizedText"] = text[:12000]
     normalized["ContentHash"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return normalized, None
+
+
+def normalize_historical_task(
+    row: dict[str, Any], resource_id: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Normalizes an authorized SysTask without requiring a chat workroom."""
+    raw = str(row.get("RawMessage") or "").strip()
+    text = html.unescape(re.sub(r"<[^>]+>", " ", raw))
+    text = " ".join(text.replace("\x00", " ").split()).strip(" |")
+    if not text:
+        return None, "empty"
+    if any(pattern.search(text) for pattern in SECRET_PATTERNS):
+        return None, "sensitive"
+    try:
+        task_id = int(row.get("IDTask"))
+    except (TypeError, ValueError):
+        return None, "invalid_task"
+    normalized = dict(row)
+    normalized.update({
+        "IDChat2": task_id,
+        "IDSenderResource": resource_id,
+        "NormalizedText": text[:12000],
+        "ContentHash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "SourceType": "task",
+    })
+    return normalized, None

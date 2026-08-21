@@ -84,13 +84,12 @@ from app.response_queue import AgentResponseQueue
 from app.historical.producer import enqueue_next_batch
 from app.historical.queue import HistoricalQueue
 from app.historical.store import (
+    approve_dry_run_cursors,
     ensure_schema as ensure_historical_schema,
-    get_cursor as get_historical_cursor,
     historical_points,
     list_audits as list_historical_audits,
     list_cursors as list_historical_cursors,
     mark_historical_deleted,
-    set_cursor as set_historical_cursor,
 )
 
 # ============================================================
@@ -3766,30 +3765,34 @@ def approve_historical_dry_run(
     instance = get_solidset_instance(code=instanceCode, source_ip=None)
     if not instance:
         raise HTTPException(status_code=404, detail="Instância não encontrada.")
-    cursor = get_historical_cursor(str(instance["ID"]))
-    set_historical_cursor(
-        str(instance["ID"]),
-        int(cursor["LastIDChat2"]),
-        cursor.get("LastStamp"),
-        "idle",
-    )
-    return {"status":"approved", "lastIDChat2":int(cursor["LastIDChat2"])}
+    approved = approve_dry_run_cursors(str(instance["ID"]))
+    return {"status":"approved", "approvedCursors":approved}
 
 
 @app.get(
     "/api/v1/agent/historical-ingestion/status",
     dependencies=[Depends(_require_historical_admin)],
 )
-def historical_ingestion_status() -> dict[str, Any]:
-    return {"queue":historical_queue.stats(), "cursors":list_historical_cursors()}
+def historical_ingestion_status(
+    resourceId: Optional[uuid.UUID] = Query(None),
+) -> dict[str, Any]:
+    return {
+        "queue":historical_queue.stats(),
+        "cursors":list_historical_cursors(str(resourceId) if resourceId else None),
+    }
 
 
 @app.get(
     "/api/v1/agent/historical-ingestion/batches",
     dependencies=[Depends(_require_historical_admin)],
 )
-def historical_ingestion_batches(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
-    return {"items":list_historical_audits(limit)}
+def historical_ingestion_batches(
+    limit: int = Query(50, ge=1, le=500),
+    resourceId: Optional[uuid.UUID] = Query(None),
+) -> dict[str, Any]:
+    return {
+        "items":list_historical_audits(limit, str(resourceId) if resourceId else None)
+    }
 
 
 @app.delete(
@@ -3797,18 +3800,23 @@ def historical_ingestion_batches(limit: int = Query(50, ge=1, le=500)) -> dict[s
     dependencies=[Depends(_require_historical_admin)],
 )
 def delete_historical_message(
-    id_chat2: int, instanceCode: str = Query(...)
+    id_chat2: int,
+    instanceCode: str = Query(...),
+    sourceType: str = Query("chat", pattern="^(chat|task)$"),
 ) -> dict[str, Any]:
     instance = get_solidset_instance(code=instanceCode, source_ip=None)
     if not instance: raise HTTPException(status_code=404, detail="Instância não encontrada.")
-    points = historical_points(str(instance["ID"]), id_chat2)
+    points = historical_points(str(instance["ID"]), id_chat2, sourceType)
     if points:
         QdrantClient(url=settings.VECTOR_DB_URL).delete(
             collection_name=settings.VECTOR_COLLECTION_NAME,
             points_selector=PointIdsList(points=points), wait=True,
         )
-    deleted = mark_historical_deleted(str(instance["ID"]), id_chat2)
-    return {"status":"deleted", "idChat2":id_chat2, "documents":deleted}
+    deleted = mark_historical_deleted(str(instance["ID"]), id_chat2, sourceType)
+    return {
+        "status":"deleted", "idChat2":id_chat2,
+        "sourceType":sourceType, "documents":deleted,
+    }
 
 
 @app.get("/api/v1/agent/responses/{request_id}/status")

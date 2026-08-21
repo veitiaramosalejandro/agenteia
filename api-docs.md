@@ -1471,10 +1471,27 @@ que `vector-db:6333` acepta conexiones, evitando que la creación inicial de la
 colección `machining_docs` falle por una carrera de arranque.
 ## Ingesta retroactiva de conocimiento SolidSET
 
-La ingesta histórica es independiente de las respuestas en tiempo real. Lee
-`dbo.SysChat` incrementalmente por `IDChat2`, resuelve el autor real mediante
-`SysChat2SysResource.IDLogin = SysChat.IDSender`, aplica privacidad y publica
-lotes en `machining:historical-ingestion:v1`.
+La ingesta histórica es independiente de las respuestas en tiempo real. Solo
+crea procesos para recursos con `SysResourceIA.active=true`, un
+`IDAgentResource` y una relación `dbo.SysResource2Agent.Active=1` verificada.
+
+Cada agente activo tiene cursores independientes:
+
+```text
+solidset_chat_history:{IDResource}
+solidset_task_history:{IDResource}
+```
+
+El cursor de chat lee `dbo.SysChat` incrementalmente por `IDChat2` e incluye
+únicamente mensajes que el recurso escribió, recibió como participante o puede
+consultar por sus relaciones activas de `SysChatIAResource`. Los documentos se
+clasifican como `owner`, `workroom`, `private` o `meeting`.
+
+El cursor de tareas descubre las columnas instaladas de `dbo.SysTask` y sus
+tablas relacionales. Solo extrae tareas donde el recurso aparece como creador,
+responsable, propietario, asignado o participante. Si la instalación no expone
+`IDTask` o una relación verificable con recursos, esta fuente se omite de forma
+segura y nunca se convierte en conocimiento global.
 
 Por seguridad comienza desactivada y en modo simulación:
 
@@ -1509,7 +1526,7 @@ POST /api/v1/agent/historical-ingestion/resume
 POST /api/v1/agent/historical-ingestion/approve-dry-run?instanceCode=local-solidset
 GET  /api/v1/agent/historical-ingestion/status
 GET  /api/v1/agent/historical-ingestion/batches?limit=50
-DELETE /api/v1/agent/historical-ingestion/messages/{idChat2}?instanceCode=local-solidset
+DELETE /api/v1/agent/historical-ingestion/messages/{idChat2}?instanceCode=local-solidset&sourceType=chat
 ```
 
 El cuerpo de `start` es:
@@ -1523,11 +1540,17 @@ ni avanzar `LastIDChat2`. Tras revisar auditoría se llama a
 `approve-dry-run`, y después a `start` con `dryRun=false`.
 
 Los mensajes IA, secretos, mensajes vacíos y registros sin autor/canal se
-rechazan. El conocimiento se duplica de forma controlada por agente con scope
-`owner` o `workroom`; `global` permanece deshabilitado hasta confirmar en SQL
-Server un campo fiable de visibilidad pública. Los puntos Qdrant incluyen
-`agent_resource_id`, `canal_id`, `scope`, `id_chat2` y `content_hash`, de forma
-compatible con los filtros RAG existentes.
+rechazan. El conocimiento se almacena únicamente para el agente objetivo con
+scope `owner`, `workroom`, `private`, `meeting` o `task`; `global` permanece
+deshabilitado. Los puntos Qdrant incluyen `agent_resource_id`, `canal_id`,
+`source_type`, `source_id`, `scope`, `id_chat2` y `content_hash`.
+
+El productor funciona también como reconciliador. Cuando aparece un agente
+activo nuevo, crea automáticamente sus cursores de chat y tareas. Si existen
+documentos anteriores para ese agente, parte del máximo origen confirmado; si
+es realmente nuevo, parte de cero. Activar un agente no reinicia los demás. Un
+agente desactivado deja de producir lotes y el worker vuelve a comprobar su
+estado antes de indexar cualquier trabajo pendiente.
 
 PostgreSQL conserva cursores, auditoría de lotes y la relación exacta entre
 `IDChat2` y `QdrantPointID`. El endpoint DELETE borra los puntos y marca los
@@ -1563,6 +1586,21 @@ la pérdida de mensajes como el reinicio desde cero.
 `GET /api/v1/agent/historical-ingestion/status` muestra ahora también
 `CurrentBatchID`, `LastIDChat2`, `LastRunAt` y el estado de recuperación para
 diagnosticar exactamente dónde continuará la ingesta.
+
+Los estados y auditorías pueden filtrarse por agente:
+
+```http
+GET /api/v1/agent/historical-ingestion/status?resourceId={IDResource}
+GET /api/v1/agent/historical-ingestion/batches?resourceId={IDResource}&limit=50
+```
+
+`approve-dry-run` libera todos los cursores `dry_run` de chat y tareas de la
+instancia seleccionada. El cursor global de versiones anteriores se marca como
+`superseded` y deja de participar en la planificación.
+
+El endpoint DELETE usa `sourceType=chat` de forma predeterminada. Para eliminar
+un documento de tarea se envía `sourceType=task` y el valor de la ruta se
+interpreta como `IDTask`, evitando colisiones entre `IDChat2` e `IDTask`.
 
 Servicios Docker:
 

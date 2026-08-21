@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS public."SysAgentIAIngestionCursor" (
     "Status" varchar(30) NOT NULL DEFAULT 'idle',
     "Error" text,
     "CurrentBatchID" varchar(200),
+    "IDResource" uuid,
+    "IDAgentResource" uuid,
+    "SourceType" varchar(40) NOT NULL DEFAULT 'chat',
     UNIQUE ("IDSolidSETInstance", "Source")
 );
 
@@ -40,6 +43,8 @@ CREATE TABLE IF NOT EXISTS public."SysAgentIAHistoricalDocument" (
     "RejectReason" varchar(50),
     "IndexedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "DeletedAt" timestamptz,
+    "SourceType" varchar(40) NOT NULL DEFAULT 'chat',
+    "SourceID" varchar(100),
     UNIQUE ("IDSolidSETInstance", "IDChat2", "Scope", "IDResource", "IDWorkRoom")
 );
 
