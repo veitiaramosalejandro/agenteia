@@ -1507,3 +1507,11 @@ La detección de idioma se aplica también a mensajes cortos y respuestas
 deterministas que no pasan por el LLM. Expresiones como `Bom dia`, `Boa tarde`,
 `Good morning`, `Good evening`, `Buenos días` y sus equivalentes generan la
 respuesta directamente en portugués, inglés o español, respectivamente.
+
+Los mensajes declarativos se distinguen lingüísticamente de preguntas y
+peticiones. Se consideran señales de conocimiento las estructuras factuales,
+fechas, contenido extenso o multilínea y expresiones como `ten en cuenta`,
+`para seu conhecimento` o `remember that`. El mensaje se aprende, pero no se
+envía al LLM. Si estaba dirigido explícitamente al agente, la única respuesta
+es un agradecimiento breve en el idioma detectado; en un canal sin destino
+directo se aprende silenciosamente.

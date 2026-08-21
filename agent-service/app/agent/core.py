@@ -1060,6 +1060,7 @@ class MachiningAgent:
                 " vocês ", " faça ", " forneça ", " intervenções ", " utilizador ",
                 " não ", " olá ", " obrigado ", " obrigada ", " informação ",
                 " informações ", " hoje ", " podes ", " gostaria ", " meu ", " minha ",
+                " é ", " são ", " tem ", " foi ", " uma ", " dos ", " das ",
             ),
             "en": (
                 " good morning ", " good afternoon ", " good evening ", " the ",

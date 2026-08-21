@@ -544,10 +544,66 @@ def _looks_like_question_or_request(raw_text: str) -> bool:
         "qué ", "que ", "cómo ", "como ", "cuál ", "cual ", "cuándo ", "cuando ",
         "dónde ", "donde ", "quién ", "quien ", "por qué ", "puedes ", "podrías ",
         "dime ", "busca ", "consulta ", "explica ", "ayúdame ", "ayudame ",
+        "necesito ", "quiero que ", "haz ", "genera ", "resume ", "analiza ",
+        "compara ", "muéstrame ", "muestrame ", "indícame ", "indicame ",
         "what ", "how ", "when ", "where ", "who ", "why ", "can you ", "please ",
+        "i need ", "i want ", "give me ", "tell me ", "show me ", "generate ",
+        "summarize ", "analyse ", "analyze ", "compare ",
         "o que ", "como ", "quando ", "onde ", "quem ", "por que ", "pode ", "procura ",
+        "preciso ", "quero que ", "faça ", "faz ", "gera ", "resume ", "analisa ",
+        "compara ", "mostra ", "indica ", "diz-me ",
     )
     return text.startswith(starters)
+
+
+def _is_conversational_continuation(raw_text: str) -> bool:
+    text = " ".join(str(raw_text or "").strip().lower().split()).rstrip(".!… ")
+    return text in {
+        "sí", "si", "sim", "yes", "no", "não", "nao", "continúa", "continua",
+        "continue", "prossegue", "pode continuar", "puedes continuar", "de acuerdo",
+        "está bien", "esta bien", "ok", "vale", "correcto", "correto", "right",
+    }
+
+
+def _is_informational_learning_message(raw_text: str) -> bool:
+    """Detect factual/declarative input that should be learned, not answered."""
+    text = " ".join(str(raw_text or "").strip().split())
+    lowered = text.lower()
+    if not text or _looks_like_question_or_request(text) or _is_conversational_continuation(text):
+        return False
+    if any(term in lowered for term in (
+        "gracias", "obrigado", "obrigada", "thank you", "thanks", "bom dia",
+        "boa tarde", "boa noite", "buenos días", "buenas tardes", "buenas noches",
+        "hello", "hola", "olá",
+    )):
+        return False
+    explicit_learning = (
+        "aprende ", "recuerda que ", "ten en cuenta ", "para tu conocimiento ",
+        "te informo que ", "fica a saber ", "tem em conta ", "para teu conhecimento ",
+        "para seu conhecimento ", "informo que ", "learn this ", "remember that ",
+        "for your information ", "keep in mind ",
+    )
+    factual_patterns = (
+        r"\b(?:es|son|era|fue|tiene|tienen|representa|pertenece)\b",
+        r"\b(?:é|são|era|foi|tem|têm|representa|pertence)\b",
+        r"\b(?:is|are|was|were|has|have|represents|belongs)\b",
+        r"\b(?:19|20)\d{2}\b",
+    )
+    return (
+        len(text) >= 160
+        or "\n" in str(raw_text or "")
+        or any(lowered.startswith(prefix) for prefix in explicit_learning)
+        or any(re.search(pattern, lowered) for pattern in factual_patterns)
+    )
+
+
+def _learning_acknowledgement(raw_text: str) -> str:
+    language = agent._detect_user_language(raw_text)
+    return {
+        "pt": "Agradeço a informação. Vou tê-la em conta.",
+        "en": "Thank you for the information. I will take it into account.",
+        "es": "Gracias por la información. La tendré en cuenta.",
+    }[language]
 
 
 def _quoted_reply_is_learning_only(candidate: dict[str, Any]) -> bool:
@@ -557,16 +613,15 @@ def _quoted_reply_is_learning_only(candidate: dict[str, Any]) -> bool:
     text = " ".join(str(candidate.get("message") or "").strip().lower().split())
     if not text or _looks_like_question_or_request(text):
         return False
-    conversational = {
-        "hola", "olá", "ola", "hello", "hi", "gracias", "obrigado", "obrigada",
-        "thanks", "sí", "si", "sim", "yes", "continúa", "continua", "continue",
-        "prossegue", "pode continuar", "puedes continuar", "de acuerdo", "está bien",
-        "esta bien", "ok", "vale",
-    }
-    normalized = text.rstrip(".!… ")
-    if normalized in conversational:
+    if _is_conversational_continuation(text):
         return False
     return True
+
+
+def _candidate_is_learning_only(candidate: dict[str, Any]) -> bool:
+    return _quoted_reply_is_learning_only(candidate) or _is_informational_learning_message(
+        str(candidate.get("message") or "")
+    )
 
 
 def _message_mentions_agent(raw_text: str) -> bool:
@@ -740,7 +795,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "mensaje_vacio"
     if not channel_id and not can_reply_direct:
         return "sin_destino_para_responder"
-    if _quoted_reply_is_learning_only(candidate):
+    if _candidate_is_learning_only(candidate) and not can_reply_direct:
         return "respuesta_citada_solo_aprendizaje"
 
     # Con identidad explícita configurada, Destiny es la fuente de verdad. Así
@@ -1369,8 +1424,11 @@ async def _process_auto_replies(
             or settings.SOLIDSET_LOGIN_USERNAME
             or "solidset.agent"
         ).strip()
+        learning_only = _candidate_is_learning_only(candidate)
         response_text = (
-            _direct_courtesy_response(
+            _learning_acknowledgement(incoming_text)
+            if is_direct and learning_only
+            else _direct_courtesy_response(
                 incoming_text,
                 str(candidate.get("sender_name") or ""),
             )

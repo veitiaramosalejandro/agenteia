@@ -13,6 +13,9 @@ class LanguageDetectionTests(unittest.TestCase):
     def test_detects_short_portuguese_greeting(self):
         self.assertEqual("pt", self.agent._detect_user_language("Bom dia"))
 
+    def test_detects_short_portuguese_factual_statement(self):
+        self.assertEqual("pt", self.agent._detect_user_language("A ROBOTEA é uma empresa"))
+
     def test_detects_short_english_greeting(self):
         self.assertEqual("en", self.agent._detect_user_language("Good morning"))
 
