@@ -1490,3 +1490,8 @@ validación y diagnósticos) utilizan portugués de Portugal. Los códigos técn
 consumidos por clientes (`queued`, `processing`, `completed`, `failed`, etc.)
 se mantienen estables para no romper la integración con WPF. El texto generado
 por el agente conserva el idioma solicitado por el usuario.
+
+Las respuestas conversacionales no revelan detalles internos de recuperación
+o almacenamiento. Términos como `RAG`, `Qdrant`, `embeddings`, `base vectorial`
+o `vectorial knowledge base` se prohíben en el prompt y se eliminan mediante
+una validación final común antes de devolver o enviar cualquier respuesta.

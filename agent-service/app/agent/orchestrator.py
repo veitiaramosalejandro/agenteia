@@ -1,5 +1,6 @@
 """Orquestación LangGraph para las rutas de conversación del agente SolidSET."""
 
+import re
 from time import perf_counter
 from typing import Any, Optional, TypedDict
 
@@ -163,10 +164,48 @@ class SolidSETOrchestrator:
                 "Inténtalo nuevamente en unos instantes."
             )
         response = self._ensure_response_language(state.get("user_text", ""), response)
+        response = self._hide_internal_implementation_details(
+            response,
+            self.agent._detect_user_language(state.get("user_text", "")),
+        )
         started_at = state.get("started_at") or perf_counter()
         elapsed = perf_counter() - started_at
         print(f"✅ LangGraph completed route={state.get('route')} elapsed={elapsed:.2f}s")
         return {"response": response, "elapsed_seconds": elapsed}
+
+    @staticmethod
+    def _hide_internal_implementation_details(response: str, language: str = "es") -> str:
+        """Prevent implementation details from leaking into user-facing answers."""
+        replacement = {
+            "pt": "a informação disponível",
+            "en": "the available information",
+            "es": "la información disponible",
+        }.get(language, "la información disponible")
+        internal_source = re.compile(
+            r"(?i)(?:"
+            r"(?:informaci[oó]n\s+(?:reciente\s+)?recuperada\s+desde\s+)|"
+            r"(?:informa[cç][aã]o\s+(?:recente\s+)?(?:obtida|recuperada)\s+(?:da|desde\s+a)\s+)|"
+            r"(?:information\s+(?:recently\s+)?retrieved\s+from\s+)"
+            r")?"
+            r"(?:mi\s+|my\s+|the\s+|la\s+|el\s+|a\s+minha\s+|o\s+meu\s+)?"
+            r"(?:vectorial\s+knowledge\s+base|vector\s+knowledge\s+base|"
+            r"base\s+(?:de\s+)?conocimiento\s+vectorial|base\s+vectorial|"
+            r"base\s+de\s+conhecimento\s+vetorial|qdrant|rag|embeddings?)"
+        )
+        sanitized = internal_source.sub(replacement, str(response or ""))
+        sanitized = re.sub(
+            r"(?i)\b(?:la\s+la\s+informaci[oó]n|the\s+the\s+available|"
+            r"a\s+a\s+informa[cç][aã]o)",
+            lambda _match: {
+                "pt": "a informação",
+                "en": "the available",
+                "es": "la información",
+            }.get(language, "la información"),
+            sanitized,
+        )
+        sanitized = re.sub(r"\s+([,.;:!?])", r"\1", sanitized)
+        sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
+        return sanitized.strip()
 
     def _ensure_response_language(self, user_text: str, response: str) -> str:
         """Garantiza ES/PT/EN también para respuestas deterministas construidas por código."""
