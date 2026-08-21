@@ -1481,7 +1481,8 @@ HISTORICAL_INGESTION_STREAM=machining:historical-ingestion:v1
 HISTORICAL_INGESTION_GROUP=historical-workers-v1
 HISTORICAL_INGESTION_STREAM_MAXLEN=10000
 HISTORICAL_INGESTION_MAX_RETRIES=3
-HISTORICAL_INGESTION_CLAIM_IDLE_MS=900000
+HISTORICAL_INGESTION_CLAIM_IDLE_MS=60000
+HISTORICAL_INGESTION_STALE_SECONDS=300
 HISTORICAL_INGESTION_POLL_SECONDS=60
 HISTORICAL_INGESTION_ADMIN_KEY=<secreto-administrativo>
 DB_INGEST_CONNECT_TIMEOUT_SECONDS=15
@@ -1526,6 +1527,37 @@ compatible con los filtros RAG existentes.
 PostgreSQL conserva cursores, auditoría de lotes y la relación exacta entre
 `IDChat2` y `QdrantPointID`. El endpoint DELETE borra los puntos y marca los
 documentos como eliminados.
+
+En producción pueden mantenerse simultáneamente:
+
+```env
+HISTORICAL_INGESTION_ENABLED=true
+HISTORICAL_INGESTION_DRY_RUN=false
+```
+
+La reanudación después de reiniciar Docker utiliza PostgreSQL como checkpoint
+duradero. `SysAgentIAIngestionCursor.LastIDChat2` representa exclusivamente el
+último mensaje cuyo lote terminó correctamente y `CurrentBatchID` identifica el
+lote en curso. El cursor se actualiza de forma monotónica: una entrega antigua
+recuperada desde Redis nunca puede reducir `LastIDChat2`.
+
+Redis conserva el Stream mediante AOF en el volumen `redis_data`. Después de un
+reinicio, un worker reclama en aproximadamente
+`HISTORICAL_INGESTION_CLAIM_IDLE_MS` los mensajes pendientes del consumidor
+anterior. Si Redis perdió el lote completo, el productor detecta un cursor
+`queued` o `processing` abandonado después de
+`HISTORICAL_INGESTION_STALE_SECONDS`, conserva el último checkpoint confirmado
+y vuelve a extraer desde `LastIDChat2 + 1`.
+
+El último lote puede procesarse nuevamente después de una interrupción, pero no
+duplica conocimiento: `DocumentID` y `QdrantPointID` son UUID deterministas,
+Qdrant utiliza `upsert` y PostgreSQL aplica claves únicas. Esta garantía ofrece
+procesamiento efectivo *at least once* con resultado idempotente, evitando tanto
+la pérdida de mensajes como el reinicio desde cero.
+
+`GET /api/v1/agent/historical-ingestion/status` muestra ahora también
+`CurrentBatchID`, `LastIDChat2`, `LastRunAt` y el estado de recuperación para
+diagnosticar exactamente dónde continuará la ingesta.
 
 Servicios Docker:
 

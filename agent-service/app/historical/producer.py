@@ -8,7 +8,9 @@ from app.config import settings
 from app.connectors.db_client import list_active_solidset_instances
 from app.historical.extractor import extract_batch
 from app.historical.queue import HistoricalQueue
-from app.historical.store import ensure_schema, get_cursor, set_cursor, upsert_audit
+from app.historical.store import (
+    ensure_schema, get_cursor, recover_stale_cursors, set_cursor, upsert_audit,
+)
 
 
 def enqueue_next_batch(instance: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
@@ -30,8 +32,19 @@ def enqueue_next_batch(instance: dict[str, Any], dry_run: bool = False) -> dict[
              "instanceCode":instance.get("Code"), "firstIdChat2":first_id,
              "lastIdChat2":last_id, "dryRun":dry_run, "messages":rows}
     upsert_audit(batch, "queued")
-    HistoricalQueue().enqueue(batch)
-    set_cursor(instance_id, int(cursor["LastIDChat2"]), cursor.get("LastStamp"), "queued")
+    set_cursor(
+        instance_id, int(cursor["LastIDChat2"]), cursor.get("LastStamp"),
+        "queued", batch_id=batch["batchId"],
+    )
+    try:
+        HistoricalQueue().enqueue(batch)
+    except Exception as exc:
+        upsert_audit(batch, "failed", error=str(exc))
+        set_cursor(
+            instance_id, int(cursor["LastIDChat2"]), cursor.get("LastStamp"),
+            "failed", str(exc), batch_id=None,
+        )
+        raise
     return {"status":"queued","batchId":batch["batchId"],"messages":len(rows)}
 
 
@@ -39,6 +52,20 @@ async def run_producer() -> None:
     ensure_schema(); queue=HistoricalQueue()
     while True:
         if settings.HISTORICAL_INGESTION_ENABLED and not queue.paused():
+            try:
+                recovered = await asyncio.to_thread(
+                    recover_stale_cursors,
+                    settings.HISTORICAL_INGESTION_STALE_SECONDS,
+                )
+                for cursor in recovered:
+                    print(
+                        "🔄 Cursor histórico recuperado após reinício "
+                        f"instance={cursor['IDSolidSETInstance']} "
+                        f"last_id={cursor['LastIDChat2']}",
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(f"⚠️ Recuperação de cursor histórico: {exc}", flush=True)
             for instance in list_active_solidset_instances():
                 try: await asyncio.to_thread(enqueue_next_batch, instance, settings.HISTORICAL_INGESTION_DRY_RUN)
                 except Exception as exc: print(f"⚠️ Productor histórico: {exc}", flush=True)

@@ -28,7 +28,8 @@ def ensure_schema() -> None:
           "ID" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "IDSolidSETInstance" uuid NOT NULL,
           "Source" varchar(100) NOT NULL, "LastIDChat2" bigint NOT NULL DEFAULT 0,
           "LastStamp" timestamptz, "LastRunAt" timestamptz, "Status" varchar(30) NOT NULL DEFAULT 'idle',
-          "Error" text, UNIQUE ("IDSolidSETInstance", "Source"));
+          "Error" text, "CurrentBatchID" varchar(200),
+          UNIQUE ("IDSolidSETInstance", "Source"));
         CREATE TABLE IF NOT EXISTS public."SysAgentIAIngestionAudit" (
           "BatchID" varchar(200) PRIMARY KEY, "IDSolidSETInstance" uuid NOT NULL,
           "FirstIDChat2" bigint, "LastIDChat2" bigint, "ReadCount" integer DEFAULT 0,
@@ -40,7 +41,16 @@ def ensure_schema() -> None:
           "Scope" varchar(30) NOT NULL, "IDResource" uuid, "IDAgentResource" uuid,
           "IDWorkRoom" uuid, "QdrantPointID" uuid NOT NULL UNIQUE, "ContentHash" varchar(64) NOT NULL,
           "Status" varchar(30) DEFAULT 'indexed', "RejectReason" varchar(50),
-          "IndexedAt" timestamptz DEFAULT CURRENT_TIMESTAMP, "DeletedAt" timestamptz);'''
+          "IndexedAt" timestamptz DEFAULT CURRENT_TIMESTAMP, "DeletedAt" timestamptz);
+        ALTER TABLE public."SysAgentIAIngestionCursor"
+          ADD COLUMN IF NOT EXISTS "CurrentBatchID" varchar(200);'''
+    sql += '''
+    ALTER TABLE public."SysAgentIAIngestionCursor"
+      ADD COLUMN IF NOT EXISTS "CurrentBatchID" varchar(200);
+    CREATE INDEX IF NOT EXISTS "IX_IngestionCursor_Recovery"
+      ON public."SysAgentIAIngestionCursor" ("Status", "LastRunAt")
+      WHERE "Status" IN ('queued', 'processing', 'recovering');
+    '''
     with connection() as conn, conn.cursor() as cur:
         cur.execute(sql)
 
@@ -55,12 +65,44 @@ def get_cursor(instance_id: str, source: str = "solidset_sql_history") -> dict[s
         return dict(cur.fetchone())
 
 
-def set_cursor(instance_id: str, last_id: int, last_stamp: Any, status: str, error: str | None = None) -> None:
+def set_cursor(
+    instance_id: str,
+    last_id: int,
+    last_stamp: Any,
+    status: str,
+    error: str | None = None,
+    batch_id: str | None = None,
+) -> None:
+    """Persists a monotonic checkpoint so an old delivery can never rewind it."""
     with connection() as conn, conn.cursor() as cur:
         cur.execute('''UPDATE public."SysAgentIAIngestionCursor" SET
-          "LastIDChat2"=%s, "LastStamp"=%s, "LastRunAt"=CURRENT_TIMESTAMP,
-          "Status"=%s, "Error"=%s WHERE "IDSolidSETInstance"=%s AND "Source"='solidset_sql_history' ''',
-          (last_id, last_stamp, status, error, UUID(instance_id)))
+          "LastIDChat2"=GREATEST("LastIDChat2", %s),
+          "LastStamp"=CASE WHEN %s >= "LastIDChat2" THEN COALESCE(%s, "LastStamp") ELSE "LastStamp" END,
+          "LastRunAt"=CURRENT_TIMESTAMP,
+          "Status"=CASE WHEN %s >= "LastIDChat2" THEN %s ELSE "Status" END,
+          "Error"=CASE WHEN %s >= "LastIDChat2" THEN %s ELSE "Error" END,
+          "CurrentBatchID"=CASE WHEN %s >= "LastIDChat2" THEN %s ELSE "CurrentBatchID" END
+          WHERE "IDSolidSETInstance"=%s AND "Source"='solidset_sql_history' ''',
+          (
+              last_id, last_id, last_stamp, last_id, status,
+              last_id, error, last_id, batch_id, UUID(instance_id),
+          ))
+
+
+def recover_stale_cursors(stale_seconds: int) -> list[dict[str, Any]]:
+    """Releases abandoned batches while retaining the last committed IDChat2."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute('''UPDATE public."SysAgentIAIngestionCursor"
+          SET "Status"='recovering',
+              "Error"=CONCAT('Recuperado após reinício; lote anterior: ',
+                             COALESCE("CurrentBatchID", 'desconhecido')),
+              "CurrentBatchID"=NULL,
+              "LastRunAt"=CURRENT_TIMESTAMP
+          WHERE "Source"='solidset_sql_history'
+            AND "Status" IN ('queued','processing')
+            AND ("LastRunAt" IS NULL OR "LastRunAt" < CURRENT_TIMESTAMP - (%s * INTERVAL '1 second'))
+          RETURNING *''', (max(1, int(stale_seconds)),))
+        return [dict(row) for row in cur.fetchall()]
 
 
 def workroom_agents(workroom_id: str) -> list[dict[str, Any]]:

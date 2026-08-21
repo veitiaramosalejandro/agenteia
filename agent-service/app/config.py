@@ -84,7 +84,10 @@ class Settings(BaseSettings):
         0, min(10, int(os.getenv("HISTORICAL_INGESTION_MAX_RETRIES", "3")))
     )
     HISTORICAL_INGESTION_CLAIM_IDLE_MS: int = max(
-        60000, int(os.getenv("HISTORICAL_INGESTION_CLAIM_IDLE_MS", "900000"))
+        30000, int(os.getenv("HISTORICAL_INGESTION_CLAIM_IDLE_MS", "60000"))
+    )
+    HISTORICAL_INGESTION_STALE_SECONDS: int = max(
+        60, int(os.getenv("HISTORICAL_INGESTION_STALE_SECONDS", "300"))
     )
     HISTORICAL_INGESTION_POLL_SECONDS: int = max(
         10, int(os.getenv("HISTORICAL_INGESTION_POLL_SECONDS", "60"))

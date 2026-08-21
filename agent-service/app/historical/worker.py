@@ -48,7 +48,10 @@ def _document(row: dict[str, Any], instance_id: str, scope: str, agent: dict[str
 
 
 def process_batch(batch: dict[str, Any]) -> dict[str, int]:
-    set_cursor(batch["instanceId"], batch["firstIdChat2"] - 1, None, "processing")
+    set_cursor(
+        batch["instanceId"], batch["firstIdChat2"] - 1, None,
+        "processing", batch_id=batch["batchId"],
+    )
     accepted = rejected = indexed = 0
     documents: list[dict[str, Any]] = []
     for raw in batch.get("messages") or []:

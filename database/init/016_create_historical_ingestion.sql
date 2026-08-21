@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS public."SysAgentIAIngestionCursor" (
     "LastRunAt" timestamptz,
     "Status" varchar(30) NOT NULL DEFAULT 'idle',
     "Error" text,
+    "CurrentBatchID" varchar(200),
     UNIQUE ("IDSolidSETInstance", "Source")
 );
 
