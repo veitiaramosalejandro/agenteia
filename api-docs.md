@@ -770,6 +770,50 @@ de contingencia.
 El cliente WPF debe conservar `requestId`, mostrar un indicador indeterminado y
 consultar `statusUrl` cada 1–2 segundos hasta que `completed=true`.
 
+### Sugerir una respuesta para `Chat.chatQuestion`
+
+```http
+POST /api/v1/agent/notification/chat-question/suggest-response
+Content-Type: application/json
+```
+
+Recibe el mismo `FrameworkMessage`, pero no captura el mensaje como una nueva
+petición de autorrespuesta ni envía nada a SolidSET. El endpoint toma:
+
+- `Chat.IDChat2` como `requestId` para el seguimiento del estado.
+- `Chat.IDSenderResource` como el recurso humano que solicita la sugerencia.
+- `Chat.chatQuestion.IDSenderResource` como el autor del mensaje anterior.
+- `Chat.chatQuestion.IDChat2` y `RawMessage` como el mensaje que debe responderse.
+- `Chat.IDWorkRoom`, `Chat.IDMeeting` y `Info.meeting_code` como contexto.
+
+Antes de generar, comprueba en SQL Server que el solicitante tiene una relación
+activa en `dbo.SysResource2Agent`, sincroniza `IDAgentResource` y resuelve su
+agente activo en PostgreSQL. La generación utiliza el conocimiento privado y el
+contexto de refuerzo del agente propio del solicitante. No utiliza el agente del
+autor citado, no consulta Internet y trata el texto citado como datos no
+confiables.
+
+Si termina correctamente devuelve HTTP 200 con `Content-Type: text/plain` y
+únicamente el texto apto para asignar a `RawMessage`:
+
+```text
+Gracias por la información. Revisaré esos puntos y te confirmaré el resultado.
+```
+
+No devuelve JSON, nombre del agente, prefijo, comillas ni payload de envío. Para
+mostrar progreso mientras la llamada está abierta, WPF puede consultar en
+paralelo:
+
+```http
+GET /api/v1/agent/responses/{Chat.IDChat2}/status?lang=es
+```
+
+La secuencia normal es `queued` → `processing` → `searching` → `thinking` →
+`completed`. No aparece `sending`, porque este endpoint nunca publica el texto
+en SolidSET. Los errores de validación devuelven HTTP 422; la ausencia de un
+agente propio activo devuelve HTTP 404; las dependencias o la generación no
+disponibles devuelven HTTP 503 y dejan el estado en `failed`.
+
 ### Consultar el estado de una respuesta
 
 ```http

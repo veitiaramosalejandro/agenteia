@@ -60,6 +60,7 @@ class SolidSETOrchestrator:
     def _classify(self, state: AgentGraphState) -> AgentGraphState:
         user_text = state.get("user_text", "")
         lowered = user_text.lower()
+        metadata = dict(state.get("message_metadata") or {})
         coding_terms = (
             "código", "codigo", "programa", "python", "javascript", "c#", ".net",
             "sql", "consulta", "query", "base de datos", "api", "endpoint",
@@ -70,7 +71,12 @@ class SolidSETOrchestrator:
             "causa raíz", "causa raiz", "por qué", "porque ocurre", "evalúa", "evalua",
         )
         is_general = getattr(self.agent, "_is_general_conversation", lambda _text: False)
-        if is_general(user_text):
+        if metadata.get("response_suggestion_mode"):
+            # A suggestion must be grounded in the requester's own agent
+            # knowledge. It must not escape to the public web merely because
+            # the quoted text is outside the internal-domain classifier.
+            route = "work_sql_rag"
+        elif is_general(user_text):
             route = "general_conversation"
         elif (
             self.agent._is_external_information_query(user_text)
@@ -87,7 +93,6 @@ class SolidSETOrchestrator:
             capability = "external_web"
         else:
             capability = "general"
-        metadata = dict(state.get("message_metadata") or {})
         metadata["model_capability"] = capability
         print(
             f"🧭 LangGraph route={route} capability={capability} "

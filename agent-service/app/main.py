@@ -24,7 +24,7 @@ from urllib.request import Request as URLRequest, urlopen
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -45,6 +45,7 @@ from app.connectors.db_client import (
     ensure_solidset_agent_resource_schema,
     ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
+    get_active_agent_identity_for_resource,
     get_agent_knowledge,
     get_llm_provider_configuration,
     get_agent_model_configuration,
@@ -3292,6 +3293,246 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
         status="queued",
         statusUrl=f"/api/v1/agent/responses/{request_id}/status",
     )
+
+
+def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]:
+    """Extracts the requester and quoted-message identities without mixing them."""
+    chat = _get_payload_value(payload, "Chat", "chat")
+    chat = chat if isinstance(chat, dict) else {}
+    sender = _get_payload_value(payload, "Sender", "sender")
+    sender = sender if isinstance(sender, dict) else {}
+    destiny = _get_payload_value(payload, "Destiny", "destiny")
+    destiny = destiny if isinstance(destiny, dict) else {}
+    info = _get_payload_value(payload, "Info", "info")
+    info = info if isinstance(info, dict) else {}
+    workroom_data = _get_payload_value(payload, "WorkRoomData", "workRoomData")
+    workroom_data = workroom_data if isinstance(workroom_data, dict) else {}
+    quoted = _get_payload_value(chat, "chatQuestion", "ChatQuestion")
+    quoted = quoted if isinstance(quoted, dict) else {}
+
+    current_chat_id = str(
+        _get_payload_value(chat, "idChat2", "IDChat2", "idChat") or ""
+    ).strip()
+    quoted_chat_id = str(
+        _get_payload_value(quoted, "idChat2", "IDChat2")
+        or _get_payload_value(chat, "chatQuestionMessage", "ChatQuestionMessage")
+        or ""
+    ).strip()
+    requester_resource = _valid_framework_identifier(
+        _get_payload_value(chat, "idSenderResource", "IDSenderResource")
+    ) or _valid_framework_identifier(
+        _get_payload_value(sender, "resource", "IDResource")
+    )
+    requester_login = _valid_framework_identifier(
+        _get_payload_value(chat, "idSender", "IDSender")
+    ) or _valid_framework_identifier(_get_payload_value(sender, "login", "IDLogin"))
+    quoted_resource = _valid_framework_identifier(
+        _get_payload_value(quoted, "idSenderResource", "IDSenderResource")
+    )
+    quoted_login = _valid_framework_identifier(
+        _get_payload_value(quoted, "idSender", "IDSender")
+    )
+    workroom_id = _valid_framework_identifier(
+        _get_payload_value(chat, "idWorkRoom", "IDWorkRoom")
+    ) or _valid_framework_identifier(
+        _get_payload_value(destiny, "workRoom", "IDWorkRoom")
+    ) or _valid_framework_identifier(_get_payload_value(workroom_data, "id", "ID"))
+    meeting_id = _valid_framework_identifier(
+        _get_payload_value(quoted, "idMeeting", "IDMeeting")
+    ) or _valid_framework_identifier(
+        _get_payload_value(chat, "idMeeting", "IDMeeting")
+    ) or _valid_framework_identifier(_get_payload_value(info, "meeting_id", "meetingId"))
+    quoted_message = str(
+        _get_payload_value(quoted, "rawMessage", "RawMessage") or ""
+    ).strip()
+    session_id = _valid_framework_identifier(
+        _get_payload_value(sender, "session", "IDSession")
+    )
+    return {
+        "request_id": current_chat_id,
+        "quoted_chat_id": quoted_chat_id,
+        "quoted_message": quoted_message,
+        "requester_resource": requester_resource or "",
+        "requester_login": requester_login or "",
+        "quoted_resource": quoted_resource or "",
+        "quoted_login": quoted_login or "",
+        "workroom_id": workroom_id or "",
+        "meeting_id": meeting_id or "",
+        "meeting_code": str(
+            _get_payload_value(info, "meeting_code", "meetingCode") or ""
+        ).strip(),
+        "session_id": session_id or "",
+    }
+
+
+@app.post(
+    "/api/v1/agent/notification/chat-question/suggest-response",
+    response_class=PlainTextResponse,
+    summary="Suggest a response to a quoted SolidSET chat message",
+    responses={
+        200: {
+            "description": "RawMessage suggestion only.",
+            "content": {"text/plain": {"schema": {"type": "string"}}},
+        },
+        404: {"description": "The requester's own AI agent is not active."},
+        422: {"description": "The FrameworkMessage lacks required chat context."},
+        503: {"description": "A database or model dependency is unavailable."},
+    },
+)
+async def suggest_chat_question_response(
+    message: FrameworkMessageDTO,
+) -> PlainTextResponse:
+    """Returns only a RawMessage suggestion grounded in the requester's own agent."""
+    payload = message.model_dump(mode="json")
+    context = _chat_question_suggestion_context(payload)
+    request_id = context["request_id"]
+    if not request_id:
+        raise HTTPException(
+            status_code=422,
+            detail="O campo Chat.IDChat2 é obrigatório para acompanhar o estado do pedido.",
+        )
+    if not context["quoted_chat_id"] or not context["quoted_message"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Chat.chatQuestion deve conter IDChat2 e RawMessage.",
+        )
+    if not context["requester_resource"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Não foi possível identificar o recurso que solicitou a sugestão.",
+        )
+    if not context["workroom_id"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Não foi possível identificar o canal da conversa.",
+        )
+
+    _create_response_status(request_id, request_id, 1)
+    status_agent_id = context["requester_resource"]
+    agent_name = ""
+    try:
+        _update_response_status(request_id, "processing")
+        verification = await asyncio.to_thread(
+            verify_and_sync_solidset_agent_mapping,
+            context["requester_resource"],
+        )
+        if not verification.get("verified"):
+            raise LookupError(
+                "O recurso solicitante não possui um agente IA ativo em SysResource2Agent."
+            )
+        identity = await asyncio.to_thread(
+            get_active_agent_identity_for_resource,
+            context["requester_resource"],
+        )
+        if not identity:
+            raise LookupError("O agente próprio do recurso não está ativo no PostgreSQL.")
+        status_agent_id = str(
+            verification.get("IDAgentResource") or identity.get("IDAgentResource") or ""
+        ).strip()
+        agent_name = _agent_visible_name(identity)
+        _update_response_status(
+            request_id,
+            "searching",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+        )
+        private_knowledge = await asyncio.to_thread(
+            get_agent_knowledge,
+            context["requester_resource"],
+            context["workroom_id"],
+        )
+        reinforcement = await asyncio.to_thread(
+            get_agent_reinforcement_context,
+            context["requester_resource"],
+            context["workroom_id"],
+        )
+        metadata = {
+            "response_suggestion_mode": True,
+            "chat_id": request_id,
+            "quoted_chat_id": context["quoted_chat_id"],
+            "quoted_message": context["quoted_message"],
+            "quoted_sender_resource": context["quoted_resource"],
+            "quoted_sender_login": context["quoted_login"],
+            "requester_resource": context["requester_resource"],
+            "requester_login": context["requester_login"],
+            "agent_resource_id": context["requester_resource"],
+            "agent_identity_id": status_agent_id,
+            "agent_name": agent_name,
+            "agent_knowledge": private_knowledge,
+            "agent_reinforcement": reinforcement,
+            "workroom_id": context["workroom_id"],
+            "recipient_count": 1,
+            "importance": int(message.Importance or 0),
+        }
+        _update_response_status(
+            request_id,
+            "thinking",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+        )
+        scoped_session = (
+            f"solidset:suggestion:agent:{context['requester_resource']}:"
+            f"session:{context['session_id'] or request_id}:"
+            f"question:{context['quoted_chat_id']}"
+        )
+        suggestion = await asyncio.to_thread(
+            orchestrator.invoke,
+            session_id=scoped_session,
+            user_text=context["quoted_message"],
+            user_id=context["requester_resource"],
+            canal_id=context["workroom_id"],
+            meeting_id=context["meeting_id"] or None,
+            meeting_code=context["meeting_code"] or None,
+            message_kind=str(message.Kind or "ChatMessage"),
+            message_category="chat_question_response_suggestion",
+            message_metadata=metadata,
+            tool_allowlist=set(),
+            auto_reply_mode=True,
+        )
+        suggestion = str(suggestion or "").strip()
+        if not suggestion:
+            raise RuntimeError("O modelo não gerou uma sugestão de resposta.")
+        _update_response_status(
+            request_id,
+            "completed",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+            response_count=1,
+        )
+        return PlainTextResponse(content=suggestion)
+    except LookupError as exc:
+        _update_response_status(
+            request_id,
+            "failed",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, psycopg.Error, pymssql.Error, RuntimeError) as exc:
+        _update_response_status(
+            request_id,
+            "failed",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível gerar a sugestão de resposta.",
+        ) from exc
+    except Exception as exc:
+        _update_response_status(
+            request_id,
+            "failed",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível gerar a sugestão de resposta.",
+        ) from exc
 
 
 @app.get("/api/v1/agent/responses/status")
