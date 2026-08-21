@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+import os
 from typing import Any, Iterator
 
 import pymssql
@@ -28,6 +29,11 @@ def connection_options(instance: dict[str, Any]) -> dict[str, Any]:
     host = str(database.get("Host") or "").strip().rstrip("\\")
     if not host:
         raise RuntimeError("A instância SolidSET não tem uma ligação SQL Server configurada.")
+    if (
+        host.lower() in {"localhost", "127.0.0.1", "."}
+        and (os.path.exists("/.dockerenv") or os.getenv("RUNNING_IN_DOCKER") == "1")
+    ):
+        host = "host.docker.internal"
     instance_name = str(database.get("InstanceName") or "").strip().strip("\\")
     server = f"{host}\\{instance_name}" if instance_name else host
     options: dict[str, Any] = {"server": server}

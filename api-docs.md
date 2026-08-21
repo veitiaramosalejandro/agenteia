@@ -399,8 +399,19 @@ La configuración general se guarda en `SysSolidSETInstance` y su conexión en
 `SysSolidSETDatabase`. La contraseña se cifra con Fernet antes de persistirse y
 nunca se devuelve: la respuesta solo contiene `PasswordConfigured=true`. Para
 actualizar una instancia sin cambiar su contraseña se omite `Database.Password`.
-La clave maestra `LLM_CREDENTIAL_ENCRYPTION_KEY` debe suministrarse como secreto
-de despliegue; no es una credencial SQL Server.
+Si no se proporciona `LLM_CREDENTIAL_ENCRYPTION_KEY`, la API genera una clave
+Fernet una sola vez en `/app/data/credential.key`. El directorio `data` ya está
+montado de forma persistente en desarrollo, API, producer y worker. También se
+puede proporcionar la clave como secreto de despliegue; no es una credencial
+SQL Server. El fichero o secreto debe incluirse en las copias de seguridad: si
+se pierde, las contraseñas guardadas no se pueden recuperar.
+Si la variable o el fichero contienen una clave que no es Fernet válida, la
+variable se ignora y el fichero se conserva como
+`credential.key.invalid-<timestamp>` antes de generar una clave correcta.
+
+Dentro de Docker, `Database.Host=localhost`, `127.0.0.1` o `.` se traduce a
+`host.docker.internal`. En una máquina donde SQL Server esté en otro servidor
+debe utilizarse directamente su DNS o IP.
 
 Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`;
 si encuentra alguna, actualiza la misma fila y conserva su `ID`. `BaseUrl` se

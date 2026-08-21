@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_CREDENTIAL_ENCRYPTION_KEY: str = os.getenv("LLM_CREDENTIAL_ENCRYPTION_KEY", "")
+    CREDENTIAL_ENCRYPTION_KEY_FILE: str = os.getenv(
+        "CREDENTIAL_ENCRYPTION_KEY_FILE", "./data/credential.key"
+    )
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.5"))
     AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
