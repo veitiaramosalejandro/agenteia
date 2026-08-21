@@ -1095,6 +1095,16 @@ class NotificationApiListener:
             payload.get("ExtraData") if payload else None,
             payload.get("Chat") if payload else None,
         )
+        chat_payload = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+        chat_lower = {str(key).lower(): value for key, value in chat_payload.items()}
+        quoted_payload = (
+            chat_lower.get("chatquestion")
+            if isinstance(chat_lower.get("chatquestion"), dict)
+            else {}
+        )
+        quoted_lower = {str(key).lower(): value for key, value in quoted_payload.items()}
+        quoted_chat_id = chat_lower.get("chatquestionmessage") or quoted_lower.get("idchat2")
+        quoted_message = str(quoted_lower.get("rawmessage") or "").strip()
         framework_stamp = payload.get("FrameworkStamp") or payload.get("Stamp") if payload else None
         event_timestamp = datetime.utcnow()
         if isinstance(framework_stamp, str) and framework_stamp.strip():
@@ -1150,6 +1160,12 @@ class NotificationApiListener:
                 "meeting_active": meeting["active"],
                 "meeting_id": meeting["meeting_id"],
                 "meeting_code": meeting["meeting_code"],
+                "is_quoted_reply": bool(quoted_chat_id or quoted_message),
+                "quoted_chat_id": quoted_chat_id,
+                "quoted_message": quoted_message[:2000],
+                "quoted_sender_resource": str(
+                    quoted_lower.get("idsenderresource") or ""
+                ).strip(),
                 "mask_message": payload.get("MaskMessage"),
                 "fingerprint": fingerprint,
                 "captured_at": datetime.utcnow().isoformat(),

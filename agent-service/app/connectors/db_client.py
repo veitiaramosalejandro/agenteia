@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 from uuid import UUID
+import threading
 import psycopg
 from psycopg.rows import dict_row
 
 from app.config import settings
 from app.llm.secrets import decrypt_api_key, encrypt_api_key
+
+
+_solidset_location_schema_lock = threading.Lock()
+_solidset_location_schema_ready = False
 
 
 def _postgres_connection() -> psycopg.Connection:
@@ -19,6 +24,25 @@ def _postgres_connection() -> psycopg.Connection:
         dbname=settings.POSTGRES_DB,
         row_factory=dict_row,
     )
+
+
+def ensure_solidset_instance_location_schema() -> None:
+    """Adds deterministic regional context to existing PostgreSQL volumes."""
+    global _solidset_location_schema_ready
+    if _solidset_location_schema_ready:
+        return
+    with _solidset_location_schema_lock:
+        if _solidset_location_schema_ready:
+            return
+        with _postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute('''
+                    ALTER TABLE public."SysSolidSETInstance"
+                      ADD COLUMN IF NOT EXISTS "CountryCode" varchar(2) NOT NULL DEFAULT 'PT',
+                      ADD COLUMN IF NOT EXISTS "Locale" varchar(20) NOT NULL DEFAULT 'pt-PT',
+                      ADD COLUMN IF NOT EXISTS "TimeZone" varchar(80) NOT NULL DEFAULT 'Europe/Lisbon';
+                ''')
+        _solidset_location_schema_ready = True
 
 
 def ensure_solidset_agent_resource_schema() -> None:
@@ -107,6 +131,7 @@ def save_agent_response_audit(
 
 def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
     """Registra o actualiza por Code, BaseUrl o SourceIP sin crear duplicados."""
+    ensure_solidset_instance_location_schema()
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -141,6 +166,9 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
                         "BaseUrl" = %s,
                         "NotificationUrl" = %s,
                         "SourceIP" = %s,
+                        "CountryCode" = %s,
+                        "Locale" = %s,
+                        "TimeZone" = %s,
                         active = %s,
                         "UpdatedAt" = CURRENT_TIMESTAMP
                     WHERE "ID" = %s
@@ -149,7 +177,10 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
                     (
                         configuration["Code"], configuration["Name"],
                         configuration["BaseUrl"], configuration.get("NotificationUrl"),
-                        configuration.get("SourceIP"), configuration.get("active", True),
+                        configuration.get("SourceIP"), configuration.get("CountryCode", "PT"),
+                        configuration.get("Locale", "pt-PT"),
+                        configuration.get("TimeZone", "Europe/Lisbon"),
+                        configuration.get("active", True),
                         existing["ID"],
                     ),
                 )
@@ -159,14 +190,18 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
                 cursor.execute(
                     '''
                     INSERT INTO public."SysSolidSETInstance" (
-                        "Code", "Name", "BaseUrl", "NotificationUrl", "SourceIP", active
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                        "Code", "Name", "BaseUrl", "NotificationUrl", "SourceIP",
+                        "CountryCode", "Locale", "TimeZone", active
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     ''',
                     (
                         configuration["Code"], configuration["Name"],
                         configuration["BaseUrl"], configuration.get("NotificationUrl"),
-                        configuration.get("SourceIP"), configuration.get("active", True),
+                        configuration.get("SourceIP"), configuration.get("CountryCode", "PT"),
+                        configuration.get("Locale", "pt-PT"),
+                        configuration.get("TimeZone", "Europe/Lisbon"),
+                        configuration.get("active", True),
                     ),
                 )
                 row = cursor.fetchone()
@@ -182,6 +217,7 @@ def get_solidset_instance(
     *, code: str | None = None, source_ip: str | None = None
 ) -> dict[str, Any] | None:
     """Resuelve una instancia activa por código explícito o IP directa."""
+    ensure_solidset_instance_location_schema()
     if not code and not source_ip:
         return None
     with _postgres_connection() as connection:
@@ -206,6 +242,7 @@ def get_solidset_instance(
 
 
 def list_active_solidset_instances() -> list[dict[str, Any]]:
+    ensure_solidset_instance_location_schema()
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(

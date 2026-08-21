@@ -11,17 +11,21 @@ import httpx
 import psycopg
 import pymssql
 import redis
+from qdrant_client import QdrantClient
+from qdrant_client.models import PointIdsList
 from contextlib import suppress
 from collections import OrderedDict
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from time import perf_counter, time
 from typing import Any, Optional
 from urllib import error as urlerror
 from urllib.parse import urlparse
 from urllib.request import Request as URLRequest, urlopen
-from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.routing import APIRoute
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -42,6 +46,7 @@ from app.connectors.db_client import (
     ensure_solidset_agent_resource_schema,
     ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
+    get_active_agent_identity_for_resource,
     get_agent_knowledge,
     get_llm_provider_configuration,
     get_agent_model_configuration,
@@ -76,15 +81,42 @@ from app.system.reaction_capture import (
 from app.system.schema import Actividad
 from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
 from app.response_queue import AgentResponseQueue
+from app.historical.producer import enqueue_next_batch
+from app.historical.queue import HistoricalQueue
+from app.historical.store import (
+    ensure_schema as ensure_historical_schema,
+    get_cursor as get_historical_cursor,
+    historical_points,
+    list_audits as list_historical_audits,
+    list_cursors as list_historical_cursors,
+    mark_historical_deleted,
+    set_cursor as set_historical_cursor,
+)
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
 # ============================================================
 
+OPENAPI_TAGS = [
+    {"name": "Conversation", "description": "Direct requests and conversational agent execution."},
+    {"name": "SolidSET Notifications", "description": "FrameworkMessage reception, preview, and capture."},
+    {"name": "Asynchronous Responses", "description": "Response status tracking and queue metrics."},
+    {"name": "Historical Ingestion", "description": "Dry runs, execution, auditing, and removal of historical knowledge."},
+    {"name": "SolidSET Agents", "description": "Agents, workrooms, models, private knowledge, and multi-agent execution."},
+    {"name": "SolidSET Configuration", "description": "SolidSET instances and master-data synchronization."},
+    {"name": "LLM Providers", "description": "AI model and provider configuration."},
+    {"name": "Learning and Feedback", "description": "Feedback, reactions, reinforcement signals, and learning evaluation."},
+    {"name": "Audio, History and Context", "description": "Generated audio, conversation history, and user context."},
+    {"name": "Observability", "description": "Health, metrics, recent messages, and internal diagnostics."},
+    {"name": "Connectivity", "description": "Connectivity checks for configured external services."},
+]
+
+
 app = FastAPI(
     title="Agent API",
-    description="Agente inteligente",
-    version="1.0.0"
+    description="Intelligent agent API integrated with SolidSET.",
+    version="1.0.0",
+    openapi_tags=OPENAPI_TAGS,
 )
 
 # CORS para permitir conexiones desde el frontend
@@ -163,6 +195,21 @@ def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | Non
 
 def _attach_solidset_instance(candidates: list[dict], instance: dict[str, Any]) -> None:
     for candidate in candidates:
+        payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+        regional_sources = []
+        for source_name in ("Info", "TimeData", "UserData"):
+            source = payload.get(source_name)
+            if isinstance(source, dict):
+                regional_sources.append({str(key).lower(): value for key, value in source.items()})
+
+        def regional_value(*keys: str) -> str:
+            for source in regional_sources:
+                for key in keys:
+                    value = source.get(key.lower())
+                    if value not in (None, ""):
+                        return str(value).strip()
+            return ""
+
         original_fingerprint = str(candidate.get("fingerprint") or "")
         candidate["fingerprint"] = f"{instance['ID']}:{original_fingerprint}"
         candidate["solidset_instance_id"] = str(instance["ID"])
@@ -171,6 +218,26 @@ def _attach_solidset_instance(candidates: list[dict], instance: dict[str, Any]) 
         candidate["solidset_notification_url"] = str(
             instance.get("NotificationUrl") or ""
         ).rstrip("/")
+        candidate["country_code"] = (
+            regional_value("country_code", "countryCode", "country")
+            or str(instance.get("CountryCode") or "PT")
+        ).upper()
+        candidate["locale"] = (
+            regional_value("locale", "culture", "language_tag")
+            or str(instance.get("Locale") or "pt-PT")
+        )
+        requested_time_zone = regional_value(
+            "time_zone", "timeZone", "timezone", "iana_time_zone", "ianaTimeZone"
+        )
+        if requested_time_zone:
+            try:
+                ZoneInfo(requested_time_zone)
+            except (ZoneInfoNotFoundError, ValueError):
+                requested_time_zone = ""
+        candidate["time_zone"] = (
+            requested_time_zone
+            or str(instance.get("TimeZone") or "Europe/Lisbon")
+        )
 
 
 @app.middleware("http")
@@ -198,6 +265,7 @@ agent = MachiningAgent()
 orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
 response_queue = AgentResponseQueue()
+historical_queue = HistoricalQueue()
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
@@ -224,18 +292,18 @@ _response_status_lock = threading.Lock()
 _response_status_fallback: dict[str, dict[str, Any]] = {}
 
 _RESPONSE_DISPLAY_MESSAGES = {
-    "queued": {"es": "Esperando…", "en": "Waiting…", "pt": "Aguardando…"},
-    "processing": {"es": "Procesando…", "en": "Processing…", "pt": "Processando…"},
+    "queued": {"es": "Esperando…", "en": "Waiting…", "pt": "A aguardar…"},
+    "processing": {"es": "Procesando…", "en": "Processing…", "pt": "A processar…"},
     "searching": {
         "es": "Buscando información…",
         "en": "Searching for information…",
-        "pt": "Procurando informações…",
+        "pt": "A pesquisar informação…",
     },
-    "thinking": {"es": "Pensando…", "en": "Thinking…", "pt": "Pensando…"},
+    "thinking": {"es": "Pensando…", "en": "Thinking…", "pt": "A pensar…"},
     "sending": {
         "es": "Enviando respuesta…",
         "en": "Sending response…",
-        "pt": "Enviando resposta…",
+        "pt": "A enviar a resposta…",
     },
     "completed": {"es": "Respondido", "en": "Answered", "pt": "Respondido"},
     "failed": {
@@ -267,7 +335,7 @@ def _response_display_messages(status_name: str) -> dict[str, str]:
 
 def _localize_response_status(data: dict[str, Any], language: str) -> dict[str, Any]:
     localized = json.loads(json.dumps(data, ensure_ascii=False))
-    lang = language if language in {"es", "en", "pt"} else "es"
+    lang = language if language in {"es", "en", "pt"} else "pt"
     messages = _response_display_messages(str(localized.get("status") or ""))
     localized["code"] = _RESPONSE_STATUS_CODES.get(
         str(localized.get("status") or ""), -1
@@ -359,7 +427,7 @@ def _create_response_status(request_id: str, chat_id: str, candidate_count: int)
         "chatId": chat_id or None,
         "status": "queued",
         "code": _RESPONSE_STATUS_CODES["queued"],
-        "displayMessage": _RESPONSE_DISPLAY_MESSAGES["queued"]["es"],
+        "displayMessage": _RESPONSE_DISPLAY_MESSAGES["queued"]["pt"],
         "displayMessages": _response_display_messages("queued"),
         "completed": False,
         "createdAt": now,
@@ -391,7 +459,7 @@ def _update_response_status(
         return
     now = _utc_status_timestamp()
     display_messages = _response_display_messages(status_name)
-    display = display_messages["es"]
+    display = display_messages["pt"]
     if agent_resource_id:
         agents = data.setdefault("agents", [])
         agent_state = next(
@@ -513,10 +581,84 @@ def _looks_like_question_or_request(raw_text: str) -> bool:
         "qué ", "que ", "cómo ", "como ", "cuál ", "cual ", "cuándo ", "cuando ",
         "dónde ", "donde ", "quién ", "quien ", "por qué ", "puedes ", "podrías ",
         "dime ", "busca ", "consulta ", "explica ", "ayúdame ", "ayudame ",
+        "necesito ", "quiero que ", "haz ", "genera ", "resume ", "analiza ",
+        "compara ", "muéstrame ", "muestrame ", "indícame ", "indicame ",
         "what ", "how ", "when ", "where ", "who ", "why ", "can you ", "please ",
+        "i need ", "i want ", "give me ", "tell me ", "show me ", "generate ",
+        "summarize ", "analyse ", "analyze ", "compare ",
         "o que ", "como ", "quando ", "onde ", "quem ", "por que ", "pode ", "procura ",
+        "preciso ", "quero que ", "faça ", "faz ", "gera ", "resume ", "analisa ",
+        "compara ", "mostra ", "indica ", "diz-me ",
     )
     return text.startswith(starters)
+
+
+def _is_conversational_continuation(raw_text: str) -> bool:
+    text = " ".join(str(raw_text or "").strip().lower().split()).rstrip(".!… ")
+    return text in {
+        "sí", "si", "sim", "yes", "no", "não", "nao", "continúa", "continua",
+        "continue", "prossegue", "pode continuar", "puedes continuar", "de acuerdo",
+        "está bien", "esta bien", "ok", "vale", "correcto", "correto", "right",
+    }
+
+
+def _is_informational_learning_message(raw_text: str) -> bool:
+    """Detect factual/declarative input that should be learned, not answered."""
+    text = " ".join(str(raw_text or "").strip().split())
+    lowered = text.lower()
+    if not text or _looks_like_question_or_request(text) or _is_conversational_continuation(text):
+        return False
+    if any(term in lowered for term in (
+        "gracias", "obrigado", "obrigada", "thank you", "thanks", "bom dia",
+        "boa tarde", "boa noite", "buenos días", "buenas tardes", "buenas noches",
+        "hello", "hola", "olá",
+    )):
+        return False
+    explicit_learning = (
+        "aprende ", "recuerda que ", "ten en cuenta ", "para tu conocimiento ",
+        "te informo que ", "fica a saber ", "tem em conta ", "para teu conhecimento ",
+        "para seu conhecimento ", "informo que ", "learn this ", "remember that ",
+        "for your information ", "keep in mind ",
+    )
+    factual_patterns = (
+        r"\b(?:es|son|era|fue|tiene|tienen|representa|pertenece)\b",
+        r"\b(?:é|são|era|foi|tem|têm|representa|pertence)\b",
+        r"\b(?:is|are|was|were|has|have|represents|belongs)\b",
+        r"\b(?:19|20)\d{2}\b",
+    )
+    return (
+        len(text) >= 160
+        or "\n" in str(raw_text or "")
+        or any(lowered.startswith(prefix) for prefix in explicit_learning)
+        or any(re.search(pattern, lowered) for pattern in factual_patterns)
+    )
+
+
+def _learning_acknowledgement(raw_text: str) -> str:
+    language = agent._detect_user_language(raw_text)
+    return {
+        "pt": "Agradeço a informação. Vou tê-la em conta.",
+        "en": "Thank you for the information. I will take it into account.",
+        "es": "Gracias por la información. La tendré en cuenta.",
+    }[language]
+
+
+def _quoted_reply_is_learning_only(candidate: dict[str, Any]) -> bool:
+    """Classify an informative reply to a quoted chat as learning-only."""
+    if not str(candidate.get("quoted_message") or "").strip():
+        return False
+    text = " ".join(str(candidate.get("message") or "").strip().lower().split())
+    if not text or _looks_like_question_or_request(text):
+        return False
+    if _is_conversational_continuation(text):
+        return False
+    return True
+
+
+def _candidate_is_learning_only(candidate: dict[str, Any]) -> bool:
+    return _quoted_reply_is_learning_only(candidate) or _is_informational_learning_message(
+        str(candidate.get("message") or "")
+    )
 
 
 def _message_mentions_agent(raw_text: str) -> bool:
@@ -621,6 +763,76 @@ def _weather_location_prompt(raw_text: str) -> Optional[str]:
     return "¿De qué ciudad o localidad quieres conocer el tiempo?"
 
 
+def _local_temporal_response(
+    raw_text: str,
+    *,
+    time_zone: str,
+    locale: str,
+    country_code: str,
+) -> Optional[str]:
+    """Answers local date/time questions without allowing the LLM to invent a place."""
+    text = " ".join((raw_text or "").strip().lower().split())
+    asks_date = any(phrase in text for phrase in (
+        "que dia é hoje", "que dia e hoje", "qual é a data", "qual e a data",
+        "data de hoje", "qué día es hoy", "que día es hoy", "fecha de hoy",
+        "what day is today", "what is today's date", "today's date",
+    ))
+    asks_time = any(phrase in text for phrase in (
+        "que horas são", "que horas sao", "hora atual", "hora local",
+        "qué hora es", "que hora es", "hora actual", "what time is it",
+        "current time", "local time",
+    ))
+    if not asks_date and not asks_time:
+        return None
+    try:
+        local_now = datetime.now(ZoneInfo(time_zone))
+    except (ZoneInfoNotFoundError, ValueError):
+        local_now = datetime.now(ZoneInfo("UTC"))
+        time_zone = "UTC"
+
+    language = (locale or "pt-PT").split("-", 1)[0].lower()
+    country_names = {
+        "PT": {"pt": "Portugal", "es": "Portugal", "en": "Portugal"},
+        "ES": {"pt": "Espanha", "es": "España", "en": "Spain"},
+        "BR": {"pt": "Brasil", "es": "Brasil", "en": "Brazil"},
+    }
+    country = country_names.get(country_code.upper(), {}).get(language, country_code.upper())
+    weekdays = {
+        "pt": ("segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"),
+        "es": ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"),
+        "en": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+    }
+    months = {
+        "pt": ("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"),
+        "es": ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"),
+        "en": ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"),
+    }
+    language = language if language in weekdays else "en"
+    weekday = weekdays[language][local_now.weekday()]
+    month = months[language][local_now.month - 1]
+    clock = local_now.strftime("%H:%M")
+    if language == "pt":
+        date_text = f"Hoje é {weekday}, {local_now.day} de {month} de {local_now.year}"
+        time_text = f"A hora local é {clock}"
+        suffix = f"em {country} (fuso horário {time_zone})"
+        return f"{date_text} e são {clock}, {suffix}." if asks_date and asks_time else (
+            f"{date_text}, {suffix}." if asks_date else f"{time_text}, {suffix}."
+        )
+    if language == "es":
+        date_text = f"Hoy es {weekday}, {local_now.day} de {month} de {local_now.year}"
+        time_text = f"La hora local es {clock}"
+        suffix = f"en {country} (zona horaria {time_zone})"
+        return f"{date_text} y son las {clock}, {suffix}." if asks_date and asks_time else (
+            f"{date_text}, {suffix}." if asks_date else f"{time_text}, {suffix}."
+        )
+    date_text = f"Today is {weekday}, {month} {local_now.day}, {local_now.year}"
+    time_text = f"The local time is {clock}"
+    suffix = f"in {country} ({time_zone})"
+    return f"{date_text}, and the time is {clock} {suffix}." if asks_date and asks_time else (
+        f"{date_text} {suffix}." if asks_date else f"{time_text} {suffix}."
+    )
+
+
 def _direct_courtesy_response(
     raw_text: str,
     recipient_name: str = "",
@@ -637,18 +849,19 @@ def _direct_courtesy_response(
         pass
     if display_name.lower() in {"desconocido", "unknown", "-"}:
         display_name = ""
+    language = agent._detect_user_language(raw_text)
     greeting_name = f", {display_name}" if display_name else ""
     greeting_terms = {
-        "hola",
-        "hola como estas",
-        "hola cómo estás",
-        "buenos dias",
-        "buenos días",
-        "buenas tardes",
-        "buenas noches",
+        "hola", "hola como estas", "hola cómo estás", "buenos dias", "buenos días",
+        "buenas tardes", "buenas noches", "olá", "ola", "bom dia", "boa tarde",
+        "boa noite", "good morning", "good afternoon", "good evening", "hello", "hi",
     }
     if text.rstrip("!?., ") in greeting_terms:
-        return f"¡Hola{greeting_name}! Estoy muy bien, gracias. ¿En qué puedo ayudarte?"
+        return {
+            "pt": f"Olá{greeting_name}! É um prazer cumprimentá-lo. Como posso ajudar?",
+            "en": f"Hello{greeting_name}! It is a pleasure to greet you. How can I help?",
+            "es": f"¡Hola{greeting_name}! Es un placer saludarte. ¿En qué puedo ayudarte?",
+        }[language]
     if _looks_like_question_or_request(text):
         return None
     if any(term in text for term in ("obrigado", "obrigada", "boa explicação", "boa explicacao", "muito bom")):
@@ -689,6 +902,8 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "mensaje_vacio"
     if not channel_id and not can_reply_direct:
         return "sin_destino_para_responder"
+    if _candidate_is_learning_only(candidate) and not can_reply_direct:
+        return "respuesta_citada_solo_aprendizaje"
 
     # Con identidad explícita configurada, Destiny es la fuente de verdad. Así
     # una mención textual dentro de un canal ajeno no provoca una respuesta.
@@ -997,7 +1212,7 @@ def _agent_visible_name(configured_agent: dict[str, Any]) -> str:
     full_name = str(configured_agent.get("FullName") or "").strip()
     fallback = str(configured_agent.get("Name") or resource_id).strip()
     identity = full_name or fallback or resource_id
-    return f"Asistente IA {identity}".strip()
+    return f"{identity}".strip()
 
 
 def _payload_participant_resource_ids(candidate: dict) -> list[str]:
@@ -1285,6 +1500,9 @@ async def _process_auto_replies(
             "agent_knowledge": candidate.get("agent_knowledge"),
             "agent_reinforcement": candidate.get("agent_reinforcement"),
             "workroom_id": channel_id,
+            "country_code": candidate.get("country_code") or "PT",
+            "locale": candidate.get("locale") or "pt-PT",
+            "time_zone": candidate.get("time_zone") or "Europe/Lisbon",
         }
         if not incoming_text or (not channel_id and not reply_resource):
             continue
@@ -1316,14 +1534,24 @@ async def _process_auto_replies(
             or settings.SOLIDSET_LOGIN_USERNAME
             or "solidset.agent"
         ).strip()
+        learning_only = _candidate_is_learning_only(candidate)
         response_text = (
-            _direct_courtesy_response(
+            _learning_acknowledgement(incoming_text)
+            if is_direct and learning_only
+            else _direct_courtesy_response(
                 incoming_text,
                 str(candidate.get("sender_name") or ""),
             )
             if is_direct
             else None
         )
+        if response_text is None:
+            response_text = _local_temporal_response(
+                incoming_text,
+                time_zone=str(candidate.get("time_zone") or "Europe/Lisbon"),
+                locale=str(candidate.get("locale") or "pt-PT"),
+                country_code=str(candidate.get("country_code") or "PT"),
+            )
         if response_text is None:
             response_text = _weather_location_prompt(incoming_text)
         if response_text is not None:
@@ -1412,7 +1640,7 @@ async def _process_auto_replies(
                 solidset_send_chat_message.invoke,
                 {
                     "canal_id": channel_id,
-                    "mensaje": f"{agent_name}: {response_text}",
+                    "mensaje": f"{response_text}",
                     "confirm": True,
                     "recurso_id": reply_resource if is_direct else None,
                     "recurso_login_id": reply_login if is_direct else None,
@@ -1679,7 +1907,7 @@ def _run_startup_connectivity_checks() -> dict:
 
         def probe_configured_url(url: str, path: str, default_port: int) -> dict:
             if not url:
-                return {"ok": False, "error": "url_no_configurada", "url": url}
+                return {"ok": False, "error": "url_nao_configurado", "url": url}
             candidates = [url.rstrip("/")]
             parsed = urlparse(url)
             if (
@@ -1721,7 +1949,7 @@ def _run_startup_connectivity_checks() -> dict:
             "notification": (
                 probe_configured_url(notification_url, "/api/Request", 443)
                 if notification_url
-                else {"ok": True, "skipped": True, "error": "NotificationUrl_no_configurada"}
+                else {"ok": True, "skipped": True, "error": "NotificationUrl_nao_configurado"}
             ),
         })
     checks["solidset_instances"] = {
@@ -1739,7 +1967,7 @@ def _run_startup_connectivity_checks() -> dict:
     pg_host, pg_port = _extract_host_port_from_url(db_url, 5432)
     checks["postgres_timescaledb"] = {
         "configured": bool(db_url),
-        "tcp": _probe_tcp(pg_host, pg_port) if db_url else {"ok": False, "error": "DB_URL_no_configurada"},
+        "tcp": _probe_tcp(pg_host, pg_port) if db_url else {"ok": False, "error": "DB_URL_nao_configurado"},
     }
 
     all_ok = True
@@ -2099,6 +2327,7 @@ async def startup_db_learning() -> None:
             await asyncio.to_thread(ensure_solidset_agent_resource_schema)
             await asyncio.to_thread(ensure_agent_model_schema)
             await asyncio.to_thread(ensure_agent_response_audit_schema)
+            await asyncio.to_thread(ensure_historical_schema)
         except psycopg.Error as exc:
             print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
         app.state.startup_connectivity = _run_startup_connectivity_checks()
@@ -2152,13 +2381,13 @@ async def shutdown_db_learning() -> None:
 # ============================================================
 
 class ChatConversationRequest(BaseModel):
-    session_id: str = Field(..., description="ID de la sesión de conversación")
-    message: str = Field(..., description="Mensaje enviado por el usuario")
-    user_id: str = Field(..., description="Username del usuario que está consultando en el sistema")
-    resource_id: Optional[str] = Field(None, description="IDResource canónico del interlocutor")
-    login_id: Optional[str] = Field(None, description="IDLogin de la sesión activa")
-    canal_id: Optional[str] = Field(None, description="ID del canal actual (opcional)")
-    generate_audio: bool = Field(False, description="Si se debe generar audio de la respuesta")
+    session_id: str = Field(..., description="Conversation session ID")
+    message: str = Field(..., description="Message submitted by the user")
+    user_id: str = Field(..., description="Username of the user making the request")
+    resource_id: Optional[str] = Field(None, description="Canonical IDResource of the participant")
+    login_id: Optional[str] = Field(None, description="IDLogin of the active session")
+    canal_id: Optional[str] = Field(None, description="Current workroom ID (optional)")
+    generate_audio: bool = Field(False, description="Whether an audio response should be generated")
 
 class ChatConversationResponse(BaseModel):
     session_id: str
@@ -2169,16 +2398,16 @@ class ChatConversationResponse(BaseModel):
 
 
 class UserFeedbackRequest(BaseModel):
-    session_id: str = Field(..., description="ID de la sesión de conversación")
-    user_id: str = Field(..., description="Username del usuario que aporta feedback")
-    user_text: str = Field(..., description="Mensaje original del usuario")
-    agent_response: str = Field(..., description="Respuesta del agente que se evalúa")
-    corrected_response: Optional[str] = Field(None, description="Respuesta correcta o corrección del usuario")
-    canal_id: Optional[str] = Field(None, description="ID del canal donde ocurrió la interacción")
-    feedback_type: str = Field("explicit", description="Tipo de feedback: explicit o implicit")
-    reason: Optional[str] = Field(None, description="Motivo del feedback o corrección")
-    previous_user_text: Optional[str] = Field(None, description="Mensaje anterior del usuario para detectar repetición")
-    update_profile: bool = Field(True, description="Si se debe actualizar el perfil dinámico del usuario")
+    session_id: str = Field(..., description="Conversation session ID")
+    user_id: str = Field(..., description="Username of the user providing feedback")
+    user_text: str = Field(..., description="Original user message")
+    agent_response: str = Field(..., description="Agent response being evaluated")
+    corrected_response: Optional[str] = Field(None, description="Expected response or user correction")
+    canal_id: Optional[str] = Field(None, description="Workroom ID where the interaction occurred")
+    feedback_type: str = Field("explicit", description="Feedback type: explicit or implicit")
+    reason: Optional[str] = Field(None, description="Reason for the feedback or correction")
+    previous_user_text: Optional[str] = Field(None, description="Previous user message used to detect repetition")
+    update_profile: bool = Field(True, description="Whether the dynamic user profile should be updated")
 
 
 class UserFeedbackResponse(BaseModel):
@@ -2237,6 +2466,9 @@ class SolidSETInstanceConfiguration(BaseModel):
     BaseUrl: str = Field(..., min_length=8, max_length=500)
     NotificationUrl: Optional[str] = Field(None, max_length=500)
     SourceIP: Optional[str] = Field(None, max_length=255)
+    CountryCode: str = Field("PT", min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")
+    Locale: str = Field("pt-PT", min_length=2, max_length=20, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+    TimeZone: str = Field("Europe/Lisbon", min_length=1, max_length=80)
     active: bool = True
 
     class Config:
@@ -2632,9 +2864,27 @@ def detect_offensive_content(text: str) -> bool:
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Maneja errores de validación de peticiones."""
     print("❌ Error de validación en la petición recibida:", exc.errors())
+    translated_errors = []
+    validation_messages = {
+        "missing": "Campo obrigatório.",
+        "string_type": "O valor deve ser uma cadeia de caracteres.",
+        "int_type": "O valor deve ser um número inteiro.",
+        "bool_type": "O valor deve ser verdadeiro ou falso.",
+        "uuid_parsing": "O valor deve ser um UUID válido.",
+        "url_parsing": "O valor deve ser um URL válido.",
+        "json_invalid": "O corpo do pedido contém JSON inválido.",
+    }
+    for error in exc.errors():
+        translated = dict(error)
+        error_type = str(error.get("type") or "")
+        translated["msg"] = validation_messages.get(
+            error_type,
+            "O valor fornecido não é válido para este campo.",
+        )
+        translated_errors.append(translated)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors()},
+        content={"detail": translated_errors},
     )
 
 @app.exception_handler(HTTPException)
@@ -2661,7 +2911,7 @@ def sync_solidset_workrooms() -> SysWorkRoomIngestResponse:
         print(f"❌ No se pudo sincronizar SysWorkRoom: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudieron sincronizar los canales de SolidSET.",
+            detail="Não foi possível sincronizar os canais do SolidSET.",
         ) from exc
     return SysWorkRoomIngestResponse(status="synchronized", **result)
 
@@ -2678,7 +2928,7 @@ def sync_solidset_logins() -> SysLoginIngestResponse:
         print(f"❌ No se pudo sincronizar SysLogin: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudieron sincronizar las cuentas de SolidSET.",
+            detail="Não foi possível sincronizar as contas do SolidSET.",
         ) from exc
     return SysLoginIngestResponse(status="synchronized", **result)
 
@@ -2701,9 +2951,9 @@ async def create_agent_knowledge(
     try:
         saved = await asyncio.to_thread(save_agent_knowledge, payload)
     except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+        raise HTTPException(status_code=404, detail="O agente indicado não existe.") from exc
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo guardar el conocimiento.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível guardar o conhecimento.") from exc
     indexed = await asyncio.to_thread(agent.sistema_aprendizaje.aprender_conocimiento_agente, saved)
     return AgentKnowledgeResponse(**saved, indexed=indexed)
 
@@ -2727,7 +2977,7 @@ async def set_agent_workroom_configuration(
             response_order=request.response_order,
         )
     except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+        raise HTTPException(status_code=404, detail="O agente indicado não existe.") from exc
     return AgentWorkRoomConfigurationResponse(**saved)
 
 @app.post(
@@ -2740,28 +2990,28 @@ async def handle_multi_agent_dialogue(
     """Ejecuta de forma independiente los agentes seleccionados por SolidSET."""
     selected = list(dict.fromkeys(request.SelectedAgentResourceIds))
     if not selected:
-        raise HTTPException(status_code=422, detail="Selecciona al menos un agente.")
+        raise HTTPException(status_code=422, detail="Selecione, pelo menos, um agente.")
     if len(selected) > 10:
-        raise HTTPException(status_code=422, detail="Se permiten como máximo 10 agentes por mensaje.")
+        raise HTTPException(status_code=422, detail="É permitido um máximo de 10 agentes por mensagem.")
 
     solidset_instance = None
     if request.SendToSolidSET:
         if not str(request.SolidSETInstanceCode or "").strip():
             raise HTTPException(
                 status_code=422,
-                detail="SolidSETInstanceCode es obligatorio cuando SendToSolidSET=true.",
+                detail="SolidSETInstanceCode é obrigatório quando SendToSolidSET=true.",
             )
         solidset_instance = get_solidset_instance(
             code=str(request.SolidSETInstanceCode).strip()
         )
         if solidset_instance is None:
-            raise HTTPException(status_code=404, detail="La instancia SolidSET no existe o está inactiva.")
+            raise HTTPException(status_code=404, detail="A instância SolidSET não existe ou está inativa.")
 
     configured_agents = get_active_agents_for_workroom(request.IDWorkRoom, selected)
     if not configured_agents:
         raise HTTPException(
             status_code=404,
-            detail="Ningún agente seleccionado está activo y asignado al canal.",
+            detail="Nenhum dos agentes selecionados está ativo e atribuído ao canal.",
         )
 
     conversation_id = request.IDSession or uuid.uuid4()
@@ -2773,8 +3023,8 @@ async def handle_multi_agent_dialogue(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "El recurso humano seleccionado no tiene IDAgentResource "
-                    "sincronizado desde dbo.SysResource2Agent."
+                    "O recurso humano selecionado não tem um IDAgentResource "
+                    "sincronizado a partir de dbo.SysResource2Agent."
                 ),
             )
         agent_name = _agent_visible_name(configured_agent)
@@ -2866,7 +3116,7 @@ def sync_solidset_chat_resources() -> SysChatIAResourceIngestResponse:
         print(f"❌ No se pudo sincronizar SysChatIAResource: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudieron sincronizar las relaciones de chat.",
+            detail="Não foi possível sincronizar as relações de chat.",
         ) from exc
     return SysChatIAResourceIngestResponse(status="synchronized", **result)
 
@@ -2882,7 +3132,7 @@ def sync_solidset_resources() -> SysResourceIAIngestResponse:
         print(f"❌ No se pudo sincronizar SysResourceIA: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudieron sincronizar los recursos entre SQL Server y PostgreSQL.",
+            detail="Não foi possível sincronizar os recursos entre o SQL Server e o PostgreSQL.",
         ) from exc
     return SysResourceIAIngestResponse(status="synchronized", **result)
 
@@ -2906,7 +3156,7 @@ def save_solidset_chat_configuration(
         print(f"❌ No se pudo guardar la configuración SysResourceIA: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudo guardar la configuración en PostgreSQL.",
+            detail="Não foi possível guardar a configuração no PostgreSQL.",
         ) from exc
 
     return SysResourceIAConfigurationResponse(
@@ -2931,12 +3181,23 @@ def register_solidset_instance(
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"{field} debe ser una URL HTTP(S) absoluta.",
+                    detail=f"{field} deve ser um URL HTTP(S) absoluto.",
                 )
         payload[field] = value or None
     payload["Code"] = payload["Code"].strip()
     payload["Name"] = payload["Name"].strip()
     payload["SourceIP"] = str(payload.get("SourceIP") or "").strip() or None
+    payload["CountryCode"] = payload["CountryCode"].strip().upper()
+    language, *locale_parts = payload["Locale"].strip().split("-")
+    payload["Locale"] = "-".join([language.lower(), *[part.upper() for part in locale_parts]])
+    payload["TimeZone"] = payload["TimeZone"].strip()
+    try:
+        ZoneInfo(payload["TimeZone"])
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="TimeZone deve ser um identificador IANA válido, por exemplo Europe/Lisbon.",
+        ) from exc
     try:
         saved = save_solidset_instance(payload)
         with _solidset_instance_cache_lock:
@@ -2944,12 +3205,12 @@ def register_solidset_instance(
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="SourceIP ya está asignada a otra instancia SolidSET.",
+            detail="SourceIP já está atribuído a outra instância SolidSET.",
         ) from exc
     except psycopg.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudo guardar la instancia SolidSET en PostgreSQL.",
+            detail="Não foi possível guardar a instância SolidSET no PostgreSQL.",
         ) from exc
     operation = str(saved.pop("_operation", "saved"))
     return SolidSETInstanceConfigurationResponse(
@@ -2969,11 +3230,11 @@ def save_llm_provider(
     """Registra/actualiza un proveedor global o específico de un agente."""
     payload = configuration.model_dump()
     if code.strip().lower() != payload["Code"].strip().lower():
-        raise HTTPException(status_code=422, detail="El Code de la ruta y del cuerpo deben coincidir.")
+        raise HTTPException(status_code=422, detail="O Code da rota e do corpo devem coincidir.")
     provider = payload["Provider"].strip().lower().replace("-", "_")
     if provider not in ProviderRegistry.names():
         raise HTTPException(status_code=422, detail={
-            "message": "Proveedor LLM no soportado.",
+            "message": "Fornecedor LLM não suportado.",
             "available": list(ProviderRegistry.names()),
         })
     payload["Code"] = payload["Code"].strip()
@@ -2985,14 +3246,14 @@ def save_llm_provider(
         if value:
             parsed = urlparse(value)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise HTTPException(status_code=422, detail=f"{field} debe ser una URL HTTP(S) absoluta.")
+                raise HTTPException(status_code=422, detail=f"{field} deve ser um URL HTTP(S) absoluto.")
         payload[field] = value or None
     if provider == "ollama" and not payload.get("BaseUrl"):
         payload["BaseUrl"] = settings.OLLAMA_BASE_URL.rstrip("/")
     if provider in {"openai_compatible", "local_openai"} and not payload.get("BaseUrl"):
-        raise HTTPException(status_code=422, detail="BaseUrl es obligatoria para un proveedor OpenAI compatible.")
+        raise HTTPException(status_code=422, detail="BaseUrl é obrigatório para um fornecedor compatível com OpenAI.")
     if provider == "azure_openai" and not (payload.get("AzureEndpoint") or payload.get("BaseUrl")):
-        raise HTTPException(status_code=422, detail="AzureEndpoint o BaseUrl es obligatorio para Azure OpenAI.")
+        raise HTTPException(status_code=422, detail="AzureEndpoint ou BaseUrl é obrigatório para Azure OpenAI.")
     if payload.get("IDResource") is not None:
         payload["IsDefault"] = False
 
@@ -3008,11 +3269,11 @@ def save_llm_provider(
         ))
         saved = save_llm_provider_configuration(payload)
     except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="El IDResource indicado no existe.") from exc
+        raise HTTPException(status_code=404, detail="O IDResource indicado não existe.") from exc
     except (ValueError, RuntimeError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail="A configuração do fornecedor não é válida.") from exc
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo guardar el proveedor en PostgreSQL.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível guardar o fornecedor no PostgreSQL.") from exc
     agent.clear_llm_configuration_cache()
     return LLMProviderConfigurationResponse(
         status="saved", configuration=LLMProviderConfigurationStored(**saved)
@@ -3028,7 +3289,7 @@ def get_llm_providers() -> list[LLMProviderConfigurationStored]:
     try:
         return [LLMProviderConfigurationStored(**row) for row in list_llm_provider_configurations()]
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudieron consultar los proveedores.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível consultar os fornecedores.") from exc
 
 
 @app.delete("/api/v1/agent/llm/providers/{code}")
@@ -3037,9 +3298,9 @@ def deactivate_llm_provider(code: str) -> dict[str, str]:
     try:
         changed = deactivate_llm_provider_configuration(code.strip())
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo desactivar el proveedor.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível desativar o fornecedor.") from exc
     if not changed:
-        raise HTTPException(status_code=404, detail="La configuración no existe.")
+        raise HTTPException(status_code=404, detail="A configuração não existe.")
     agent.clear_llm_configuration_cache()
     return {"status": "deactivated", "code": code.strip()}
 
@@ -3059,13 +3320,13 @@ def configure_agent_model(
     try:
         saved = save_agent_model_configuration(agent_resource_id, payload)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail="A configuração solicitada não foi encontrada.") from exc
     except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="El agente indicado no existe.") from exc
+        raise HTTPException(status_code=404, detail="O agente indicado não existe.") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail="A configuração do modelo não é válida.") from exc
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo asignar el modelo al agente.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível atribuir o modelo ao agente.") from exc
     agent.clear_llm_configuration_cache()
     return AgentIAModelStored(**saved)
 
@@ -3078,9 +3339,9 @@ def read_agent_model(agent_resource_id: uuid.UUID) -> dict[str, Any]:
     try:
         saved = get_agent_model_configurations(agent_resource_id)
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo consultar el modelo del agente.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível consultar o modelo do agente.") from exc
     if not saved:
-        raise HTTPException(status_code=404, detail="El agente no tiene SysAgentIAModel activo.")
+        raise HTTPException(status_code=404, detail="O agente não tem nenhum SysAgentIAModel ativo.")
     return {"IDResource": agent_resource_id, "models": saved}
 
 
@@ -3102,11 +3363,11 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
     try:
         instance = _resolve_request_solidset_instance(request)
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo resolver la instancia SolidSET.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível determinar a instância SolidSET.") from exc
     if instance is None:
         raise HTTPException(
             status_code=400,
-            detail="Instancia SolidSET desconocida. Envía X-SolidSET-Instance o registra la IP origen.",
+            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance ou registe o endereço IP de origem.",
         )
     payload["_SolidSETInstanceID"] = str(instance["ID"])
     chat_id = _framework_message_chat_id(payload, [])
@@ -3133,7 +3394,7 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
         raise HTTPException(
             status_code=503,
             detail={
-                "message": "No se pudo encolar o auditar la solicitud.",
+                "message": "Não foi possível colocar o pedido na fila nem registá-lo para auditoria.",
                 "requestId": request_id,
                 "error": str(exc),
             },
@@ -3164,14 +3425,260 @@ async def receive_framework_notification(message: FrameworkMessageDTO, request: 
     )
 
 
+def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]:
+    """Extracts the requester and quoted-message identities without mixing them."""
+    chat = _get_payload_value(payload, "Chat", "chat")
+    chat = chat if isinstance(chat, dict) else {}
+    sender = _get_payload_value(payload, "Sender", "sender")
+    sender = sender if isinstance(sender, dict) else {}
+    destiny = _get_payload_value(payload, "Destiny", "destiny")
+    destiny = destiny if isinstance(destiny, dict) else {}
+    info = _get_payload_value(payload, "Info", "info")
+    info = info if isinstance(info, dict) else {}
+    workroom_data = _get_payload_value(payload, "WorkRoomData", "workRoomData")
+    workroom_data = workroom_data if isinstance(workroom_data, dict) else {}
+    quoted = _get_payload_value(chat, "chatQuestion", "ChatQuestion")
+    quoted = quoted if isinstance(quoted, dict) else {}
+
+    current_chat_id = str(
+        _get_payload_value(chat, "idChat2", "IDChat2", "idChat") or ""
+    ).strip()
+    quoted_chat_id = str(
+        _get_payload_value(quoted, "idChat2", "IDChat2")
+        or _get_payload_value(chat, "chatQuestionMessage", "ChatQuestionMessage")
+        or ""
+    ).strip()
+    requester_resource = _valid_framework_identifier(
+        _get_payload_value(chat, "idSenderResource", "IDSenderResource")
+    ) or _valid_framework_identifier(
+        _get_payload_value(sender, "resource", "IDResource")
+    )
+    requester_login = _valid_framework_identifier(
+        _get_payload_value(chat, "idSender", "IDSender")
+    ) or _valid_framework_identifier(_get_payload_value(sender, "login", "IDLogin"))
+    quoted_resource = _valid_framework_identifier(
+        _get_payload_value(quoted, "idSenderResource", "IDSenderResource")
+    )
+    quoted_login = _valid_framework_identifier(
+        _get_payload_value(quoted, "idSender", "IDSender")
+    )
+    workroom_id = _valid_framework_identifier(
+        _get_payload_value(chat, "idWorkRoom", "IDWorkRoom")
+    ) or _valid_framework_identifier(
+        _get_payload_value(destiny, "workRoom", "IDWorkRoom")
+    ) or _valid_framework_identifier(_get_payload_value(workroom_data, "id", "ID"))
+    meeting_id = _valid_framework_identifier(
+        _get_payload_value(quoted, "idMeeting", "IDMeeting")
+    ) or _valid_framework_identifier(
+        _get_payload_value(chat, "idMeeting", "IDMeeting")
+    ) or _valid_framework_identifier(_get_payload_value(info, "meeting_id", "meetingId"))
+    quoted_message = str(
+        _get_payload_value(quoted, "rawMessage", "RawMessage") or ""
+    ).strip()
+    session_id = _valid_framework_identifier(
+        _get_payload_value(sender, "session", "IDSession")
+    )
+    return {
+        "request_id": current_chat_id,
+        "quoted_chat_id": quoted_chat_id,
+        "quoted_message": quoted_message,
+        "requester_resource": requester_resource or "",
+        "requester_login": requester_login or "",
+        "quoted_resource": quoted_resource or "",
+        "quoted_login": quoted_login or "",
+        "workroom_id": workroom_id or "",
+        "meeting_id": meeting_id or "",
+        "meeting_code": str(
+            _get_payload_value(info, "meeting_code", "meetingCode") or ""
+        ).strip(),
+        "session_id": session_id or "",
+    }
+
+
+@app.post(
+    "/api/v1/agent/notification/chat-question/suggest-response",
+    response_class=PlainTextResponse,
+    summary="Suggest a response to a quoted SolidSET chat message",
+    responses={
+        200: {
+            "description": "RawMessage suggestion only.",
+            "content": {"text/plain": {"schema": {"type": "string"}}},
+        },
+        404: {"description": "The requester's own AI agent is not active."},
+        422: {"description": "The FrameworkMessage lacks required chat context."},
+        503: {"description": "A database or model dependency is unavailable."},
+    },
+)
+async def suggest_chat_question_response(
+    message: FrameworkMessageDTO,
+) -> PlainTextResponse:
+    """Returns only a RawMessage suggestion grounded in the requester's own agent."""
+    payload = message.model_dump(mode="json")
+    context = _chat_question_suggestion_context(payload)
+    request_id = context["request_id"]
+    if not request_id:
+        raise HTTPException(
+            status_code=422,
+            detail="O campo Chat.IDChat2 é obrigatório para acompanhar o estado do pedido.",
+        )
+    if not context["quoted_chat_id"] or not context["quoted_message"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Chat.chatQuestion deve conter IDChat2 e RawMessage.",
+        )
+    if not context["requester_resource"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Não foi possível identificar o recurso que solicitou a sugestão.",
+        )
+    if not context["workroom_id"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Não foi possível identificar o canal da conversa.",
+        )
+
+    _create_response_status(request_id, request_id, 1)
+    status_agent_id = context["requester_resource"]
+    agent_name = ""
+    try:
+        _update_response_status(request_id, "processing")
+        verification = await asyncio.to_thread(
+            verify_and_sync_solidset_agent_mapping,
+            context["requester_resource"],
+        )
+        if not verification.get("verified"):
+            raise LookupError(
+                "O recurso solicitante não possui um agente IA ativo em SysResource2Agent."
+            )
+        identity = await asyncio.to_thread(
+            get_active_agent_identity_for_resource,
+            context["requester_resource"],
+        )
+        if not identity:
+            raise LookupError("O agente próprio do recurso não está ativo no PostgreSQL.")
+        status_agent_id = str(
+            verification.get("IDAgentResource") or identity.get("IDAgentResource") or ""
+        ).strip()
+        agent_name = _agent_visible_name(identity)
+        _update_response_status(
+            request_id,
+            "searching",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+        )
+        private_knowledge = await asyncio.to_thread(
+            get_agent_knowledge,
+            context["requester_resource"],
+            context["workroom_id"],
+        )
+        reinforcement = await asyncio.to_thread(
+            get_agent_reinforcement_context,
+            context["requester_resource"],
+            context["workroom_id"],
+        )
+        metadata = {
+            "response_suggestion_mode": True,
+            "chat_id": request_id,
+            "quoted_chat_id": context["quoted_chat_id"],
+            "quoted_message": context["quoted_message"],
+            "quoted_sender_resource": context["quoted_resource"],
+            "quoted_sender_login": context["quoted_login"],
+            "requester_resource": context["requester_resource"],
+            "requester_login": context["requester_login"],
+            "agent_resource_id": context["requester_resource"],
+            "agent_identity_id": status_agent_id,
+            "agent_name": agent_name,
+            "agent_knowledge": private_knowledge,
+            "agent_reinforcement": reinforcement,
+            "workroom_id": context["workroom_id"],
+            "recipient_count": 1,
+            "importance": int(message.Importance or 0),
+            "country_code": str(_get_payload_value(message.Info, "country_code") or "PT"),
+            "locale": str(_get_payload_value(message.Info, "locale") or "pt-PT"),
+            "time_zone": str(
+                _get_payload_value(message.Info, "time_zone", "timezone")
+                or "Europe/Lisbon"
+            ),
+        }
+        _update_response_status(
+            request_id,
+            "thinking",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+        )
+        scoped_session = (
+            f"solidset:suggestion:agent:{context['requester_resource']}:"
+            f"session:{context['session_id'] or request_id}:"
+            f"question:{context['quoted_chat_id']}"
+        )
+        suggestion = await asyncio.to_thread(
+            orchestrator.invoke,
+            session_id=scoped_session,
+            user_text=context["quoted_message"],
+            user_id=context["requester_resource"],
+            canal_id=context["workroom_id"],
+            meeting_id=context["meeting_id"] or None,
+            meeting_code=context["meeting_code"] or None,
+            message_kind=str(message.Kind or "ChatMessage"),
+            message_category="chat_question_response_suggestion",
+            message_metadata=metadata,
+            tool_allowlist=set(),
+            auto_reply_mode=True,
+        )
+        suggestion = str(suggestion or "").strip()
+        if not suggestion:
+            raise RuntimeError("O modelo não gerou uma sugestão de resposta.")
+        _update_response_status(
+            request_id,
+            "completed",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+            response_count=1,
+        )
+        return PlainTextResponse(content=suggestion)
+    except LookupError as exc:
+        _update_response_status(
+            request_id,
+            "failed",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, psycopg.Error, pymssql.Error, RuntimeError) as exc:
+        _update_response_status(
+            request_id,
+            "failed",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível gerar a sugestão de resposta.",
+        ) from exc
+    except Exception as exc:
+        _update_response_status(
+            request_id,
+            "failed",
+            agent_resource_id=status_agent_id,
+            agent_name=agent_name,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível gerar a sugestão de resposta.",
+        ) from exc
+
+
 @app.get("/api/v1/agent/responses/status")
 def read_agent_response_status_by_chat(
-    chatId: str = Query(...), lang: str = Query("es", pattern="^(es|en|pt)$")
+    chatId: str = Query(...), lang: str = Query("pt", pattern="^(es|en|pt)$")
 ) -> dict[str, Any]:
     """Devuelve la solicitud más reciente asociada al IDChat2 indicado."""
     data = _load_response_status_by_chat(str(chatId).strip())
     if data is None:
-        raise HTTPException(status_code=404, detail="No existe estado para ese chatId.")
+        raise HTTPException(status_code=404, detail="Não existe um estado para esse chatId.")
     return _localize_response_status(data, lang)
 
 
@@ -3181,17 +3688,135 @@ def read_agent_response_queue_status() -> dict[str, Any]:
     try:
         return response_queue.stats()
     except redis.RedisError as exc:
-        raise HTTPException(status_code=503, detail="Redis Stream no disponible.") from exc
+        raise HTTPException(status_code=503, detail="O Redis Stream não está disponível.") from exc
+
+
+class HistoricalIngestionStartRequest(BaseModel):
+    instanceCode: Optional[str] = None
+    dryRun: bool = True
+
+
+def _require_historical_admin(
+    x_agent_admin_key: str = Header(
+        ...,
+        alias="X-Agent-Admin-Key",
+        description="Administrative key configured in HISTORICAL_INGESTION_ADMIN_KEY.",
+    ),
+) -> None:
+    configured = settings.HISTORICAL_INGESTION_ADMIN_KEY.strip()
+    if not configured:
+        raise HTTPException(status_code=503, detail="Configure HISTORICAL_INGESTION_ADMIN_KEY.")
+    if x_agent_admin_key != configured:
+        raise HTTPException(status_code=401, detail="Credencial administrativa inválida.")
+
+
+@app.post(
+    "/api/v1/agent/historical-ingestion/start",
+    status_code=202,
+    dependencies=[Depends(_require_historical_admin)],
+)
+async def start_historical_ingestion(
+    configuration: HistoricalIngestionStartRequest,
+) -> dict[str, Any]:
+    try:
+        instances = (
+            [get_solidset_instance(code=configuration.instanceCode, source_ip=None)]
+            if configuration.instanceCode else list_active_solidset_instances()
+        )
+        instances = [instance for instance in instances if instance]
+        if not instances:
+            raise HTTPException(status_code=404, detail="Não existem instâncias SolidSET ativas.")
+        historical_queue.set_paused(False)
+        results = [
+            await asyncio.to_thread(enqueue_next_batch, instance, configuration.dryRun)
+            for instance in instances
+        ]
+        return {"status":"accepted", "dryRun":configuration.dryRun, "instances":results}
+    except (pymssql.Error, psycopg.Error, redis.RedisError) as exc:
+        raise HTTPException(status_code=503, detail="Não foi possível iniciar o lote de ingestão histórica.") from exc
+
+
+@app.post(
+    "/api/v1/agent/historical-ingestion/pause",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def pause_historical_ingestion() -> dict[str, Any]:
+    historical_queue.set_paused(True)
+    return {"status":"paused"}
+
+
+@app.post(
+    "/api/v1/agent/historical-ingestion/resume",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def resume_historical_ingestion() -> dict[str, Any]:
+    historical_queue.set_paused(False)
+    return {"status":"running"}
+
+
+@app.post(
+    "/api/v1/agent/historical-ingestion/approve-dry-run",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def approve_historical_dry_run(
+    instanceCode: str = Query(...)
+) -> dict[str, Any]:
+    instance = get_solidset_instance(code=instanceCode, source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instância não encontrada.")
+    cursor = get_historical_cursor(str(instance["ID"]))
+    set_historical_cursor(
+        str(instance["ID"]),
+        int(cursor["LastIDChat2"]),
+        cursor.get("LastStamp"),
+        "idle",
+    )
+    return {"status":"approved", "lastIDChat2":int(cursor["LastIDChat2"])}
+
+
+@app.get(
+    "/api/v1/agent/historical-ingestion/status",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def historical_ingestion_status() -> dict[str, Any]:
+    return {"queue":historical_queue.stats(), "cursors":list_historical_cursors()}
+
+
+@app.get(
+    "/api/v1/agent/historical-ingestion/batches",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def historical_ingestion_batches(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+    return {"items":list_historical_audits(limit)}
+
+
+@app.delete(
+    "/api/v1/agent/historical-ingestion/messages/{id_chat2}",
+    dependencies=[Depends(_require_historical_admin)],
+)
+def delete_historical_message(
+    id_chat2: int, instanceCode: str = Query(...)
+) -> dict[str, Any]:
+    instance = get_solidset_instance(code=instanceCode, source_ip=None)
+    if not instance: raise HTTPException(status_code=404, detail="Instância não encontrada.")
+    points = historical_points(str(instance["ID"]), id_chat2)
+    if points:
+        QdrantClient(url=settings.VECTOR_DB_URL).delete(
+            collection_name=settings.VECTOR_COLLECTION_NAME,
+            points_selector=PointIdsList(points=points), wait=True,
+        )
+    deleted = mark_historical_deleted(str(instance["ID"]), id_chat2)
+    return {"status":"deleted", "idChat2":id_chat2, "documents":deleted}
 
 
 @app.get("/api/v1/agent/responses/{request_id}/status")
 def read_agent_response_status(
-    request_id: str, lang: str = Query("es", pattern="^(es|en|pt)$")
+    request_id: str, lang: str = Query("pt", pattern="^(es|en|pt)$")
 ) -> dict[str, Any]:
     """Devuelve el estado de procesamiento de una respuesta automática."""
     data = _load_response_status(request_id.strip())
     if data is None:
-        raise HTTPException(status_code=404, detail="La solicitud no existe o expiró.")
+        raise HTTPException(status_code=404, detail="O pedido não existe ou expirou.")
     return _localize_response_status(data, lang)
 
 
@@ -3247,14 +3872,14 @@ async def preview_framework_notification(
         instance = _resolve_request_solidset_instance(request)
     except psycopg.Error as exc:
         raise HTTPException(
-            status_code=503, detail="No se pudo resolver la instancia SolidSET."
+            status_code=503, detail="Não foi possível determinar a instância SolidSET."
         ) from exc
     if instance is None:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Instancia SolidSET desconocida. Envía X-SolidSET-Instance "
-                "o registra la IP origen."
+                "Instância SolidSET desconhecida. Envie X-SolidSET-Instance "
+                "ou registe o endereço IP de origem."
             ),
         )
     payload["_SolidSETInstanceID"] = str(instance["ID"])
@@ -3264,7 +3889,7 @@ async def preview_framework_notification(
     if capture["errors"]:
         raise HTTPException(
             status_code=503,
-            detail=f"No se pudo procesar el mensaje: {capture['errors']} error(es).",
+            detail=f"Não foi possível processar a mensagem: {capture['errors']} erro(s).",
         )
     flat_payloads = await _process_auto_replies(candidates, preview_only=True)
     logical_payloads = [
@@ -3291,11 +3916,11 @@ async def capture_and_forward_framework_message(request: Request):
     try:
         instance = _resolve_request_solidset_instance(request)
     except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="No se pudo resolver la instancia SolidSET.") from exc
+        raise HTTPException(status_code=503, detail="Não foi possível determinar a instância SolidSET.") from exc
     if instance is None:
         raise HTTPException(
             status_code=400,
-            detail="Instancia SolidSET desconocida. Envía X-SolidSET-Instance o registra la IP origen.",
+            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance ou registe o endereço IP de origem.",
         )
     if isinstance(payload, dict):
         payload["_SolidSETInstanceID"] = str(instance["ID"])
@@ -3306,7 +3931,7 @@ async def capture_and_forward_framework_message(request: Request):
     upstream_base = str(instance.get("NotificationUrl") or "").rstrip("/")
     if not upstream_base:
         raise HTTPException(status_code=503, detail={
-            "message": "La instancia no tiene NotificationUrl configurada para reenviar el mensaje.",
+            "message": "A instância não tem NotificationUrl configurado para reencaminhar a mensagem.",
             "capture": capture,
         })
 
@@ -3331,7 +3956,7 @@ async def capture_and_forward_framework_message(request: Request):
             )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={
-            "message": f"El mensaje fue capturado, pero no pudo reenviarse a SolidSET: {exc}",
+            "message": "A mensagem foi capturada, mas não foi possível reencaminhá-la para o SolidSET.",
             "capture": capture,
         }) from exc
 
@@ -3376,7 +4001,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
     if message.RawMessage is None and _get_payload_value(chat_payload, "rawMessage", "RawMessage") is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="RawMessage o Chat.rawMessage es obligatorio para procesar un FrameworkMessage en /dialogue.",
+            detail="RawMessage ou Chat.rawMessage é obrigatório para processar um FrameworkMessage em /dialogue.",
         )
 
     req = _framework_message_to_dialogue(message)
@@ -3394,7 +4019,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="⚠️ Por favor, escribe un mensaje para poder ayudarte."
+                agent_response="Por favor, escreva uma mensagem para que eu possa ajudar."
             )
         
         # Validar largo del mensaje (prevenir abusos)
@@ -3402,7 +4027,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message[:100] + "...",
-                agent_response="⚠️ El mensaje es demasiado largo. Por favor, reduce tu consulta a menos de 5000 caracteres."
+                agent_response="A mensagem é demasiado longa. Reduza o pedido para menos de 5000 caracteres."
             )
         
         # Detectar inyección de prompts
@@ -3410,7 +4035,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="🚫 Lo siento, no puedo procesar esa solicitud por políticas de seguridad. Si necesitas ayuda con tu consulta técnica, reformúlala de manera clara y directa."
+                agent_response="Não posso processar este pedido devido às políticas de segurança. Reformule o pedido técnico de forma clara e direta."
             )
         
         # Detectar inyección SQL
@@ -3418,7 +4043,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="🔒 He detectado un intento de inyección SQL. Solo puedo ejecutar consultas de lectura (SELECT) seguras. ¿Qué información necesitas consultar? Por favor, especifica qué datos quieres ver."
+                agent_response="Foi detetada uma tentativa de injeção SQL. Apenas posso executar consultas de leitura (SELECT) seguras. Indique os dados que pretende consultar."
             )
         
         # Detectar contenido ofensivo
@@ -3426,7 +4051,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="🤖 Por favor, mantén un tono respetuoso en la conversación. Estoy aquí para ayudarte con tus consultas técnicas sobre maquinaria y sistemas. ¿En qué puedo asistirte?"
+                agent_response="Mantenha um tom respeitador na conversa. Estou disponível para ajudar com questões técnicas sobre maquinaria e sistemas."
             )
 
         cached_response_text = _get_cached_dialogue_response(cache_key)
@@ -3459,7 +4084,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="⏳ El agente está atendiendo varias conversaciones en este momento. Intenta nuevamente en unos segundos."
+                agent_response="O agente está a processar várias conversas neste momento. Tente novamente dentro de alguns segundos."
             )
         
         # Registrar inicio del procesamiento
@@ -3522,7 +4147,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
-                agent_response="⏱️ La consulta está tomando más tiempo de lo esperado. Intenta de nuevo en unos segundos para mantener una respuesta ágil del sistema."
+                agent_response="O pedido está a demorar mais do que o esperado. Tente novamente dentro de alguns segundos."
             )
 
         if "error" in error_holder:
@@ -3567,7 +4192,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
         return ChatConversationResponse(
             session_id=req.session_id,
             user_message=req.message,
-            agent_response=f"⚠️ Lo siento, ocurrió un error al procesar tu consulta. Por favor, intenta nuevamente o contacta al administrador del sistema. (Error: {str(e)[:100]})"
+            agent_response="Ocorreu um erro ao processar o pedido. Tente novamente ou contacte o administrador do sistema."
         )
     finally:
         if dialogue_started:
@@ -3613,13 +4238,13 @@ def submit_feedback(req: UserFeedbackRequest):
             status="ok" if learned else "warning",
             learned=learned,
             profile_updated=profile_updated,
-            reaction_signal=reaction.get("signal", "sin_senal"),
+            reaction_signal=reaction.get("signal", "sem_sinal"),
             topics=reaction.get("topics", []),
         )
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error registrando feedback del usuario: {str(e)}"
+            detail="Não foi possível registar o feedback do utilizador."
         )
 
 
@@ -3638,12 +4263,12 @@ def capture_solidset_agent_reaction(
     except (pymssql.Error, psycopg.Error) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudo resolver el mensaje reaccionado.",
+            detail="Não foi possível determinar a mensagem que recebeu a reação.",
         ) from exc
     if message is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="El chat no existe o no fue emitido por un agente IA registrado.",
+            detail="O chat não existe ou não foi enviado por um agente de IA registado.",
         )
 
     channel_id = req.IDChannel
@@ -3667,7 +4292,7 @@ def capture_solidset_agent_reaction(
     except psycopg.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No se pudo persistir la reacción del agente.",
+            detail="Não foi possível guardar a reação ao agente.",
         ) from exc
 
     learned = False
@@ -3723,7 +4348,7 @@ def get_audio_file(file: str):
             media_type="audio/mpeg",
             filename=file
         )
-    raise HTTPException(status_code=404, detail="Archivo de audio no encontrado.")
+    raise HTTPException(status_code=404, detail="Ficheiro de áudio não encontrado.")
 
 
 @app.get("/api/v1/agent/history/{session_id}")
@@ -3732,13 +4357,13 @@ def get_chat_history(
     before: int = Query(
         0,
         ge=0,
-        description="Cantidad de mensajes mas recientes a omitir antes de devolver resultados (cursor para scroll hacia atras)."
+        description="Number of recent messages to skip before returning results (backward-scroll cursor)."
     ),
     limit: int = Query(
         10,
         ge=1,
         le=100,
-        description="Cantidad maxima de mensajes a devolver por pagina."
+        description="Maximum number of messages returned per page."
     ),
 ):
     """
@@ -3782,7 +4407,7 @@ def get_chat_history(
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error recuperando historial: {str(e)}"
+            detail="Não foi possível obter o histórico."
         )
 
 
@@ -3797,12 +4422,12 @@ def clear_chat_history(session_id: str):
         return {
             "session_id": session_id, 
             "status": "cleared",
-            "message": "Historial eliminado correctamente"
+            "message": "Histórico eliminado com sucesso"
         }
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error eliminando historial: {str(e)}"
+            detail="Não foi possível eliminar o histórico."
         )
 
 
@@ -3897,7 +4522,7 @@ def get_agent_evaluation_summary():
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error construyendo resumen de evaluación: {str(e)}"
+            detail="Não foi possível criar o resumo da avaliação."
         )
 
 
@@ -3917,7 +4542,7 @@ def get_recent_notification_messages(limit: int = Query(30, ge=1, le=200)):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error obteniendo mensajes recientes de notification listener: {str(e)}"
+            detail="Não foi possível obter as mensagens recentes do serviço de notificações."
         )
 
 
@@ -3945,12 +4570,12 @@ def get_user_context(user_id: str):
             return {
                 "user_id": user_id,
                 "dynamic_profile": perfil_dinamico,
-                "error": "Usuario no encontrado o sin contexto disponible"
+                "error": "Utilizador não encontrado ou sem contexto disponível"
             }
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error obteniendo contexto del usuario: {str(e)}"
+            detail="Não foi possível obter o contexto do utilizador."
         )
 
 
@@ -3967,7 +4592,7 @@ def get_sql_retry_stats():
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error obteniendo métricas SQL: {str(e)}"
+            detail="Não foi possível obter as métricas de SQL."
         )
 
 
@@ -3981,14 +4606,14 @@ def reset_sql_retry_stats():
         current = agent.sistema_aprendizaje.get_sql_retry_stats()
         return {
             "status": "ok",
-            "message": "sql retry stats reset",
+            "message": "Estatísticas de novas tentativas de SQL repostas com sucesso",
             "previous": previous,
             "current": current,
         }
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error reseteando métricas SQL: {str(e)}"
+            detail="Não foi possível repor as métricas de SQL."
         )
 
 
@@ -4011,7 +4636,7 @@ def test_solidset_connectivity():
     if not base_url:
         return {
             "status": "error",
-            "message": "SOLIDSET_RESTAPI_BASE_URL no configurada en el entorno",
+            "message": "SOLIDSET_RESTAPI_BASE_URL não está configurado no ambiente",
             "configured": False
         }
     
@@ -4056,16 +4681,16 @@ def test_solidset_connectivity():
     
     if heartbeat_ok:
         results["overall_status"] = "healthy"
-        results["message"] = "✅ Comunicación exitosa con SolidSET API (Heartbeat OK)"
+        results["message"] = "Comunicação com a API SolidSET estabelecida com sucesso (Heartbeat OK)"
     elif swagger_ok:
         results["overall_status"] = "partial"
-        results["message"] = "⚠️ SolidSET API accesible, pero Heartbeat no responde correctamente"
+        results["message"] = "A API SolidSET está acessível, mas o Heartbeat não responde corretamente"
     elif openapi_ok:
         results["overall_status"] = "partial"
-        results["message"] = "⚠️ SolidSET API OpenAPI accesible, pero servicios principales no responden"
+        results["message"] = "O OpenAPI da API SolidSET está acessível, mas os serviços principais não respondem"
     else:
         results["overall_status"] = "unreachable"
-        results["message"] = "❌ No se pudo establecer comunicación con SolidSET API"
+        results["message"] = "Não foi possível estabelecer comunicação com a API SolidSET"
     
     return results
 
@@ -4096,7 +4721,7 @@ def test_all_connectivity():
     else:
         results["services"]["solidset_restapi"] = {
             "configured": False,
-            "error": "SOLIDSET_RESTAPI_BASE_URL no configurada"
+            "error": "SOLIDSET_RESTAPI_BASE_URL não está configurado"
         }
     
     # Test Ollama
@@ -4132,6 +4757,40 @@ def test_all_connectivity():
 # ============================================================
 # PUNTO DE ENTRADA PARA EJECUCIÓN DIRECTA
 # ============================================================
+
+def _swagger_tag_for_path(path: str) -> str:
+    """Classify each operation into a stable Swagger UI section."""
+    if "/historical-ingestion" in path:
+        return "Historical Ingestion"
+    if "/responses" in path:
+        return "Asynchronous Responses"
+    if "/notification" in path:
+        return "SolidSET Notifications"
+    if "/llm/providers" in path:
+        return "LLM Providers"
+    if "/solidset/agents" in path or "/solidset/multi-agent" in path:
+        return "SolidSET Agents"
+    if "/solidset/" in path:
+        return "SolidSET Configuration"
+    if path.endswith("/feedback") or "/reactions/" in path or "/evaluation/" in path:
+        return "Learning and Feedback"
+    if "/audio-response" in path or "/history/" in path or "/context/" in path:
+        return "Audio, History and Context"
+    if path.endswith("/dialogue"):
+        return "Conversation"
+    if "/connectivity/" in path:
+        return "Connectivity"
+    return "Observability"
+
+
+for route in app.routes:
+    if isinstance(route, APIRoute):
+        tag = _swagger_tag_for_path(route.path)
+        route.tags = [tag]
+        route.summary = route.name.replace("_", " ").title().replace("Solidset", "SolidSET")
+        route.description = next(
+            item["description"] for item in OPENAPI_TAGS if item["name"] == tag
+        )
 
 if __name__ == "__main__":
     import uvicorn

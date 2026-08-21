@@ -34,7 +34,7 @@ services:
       - ./certbot/conf:/etc/letsencrypt
 
   agent-service:
-    image: agent-service:0.0.1    
+    image: agent-beta:0.0.1    
     container_name: machining_agent
     hostname: agent-service
     restart: unless-stopped
@@ -82,7 +82,7 @@ services:
   # Worker durable. Escala horizontalmente sin cambiar la API:
   # docker compose -f docker-compose-prod.yml up -d --scale agent-worker=4
   agent-worker:
-    image: agent-service:0.0.1
+    image: agent-beta:0.0.1
     container_name: machining_agent_worker
     hostname: agent-worker
     restart: unless-stopped
@@ -118,6 +118,33 @@ services:
         condition: service_healthy
     networks:
       - machining-network
+
+  historical-worker:
+    image: agent-beta:0.0.1
+    restart: unless-stopped
+    command: ["python", "-m", "app.historical.worker"]
+    env_file:
+      - ${AGENT_ENV_FILE:-.env}
+    environment:
+      ENVIRONMENT: production
+      RUNNING_IN_DOCKER: "1"
+      OLLAMA_BASE_URL: http://ollama-llm:11434
+      VECTOR_DB_URL: http://vector-db:6333
+      POSTGRES_HOST: timescaledb
+      REDIS_URL: redis://redis-cache:6379
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["./data:/app/data"]
+    depends_on:
+      ollama-llm: {condition: service_healthy}
+      timescaledb: {condition: service_healthy}
+      redis-cache: {condition: service_healthy}
+      vector-db: {condition: service_healthy}
+    networks: [machining-network]
+
+  historical-producer:
+    extends:
+      service: historical-worker
+    command: ["python", "-m", "app.historical.producer"]
 
   # 3. Servidor de Modelos Locales (Ollama)
   ollama-llm:

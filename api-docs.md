@@ -370,11 +370,36 @@ Registra o actualiza por `Code` las URLs que antes se seleccionaban desde `.env`
   "BaseUrl": "http://192.168.10.20:52130",
   "NotificationUrl": "http://192.168.10.20:52131",
   "SourceIP": "192.168.10.20",
+  "CountryCode": "PT",
+  "Locale": "pt-PT",
+  "TimeZone": "Europe/Lisbon",
   "active": true
 }
 ```
 
 La configuración se guarda en PostgreSQL `SysSolidSETInstance`. Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`; si encuentra alguna, actualiza esa misma fila y conserva su `ID`. La respuesta indica `status=created` o `status=updated`. Existen índices únicos normalizados para impedir duplicados incluso con diferencias de mayúsculas o una barra final en la URL. `BaseUrl` se utiliza para `/User/LoginJson`, consultas y respuestas; `NotificationUrl` se utiliza únicamente para reenviar al servicio de notificaciones correspondiente.
+
+`CountryCode`, `Locale` y `TimeZone` definen el contexto regional de las
+respuestas. `TimeZone` debe ser una zona IANA válida, como `Europe/Lisbon`, y
+`Locale` utiliza formato BCP 47, como `pt-PT`. Las instalaciones existentes se
+migran automáticamente con `PT`, `pt-PT` y `Europe/Lisbon`. No se geolocaliza la
+IP privada ni se deduce el país a partir del idioma: esos métodos no son fiables
+detrás de NAT, VPN o Docker.
+
+El agente recibe estos valores en todas las respuestas de esa instancia. Para
+`pt-PT` emplea vocabulario y ortografía de Portugal. Las consultas explícitas de
+fecha u hora (`Que dia é hoje?`, `Que horas são?`) se calculan directamente con
+`TimeZone`, sin pedir al LLM que adivine la ubicación; por ello no puede responder
+con la hora de Brasilia cuando la instancia está configurada en Portugal.
+
+Si el cliente conoce la ubicación efectiva del recurso —por ejemplo, porque el
+usuario está temporalmente en otro país— puede incluir en `Info`, `TimeData` o
+`UserData` los campos `country_code`, `locale` y `time_zone`. Estos valores
+específicos del mensaje tienen prioridad sobre la instancia; una zona IANA no
+válida se descarta. Cuando el payload no los incluye, se usa la configuración de
+`SysSolidSETInstance`. La IP observada por la API corresponde normalmente al
+servidor SolidSET o al proxy, no al equipo WPF, por lo que no se usa para ubicar
+al recurso.
 
 Cada SolidSET debe llamar los endpoints de entrada con:
 
@@ -714,7 +739,7 @@ Resources[0]      = SysResourceIA.IDResource
 
 `SysLogin.Password` es el HMAC ya generado por SolidSET, no una contraseña reversible. `PasswordEncrypted=true` hace que el método de SolidSET omita `GenerateHMAC` y compare directamente ese valor. `Resources[0]` obliga a registrar la sesión con el recurso agente solicitado cuando el login dispone de varios recursos. Si el recurso no es un agente activo, no tiene una cuenta válida o `LoginJson` rechaza el acceso, el envío falla explícitamente y no utiliza la identidad global configurada en `.env`.
 
-La respuesta publicada usa `SysLogin.FullName` y conserva una identificación visible con el formato `Asistente IA {FullName}: respuesta`; por ejemplo, `Asistente IA Alejandro Veitia: ...`. SolidSET muestra además como emisor el login propio del recurso. Si excepcionalmente `FullName` está vacío, se utiliza `SysResourceIA.Name` como respaldo.
+La respuesta publicada usa `SysLogin.FullName` y conserva una identificación visible con el formato `{FullName}: respuesta`; por ejemplo, `Alejandro Veitia: ...`. SolidSET muestra además como emisor el login propio del recurso. Si excepcionalmente `FullName` está vacío, se utiliza `SysResourceIA.Name` como respaldo.
 
 La respuesta contiene únicamente contadores; nunca devuelve ni registra `Password` o `Salt`:
 
@@ -769,6 +794,50 @@ de contingencia.
 
 El cliente WPF debe conservar `requestId`, mostrar un indicador indeterminado y
 consultar `statusUrl` cada 1–2 segundos hasta que `completed=true`.
+
+### Sugerir una respuesta para `Chat.chatQuestion`
+
+```http
+POST /api/v1/agent/notification/chat-question/suggest-response
+Content-Type: application/json
+```
+
+Recibe el mismo `FrameworkMessage`, pero no captura el mensaje como una nueva
+petición de autorrespuesta ni envía nada a SolidSET. El endpoint toma:
+
+- `Chat.IDChat2` como `requestId` para el seguimiento del estado.
+- `Chat.IDSenderResource` como el recurso humano que solicita la sugerencia.
+- `Chat.chatQuestion.IDSenderResource` como el autor del mensaje anterior.
+- `Chat.chatQuestion.IDChat2` y `RawMessage` como el mensaje que debe responderse.
+- `Chat.IDWorkRoom`, `Chat.IDMeeting` y `Info.meeting_code` como contexto.
+
+Antes de generar, comprueba en SQL Server que el solicitante tiene una relación
+activa en `dbo.SysResource2Agent`, sincroniza `IDAgentResource` y resuelve su
+agente activo en PostgreSQL. La generación utiliza el conocimiento privado y el
+contexto de refuerzo del agente propio del solicitante. No utiliza el agente del
+autor citado, no consulta Internet y trata el texto citado como datos no
+confiables.
+
+Si termina correctamente devuelve HTTP 200 con `Content-Type: text/plain` y
+únicamente el texto apto para asignar a `RawMessage`:
+
+```text
+Gracias por la información. Revisaré esos puntos y te confirmaré el resultado.
+```
+
+No devuelve JSON, nombre del agente, prefijo, comillas ni payload de envío. Para
+mostrar progreso mientras la llamada está abierta, WPF puede consultar en
+paralelo:
+
+```http
+GET /api/v1/agent/responses/{Chat.IDChat2}/status?lang=es
+```
+
+La secuencia normal es `queued` → `processing` → `searching` → `thinking` →
+`completed`. No aparece `sending`, porque este endpoint nunca publica el texto
+en SolidSET. Los errores de validación devuelven HTTP 422; la ausencia de un
+agente propio activo devuelve HTTP 404; las dependencias o la generación no
+disponibles devuelven HTTP 503 y dejan el estado en `failed`.
 
 ### Consultar el estado de una respuesta
 
@@ -1120,7 +1189,7 @@ Respuesta:
   "reward": 1.0,
   "IDChat": 1822812,
   "IDAgentResource": "272700d8-d1ba-46a6-a121-b76fce8ecb9f",
-  "AgentName": "Asistente IA Victor Vargas"
+  "AgentName": "Victor Vargas"
 }
 ```
 
@@ -1395,3 +1464,155 @@ recurso agente almacenado en PostgreSQL.
 Qdrant dispone de una comprobación TCP de salud. El agente no comienza hasta
 que `vector-db:6333` acepta conexiones, evitando que la creación inicial de la
 colección `machining_docs` falle por una carrera de arranque.
+## Ingesta retroactiva de conocimiento SolidSET
+
+La ingesta histórica es independiente de las respuestas en tiempo real. Lee
+`dbo.SysChat` incrementalmente por `IDChat2`, resuelve el autor real mediante
+`SysChat2SysResource.IDLogin = SysChat.IDSender`, aplica privacidad y publica
+lotes en `machining:historical-ingestion:v1`.
+
+Por seguridad comienza desactivada y en modo simulación:
+
+```env
+HISTORICAL_INGESTION_ENABLED=false
+HISTORICAL_INGESTION_DRY_RUN=true
+HISTORICAL_INGESTION_BATCH_SIZE=500
+HISTORICAL_INGESTION_STREAM=machining:historical-ingestion:v1
+HISTORICAL_INGESTION_GROUP=historical-workers-v1
+HISTORICAL_INGESTION_STREAM_MAXLEN=10000
+HISTORICAL_INGESTION_MAX_RETRIES=3
+HISTORICAL_INGESTION_CLAIM_IDLE_MS=60000
+HISTORICAL_INGESTION_STALE_SECONDS=300
+HISTORICAL_INGESTION_POLL_SECONDS=60
+HISTORICAL_INGESTION_ADMIN_KEY=<secreto-administrativo>
+DB_INGEST_CONNECT_TIMEOUT_SECONDS=15
+DB_INGEST_QUERY_TIMEOUT_SECONDS=120
+```
+
+`DB_INGEST_CONNECT_TIMEOUT_SECONDS` limita la apertura de conexión con SQL
+Server y `DB_INGEST_QUERY_TIMEOUT_SECONDS` limita cada lote de extracción.
+
+Todas las operaciones requieren la cabecera `X-Agent-Admin-Key`, cuyo valor
+debe ser exactamente el configurado en `HISTORICAL_INGESTION_ADMIN_KEY`.
+La cabecera está declarada en OpenAPI y aparece como campo obligatorio en
+Swagger. Si se omite, la API devuelve `422`; si no coincide, devuelve `401`.
+
+```http
+POST /api/v1/agent/historical-ingestion/start
+POST /api/v1/agent/historical-ingestion/pause
+POST /api/v1/agent/historical-ingestion/resume
+POST /api/v1/agent/historical-ingestion/approve-dry-run?instanceCode=local-solidset
+GET  /api/v1/agent/historical-ingestion/status
+GET  /api/v1/agent/historical-ingestion/batches?limit=50
+DELETE /api/v1/agent/historical-ingestion/messages/{idChat2}?instanceCode=local-solidset
+```
+
+El cuerpo de `start` es:
+
+```json
+{"instanceCode":"local-solidset","dryRun":true}
+```
+
+El `dryRun` normaliza, rechaza secretos y valida scopes sin generar embeddings
+ni avanzar `LastIDChat2`. Tras revisar auditoría se llama a
+`approve-dry-run`, y después a `start` con `dryRun=false`.
+
+Los mensajes IA, secretos, mensajes vacíos y registros sin autor/canal se
+rechazan. El conocimiento se duplica de forma controlada por agente con scope
+`owner` o `workroom`; `global` permanece deshabilitado hasta confirmar en SQL
+Server un campo fiable de visibilidad pública. Los puntos Qdrant incluyen
+`agent_resource_id`, `canal_id`, `scope`, `id_chat2` y `content_hash`, de forma
+compatible con los filtros RAG existentes.
+
+PostgreSQL conserva cursores, auditoría de lotes y la relación exacta entre
+`IDChat2` y `QdrantPointID`. El endpoint DELETE borra los puntos y marca los
+documentos como eliminados.
+
+En producción pueden mantenerse simultáneamente:
+
+```env
+HISTORICAL_INGESTION_ENABLED=true
+HISTORICAL_INGESTION_DRY_RUN=false
+```
+
+La reanudación después de reiniciar Docker utiliza PostgreSQL como checkpoint
+duradero. `SysAgentIAIngestionCursor.LastIDChat2` representa exclusivamente el
+último mensaje cuyo lote terminó correctamente y `CurrentBatchID` identifica el
+lote en curso. El cursor se actualiza de forma monotónica: una entrega antigua
+recuperada desde Redis nunca puede reducir `LastIDChat2`.
+
+Redis conserva el Stream mediante AOF en el volumen `redis_data`. Después de un
+reinicio, un worker reclama en aproximadamente
+`HISTORICAL_INGESTION_CLAIM_IDLE_MS` los mensajes pendientes del consumidor
+anterior. Si Redis perdió el lote completo, el productor detecta un cursor
+`queued` o `processing` abandonado después de
+`HISTORICAL_INGESTION_STALE_SECONDS`, conserva el último checkpoint confirmado
+y vuelve a extraer desde `LastIDChat2 + 1`.
+
+El último lote puede procesarse nuevamente después de una interrupción, pero no
+duplica conocimiento: `DocumentID` y `QdrantPointID` son UUID deterministas,
+Qdrant utiliza `upsert` y PostgreSQL aplica claves únicas. Esta garantía ofrece
+procesamiento efectivo *at least once* con resultado idempotente, evitando tanto
+la pérdida de mensajes como el reinicio desde cero.
+
+`GET /api/v1/agent/historical-ingestion/status` muestra ahora también
+`CurrentBatchID`, `LastIDChat2`, `LastRunAt` y el estado de recuperación para
+diagnosticar exactamente dónde continuará la ingesta.
+
+Servicios Docker:
+
+```powershell
+docker compose -f docker-compose-prod.yml up -d historical-worker historical-producer
+docker compose -f docker-compose-prod.yml up -d --scale historical-worker=2
+```
+
+## Organización de Swagger
+
+Swagger (`/docs`) presenta la documentación pública de los endpoints en inglés
+y agrupa las operaciones mediante etiquetas OpenAPI estables:
+
+- `Conversation`
+- `SolidSET Notifications`
+- `Asynchronous Responses`
+- `Historical Ingestion`
+- `SolidSET Agents`
+- `SolidSET Configuration`
+- `LLM Providers`
+- `Learning and Feedback`
+- `Audio, History and Context`
+- `Observability`
+- `Connectivity`
+
+La clasificación solo modifica la presentación y documentación OpenAPI; no
+cambia las URLs, cuerpos, respuestas ni comportamiento de los endpoints.
+
+Los mensajes humanos devueltos por la API (`detail`, `message`, errores de
+validación y diagnósticos) utilizan portugués de Portugal. Los códigos técnicos
+consumidos por clientes (`queued`, `processing`, `completed`, `failed`, etc.)
+se mantienen estables para no romper la integración con WPF. El texto generado
+por el agente conserva el idioma solicitado por el usuario.
+
+Las respuestas conversacionales no revelan detalles internos de recuperación
+o almacenamiento. Términos como `RAG`, `Qdrant`, `embeddings`, `base vectorial`
+o `vectorial knowledge base` se prohíben en el prompt y se eliminan mediante
+una validación final común antes de devolver o enviar cualquier respuesta.
+
+Cuando `Chat.chatQuestion` está presente, `Chat.rawMessage` es la intervención
+actual y `chatQuestion.rawMessage` se conserva únicamente como contexto citado.
+La intervención actual siempre puede alimentar el aprendizaje. Solo genera una
+respuesta si contiene una pregunta, petición, saludo o continuación; una
+afirmación o corrección informativa sobre el mensaje citado se clasifica como
+`respuesta_citada_solo_aprendizaje` y no provoca una auto-respuesta.
+
+La detección de idioma se aplica también a mensajes cortos y respuestas
+deterministas que no pasan por el LLM. Expresiones como `Bom dia`, `Boa tarde`,
+`Good morning`, `Good evening`, `Buenos días` y sus equivalentes generan la
+respuesta directamente en portugués, inglés o español, respectivamente.
+
+Los mensajes declarativos se distinguen lingüísticamente de preguntas y
+peticiones. Se consideran señales de conocimiento las estructuras factuales,
+fechas, contenido extenso o multilínea y expresiones como `ten en cuenta`,
+`para seu conhecimento` o `remember that`. El mensaje se aprende, pero no se
+envía al LLM. Si estaba dirigido explícitamente al agente, la única respuesta
+es un agradecimiento breve en el idioma detectado; en un canal sin destino
+directo se aprende silenciosamente.
