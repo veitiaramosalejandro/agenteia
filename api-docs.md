@@ -1495,3 +1495,15 @@ Las respuestas conversacionales no revelan detalles internos de recuperación
 o almacenamiento. Términos como `RAG`, `Qdrant`, `embeddings`, `base vectorial`
 o `vectorial knowledge base` se prohíben en el prompt y se eliminan mediante
 una validación final común antes de devolver o enviar cualquier respuesta.
+
+Cuando `Chat.chatQuestion` está presente, `Chat.rawMessage` es la intervención
+actual y `chatQuestion.rawMessage` se conserva únicamente como contexto citado.
+La intervención actual siempre puede alimentar el aprendizaje. Solo genera una
+respuesta si contiene una pregunta, petición, saludo o continuación; una
+afirmación o corrección informativa sobre el mensaje citado se clasifica como
+`respuesta_citada_solo_aprendizaje` y no provoca una auto-respuesta.
+
+La detección de idioma se aplica también a mensajes cortos y respuestas
+deterministas que no pasan por el LLM. Expresiones como `Bom dia`, `Boa tarde`,
+`Good morning`, `Good evening`, `Buenos días` y sus equivalentes generan la
+respuesta directamente en portugués, inglés o español, respectivamente.

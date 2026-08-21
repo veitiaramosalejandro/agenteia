@@ -163,7 +163,11 @@ class SolidSETOrchestrator:
                 "No pude presentar de forma segura los datos obtenidos. "
                 "Inténtalo nuevamente en unos instantes."
             )
-        response = self._ensure_response_language(state.get("user_text", ""), response)
+        response = self._ensure_response_language(
+            state.get("user_text", ""),
+            response,
+            state.get("message_metadata"),
+        )
         response = self._hide_internal_implementation_details(
             response,
             self.agent._detect_user_language(state.get("user_text", "")),
@@ -207,7 +211,12 @@ class SolidSETOrchestrator:
         sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
         return sanitized.strip()
 
-    def _ensure_response_language(self, user_text: str, response: str) -> str:
+    def _ensure_response_language(
+        self,
+        user_text: str,
+        response: str,
+        message_metadata: Optional[dict[str, Any]] = None,
+    ) -> str:
         """Garantiza ES/PT/EN también para respuestas deterministas construidas por código."""
         expected = self.agent._detect_user_language(user_text)
         detected = self.agent._detect_user_language(response)
@@ -215,7 +224,7 @@ class SolidSETOrchestrator:
             return response
         target = {"es": "español", "pt": "português", "en": "English"}[expected]
         try:
-            selected_llm, _, _ = self.agent.get_llm_for_metadata(state.get("message_metadata"))
+            selected_llm, _, _ = self.agent.get_llm_for_metadata(message_metadata)
             translated = selected_llm.invoke([
                 SystemMessage(content=(
                     f"Translate the response to {target}. Preserve names, figures, dates, Markdown and "

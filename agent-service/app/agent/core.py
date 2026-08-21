@@ -1055,9 +1055,24 @@ class MachiningAgent:
         text = f" {self._normalize_context_query(user_text).lower()} "
         scores = {"es": 0, "pt": 0, "en": 0}
         markers = {
-            "pt": (" você ", " voces ", " faça ", " forneça ", " intervenções ", " resumo ", " utilizador ", " não ", " suas ", " olá ", " obrigado "),
-            "en": (" the ", " please ", " what ", " how ", " channel ", " messages ", " summary ", " user ", " hello ", " thanks ", " show me "),
-            "es": (" qué ", " cual ", " cuál ", " como ", " cómo ", " necesito ", " resumen ", " canal ", " usuario ", " mensajes ", " hola ", " gracias "),
+            "pt": (
+                " bom dia ", " boa tarde ", " boa noite ", " tudo bem ", " você ",
+                " vocês ", " faça ", " forneça ", " intervenções ", " utilizador ",
+                " não ", " olá ", " obrigado ", " obrigada ", " informação ",
+                " informações ", " hoje ", " podes ", " gostaria ", " meu ", " minha ",
+            ),
+            "en": (
+                " good morning ", " good afternoon ", " good evening ", " the ",
+                " please ", " what ", " how ", " channel ", " messages ", " summary ",
+                " user ", " hello ", " thanks ", " show me ", " information ",
+                " today ", " could you ", " would you ", " my ",
+            ),
+            "es": (
+                " buenos días ", " buenos dias ", " buenas tardes ", " buenas noches ",
+                " qué ", " cual ", " cuál ", " como ", " cómo ", " necesito ",
+                " resumen ", " canal ", " usuario ", " mensajes ", " hola ", " gracias ",
+                " información ", " hoy ", " puedes ", " gustaría ", " mi ",
+            ),
         }
         for language, words in markers.items():
             scores[language] = sum(1 for word in words if word in text)

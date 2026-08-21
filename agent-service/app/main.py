@@ -550,6 +550,25 @@ def _looks_like_question_or_request(raw_text: str) -> bool:
     return text.startswith(starters)
 
 
+def _quoted_reply_is_learning_only(candidate: dict[str, Any]) -> bool:
+    """Classify an informative reply to a quoted chat as learning-only."""
+    if not str(candidate.get("quoted_message") or "").strip():
+        return False
+    text = " ".join(str(candidate.get("message") or "").strip().lower().split())
+    if not text or _looks_like_question_or_request(text):
+        return False
+    conversational = {
+        "hola", "olá", "ola", "hello", "hi", "gracias", "obrigado", "obrigada",
+        "thanks", "sí", "si", "sim", "yes", "continúa", "continua", "continue",
+        "prossegue", "pode continuar", "puedes continuar", "de acuerdo", "está bien",
+        "esta bien", "ok", "vale",
+    }
+    normalized = text.rstrip(".!… ")
+    if normalized in conversational:
+        return False
+    return True
+
+
 def _message_mentions_agent(raw_text: str) -> bool:
     text = (raw_text or "").strip()
     if not text:
@@ -668,18 +687,19 @@ def _direct_courtesy_response(
         pass
     if display_name.lower() in {"desconocido", "unknown", "-"}:
         display_name = ""
+    language = agent._detect_user_language(raw_text)
     greeting_name = f", {display_name}" if display_name else ""
     greeting_terms = {
-        "hola",
-        "hola como estas",
-        "hola cómo estás",
-        "buenos dias",
-        "buenos días",
-        "buenas tardes",
-        "buenas noches",
+        "hola", "hola como estas", "hola cómo estás", "buenos dias", "buenos días",
+        "buenas tardes", "buenas noches", "olá", "ola", "bom dia", "boa tarde",
+        "boa noite", "good morning", "good afternoon", "good evening", "hello", "hi",
     }
     if text.rstrip("!?., ") in greeting_terms:
-        return f"¡Hola{greeting_name}! Estoy muy bien, gracias. ¿En qué puedo ayudarte?"
+        return {
+            "pt": f"Olá{greeting_name}! É um prazer cumprimentá-lo. Como posso ajudar?",
+            "en": f"Hello{greeting_name}! It is a pleasure to greet you. How can I help?",
+            "es": f"¡Hola{greeting_name}! Es un placer saludarte. ¿En qué puedo ayudarte?",
+        }[language]
     if _looks_like_question_or_request(text):
         return None
     if any(term in text for term in ("obrigado", "obrigada", "boa explicação", "boa explicacao", "muito bom")):
@@ -720,6 +740,8 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "mensaje_vacio"
     if not channel_id and not can_reply_direct:
         return "sin_destino_para_responder"
+    if _quoted_reply_is_learning_only(candidate):
+        return "respuesta_citada_solo_aprendizaje"
 
     # Con identidad explícita configurada, Destiny es la fuente de verdad. Así
     # una mención textual dentro de un canal ajeno no provoca una respuesta.
