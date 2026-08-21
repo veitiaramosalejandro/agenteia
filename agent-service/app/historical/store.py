@@ -154,7 +154,7 @@ def workroom_agents(workroom_id: str) -> list[dict[str, Any]]:
         return [dict(row) for row in cur.fetchall()]
 
 
-def list_active_ingestion_agents() -> list[dict[str, Any]]:
+def list_active_ingestion_agents(instance_id: str | None = None) -> list[dict[str, Any]]:
     """Returns only verified local agents and their currently authorized rooms."""
     with connection() as conn, conn.cursor() as cur:
         cur.execute('''SELECT r."IDResource", r."IDAgentResource", r."Name",
@@ -162,16 +162,26 @@ def list_active_ingestion_agents() -> list[dict[str, Any]]:
           FROM public."SysResourceIA" r
           LEFT JOIN public."SysChatIAResource" c ON c."IDResource"=r."IDResource"
           WHERE r.active=true AND r."IDAgentResource" IS NOT NULL
+            AND (%s::uuid IS NULL OR EXISTS (
+              SELECT 1 FROM public."SysSolidSETInstanceResource" ir
+              WHERE ir."IDSolidSETInstance"=%s::uuid AND ir."IDResource"=r."IDResource" AND ir.active=true
+            ))
           GROUP BY r."IDResource", r."IDAgentResource", r."Name"
-          ORDER BY r."IDResource"''')
+          ORDER BY r."IDResource"''', (instance_id, instance_id))
         return [dict(row) for row in cur.fetchall()]
 
 
-def historical_agent_is_active(resource_id: str, agent_resource_id: str) -> bool:
+def historical_agent_is_active(
+    resource_id: str, agent_resource_id: str, instance_id: str | None = None,
+) -> bool:
     with connection() as conn, conn.cursor() as cur:
-        cur.execute('''SELECT EXISTS(SELECT 1 FROM public."SysResourceIA"
-          WHERE "IDResource"=%s AND "IDAgentResource"=%s AND active=true) AS active''',
-          (UUID(resource_id), UUID(agent_resource_id)))
+        cur.execute('''SELECT EXISTS(SELECT 1 FROM public."SysResourceIA" r
+          WHERE r."IDResource"=%s AND r."IDAgentResource"=%s AND r.active=true
+            AND (%s::uuid IS NULL OR EXISTS (
+              SELECT 1 FROM public."SysSolidSETInstanceResource" ir
+              WHERE ir."IDSolidSETInstance"=%s::uuid AND ir."IDResource"=r."IDResource" AND ir.active=true
+            ))) AS active''',
+          (UUID(resource_id), UUID(agent_resource_id), instance_id, instance_id))
         row = cur.fetchone()
         return bool(row and row["active"])
 

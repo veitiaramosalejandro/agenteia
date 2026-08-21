@@ -4,6 +4,7 @@ from typing import Any
 import pymssql
 
 from app.config import settings
+from app.connectors.solidset_sql import connect as connect_solidset_sql
 
 
 QUERY = '''
@@ -91,6 +92,7 @@ def extract_agent_chat_batch(
     batch_size: int,
     resource_id: str,
     workroom_ids: list[str],
+    instance: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Reads only chats the active agent owner authored, received or may access."""
     valid_rooms = [str(value) for value in workroom_ids if value]
@@ -101,12 +103,7 @@ def extract_agent_chat_batch(
         room_clause = f" OR cw.IDWorkRoom IN ({placeholders})"
         parameters.extend(valid_rooms)
     query = AGENT_CHAT_QUERY % ("%s", "%s", "%s", "%s", room_clause)
-    with pymssql.connect(
-        **settings.sql_server_connection_options(), user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD, database=settings.SQL_SERVER_DB,
-        login_timeout=settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS,
-        timeout=settings.DB_INGEST_QUERY_TIMEOUT_SECONDS, as_dict=True,
-    ) as conn, conn.cursor(as_dict=True) as cur:
+    with connect_solidset_sql(instance, as_dict=True) as conn, conn.cursor(as_dict=True) as cur:
         cur.execute(query, tuple(parameters))
         return [dict(row) for row in (cur.fetchall() or [])]
 
@@ -121,14 +118,10 @@ def extract_agent_task_batch(
     last_id_task: int,
     batch_size: int,
     resource_id: str,
+    instance: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Discovers the installed SysTask schema and reads only resource-related tasks."""
-    with pymssql.connect(
-        **settings.sql_server_connection_options(), user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD, database=settings.SQL_SERVER_DB,
-        login_timeout=settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS,
-        timeout=settings.DB_INGEST_QUERY_TIMEOUT_SECONDS, as_dict=True,
-    ) as conn, conn.cursor(as_dict=True) as cur:
+    with connect_solidset_sql(instance, as_dict=True) as conn, conn.cursor(as_dict=True) as cur:
         cur.execute('''SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
           WHERE TABLE_SCHEMA='dbo' AND (TABLE_NAME='SysTask' OR TABLE_NAME LIKE '%Task%')''')
         schema: dict[str, dict[str, str]] = {}

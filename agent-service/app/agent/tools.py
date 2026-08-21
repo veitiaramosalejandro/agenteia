@@ -23,6 +23,7 @@ from app.connectors.db_client import (
     get_solidset_login_for_active_agent,
     list_active_solidset_instances,
 )
+from app.connectors.solidset_sql import open_current_connection
 from app.rag.vector_store import ensure_vector_collection
 
 from app.rag.audio_processor import extract_audio_features
@@ -33,6 +34,7 @@ def _resolve_solidset_meeting_id(
     meeting_id: Optional[str],
     channel_id: Optional[str],
     meeting_code: Optional[str] = None,
+    base_url: Optional[str] = None,
 ) -> Optional[str]:
     """Devuelve un meeting existente y perteneciente al canal indicado."""
     try:
@@ -45,14 +47,13 @@ def _resolve_solidset_meeting_id(
         requested_uuid = None
     code = str(meeting_code or "").strip()
     try:
-        with pymssql.connect(
-            **settings.sql_server_connection_options(),
-            user=settings.SQL_SERVER_USER,
-            password=settings.SQL_SERVER_PASSWORD,
-            database=settings.SQL_SERVER_DB,
-            login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-            timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        ) as connection:
+        target_instance = next((item for item in list_active_solidset_instances()
+            if str(item.get("BaseUrl") or "").rstrip("/").lower()
+            == str(base_url or "").rstrip("/").lower()), None)
+        if not target_instance:
+            return None
+        from app.connectors.solidset_sql import connect as connect_solidset_sql
+        with connect_solidset_sql(target_instance, as_dict=True) as connection:
             cursor = connection.cursor(as_dict=True)
             if requested_uuid is not None:
                 cursor.execute(
@@ -271,9 +272,20 @@ def _solidset_login(
             flush=True,
         )
         try:
+            login_instance = next(
+                (
+                    item for item in list_active_solidset_instances()
+                    if str(item.get("BaseUrl") or "").rstrip("/").lower()
+                    == str(base_url or "").rstrip("/").lower()
+                ),
+                None,
+            )
+            if not login_instance:
+                return False, "", ""
             login = get_solidset_login_for_active_agent(
                 agent_resource_id,
                 preferred_login_id=agent_login_id,
+                instance_id=login_instance["ID"],
             )
         except Exception as exc:
             print(f"❌ No se pudo leer SysLogin del agente: {exc}", flush=True)
@@ -339,8 +351,19 @@ def _solidset_login(
                     if allow_sync_retry:
                         try:
                             from app.system.resource_ingest import ingest_solidset_logins
-
-                            sync_result = ingest_solidset_logins()
+                            matching_instance = next(
+                                (
+                                    item for item in list_active_solidset_instances()
+                                    if str(item.get("BaseUrl") or "").rstrip("/").lower()
+                                    == str(base_url or "").rstrip("/").lower()
+                                ),
+                                None,
+                            )
+                            if not matching_instance or not matching_instance.get("Database"):
+                                raise RuntimeError(
+                                    "A instância de destino não tem ligação SQL Server configurada."
+                                )
+                            sync_result = ingest_solidset_logins(matching_instance)
                             print(
                                 "🔄 SysLogin resincronizado después del rechazo "
                                 f"updated={sync_result.get('updated', 0)} "
@@ -827,11 +850,6 @@ def query_sql_server(query: str) -> str:
     - No preguntes qué tabla usar si el esquema conocido ya identifica la tabla y columnas.
     - Los agregados COUNT con WHERE son consultas acotadas y no requieren confirmación.
     """
-    server = settings.SQL_SERVER_HOST
-    user = settings.SQL_SERVER_USER
-    password = settings.SQL_SERVER_PASSWORD
-    database = settings.SQL_SERVER_DB
-
     clean_query = query.strip()
     if not clean_query.upper().startswith("SELECT") and not clean_query.upper().startswith("WITH"):
         return "Error de seguridad: Solo se permiten consultas de lectura (SELECT / WITH)."
@@ -841,13 +859,7 @@ def query_sql_server(query: str) -> str:
         return "Error de seguridad: La consulta contiene comandos no permitidos."
 
     try:
-        conn = pymssql.connect(
-            **settings.sql_server_connection_options(),
-            user=user,
-            password=password,
-            database=database,
-            timeout=5,
-        )
+        conn = open_current_connection(as_dict=True)
         cursor = conn.cursor(as_dict=True)
 
         referenced_tables = _extract_table_references(clean_query)
@@ -897,19 +909,8 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
     - NO la uses para obtener datos reales de negocio (usa query_sql_server)
     - NO la uses si el usuario ya sabe qué tabla consultar
     """
-    server = settings.SQL_SERVER_HOST
-    user = settings.SQL_SERVER_USER
-    password = settings.SQL_SERVER_PASSWORD
-    database = settings.SQL_SERVER_DB
-
     try:
-        conn = pymssql.connect(
-            **settings.sql_server_connection_options(),
-            user=user,
-            password=password,
-            database=database,
-            timeout=5,
-        )
+        conn = open_current_connection(as_dict=True)
         cursor = conn.cursor(as_dict=True)
 
         if table_name:
@@ -1127,6 +1128,7 @@ def solidset_send_chat_message(
         requested_meeting,
         channel,
         meeting_label,
+        base_url,
     ) if requested_meeting else None
     if requested_meeting and not meeting:
         print(

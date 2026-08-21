@@ -62,7 +62,7 @@ def process_batch(batch: dict[str, Any]) -> dict[str, int]:
     resource_id = str(batch.get("resourceId") or "")
     agent_resource_id = str(batch.get("agentResourceId") or "")
     if not resource_id or not agent_resource_id or not historical_agent_is_active(
-        resource_id, agent_resource_id
+        resource_id, agent_resource_id, str(batch.get("instanceId") or "") or None
     ):
         upsert_audit(batch, "inactive", accepted=0, rejected=len(batch.get("messages") or []), indexed=0)
         set_cursor(

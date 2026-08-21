@@ -53,8 +53,7 @@ services:
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
       DIALOGUE_MAX_CONCURRENT: 1
-      # SQL_SERVER_HOST/INSTANCE/PORT proceden de .env.production. No deben
-      # interpolarse aquí desde el .env de desarrollo.
+      # Cada conexión SQL Server se resuelve por instancia desde PostgreSQL.
       # Las respuestas usan la identidad por recurso almacenada en PostgreSQL.
       # Se neutraliza cualquier cuenta global antigua que permanezca en .env.
       SOLIDSET_LOGIN_USERNAME: ""

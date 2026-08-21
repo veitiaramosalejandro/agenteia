@@ -54,7 +54,10 @@ Como alternativa exclusivamente interna, `scripts/issue-internal-certificate.ps1
 
 La resolución habitual de identidad (`Username`, `FullName`, `IDLogin`, `IDResource`) utiliza exclusivamente la réplica PostgreSQL `SysLogin`; un identificador desconocido no desencadena conexiones a SQL Server. SQL Server queda reservado para ingestas y consultas operativas explícitas. En el perfil CPU de producción, Ollama usa `OLLAMA_KV_CACHE_TYPE=f16` porque una caché V cuantizada requiere Flash Attention.
 
-En el despliegue Windows actual, SQL Server se alcanza desde Docker mediante `SQL_SERVER_DOCKER_HOST=host.docker.internal` y `SQL_SERVER_INSTANCE=SQL2017DEV`. La API compone una única barra invertida y no fuerza el puerto cuando existe una instancia. Catálogo, usuario y contraseña permanecen en `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`.
+En Windows, cada destino SQL Server se obtiene de `SysSolidSETDatabase`. Para
+una instancia instalada en el host puede configurarse `Host=host.docker.internal`
+y un puerto TCP directo, o indicar `InstanceName` cuando SQL Browser sea
+alcanzable. Catálogo, usuario y contraseña ya no proceden del entorno.
 
 El despliegue `docker-compose-prod.yml` utiliza Ollama por CPU de forma predeterminada y no exige el runtime NVIDIA. Cuando `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` funcione correctamente, la aceleración se activa añadiendo el overlay `docker-compose-prod.gpu.yml`. En producción Uvicorn se ejecuta sin `--reload`.
 
@@ -361,7 +364,8 @@ opcional secuencial y `nomic-embed-text` para conservar la colección actual.
 POST /api/v1/agent/solidset/instances
 ```
 
-Registra o actualiza por `Code` las URLs que antes se seleccionaban desde `.env`:
+Registra o actualiza por `Code` las URLs y la conexión SQL Server independiente
+de una instalación. Los campos SQL Server ya no se leen desde `.env`:
 
 ```json
 {
@@ -373,11 +377,50 @@ Registra o actualiza por `Code` las URLs que antes se seleccionaban desde `.env`
   "CountryCode": "PT",
   "Locale": "pt-PT",
   "TimeZone": "Europe/Lisbon",
+  "Database": {
+    "Host": "host.docker.internal",
+    "InstanceName": null,
+    "Port": 57258,
+    "DatabaseName": "DEV_ISIFrameIsicom",
+    "Username": "agent_reader",
+    "Password": "<secret>",
+    "Encrypt": false,
+    "TrustServerCertificate": true,
+    "ConnectionTimeout": 15,
+    "SchemaVersion": "2026.08",
+    "AdapterCode": "solidset-v1",
+    "active": true
+  },
   "active": true
 }
 ```
 
-La configuración se guarda en PostgreSQL `SysSolidSETInstance`. Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`; si encuentra alguna, actualiza esa misma fila y conserva su `ID`. La respuesta indica `status=created` o `status=updated`. Existen índices únicos normalizados para impedir duplicados incluso con diferencias de mayúsculas o una barra final en la URL. `BaseUrl` se utiliza para `/User/LoginJson`, consultas y respuestas; `NotificationUrl` se utiliza únicamente para reenviar al servicio de notificaciones correspondiente.
+La configuración general se guarda en `SysSolidSETInstance` y su conexión en
+`SysSolidSETDatabase`. La contraseña se cifra con Fernet antes de persistirse y
+nunca se devuelve: la respuesta solo contiene `PasswordConfigured=true`. Para
+actualizar una instancia sin cambiar su contraseña se omite `Database.Password`.
+La clave maestra `LLM_CREDENTIAL_ENCRYPTION_KEY` debe suministrarse como secreto
+de despliegue; no es una credencial SQL Server.
+
+Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`;
+si encuentra alguna, actualiza la misma fila y conserva su `ID`. `BaseUrl` se
+utiliza para login y respuestas; `NotificationUrl`, para notificaciones.
+
+Después del registro se verifica la conexión mediante:
+
+```http
+POST /api/v1/agent/solidset/instances/solidset-lisboa/test-connection
+```
+
+La prueba devuelve el catálogo real, una versión abreviada del servidor, el
+adaptador seleccionado y si existe `dbo.SysResource2Agent`. El resultado queda
+auditado en `LastConnectionAt`, `LastConnectionStatus` y
+`LastConnectionError`; nunca incluye usuario, contraseña ni cadena completa.
+
+`AdapterCode` desacopla las consultas de la versión instalada. Actualmente
+`solidset-v1` representa el esquema conocido. Una instalación con tablas o
+columnas diferentes debe incorporar un nuevo adaptador antes de activarse; no
+se permite usar silenciosamente las consultas de otra versión.
 
 `CountryCode`, `Locale` y `TimeZone` definen el contexto regional de las
 respuestas. `TimeZone` debe ser una zona IANA válida, como `Europe/Lisbon`, y
@@ -1424,43 +1467,38 @@ Cada agente mantiene su propia sesión, memoria y conocimiento.
 ```
 # Conectividad de producción: SQL Server y Qdrant
 
-En este servidor Docker, SQL Server se configura como instancia nombrada. El
-host y la instancia se declaran por separado y la API construye para FreeTDS
-el destino `host.docker.internal\SQL2017DEV` sin forzar el puerto `1433`. No se
-debe usar `.\\SQL2017DEV`: el punto identifica al propio contenedor y las dos
-barras literales provocan un destino inválido.
-
-Variables usadas por `agent-service`:
-
-- `SQL_SERVER_DOCKER_HOST`: host alcanzable desde Docker; normalmente
-  `host.docker.internal` cuando SQL Server está en el mismo servidor Windows.
-- `SQL_SERVER_INSTANCE`: nombre de instancia, actualmente `SQL2017DEV`. Cuando
-  tiene valor, no se envía un puerto explícito y FreeTDS consulta SQL Browser.
-- `SQL_SERVER_DOCKER_PORT`: solamente se utiliza cuando
-  `SQL_SERVER_INSTANCE` está vacío; su valor predeterminado es `1433`.
-- `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`: base de datos y
-  credenciales de SQL Server.
+Cada SQL Server se configura en PostgreSQL mediante el endpoint de instancias.
+Ya no existen variables `SQL_SERVER_HOST`, `SQL_SERVER_INSTANCE`,
+`SQL_SERVER_PORT`, `SQL_SERVER_DB`, `SQL_SERVER_USER` ni
+`SQL_SERVER_PASSWORD` en los ficheros `.env` o Compose. Una instancia nombrada
+usa `Host` más `InstanceName`; para conexión TCP directa se deja
+`InstanceName=null` y se indica el puerto publicado.
 
 El `.env` de producción debe declarar `ENVIRONMENT=production`, utilizar
 `OLLAMA_BASE_URL=http://ollama-llm:11434` y no contener una cuenta global en
 `SOLIDSET_LOGIN_*`; la identidad para responder se obtiene de `SysLogin` según
 el recurso agente seleccionado.
 
-Ejemplo para producción:
+Los endpoints manuales de sincronización requieren ahora el parámetro
+`instanceCode`, por ejemplo
+`POST /api/v1/agent/solidset/resources/sync?instanceCode=solidset-lisboa`.
+Lo mismo aplica a `logins/sync`, `workrooms/sync` y `chat-workroom/sync`.
+La ingesta histórica recorre cada instancia con su propia conexión y cursores;
+una instancia sin conexión configurada se omite, sin recurrir a otra base.
 
-```env
-SQL_SERVER_DOCKER_HOST=host.docker.internal
-SQL_SERVER_INSTANCE=SQL2017DEV
-SQL_SERVER_DOCKER_PORT=1433
-SQL_SERVER_DB=DEV_ISIFrameIsicom
-SQL_SERVER_USER=sa
-SQL_SERVER_PASSWORD=<secreto>
-```
+Después de actualizar una instalación existente, el orden inicial recomendado
+es: registrar de nuevo la instancia con `Database`, ejecutar `test-connection`,
+sincronizar `resources`, `logins`, `workrooms` y `chat-workroom`, y finalmente
+reanudar la ingesta histórica. La sincronización de recursos crea el ámbito de
+instancia necesario; hasta entonces los agentes se omiten deliberadamente.
 
-Si SQL Browser/UDP 1434 no es alcanzable desde Docker, debe dejarse
-`SQL_SERVER_INSTANCE=` vacío y asignar a `SQL_SERVER_DOCKER_PORT` el puerto TCP
-real publicado por `SQL2017DEV`. El Compose preserva expresamente el valor
-vacío para activar este modo de conexión directa.
+`SysSolidSETInstanceResource` registra qué recursos fueron descubiertos en cada
+instalación. La validación histórica exige esa relación además de un agente
+activo, evitando utilizar recursos pertenecientes a otra instancia.
+Las cuentas se replican además en `SysSolidSETInstanceLogin`, cuya clave es
+`(IDSolidSETInstance, IDLogin)`. El login de una respuesta se resuelve por la
+instancia de la URL de destino; aunque dos instalaciones reutilicen el mismo
+GUID de login, sus contraseñas no se sobrescriben entre sí.
 
 La cuenta global antigua de SolidSET queda deshabilitada en
 `docker-compose-prod.yml`. Cada respuesta inicia sesión con el `SysLogin` del

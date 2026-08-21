@@ -15,13 +15,13 @@ from app.historical.store import (
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 
 
-def verified_ingestion_agents() -> list[dict[str, Any]]:
+def verified_ingestion_agents(instance: dict[str, Any]) -> list[dict[str, Any]]:
     """Reconciles PostgreSQL targets against active SQL Server agent mappings."""
     verified: list[dict[str, Any]] = []
-    for target in list_active_ingestion_agents():
+    for target in list_active_ingestion_agents(str(instance["ID"])):
         try:
             result = verify_and_sync_solidset_agent_mapping(
-                target["IDResource"], target["IDAgentResource"]
+                target["IDResource"], target["IDAgentResource"], instance
             )
         except Exception as exc:
             print(
@@ -45,7 +45,7 @@ def enqueue_next_batch(
     ensure_schema()
     if agent is None:
         results = []
-        for target in verified_ingestion_agents():
+        for target in verified_ingestion_agents(instance):
             results.append({
                 "resourceId": str(target["IDResource"]),
                 "chat": enqueue_next_batch(instance, dry_run, target),
@@ -77,6 +77,7 @@ def enqueue_next_batch(
     rows = extract_agent_chat_batch(
         int(cursor["LastIDChat2"]), settings.HISTORICAL_INGESTION_BATCH_SIZE,
         resource_id, [str(value) for value in (agent.get("WorkRooms") or [])],
+        instance,
     )
     if not rows:
         set_cursor(
@@ -131,6 +132,7 @@ def enqueue_next_task_batch(
     rows = extract_agent_task_batch(
         int(cursor["LastIDChat2"]), settings.HISTORICAL_INGESTION_BATCH_SIZE,
         resource_id,
+        instance,
     )
     if not rows:
         set_cursor(
@@ -182,8 +184,10 @@ async def run_producer() -> None:
                     )
             except Exception as exc:
                 print(f"⚠️ Recuperação de cursor histórico: {exc}", flush=True)
-            agents = await asyncio.to_thread(verified_ingestion_agents)
             for instance in list_active_solidset_instances():
+                if not instance.get("Database"):
+                    continue
+                agents = await asyncio.to_thread(verified_ingestion_agents, instance)
                 for target in agents:
                     try:
                         await asyncio.to_thread(
