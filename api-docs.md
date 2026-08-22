@@ -52,12 +52,13 @@ Si HTTP-01 no puede atravesar el NAT/firewall, `scripts/issue-letsencrypt-dns.ps
 
 Como alternativa exclusivamente interna, `scripts/issue-internal-certificate.ps1` crea una CA privada `ISICOM Internal Root CA`, emite un certificado con SAN `android.isicom.pt` y activa HTTPS en Nginx. Los clientes deben instalar `certbot/internal/isicom-internal-ca.crt` en su almacén de autoridades raíz. La clave `isicom-internal-ca.key` es sensible, no debe distribuirse y debe custodiarse fuera del servidor tras emitir los certificados necesarios.
 
-La resolución habitual de identidad (`Username`, `FullName`, `IDLogin`, `IDResource`) utiliza exclusivamente la réplica PostgreSQL `SysLogin`; un identificador desconocido no desencadena conexiones a SQL Server. SQL Server queda reservado para ingestas y consultas operativas explícitas. En el perfil CPU de producción, Ollama usa `OLLAMA_KV_CACHE_TYPE=f16` porque una caché V cuantizada requiere Flash Attention.
+La resolución habitual de identidad (`Username`, `FullName`, `IDLogin`, `IDResource`) utiliza exclusivamente la réplica PostgreSQL `SysLogin`. Todas las lecturas de SQL Server —sincronización, histórico, validación, aprendizaje y consultas operativas— se realizan mediante la SolidSET Data API independiente. El agente no abre conexiones TCP a SQL Server ni utiliza sus variables de conexión. En el perfil CPU de producción, Ollama usa `OLLAMA_KV_CACHE_TYPE=f16` porque una caché V cuantizada requiere Flash Attention.
 
-En Windows, cada destino SQL Server se obtiene de `SysSolidSETDatabase`. Para
-una instancia instalada en el host puede configurarse `Host=host.docker.internal`
-y un puerto TCP directo, o indicar `InstanceName` cuando SQL Browser sea
-alcanzable. Catálogo, usuario y contraseña ya no proceden del entorno.
+Cada instancia configura su gateway en PostgreSQL `SysSolidSETDataAPI`. La URL,
+timeout, límite y validación TLS se guardan por instancia; la API key se cifra y
+nunca se devuelve. Las credenciales SQL Server existen únicamente en el fichero
+de entorno del proyecto independiente `solidset-data-api`, desplegado junto al
+servidor de base de datos.
 
 El despliegue `docker-compose-prod.yml` utiliza Ollama por CPU de forma predeterminada y no exige el runtime NVIDIA. Cuando `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` funcione correctamente, la aceleración se activa añadiendo el overlay `docker-compose-prod.gpu.yml`. En producción Uvicorn se ejecuta sin `--reload`.
 
@@ -68,7 +69,7 @@ Uvicorn `--reload` para desarrollo. También espera la salud de PostgreSQL,
 Redis, Ollama y Qdrant, utiliza el perfil CPU seguro y resuelve SolidSET desde
 `SysSolidSETInstance` y las identidades desde `SysLogin` en PostgreSQL.
 
-Última actualización: 19 de agosto de 2026.
+Última actualización: 22 de agosto de 2026.
 
 > Este documento debe actualizarse en el mismo cambio que modifique una ruta, método HTTP, contrato de entrada, respuesta o comportamiento observable de la API.
 
@@ -364,8 +365,8 @@ opcional secuencial y `nomic-embed-text` para conservar la colección actual.
 POST /api/v1/agent/solidset/instances
 ```
 
-Registra o actualiza por `Code` las URLs y la conexión SQL Server independiente
-de una instalación. Los campos SQL Server ya no se leen desde `.env`:
+Registra o actualiza por `Code` las URLs y la SolidSET Data API de una
+instalación. El agente no recibe credenciales SQL Server:
 
 ```json
 {
@@ -377,41 +378,36 @@ de una instalación. Los campos SQL Server ya no se leen desde `.env`:
   "CountryCode": "PT",
   "Locale": "pt-PT",
   "TimeZone": "Europe/Lisbon",
-  "Database": {
-    "Host": "host.docker.internal",
-    "InstanceName": null,
-    "Port": 57258,
-    "DatabaseName": "DEV_ISIFrameIsicom",
-    "Username": "agent_reader",
-    "Password": "<secret>",
-    "Encrypt": false,
-    "TrustServerCertificate": true,
-    "ConnectionTimeout": 15,
-    "SchemaVersion": "2026.08",
-    "AdapterCode": "solidset-v1",
+  "DataAPI": {
+    "BaseUrl": "https://192.168.10.20:8081",
+    "APIKey": "<secret>",
+    "TimeoutSeconds": 120,
+    "MaxRows": 5000,
+    "VerifyTLS": true,
     "active": true
   },
   "active": true
 }
 ```
 
-La configuración general se guarda en `SysSolidSETInstance` y su conexión en
-`SysSolidSETDatabase`. La contraseña se cifra con Fernet antes de persistirse y
-nunca se devuelve: la respuesta solo contiene `PasswordConfigured=true`. Para
-actualizar una instancia sin cambiar su contraseña se omite `Database.Password`.
+La configuración general se guarda en `SysSolidSETInstance` y el gateway en
+`SysSolidSETDataAPI`. La API key se cifra con Fernet antes de persistirse y nunca
+se devuelve: la respuesta solo contiene `APIKeyConfigured=true`. Para actualizar
+una instancia sin cambiarla se omite `DataAPI.APIKey`.
 Si no se proporciona `LLM_CREDENTIAL_ENCRYPTION_KEY`, la API genera una clave
 Fernet una sola vez en `/app/data/credential.key`. El directorio `data` ya está
 montado de forma persistente en desarrollo, API, producer y worker. También se
-puede proporcionar la clave como secreto de despliegue; no es una credencial
-SQL Server. El fichero o secreto debe incluirse en las copias de seguridad: si
-se pierde, las contraseñas guardadas no se pueden recuperar.
+puede proporcionar la clave como secreto de despliegue; no es la API key ni una
+credencial SQL Server. El fichero debe incluirse en las copias de seguridad: si
+se pierde, las credenciales guardadas no se pueden recuperar.
 Si la variable o el fichero contienen una clave que no es Fernet válida, la
 variable se ignora y el fichero se conserva como
 `credential.key.invalid-<timestamp>` antes de generar una clave correcta.
 
-Dentro de Docker, `Database.Host=localhost`, `127.0.0.1` o `.` se traduce a
-`host.docker.internal`. En una máquina donde SQL Server esté en otro servidor
-debe utilizarse directamente su DNS o IP.
+`DataAPI.BaseUrl` debe ser alcanzable desde los contenedores del agente. Si el
+gateway de prueba está en el mismo compose se usa
+`http://solidset-data-api:8080`; si está en el servidor SolidSET se utiliza su
+DNS o IP HTTPS.
 
 Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`;
 si encuentra alguna, actualiza la misma fila y conserva su `ID`. `BaseUrl` se
@@ -423,15 +419,51 @@ Después del registro se verifica la conexión mediante:
 POST /api/v1/agent/solidset/instances/solidset-lisboa/test-connection
 ```
 
-La prueba devuelve el catálogo real, una versión abreviada del servidor, el
-adaptador seleccionado y si existe `dbo.SysResource2Agent`. El resultado queda
-auditado en `LastConnectionAt`, `LastConnectionStatus` y
-`LastConnectionError`; nunca incluye usuario, contraseña ni cadena completa.
+La prueba atraviesa la Data API y devuelve el catálogo real, una versión
+abreviada del servidor, el adaptador y si existe `dbo.SysResource2Agent`; nunca
+incluye usuario, contraseña ni cadena completa.
 
-`AdapterCode` desacopla las consultas de la versión instalada. Actualmente
-`solidset-v1` representa el esquema conocido. Una instalación con tablas o
-columnas diferentes debe incorporar un nuevo adaptador antes de activarse; no
-se permite usar silenciosamente las consultas de otra versión.
+El proyecto independiente está en `solidset-data-api/` y expone:
+
+```http
+GET  /health
+GET  /api/v1/system/capabilities
+GET  /api/v1/datasets/{dataset}
+GET  /api/v1/agents/{humanResourceId}
+POST /api/v1/query/read
+```
+
+Los endpoints protegidos requieren `X-SolidSET-Data-Key`. `query/read` admite
+solo `SELECT` o CTE parametrizadas, rechaza escritura, procedimientos,
+comentarios y múltiples instrucciones, y limita el número de filas. La cuenta
+SQL configurada en el gateway también debe tener permisos exclusivamente de
+lectura. Esta primera versión conserva las consultas existentes mientras su
+ejecución y las credenciales quedan fuera del agente.
+
+Los datasets `resources`, `logins`, `workrooms` y `workroom-resources`, junto
+con la validación `agents/{humanResourceId}`, mantienen sus consultas dentro del
+proyecto independiente. Las consultas históricas y de aprendizaje cuyo SQL se
+adapta dinámicamente al esquema utilizan `query/read`, pero también se ejecutan
+exclusivamente dentro del gateway.
+
+Para ejecutar el gateway de prueba en la misma máquina:
+
+```powershell
+docker compose -f docker-compose-dev.yml --profile data-api up -d --build solidset-data-api
+```
+
+Para desplegarlo completamente separado en el servidor donde está SQL Server,
+se utiliza el Compose incluido dentro del proyecto independiente:
+
+```powershell
+Set-Location solidset-data-api
+Copy-Item .env.example .env
+# Configurar SQL_SERVER_* y SOLIDSET_DATA_API_KEY en .env.
+docker compose up -d --build
+```
+
+Este Compose crea solamente `solidset_data_api`, su red privada y el
+healthcheck; no requiere ningún contenedor del agente.
 
 `CountryCode`, `Locale` y `TimeZone` definen el contexto regional de las
 respuestas. `TimeZone` debe ser una zona IANA válida, como `Europe/Lisbon`, y

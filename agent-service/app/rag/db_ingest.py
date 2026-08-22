@@ -102,15 +102,8 @@ class DatabaseIngestor:
         return points
 
     def _sql_server_connection(self):
-        import pymssql
-
-        return pymssql.connect(
-            **settings.sql_server_connection_options(),
-            user=settings.SQL_SERVER_USER,
-            password=settings.SQL_SERVER_PASSWORD,
-            database=settings.SQL_SERVER_DB,
-            timeout=10,
-        )
+        from app.connectors.solidset_sql import open_current_connection
+        return open_current_connection(as_dict=False)
 
     def _quote_identifier(self, raw_name: str) -> str:
         return f"[{str(raw_name).replace(']', ']]')}]"
@@ -420,16 +413,9 @@ class DatabaseIngestor:
         Tabla: dbo.Account
         """
         try:
-            import pymssql
             print("\n📊 Ingestando clientes desde SQL Server...")
-            
-            conn = pymssql.connect(
-                **settings.sql_server_connection_options(),
-                user=settings.SQL_SERVER_USER,
-                password=settings.SQL_SERVER_PASSWORD,
-                database=settings.SQL_SERVER_DB,
-                timeout=10
-            )
+            from app.connectors.solidset_sql import open_current_connection
+            conn = open_current_connection(as_dict=True)
             cursor = conn.cursor(as_dict=True)
             
             # Consulta para obtener clientes
@@ -492,9 +478,6 @@ class DatabaseIngestor:
             
             return self._ingest_points(points, "SQL Server Accounts")
             
-        except ImportError:
-            print("   ❌ pymssql no está instalado. Instala: pip install pymssql")
-            return 0
         except Exception as e:
             print(f"   ❌ Error ingiriendo desde SQL Server: {e}")
             return 0
@@ -505,16 +488,9 @@ class DatabaseIngestor:
         Tabla: dbo.Asset
         """
         try:
-            import pymssql
             print("\n🔧 Ingestando máquinas desde SQL Server...")
-            
-            conn = pymssql.connect(
-                **settings.sql_server_connection_options(),
-                user=settings.SQL_SERVER_USER,
-                password=settings.SQL_SERVER_PASSWORD,
-                database=settings.SQL_SERVER_DB,
-                timeout=10
-            )
+            from app.connectors.solidset_sql import open_current_connection
+            conn = open_current_connection(as_dict=True)
             cursor = conn.cursor(as_dict=True)
             
             query = f"""
@@ -577,9 +553,6 @@ class DatabaseIngestor:
             
             return self._ingest_points(points, "SQL Server Assets")
             
-        except ImportError:
-            print("   ❌ pymssql no está instalado. Instala: pip install pymssql")
-            return 0
         except Exception as e:
             print(f"   ❌ Error ingiriendo desde SQL Server: {e}")
             return 0
@@ -590,16 +563,9 @@ class DatabaseIngestor:
         Tabla: dbo.Activity
         """
         try:
-            import pymssql
             print("\n📝 Ingestando actividades desde SQL Server...")
-            
-            conn = pymssql.connect(
-                **settings.sql_server_connection_options(),
-                user=settings.SQL_SERVER_USER,
-                password=settings.SQL_SERVER_PASSWORD,
-                database=settings.SQL_SERVER_DB,
-                timeout=10
-            )
+            from app.connectors.solidset_sql import open_current_connection
+            conn = open_current_connection(as_dict=True)
             cursor = conn.cursor(as_dict=True)
             
             query = f"""

@@ -3,66 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-import pymssql
-
-from app.config import settings
-from app.connectors.solidset_sql import connect as connect_solidset_sql
+from app.connectors.solidset_data_api import (
+    read_active_resource_agent,
+    read_dataset,
+)
 from app.connectors.db_client import _postgres_connection
-
-
-RESOURCE_QUERY = """
-    SELECT
-        SysResources.DisplayName,
-        SysResources.ResourceId,
-        SysResources.ActiveIDLogin2Resource,
-        SysResource2Agent.IDAgentResource,
-        SysLogin.FullName
-    FROM dbo.SysResources
-    INNER JOIN dbo.SysLogin
-        ON SysLogin.ActiveIDLogin2Resource = SysResources.ActiveIDLogin2Resource
-    LEFT JOIN dbo.SysResource2Agent
-        ON SysResource2Agent.IDHumanResource = SysResources.ResourceId
-       AND SysResource2Agent.Active = 1
-    ORDER BY SysResources.DisplayName ASC
-"""
-
-
-CHAT_RESOURCE_QUERY = """
-    SELECT
-        SysResources.DisplayName,
-        SysResources.ResourceId,
-        SysLogin.FullName,
-        SysWorkRoom.Code,
-        SysWorkRoom.Name,
-        SysWorkRoom.IDWorkRoom
-    FROM dbo.SysResources
-    INNER JOIN dbo.SysLogin
-        ON SysLogin.ActiveIDLogin2Resource = SysResources.ActiveIDLogin2Resource
-    INNER JOIN dbo.SysWorkRoomResource
-        ON SysWorkRoomResource.IDResource = SysResources.ResourceId
-    INNER JOIN dbo.SysWorkRoom
-        ON SysWorkRoom.IDWorkRoom = SysWorkRoomResource.IDWorkRoom
-    ORDER BY SysResources.DisplayName ASC
-"""
-
-
-WORKROOM_QUERY = """
-    SELECT Code, Name, Description, IDWorkRoom
-    FROM dbo.SysWorkRoom
-"""
-
-
-LOGIN_QUERY = """
-    SELECT
-        Username,
-        FullName,
-        Password,
-        Salt,
-        IDLogin,
-        LastIDResource,
-        ActiveIDLogin2Resource
-    FROM dbo.SysLogin
-"""
 
 
 def verify_and_sync_solidset_agent_mapping(
@@ -79,18 +24,9 @@ def verify_and_sync_solidset_agent_mapping(
     )
     if instance is None:
         raise RuntimeError("A instância SolidSET é obrigatória para verificar o agente.")
-    with connect_solidset_sql(instance, as_dict=True) as source_connection:
-        source_cursor = source_connection.cursor(as_dict=True)
-        source_cursor.execute(
-            """
-            SELECT TOP 1 IDAgentResource
-            FROM dbo.SysResource2Agent WITH (NOLOCK)
-            WHERE IDHumanResource = %s AND Active = 1
-            ORDER BY CreatedUtc DESC
-            """,
-            (str(human_id),),
-        )
-        source_row = source_cursor.fetchone()
+    source_row = read_active_resource_agent(
+        instance.get("DataAPI") or {}, str(human_id)
+    )
 
     verified_agent_id = (
         UUID(str(source_row.get("IDAgentResource")))
@@ -126,10 +62,7 @@ def verify_and_sync_solidset_agent_mapping(
 
 def ingest_solidset_logins(instance: dict[str, object]) -> dict[str, int]:
     """Sincroniza cuentas SolidSET para autenticar al agente de cada recurso."""
-    with connect_solidset_sql(instance, as_dict=True) as source_connection:
-        source_cursor = source_connection.cursor(as_dict=True)
-        source_cursor.execute(LOGIN_QUERY)
-        source_rows = source_cursor.fetchall() or []
+    source_rows = read_dataset(instance.get("DataAPI") or {}, "logins")
 
     logins: dict[
         UUID,
@@ -228,10 +161,7 @@ def ingest_solidset_logins(instance: dict[str, object]) -> dict[str, int]:
 
 def ingest_solidset_resources(instance: dict[str, object]) -> dict[str, int]:
     """Sincroniza los recursos de SolidSET desde SQL Server hacia PostgreSQL."""
-    with connect_solidset_sql(instance, as_dict=True) as source_connection:
-        source_cursor = source_connection.cursor(as_dict=True)
-        source_cursor.execute(RESOURCE_QUERY)
-        source_rows = source_cursor.fetchall() or []
+    source_rows = read_dataset(instance.get("DataAPI") or {}, "resources")
 
     # El diccionario evita duplicados si SQL Server devuelve más de un login
     # para el mismo recurso. La clave canónica siempre es ResourceId.
@@ -306,10 +236,7 @@ def ingest_solidset_resources(instance: dict[str, object]) -> dict[str, int]:
 
 def ingest_solidset_chat_resources(instance: dict[str, object]) -> dict[str, int]:
     """Sincroniza las relaciones recurso-sala desde SolidSET."""
-    with connect_solidset_sql(instance, as_dict=True) as source_connection:
-        source_cursor = source_connection.cursor(as_dict=True)
-        source_cursor.execute(CHAT_RESOURCE_QUERY)
-        source_rows = source_cursor.fetchall() or []
+    source_rows = read_dataset(instance.get("DataAPI") or {}, "workroom-resources")
 
     relations: dict[tuple[UUID, UUID], str | None] = {}
     skipped = 0
@@ -375,10 +302,7 @@ def ingest_solidset_chat_resources(instance: dict[str, object]) -> dict[str, int
 
 def ingest_solidset_workrooms(instance: dict[str, object]) -> dict[str, int]:
     """Sincroniza el catálogo de canales de SolidSET hacia PostgreSQL."""
-    with connect_solidset_sql(instance, as_dict=True) as source_connection:
-        source_cursor = source_connection.cursor(as_dict=True)
-        source_cursor.execute(WORKROOM_QUERY)
-        source_rows = source_cursor.fetchall() or []
+    source_rows = read_dataset(instance.get("DataAPI") or {}, "workrooms")
 
     workrooms: dict[UUID, tuple[str | None, str | None, str | None]] = {}
     skipped = 0

@@ -185,7 +185,7 @@ async def run_producer() -> None:
             except Exception as exc:
                 print(f"⚠️ Recuperação de cursor histórico: {exc}", flush=True)
             for instance in list_active_solidset_instances():
-                if not instance.get("Database"):
+                if not instance.get("DataAPI"):
                     continue
                 agents = await asyncio.to_thread(verified_ingestion_agents, instance)
                 for target in agents:

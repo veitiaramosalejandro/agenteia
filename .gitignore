@@ -13,3 +13,4 @@ certbot/conf/
 certbot/www/
 .env.production
 .env
+solidset-data-api/.env

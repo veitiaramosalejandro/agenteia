@@ -1,4 +1,32 @@
 services:
+  # Gateway SQL Server independiente. En una instalación real debe desplegarse
+  # junto al servidor SolidSET/SQL y exponerse al agente mediante HTTPS.
+  solidset-data-api:
+    profiles: ["data-api"]
+    image: solidset-data-api:0.1.0
+    build:
+      context: ./solidset-data-api
+      dockerfile: Dockerfile
+    container_name: solidset_data_api
+    hostname: solidset-data-api
+    restart: unless-stopped
+    ports:
+      - 8081:8080
+    environment:
+      SOLIDSET_DATA_API_KEY: ${SOLIDSET_DATA_API_KEY:-change-this-development-key}
+      SQL_SERVER_HOST: ${SQL_SERVER_DOCKER_HOST:-host.docker.internal}
+      SQL_SERVER_INSTANCE: ${SQL_SERVER_INSTANCE:-SQL2017DEV}
+      SQL_SERVER_PORT: ${SQL_SERVER_DOCKER_PORT:-1433}
+      SQL_SERVER_DATABASE: ${SQL_SERVER_DB:-DEV_ISIFrameIsicom}
+      SQL_SERVER_USERNAME: ${SQL_SERVER_USER:-sa}
+      SQL_SERVER_PASSWORD: ${SQL_SERVER_PASSWORD:-}
+      SQL_SERVER_LOGIN_TIMEOUT: ${DB_INGEST_CONNECT_TIMEOUT_SECONDS:-15}
+      SQL_SERVER_QUERY_TIMEOUT: ${DB_INGEST_QUERY_TIMEOUT_SECONDS:-120}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - machining-network
+
   nginx:
     image: nginx:1.27-alpine
     container_name: machining_nginx
@@ -76,7 +104,7 @@ services:
   # docker compose -f docker-compose-dev.yml up -d --scale agent-worker=4
   agent-worker:
     image: agent-service:0.0.1
-    container_name: machining_agent_worker
+    container_name: agent-worker
     hostname: agent-worker
     build:
       context: ./agent-service
@@ -113,6 +141,7 @@ services:
 
   historical-worker:
     image: agent-service:0.0.1
+    container_name: historical-worker
     build:
       context: ./agent-service
       dockerfile: Dockerfile
@@ -135,6 +164,7 @@ services:
     networks: [machining-network]
 
   historical-producer:
+    container_name: historical-producer
     extends:
       service: historical-worker
     command: ["python", "-m", "app.historical.producer"]
@@ -280,6 +310,7 @@ services:
 networks:
   machining-network:
     driver: bridge
+    name: machining-network
 
 volumes:
   redis_data:

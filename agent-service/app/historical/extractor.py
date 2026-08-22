@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from typing import Any
-import pymssql
-
 from app.config import settings
-from app.connectors.solidset_sql import connect as connect_solidset_sql
+from app.connectors.solidset_sql import (
+    connect as connect_solidset_sql,
+    open_current_connection,
+)
 
 
 QUERY = '''
@@ -77,12 +78,7 @@ ORDER BY c.IDChat2 ASC
 
 
 def extract_batch(last_id_chat2: int, batch_size: int) -> list[dict[str, Any]]:
-    with pymssql.connect(
-        **settings.sql_server_connection_options(), user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD, database=settings.SQL_SERVER_DB,
-        login_timeout=settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS,
-        timeout=settings.DB_INGEST_QUERY_TIMEOUT_SECONDS, as_dict=True,
-    ) as conn, conn.cursor(as_dict=True) as cur:
+    with open_current_connection(as_dict=True) as conn, conn.cursor(as_dict=True) as cur:
         cur.execute(QUERY, (batch_size, last_id_chat2))
         return [dict(row) for row in (cur.fetchall() or [])]
 

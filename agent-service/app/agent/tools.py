@@ -80,7 +80,7 @@ def _resolve_solidset_meeting_id(
                 row = cursor.fetchone()
                 if row:
                     return str(row["ID"])
-    except pymssql.Error as exc:
+    except (pymssql.Error, RuntimeError) as exc:
         print(f"⚠️ No se pudo validar el meeting de SolidSET: {exc}")
     return None
 
@@ -359,7 +359,7 @@ def _solidset_login(
                                 ),
                                 None,
                             )
-                            if not matching_instance or not matching_instance.get("Database"):
+                            if not matching_instance or not matching_instance.get("DataAPI"):
                                 raise RuntimeError(
                                     "A instância de destino não tem ligação SQL Server configurada."
                                 )
@@ -889,7 +889,7 @@ def query_sql_server(query: str) -> str:
 
         return json.dumps(rows[:15])
 
-    except pymssql.Error as db_err:
+    except (pymssql.Error, RuntimeError) as db_err:
         return f"Error SQL Server: {str(db_err)}. Ajusta los campos/tablas y vuelve a intentar."
     except Exception as e:
         return f"Error al conectar o consultar SQL Server: {str(e)}"

@@ -67,6 +67,19 @@ def ensure_solidset_instance_location_schema() -> None:
                       "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       CONSTRAINT "CK_SysSolidSETDatabase_Port" CHECK ("Port" BETWEEN 0 AND 65535)
                     );
+                    CREATE TABLE IF NOT EXISTS public."SysSolidSETDataAPI" (
+                      "ID" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                      "IDSolidSETInstance" uuid NOT NULL UNIQUE
+                        REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
+                      "BaseUrl" varchar(500) NOT NULL,
+                      "EncryptedAPIKey" text NOT NULL,
+                      "TimeoutSeconds" integer NOT NULL DEFAULT 120,
+                      "MaxRows" integer NOT NULL DEFAULT 5000,
+                      "VerifyTLS" boolean NOT NULL DEFAULT true,
+                      active boolean NOT NULL DEFAULT true,
+                      "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
                     CREATE TABLE IF NOT EXISTS public."SysSolidSETInstanceResource" (
                       "IDSolidSETInstance" uuid NOT NULL
                         REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
@@ -285,6 +298,36 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
                     database.get("ConnectionTimeout", 15), database.get("SchemaVersion"),
                     database.get("AdapterCode", "solidset-v1"), database.get("active", True),
                 ))
+            data_api = configuration.get("DataAPI")
+            if data_api:
+                encrypted_key = encrypt_api_key(data_api.get("APIKey"))
+                if not encrypted_key:
+                    cursor.execute(
+                        'SELECT "EncryptedAPIKey" FROM public."SysSolidSETDataAPI" '
+                        'WHERE "IDSolidSETInstance"=%s', (row["ID"],),
+                    )
+                    previous = cursor.fetchone()
+                    encrypted_key = previous["EncryptedAPIKey"] if previous else None
+                if not encrypted_key:
+                    raise ValueError("APIKey é obrigatória ao criar a SolidSET Data API.")
+                cursor.execute('''
+                  INSERT INTO public."SysSolidSETDataAPI" (
+                    "IDSolidSETInstance", "BaseUrl", "EncryptedAPIKey",
+                    "TimeoutSeconds", "MaxRows", "VerifyTLS", active
+                  ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+                  ON CONFLICT ("IDSolidSETInstance") DO UPDATE SET
+                    "BaseUrl"=EXCLUDED."BaseUrl",
+                    "EncryptedAPIKey"=EXCLUDED."EncryptedAPIKey",
+                    "TimeoutSeconds"=EXCLUDED."TimeoutSeconds",
+                    "MaxRows"=EXCLUDED."MaxRows",
+                    "VerifyTLS"=EXCLUDED."VerifyTLS",
+                    active=EXCLUDED.active,
+                    "UpdatedAt"=CURRENT_TIMESTAMP
+                ''', (
+                    row["ID"], data_api["BaseUrl"], encrypted_key,
+                    data_api.get("TimeoutSeconds", 120), data_api.get("MaxRows", 5000),
+                    data_api.get("VerifyTLS", True), data_api.get("active", True),
+                ))
     if row is None:
         raise RuntimeError("PostgreSQL no devolvió la instancia SolidSET guardada.")
     result = dict(row)
@@ -322,6 +365,9 @@ def get_solidset_instance(
                 cursor.execute('SELECT * FROM public."SysSolidSETDatabase" WHERE "IDSolidSETInstance"=%s', (result["ID"],))
                 database = cursor.fetchone()
                 result["Database"] = dict(database) if database else None
+                cursor.execute('SELECT * FROM public."SysSolidSETDataAPI" WHERE "IDSolidSETInstance"=%s', (result["ID"],))
+                data_api = cursor.fetchone()
+                result["DataAPI"] = dict(data_api) if data_api else None
     return result
 
 
@@ -337,6 +383,9 @@ def list_active_solidset_instances() -> list[dict[str, Any]]:
                 cursor.execute('SELECT * FROM public."SysSolidSETDatabase" WHERE "IDSolidSETInstance"=%s', (row["ID"],))
                 database = cursor.fetchone()
                 row["Database"] = dict(database) if database else None
+                cursor.execute('SELECT * FROM public."SysSolidSETDataAPI" WHERE "IDSolidSETInstance"=%s', (row["ID"],))
+                data_api = cursor.fetchone()
+                row["DataAPI"] = dict(data_api) if data_api else None
             return rows
 
 

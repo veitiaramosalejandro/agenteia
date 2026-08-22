@@ -5,10 +5,9 @@ from contextvars import ContextVar
 import os
 from typing import Any, Iterator
 
-import pymssql
-
 from app.config import settings
 from app.llm.secrets import decrypt_api_key, encrypt_api_key
+from app.connectors.solidset_data_api import connect as connect_data_api
 
 _current_instance: ContextVar[dict[str, Any] | None] = ContextVar(
     "solidset_sql_instance", default=None,
@@ -44,23 +43,19 @@ def connection_options(instance: dict[str, Any]) -> dict[str, Any]:
 
 
 @contextmanager
-def connect(instance: dict[str, Any], *, as_dict: bool = False) -> Iterator[pymssql.Connection]:
-    database = instance.get("Database") or {}
-    if not database.get("active", True):
-        raise RuntimeError("A ligação SQL Server desta instância está desativada.")
-    connection = pymssql.connect(
-        **connection_options(instance),
-        user=str(database.get("Username") or ""),
-        password=decrypt_sql_password(database.get("EncryptedPassword")),
-        database=str(database.get("DatabaseName") or ""),
-        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        timeout=max(10, settings.DB_INGEST_QUERY_TIMEOUT_SECONDS),
-        as_dict=as_dict,
+def connect(instance: dict[str, Any], *, as_dict: bool = False) -> Iterator[Any]:
+    data_api = instance.get("DataAPI") or {}
+    if data_api.get("active") and str(data_api.get("BaseUrl") or "").strip():
+        connection = connect_data_api(data_api, as_dict=as_dict)
+        try:
+            yield connection
+        finally:
+            connection.close()
+        return
+    raise RuntimeError(
+        "A instância SolidSET não tem uma SolidSET Data API ativa; "
+        "o acesso SQL Server direto está desativado."
     )
-    try:
-        yield connection
-    finally:
-        connection.close()
 
 
 @contextmanager
@@ -72,17 +67,16 @@ def instance_context(instance: dict[str, Any]) -> Iterator[None]:
         _current_instance.reset(token)
 
 
-def open_current_connection(*, as_dict: bool = False) -> pymssql.Connection:
+def open_current_connection(*, as_dict: bool = False) -> Any:
     instance = _current_instance.get()
     if not instance:
         raise RuntimeError("Não existe uma instância SolidSET no contexto SQL atual.")
-    database = instance.get("Database") or {}
-    return pymssql.connect(
-        **connection_options(instance), user=str(database.get("Username") or ""),
-        password=decrypt_sql_password(database.get("EncryptedPassword")),
-        database=str(database.get("DatabaseName") or ""),
-        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        timeout=max(10, settings.DB_INGEST_QUERY_TIMEOUT_SECONDS), as_dict=as_dict,
+    data_api = instance.get("DataAPI") or {}
+    if data_api.get("active") and str(data_api.get("BaseUrl") or "").strip():
+        return connect_data_api(data_api, as_dict=as_dict)
+    raise RuntimeError(
+        "A instância SolidSET não tem uma SolidSET Data API ativa; "
+        "o acesso SQL Server direto está desativado."
     )
 
 

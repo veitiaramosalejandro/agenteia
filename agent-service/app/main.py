@@ -1276,8 +1276,8 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             code=str(candidate.get("solidset_instance_code") or "") or None,
             source_ip=None,
         )
-        if not instance or not instance.get("Database"):
-            print("⚠️ Agente omitido: instância sem ligação SQL Server configurada")
+        if not instance or not instance.get("DataAPI"):
+            print("⚠️ Agente omitido: instância sem SolidSET Data API configurada")
             continue
         try:
             ensure_payload_agent_workroom_assignments(channel_id, selected)
@@ -1293,7 +1293,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 verification = verify_and_sync_solidset_agent_mapping(
                     selected_resource_id, expected_agent_id, instance
                 )
-            except (ValueError, pymssql.Error, psycopg.Error) as exc:
+            except (ValueError, pymssql.Error, psycopg.Error, RuntimeError) as exc:
                 print(
                     "⚠️ Agente omitido: no se pudo verificar SysResource2Agent "
                     f"IDHumanResource={selected_resource_id}: {exc}"
@@ -1388,8 +1388,8 @@ def _invoke_orchestrator_for_instance(instance_code: str, **kwargs: Any) -> str:
     if not instance_code:
         return orchestrator.invoke(**kwargs)
     instance = get_solidset_instance(code=instance_code, source_ip=None)
-    if not instance or not instance.get("Database"):
-        raise RuntimeError("A instância SolidSET não tem uma ligação SQL Server configurada.")
+    if not instance or not instance.get("DataAPI"):
+        raise RuntimeError("A instância SolidSET não tem uma SolidSET Data API configurada.")
     with solidset_sql_instance_context(instance):
         return orchestrator.invoke(**kwargs)
 
@@ -1964,7 +1964,7 @@ def _run_startup_connectivity_checks() -> dict:
     }
 
     checks["sql_server"] = {
-        "configured": any(bool(item.get("Database")) for item in configured_instances),
+        "configured": any(bool(item.get("DataAPI")) for item in configured_instances),
         "instances": [
             {"code": item["code"], "connection": item["database"]}
             for item in instance_checks
@@ -2496,6 +2496,27 @@ class SolidSETDatabaseStored(BaseModel):
     PasswordConfigured: bool = True
 
 
+class SolidSETDataAPIConfiguration(BaseModel):
+    BaseUrl: str = Field(..., min_length=8, max_length=500)
+    APIKey: Optional[str] = Field(None, max_length=8000)
+    TimeoutSeconds: int = Field(120, ge=5, le=3600)
+    MaxRows: int = Field(5000, ge=1, le=100000)
+    VerifyTLS: bool = True
+    active: bool = True
+
+    class Config:
+        extra = "forbid"
+
+
+class SolidSETDataAPIStored(BaseModel):
+    BaseUrl: str
+    TimeoutSeconds: int
+    MaxRows: int
+    VerifyTLS: bool
+    active: bool
+    APIKeyConfigured: bool = True
+
+
 class SolidSETInstanceConfiguration(BaseModel):
     Code: str = Field(..., min_length=1, max_length=80)
     Name: str = Field(..., min_length=1, max_length=255)
@@ -2507,6 +2528,7 @@ class SolidSETInstanceConfiguration(BaseModel):
     TimeZone: str = Field("Europe/Lisbon", min_length=1, max_length=80)
     active: bool = True
     Database: Optional[SolidSETDatabaseConfiguration] = None
+    DataAPI: Optional[SolidSETDataAPIConfiguration] = None
 
     class Config:
         extra = "forbid"
@@ -2518,6 +2540,7 @@ class SolidSETInstanceStored(SolidSETInstanceConfiguration):
     UpdatedAt: datetime
 
     Database: Optional[SolidSETDatabaseStored] = None
+    DataAPI: Optional[SolidSETDataAPIStored] = None
 
 
 class SolidSETInstanceConfigurationResponse(BaseModel):
@@ -2973,10 +2996,10 @@ def sync_solidset_workrooms(instanceCode: str = Query(...)) -> SysWorkRoomIngest
     """Synchronizes dbo.SysWorkRoom using the SQL Server connection selected by instanceCode."""
     try:
         instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("Database"):
-            raise HTTPException(status_code=404, detail="A instância ou a ligação SQL Server não existe.")
+        if not instance or not instance.get("DataAPI"):
+            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
         result = ingest_solidset_workrooms(instance)
-    except (pymssql.Error, psycopg.Error) as exc:
+    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
         print(f"❌ No se pudo sincronizar SysWorkRoom: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2995,10 +3018,10 @@ def sync_solidset_logins(instanceCode: str = Query(...)) -> SysLoginIngestRespon
     """Synchronizes dbo.SysLogin without exposing credentials in the response."""
     try:
         instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("Database"):
-            raise HTTPException(status_code=404, detail="A instância ou a ligação SQL Server não existe.")
+        if not instance or not instance.get("DataAPI"):
+            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
         result = ingest_solidset_logins(instance)
-    except (pymssql.Error, psycopg.Error) as exc:
+    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
         print(f"❌ No se pudo sincronizar SysLogin: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -3189,10 +3212,10 @@ def sync_solidset_chat_resources(instanceCode: str = Query(...)) -> SysChatIARes
     """Synchronizes resource-to-workroom assignments for the selected instance."""
     try:
         instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("Database"):
-            raise HTTPException(status_code=404, detail="A instância ou a ligação SQL Server não existe.")
+        if not instance or not instance.get("DataAPI"):
+            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
         result = ingest_solidset_chat_resources(instance)
-    except (pymssql.Error, psycopg.Error) as exc:
+    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
         print(f"❌ No se pudo sincronizar SysChatIAResource: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -3210,10 +3233,10 @@ def sync_solidset_resources(instanceCode: str = Query(...)) -> SysResourceIAInge
     """Synchronizes SysResources using the SQL Server connection selected by instanceCode."""
     try:
         instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("Database"):
-            raise HTTPException(status_code=404, detail="A instância ou a ligação SQL Server não existe.")
+        if not instance or not instance.get("DataAPI"):
+            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
         result = ingest_solidset_resources(instance)
-    except (pymssql.Error, psycopg.Error) as exc:
+    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
         print(f"❌ No se pudo sincronizar SysResourceIA: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -3278,6 +3301,16 @@ def register_solidset_instance(
     language, *locale_parts = payload["Locale"].strip().split("-")
     payload["Locale"] = "-".join([language.lower(), *[part.upper() for part in locale_parts]])
     payload["TimeZone"] = payload["TimeZone"].strip()
+    data_api_payload = payload.get("DataAPI")
+    if data_api_payload:
+        data_api_url = str(data_api_payload.get("BaseUrl") or "").strip().rstrip("/")
+        parsed_data_api = urlparse(data_api_url)
+        if parsed_data_api.scheme not in {"http", "https"} or not parsed_data_api.netloc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="DataAPI.BaseUrl deve ser um URL HTTP(S) absoluto.",
+            )
+        data_api_payload["BaseUrl"] = data_api_url
     try:
         ZoneInfo(payload["TimeZone"])
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -3313,6 +3346,14 @@ def register_solidset_instance(
             )
         }
         saved["Database"]["PasswordConfigured"] = bool(database.get("EncryptedPassword"))
+    data_api = saved.get("DataAPI")
+    if data_api:
+        saved["DataAPI"] = {
+            key: data_api.get(key) for key in (
+                "BaseUrl", "TimeoutSeconds", "MaxRows", "VerifyTLS", "active",
+            )
+        }
+        saved["DataAPI"]["APIKeyConfigured"] = bool(data_api.get("EncryptedAPIKey"))
     return SolidSETInstanceConfigurationResponse(
         status=operation,
         configuration=SolidSETInstanceStored(**saved),
@@ -3323,23 +3364,25 @@ def register_solidset_instance(
     "/api/v1/agent/solidset/instances/{code}/test-connection",
     response_model=SolidSETDatabaseConnectionTestResponse,
     tags=["SolidSET instances"],
-    summary="Test the SQL Server connection configured for a SolidSET instance",
+    summary="Test the configured SolidSET data provider",
 )
 def test_solidset_instance_database(code: str) -> SolidSETDatabaseConnectionTestResponse:
     """Tests connectivity and basic schema capabilities without exposing credentials."""
     instance = get_solidset_instance(code=code.strip(), source_ip=None)
     if not instance:
         raise HTTPException(status_code=404, detail="A instância SolidSET não existe ou está inativa.")
-    if not instance.get("Database"):
-        raise HTTPException(status_code=409, detail="A instância não tem uma ligação SQL Server configurada.")
+    if not instance.get("DataAPI"):
+        raise HTTPException(status_code=409, detail="A instância não tem um fornecedor de dados configurado.")
     try:
         result = test_solidset_sql_connection(instance)
-        update_solidset_database_connection_status(instance["ID"], "connected")
+        if instance.get("Database"):
+            update_solidset_database_connection_status(instance["ID"], "connected")
     except Exception as exc:
-        update_solidset_database_connection_status(instance["ID"], "failed", str(exc)[:2000])
+        if instance.get("Database"):
+            update_solidset_database_connection_status(instance["ID"], "failed", str(exc)[:2000])
         raise HTTPException(
             status_code=503,
-            detail="Não foi possível estabelecer ligação ao SQL Server desta instância.",
+            detail="Não foi possível estabelecer ligação ao fornecedor de dados desta instância.",
         ) from exc
     return SolidSETDatabaseConnectionTestResponse(
         status="connected", instanceCode=str(instance["Code"]), **result,
@@ -3717,8 +3760,8 @@ async def suggest_chat_question_response(
     try:
         _update_response_status(request_id, "processing")
         solidset_instance = _resolve_request_solidset_instance(request)
-        if not solidset_instance or not solidset_instance.get("Database"):
-            raise LookupError("A instância SolidSET não tem ligação SQL Server configurada.")
+        if not solidset_instance or not solidset_instance.get("DataAPI"):
+            raise LookupError("A instância SolidSET não tem um fornecedor de dados configurado.")
         verification = await asyncio.to_thread(
             verify_and_sync_solidset_agent_mapping,
             context["requester_resource"],
@@ -3933,7 +3976,7 @@ async def start_historical_ingestion(
             for instance in instances
         ]
         return {"status":"accepted", "dryRun":configuration.dryRun, "instances":results}
-    except (pymssql.Error, psycopg.Error, redis.RedisError) as exc:
+    except (pymssql.Error, psycopg.Error, redis.RedisError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail="Não foi possível iniciar o lote de ingestão histórica.") from exc
 
 
@@ -4471,8 +4514,8 @@ def capture_solidset_agent_reaction(
     try:
         print(req)
         instance = _resolve_request_solidset_instance(request)
-        if not instance or not instance.get("Database"):
-            raise RuntimeError("A instância SolidSET não tem ligação SQL Server configurada.")
+        if not instance or not instance.get("DataAPI"):
+            raise RuntimeError("A instância SolidSET não tem uma SolidSET Data API configurada.")
         message = resolve_agent_message(req.IDChat, instance)
     except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
         raise HTTPException(
