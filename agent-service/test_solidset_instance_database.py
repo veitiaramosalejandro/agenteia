@@ -4,7 +4,9 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from pydantic import ValidationError
 
+from app.main import SolidSETInstanceConfiguration
 from app.connectors.solidset_sql import (
     connection_options,
     decrypt_sql_password,
@@ -13,6 +15,35 @@ from app.connectors.solidset_sql import (
 
 
 class SolidSETInstanceDatabaseTests(unittest.TestCase):
+    def test_instance_contract_accepts_data_api(self):
+        configuration = SolidSETInstanceConfiguration(
+            Code="solidset-lisboa",
+            Name="SolidSET Lisboa",
+            BaseUrl="https://solidset.example:52130",
+            DataAPI={
+                "BaseUrl": "https://solidset.example:8081",
+                "APIKey": "secret",
+            },
+        )
+        self.assertEqual(
+            "https://solidset.example:8081",
+            configuration.DataAPI.BaseUrl,
+        )
+
+    def test_instance_contract_rejects_legacy_database(self):
+        with self.assertRaises(ValidationError):
+            SolidSETInstanceConfiguration(
+                Code="solidset-lisboa",
+                Name="SolidSET Lisboa",
+                BaseUrl="https://solidset.example:52130",
+                Database={
+                    "Host": "sql.example",
+                    "DatabaseName": "SolidSET",
+                    "Username": "sa",
+                    "Password": "secret",
+                },
+            )
+
     def test_named_instance_does_not_force_port(self):
         options = connection_options({"Database": {
             "Host": "host.docker.internal", "InstanceName": "SQL2017DEV", "Port": 1433,

@@ -394,6 +394,12 @@ La configuración general se guarda en `SysSolidSETInstance` y el gateway en
 `SysSolidSETDataAPI`. La API key se cifra con Fernet antes de persistirse y nunca
 se devuelve: la respuesta solo contiene `APIKeyConfigured=true`. Para actualizar
 una instancia sin cambiarla se omite `DataAPI.APIKey`.
+
+El campo `Database` ya no forma parte del contrato de este endpoint. Si se
+envía, FastAPI responde `422` porque las credenciales y parámetros de SQL Server
+pertenecen exclusivamente al despliegue independiente `solidset-data-api/.env`.
+La tabla PostgreSQL heredada `SysSolidSETDatabase` se conserva temporalmente
+para una migración segura, pero este endpoint ya no la lee ni la actualiza.
 Si no se proporciona `LLM_CREDENTIAL_ENCRYPTION_KEY`, la API genera una clave
 Fernet una sola vez en `/app/data/credential.key`. El directorio `data` ya está
 montado de forma persistente en desarrollo, API, producer y worker. También se
@@ -1551,7 +1557,8 @@ La ingesta histórica recorre cada instancia con su propia conexión y cursores;
 una instancia sin conexión configurada se omite, sin recurrir a otra base.
 
 Después de actualizar una instalación existente, el orden inicial recomendado
-es: registrar de nuevo la instancia con `Database`, ejecutar `test-connection`,
+es: desplegar y configurar su `solidset-data-api`, registrar la instancia con
+`DataAPI`, ejecutar `test-connection`,
 sincronizar `resources`, `logins`, `workrooms` y `chat-workroom`, y finalmente
 reanudar la ingesta histórica. La sincronización de recursos crea el ámbito de
 instancia necesario; hasta entonces los agentes se omiten deliberadamente.

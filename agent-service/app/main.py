@@ -59,7 +59,6 @@ from app.connectors.db_client import (
     save_agent_model_configuration,
     save_agent_response_audit,
     save_solidset_instance,
-    update_solidset_database_connection_status,
     save_sys_resource_ia,
     touch_agent_session,
 )
@@ -2466,36 +2465,6 @@ class SysResourceIAConfigurationResponse(BaseModel):
     configuration: SysResourceIAConfigurationStored
 
 
-class SolidSETDatabaseConfiguration(BaseModel):
-    Host: str = Field(..., min_length=1, max_length=255)
-    InstanceName: Optional[str] = Field(None, max_length=255)
-    Port: int = Field(1433, ge=0, le=65535)
-    DatabaseName: str = Field(..., min_length=1, max_length=255)
-    Username: str = Field(..., min_length=1, max_length=255)
-    Password: Optional[str] = Field(None, max_length=8000)
-    Encrypt: bool = True
-    TrustServerCertificate: bool = False
-    ConnectionTimeout: int = Field(15, ge=1, le=120)
-    SchemaVersion: Optional[str] = Field(None, max_length=80)
-    AdapterCode: str = Field("solidset-v1", min_length=1, max_length=80)
-    active: bool = True
-
-
-class SolidSETDatabaseStored(BaseModel):
-    Host: str
-    InstanceName: Optional[str] = None
-    Port: int
-    DatabaseName: str
-    Username: str
-    Encrypt: bool
-    TrustServerCertificate: bool
-    ConnectionTimeout: int
-    SchemaVersion: Optional[str] = None
-    AdapterCode: str
-    active: bool
-    PasswordConfigured: bool = True
-
-
 class SolidSETDataAPIConfiguration(BaseModel):
     BaseUrl: str = Field(..., min_length=8, max_length=500)
     APIKey: Optional[str] = Field(None, max_length=8000)
@@ -2527,7 +2496,6 @@ class SolidSETInstanceConfiguration(BaseModel):
     Locale: str = Field("pt-PT", min_length=2, max_length=20, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
     TimeZone: str = Field("Europe/Lisbon", min_length=1, max_length=80)
     active: bool = True
-    Database: Optional[SolidSETDatabaseConfiguration] = None
     DataAPI: Optional[SolidSETDataAPIConfiguration] = None
 
     class Config:
@@ -2539,7 +2507,6 @@ class SolidSETInstanceStored(SolidSETInstanceConfiguration):
     CreatedAt: datetime
     UpdatedAt: datetime
 
-    Database: Optional[SolidSETDatabaseStored] = None
     DataAPI: Optional[SolidSETDataAPIStored] = None
 
 
@@ -2548,7 +2515,7 @@ class SolidSETInstanceConfigurationResponse(BaseModel):
     configuration: SolidSETInstanceStored
 
 
-class SolidSETDatabaseConnectionTestResponse(BaseModel):
+class SolidSETDataAPIConnectionTestResponse(BaseModel):
     status: str
     instanceCode: str
     connected: bool
@@ -3277,12 +3244,12 @@ def save_solidset_chat_configuration(
     response_model=SolidSETInstanceConfigurationResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["SolidSET instances"],
-    summary="Register or update a SolidSET instance and its SQL Server connection",
+    summary="Register or update a SolidSET instance and its Data API",
 )
 def register_solidset_instance(
     configuration: SolidSETInstanceConfiguration,
 ) -> SolidSETInstanceConfigurationResponse:
-    """Registers instance routing, regional settings, and an encrypted SQL Server profile."""
+    """Registers instance routing, regional settings, and its independent Data API."""
     payload = configuration.model_dump()
     for field in ("BaseUrl", "NotificationUrl"):
         value = str(payload.get(field) or "").strip().rstrip("/")
@@ -3337,15 +3304,6 @@ def register_solidset_instance(
             detail="Não foi possível guardar a instância SolidSET no PostgreSQL.",
         ) from exc
     saved.pop("_operation", None)
-    database = saved.get("Database")
-    if database:
-        saved["Database"] = {
-            key: database.get(key) for key in (
-                "Host", "InstanceName", "Port", "DatabaseName", "Username", "Encrypt",
-                "TrustServerCertificate", "ConnectionTimeout", "SchemaVersion", "AdapterCode", "active",
-            )
-        }
-        saved["Database"]["PasswordConfigured"] = bool(database.get("EncryptedPassword"))
     data_api = saved.get("DataAPI")
     if data_api:
         saved["DataAPI"] = {
@@ -3362,11 +3320,11 @@ def register_solidset_instance(
 
 @app.post(
     "/api/v1/agent/solidset/instances/{code}/test-connection",
-    response_model=SolidSETDatabaseConnectionTestResponse,
+    response_model=SolidSETDataAPIConnectionTestResponse,
     tags=["SolidSET instances"],
     summary="Test the configured SolidSET data provider",
 )
-def test_solidset_instance_database(code: str) -> SolidSETDatabaseConnectionTestResponse:
+def test_solidset_instance_database(code: str) -> SolidSETDataAPIConnectionTestResponse:
     """Tests connectivity and basic schema capabilities without exposing credentials."""
     instance = get_solidset_instance(code=code.strip(), source_ip=None)
     if not instance:
@@ -3375,16 +3333,12 @@ def test_solidset_instance_database(code: str) -> SolidSETDatabaseConnectionTest
         raise HTTPException(status_code=409, detail="A instância não tem um fornecedor de dados configurado.")
     try:
         result = test_solidset_sql_connection(instance)
-        if instance.get("Database"):
-            update_solidset_database_connection_status(instance["ID"], "connected")
     except Exception as exc:
-        if instance.get("Database"):
-            update_solidset_database_connection_status(instance["ID"], "failed", str(exc)[:2000])
         raise HTTPException(
             status_code=503,
             detail="Não foi possível estabelecer ligação ao fornecedor de dados desta instância.",
         ) from exc
-    return SolidSETDatabaseConnectionTestResponse(
+    return SolidSETDataAPIConnectionTestResponse(
         status="connected", instanceCode=str(instance["Code"]), **result,
     )
 

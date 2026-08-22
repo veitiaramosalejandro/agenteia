@@ -8,7 +8,6 @@ from psycopg.rows import dict_row
 
 from app.config import settings
 from app.llm.secrets import decrypt_api_key, encrypt_api_key
-from app.connectors.solidset_sql import encrypt_sql_password
 
 
 _solidset_location_schema_lock = threading.Lock()
@@ -263,41 +262,6 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
                 )
                 row = cursor.fetchone()
                 operation = "created"
-            database = configuration.get("Database")
-            if database:
-                encrypted = encrypt_sql_password(database.get("Password"))
-                if not encrypted:
-                    cursor.execute(
-                        'SELECT "EncryptedPassword" FROM public."SysSolidSETDatabase" '
-                        'WHERE "IDSolidSETInstance"=%s', (row["ID"],),
-                    )
-                    previous = cursor.fetchone()
-                    encrypted = previous["EncryptedPassword"] if previous else None
-                if not encrypted:
-                    raise ValueError("Password é obrigatória ao criar a ligação SQL Server.")
-                cursor.execute('''
-                  INSERT INTO public."SysSolidSETDatabase" (
-                    "IDSolidSETInstance", "Host", "InstanceName", "Port", "DatabaseName",
-                    "Username", "EncryptedPassword", "Encrypt", "TrustServerCertificate",
-                    "ConnectionTimeout", "SchemaVersion", "AdapterCode", active
-                  ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                  ON CONFLICT ("IDSolidSETInstance") DO UPDATE SET
-                    "Host"=EXCLUDED."Host", "InstanceName"=EXCLUDED."InstanceName",
-                    "Port"=EXCLUDED."Port", "DatabaseName"=EXCLUDED."DatabaseName",
-                    "Username"=EXCLUDED."Username", "EncryptedPassword"=EXCLUDED."EncryptedPassword",
-                    "Encrypt"=EXCLUDED."Encrypt",
-                    "TrustServerCertificate"=EXCLUDED."TrustServerCertificate",
-                    "ConnectionTimeout"=EXCLUDED."ConnectionTimeout",
-                    "SchemaVersion"=EXCLUDED."SchemaVersion", "AdapterCode"=EXCLUDED."AdapterCode",
-                    active=EXCLUDED.active, "UpdatedAt"=CURRENT_TIMESTAMP
-                ''', (
-                    row["ID"], database["Host"], database.get("InstanceName"),
-                    database.get("Port", 1433), database["DatabaseName"], database["Username"],
-                    encrypted, database.get("Encrypt", True),
-                    database.get("TrustServerCertificate", False),
-                    database.get("ConnectionTimeout", 15), database.get("SchemaVersion"),
-                    database.get("AdapterCode", "solidset-v1"), database.get("active", True),
-                ))
             data_api = configuration.get("DataAPI")
             if data_api:
                 encrypted_key = encrypt_api_key(data_api.get("APIKey"))
@@ -362,9 +326,6 @@ def get_solidset_instance(
             row = cursor.fetchone()
             result = dict(row) if row else None
             if result:
-                cursor.execute('SELECT * FROM public."SysSolidSETDatabase" WHERE "IDSolidSETInstance"=%s', (result["ID"],))
-                database = cursor.fetchone()
-                result["Database"] = dict(database) if database else None
                 cursor.execute('SELECT * FROM public."SysSolidSETDataAPI" WHERE "IDSolidSETInstance"=%s', (result["ID"],))
                 data_api = cursor.fetchone()
                 result["DataAPI"] = dict(data_api) if data_api else None
@@ -380,26 +341,10 @@ def list_active_solidset_instances() -> list[dict[str, Any]]:
             )
             rows = [dict(row) for row in cursor.fetchall()]
             for row in rows:
-                cursor.execute('SELECT * FROM public."SysSolidSETDatabase" WHERE "IDSolidSETInstance"=%s', (row["ID"],))
-                database = cursor.fetchone()
-                row["Database"] = dict(database) if database else None
                 cursor.execute('SELECT * FROM public."SysSolidSETDataAPI" WHERE "IDSolidSETInstance"=%s', (row["ID"],))
                 data_api = cursor.fetchone()
                 row["DataAPI"] = dict(data_api) if data_api else None
             return rows
-
-
-def update_solidset_database_connection_status(
-    instance_id: str | UUID, status: str, error: str | None = None,
-) -> None:
-    with _postgres_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute('''UPDATE public."SysSolidSETDatabase"
-              SET "LastConnectionAt"=CURRENT_TIMESTAMP,
-                  "LastConnectionStatus"=%s, "LastConnectionError"=%s,
-                  "UpdatedAt"=CURRENT_TIMESTAMP
-              WHERE "IDSolidSETInstance"=%s''',
-              (status, error, UUID(str(instance_id))))
 
 
 def ensure_llm_provider_schema() -> None:
