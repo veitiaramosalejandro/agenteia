@@ -58,6 +58,24 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         term = self.agent._extract_resource_count_term("¿Cuántos recursos hay?")
         self.assertEqual(term, "")
 
+    def test_meeting_resource_count_uses_contextual_sql_route(self):
+        term = self.agent._extract_resource_count_term(
+            "¿Cuántos recursos tiene este meeting activo?"
+        )
+        self.assertIsNone(term)
+
+    @patch("app.agent.core.query_sql_server")
+    def test_meeting_resource_count_uses_current_meeting_id(self, query_tool):
+        query_tool.invoke.return_value = '[{"Total": 4}]'
+        response = self.agent._resolve_meeting_resource_count_from_db(
+            "¿Cuántos recursos tiene este meeting activo?",
+            "7d7a581d-d7c1-4e18-a11b-6d322e4755c6",
+        )
+        self.assertEqual("Este meeting activo tiene **4 recursos participantes**.", response)
+        sql = query_tool.invoke.call_args.args[0]["query"]
+        self.assertIn("dbo.SysMeeting2Resource", sql)
+        self.assertIn("7d7a581d-d7c1-4e18-a11b-6d322e4755c6", sql)
+
     def test_channel_names_question_uses_direct_sql_route(self):
         self.assertTrue(
             self.agent._is_channel_names_intent(

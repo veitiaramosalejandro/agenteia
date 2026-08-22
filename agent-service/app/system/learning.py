@@ -1000,8 +1000,20 @@ class SistemaAprendizaje:
         if not rows:
             return "No hay historial de chat reciente en la base de datos para este usuario."
 
+        def timestamp_text(value: Any) -> str:
+            if hasattr(value, "strftime"):
+                return value.strftime("%Y-%m-%d %H:%M:%S")
+            raw = str(value or "").strip()
+            if not raw:
+                return "sin_fecha"
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                return parsed.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return raw[:19]
+
         lines = [
-            f"[{row.get('timestamp').strftime('%Y-%m-%d %H:%M:%S')}] ({(row.get('channel_name') or 'N/A')}) [{row.get('sender_display_name') or row.get('sender_username') or 'N/A'}] {row.get('message', '')[:180]}"
+            f"[{timestamp_text(row.get('timestamp'))}] ({(row.get('channel_name') or 'N/A')}) [{row.get('sender_display_name') or row.get('sender_username') or 'N/A'}] {row.get('message', '')[:180]}"
             for row in rows
         ]
         return "\n".join(lines) or "No hay mensajes de chat útiles para contexto en base de datos."

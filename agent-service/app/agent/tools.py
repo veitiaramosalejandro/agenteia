@@ -256,6 +256,17 @@ def _solidset_get_all_base_candidates() -> list[str]:
     return collected
 
 
+def _solidset_instance_for_base(base_url: str) -> Optional[dict[str, Any]]:
+    """Resolve a logical instance from either its stored or Docker runtime URL."""
+    requested = str(base_url or "").rstrip("/").lower()
+    for item in list_active_solidset_instances():
+        configured = str(item.get("BaseUrl") or "").strip()
+        candidates = _solidset_candidate_base_urls(configured)
+        if requested in {candidate.rstrip("/").lower() for candidate in candidates}:
+            return item
+    return None
+
+
 def _solidset_login(
     client: httpx.Client,
     base_url: str,
@@ -272,14 +283,7 @@ def _solidset_login(
             flush=True,
         )
         try:
-            login_instance = next(
-                (
-                    item for item in list_active_solidset_instances()
-                    if str(item.get("BaseUrl") or "").rstrip("/").lower()
-                    == str(base_url or "").rstrip("/").lower()
-                ),
-                None,
-            )
+            login_instance = _solidset_instance_for_base(base_url)
             if not login_instance:
                 return False, "", ""
             login = get_solidset_login_for_active_agent(
@@ -351,14 +355,7 @@ def _solidset_login(
                     if allow_sync_retry:
                         try:
                             from app.system.resource_ingest import ingest_solidset_logins
-                            matching_instance = next(
-                                (
-                                    item for item in list_active_solidset_instances()
-                                    if str(item.get("BaseUrl") or "").rstrip("/").lower()
-                                    == str(base_url or "").rstrip("/").lower()
-                                ),
-                                None,
-                            )
+                            matching_instance = _solidset_instance_for_base(base_url)
                             if not matching_instance or not matching_instance.get("DataAPI"):
                                 raise RuntimeError(
                                     "A instância de destino não tem ligação SQL Server configurada."
@@ -1128,7 +1125,7 @@ def solidset_send_chat_message(
         requested_meeting,
         channel,
         meeting_label,
-        base_url,
+        solidset_base_url,
     ) if requested_meeting else None
     if requested_meeting and not meeting:
         print(

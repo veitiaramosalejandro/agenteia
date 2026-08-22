@@ -456,6 +456,10 @@ SQL configurada en el gateway también debe tener permisos exclusivamente de
 lectura. Esta primera versión conserva las consultas existentes mientras su
 ejecución y las credenciales quedan fuera del agente.
 
+El adaptador de compatibilidad elimina comentarios SQL heredados antes de
+enviar una consulta de lectura al gateway. Los valores temporales devueltos por
+JSON se normalizan desde ISO 8601 antes de construir el contexto del agente.
+
 Los datasets `resources`, `logins`, `workrooms` y `workroom-resources`, junto
 con la validación `agents/{humanResourceId}`, mantienen sus consultas dentro del
 proyecto independiente. Las consultas históricas y de aprendizaje cuyo SQL se
@@ -466,6 +470,14 @@ exclusivamente dentro del gateway.
 `hasMore` y `nextOffset`. El conector del agente recorre automáticamente todas
 las páginas, por lo que una instalación con más filas que `MaxRows` no queda
 sincronizada parcialmente.
+
+Al responder dentro de un meeting, el agente valida el `meeting_id` utilizando
+la `BaseUrl` de la instancia seleccionada. Las preguntas sobre recursos o
+participantes de un meeting no utilizan el contador global de recursos: se
+resuelven contra `dbo.SysMeeting2Resource` usando el `meeting_id` de la
+conversación y excluyen recursos pendientes, bloqueados o expulsados. La URL
+lógica `localhost` y su traducción Docker `host.docker.internal` identifican la
+misma instancia al seleccionar el `SysLogin` del agente.
 
 Para ejecutar el gateway de prueba en la misma máquina:
 

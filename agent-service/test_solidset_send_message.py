@@ -3,10 +3,25 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from app.agent.tools import _solidset_login, _solidset_request_as_agent, solidset_send_chat_message
+from app.agent.tools import (
+    _solidset_instance_for_base,
+    _solidset_login,
+    _solidset_request_as_agent,
+    solidset_send_chat_message,
+)
 
 
 class SolidsetSendChatMessageTests(unittest.TestCase):
+    @patch("app.agent.tools.list_active_solidset_instances")
+    @patch("app.agent.tools.os.path.exists", return_value=True)
+    def test_docker_runtime_url_resolves_logical_instance(self, _exists, instances):
+        expected = {"ID": "instance-1", "BaseUrl": "http://localhost:52130"}
+        instances.return_value = [expected]
+        self.assertIs(
+            expected,
+            _solidset_instance_for_base("http://host.docker.internal:52130"),
+        )
+
     @patch("app.agent.tools._solidset_request_as_agent")
     def test_preview_returns_payload_without_calling_solidset(self, request_mock):
         result = solidset_send_chat_message.invoke(
@@ -297,7 +312,9 @@ class SolidsetSendChatMessageTests(unittest.TestCase):
         )
         self.assertEqual(form["Kind"], 7)
         self.assertNotIn("Destiny.Resource", form)
-        meeting_mock.assert_called_once_with("meeting-123", "channel-123", "M8")
+        meeting_mock.assert_called_once_with(
+            "meeting-123", "channel-123", "M8", None
+        )
 
 
 if __name__ == "__main__":

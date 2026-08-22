@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from decimal import Decimal
 import os
+import re
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
@@ -42,6 +43,15 @@ def _json_parameter(value: Any) -> Any:
     return value
 
 
+def _strip_sql_comments(query: str) -> str:
+    """Remove legacy comments before sending a single read statement."""
+    without_blocks = re.sub(r"/\*.*?\*/", " ", str(query), flags=re.DOTALL)
+    without_lines = re.sub(r"--[^\r\n]*", " ", without_blocks)
+    return "\n".join(
+        line.rstrip() for line in without_lines.splitlines() if line.strip()
+    ).strip()
+
+
 class DataAPICursor:
     def __init__(self, connection: "DataAPIConnection", *, as_dict: bool) -> None:
         self.connection = connection
@@ -63,7 +73,7 @@ class DataAPICursor:
     def execute(self, query: str, params: Any = None) -> None:
         parameters = list(params or [])
         payload = {
-            "query": str(query),
+            "query": _strip_sql_comments(str(query)),
             "parameters": [_json_parameter(value) for value in parameters],
             "maxRows": self.connection.max_rows,
         }

@@ -4,12 +4,22 @@ from unittest.mock import Mock, patch
 from app.connectors.solidset_data_api import (
     DataAPIConnection,
     _runtime_base_url,
+    _strip_sql_comments,
     read_dataset,
 )
 from app.connectors.solidset_sql import connect as connect_solidset_data
 
 
 class SolidSETDataAPIConnectorTests(unittest.TestCase):
+    def test_legacy_sql_comments_are_removed_before_gateway(self):
+        query = """SELECT TOP 1 ID -- legacy note
+        FROM dbo.SysChat /* read only */
+        WHERE ID = %s"""
+        clean = _strip_sql_comments(query)
+        self.assertNotIn("--", clean)
+        self.assertNotIn("/*", clean)
+        self.assertIn("FROM dbo.SysChat", clean)
+
     @patch("app.connectors.solidset_data_api.decrypt_api_key", return_value="secret")
     @patch("app.connectors.solidset_data_api.httpx.Client")
     def test_dataset_reads_all_pages(self, client_type, _decrypt):

@@ -1210,6 +1210,10 @@ class MachiningAgent:
             flags=re.IGNORECASE,
         ):
             return None
+        # Las preguntas sobre participantes de un meeting requieren filtrar por
+        # el IDMeeting del mensaje. No deben caer en el conteo global de recursos.
+        if re.search(r"\b(?:meeting|reuni[oó]n|reuni[aã]o)\b", text, flags=re.IGNORECASE):
+            return None
         english_match = re.search(
             r"\bhow\s+many(?:\s+(.+?))?\s+users?\b",
             text,
@@ -1284,6 +1288,48 @@ class MachiningAgent:
             es=f"En SOLIDSET existen **{total} usuarios asociados a recursos** registrados.",
             pt=f"No SOLIDSET existem **{total} utilizadores associados a recursos** registados.",
             en=f"SOLIDSET has **{total} registered users associated with resources**.",
+        )
+
+    def _resolve_meeting_resource_count_from_db(
+        self, user_text: str, meeting_id: Optional[str]
+    ) -> Optional[str]:
+        """Count active resource participants in the meeting from message context."""
+        text = self._normalize_context_query(user_text)
+        if not meeting_id or not self._is_valid_guid(str(meeting_id)):
+            return None
+        if not re.search(r"\b(?:meeting|reuni[oó]n|reuni[aã]o)\b", text, re.IGNORECASE):
+            return None
+        if not re.search(r"\b(?:cu[aá]nt|quant|how\s+many)\w*\b", text, re.IGNORECASE):
+            return None
+        if not re.search(r"\b(?:recursos?|users?|utilizadores?|usuários?|participants?|participantes?)\b", text, re.IGNORECASE):
+            return None
+
+        sql = (
+            "SELECT COUNT_BIG(DISTINCT mr.IDResource) AS Total "
+            "FROM dbo.SysMeeting m WITH (NOLOCK) "
+            "INNER JOIN dbo.SysMeeting2Resource mr WITH (NOLOCK) "
+            "ON mr.IDMeeting = m.ID "
+            "WHERE m.ID = TRY_CONVERT(uniqueidentifier, %s) "
+            "AND m.Active = 1 "
+            "AND mr.IDResource IS NOT NULL "
+            "AND ISNULL(mr.Pending, 0) = 0 "
+            "AND ISNULL(mr.IsBlocked, 0) = 0 "
+            "AND ISNULL(mr.IsBanned, 0) = 0"
+        )
+        print(f"🗄️ Contando recursos do meeting IDMeeting={meeting_id}")
+        result = str(query_sql_server.invoke({
+            "query": sql.replace("%s", f"'{str(meeting_id)}'", 1)
+        }))
+        try:
+            rows = json.loads(result)
+            total = int(rows[0]["Total"])
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError):
+            return None
+        return self._localized(
+            user_text,
+            es=f"Este meeting activo tiene **{total} recursos participantes**.",
+            pt=f"Este meeting ativo tem **{total} recursos participantes**.",
+            en=f"This active meeting has **{total} participating resources**.",
         )
 
     def _normalize_tool_args(
@@ -1770,7 +1816,20 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando listado de canales en Redis: {e}")
             return channel_names_response
 
-        # --- 3.5 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
+        # --- 3.5 CONTEO DIRECTO DE RECURSOS DEL MEETING DESDE SQL SERVER ---
+        meeting_resource_count_response = self._resolve_meeting_resource_count_from_db(
+            user_text, meeting_id
+        )
+        if meeting_resource_count_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(meeting_resource_count_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando conteo del meeting en Redis: {e}")
+            return meeting_resource_count_response
+
+        # --- 3.6 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
         resource_count_response = self._resolve_resource_count_from_db(user_text)
         if resource_count_response is not None:
             if history:
@@ -1781,7 +1840,7 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando conteo de recursos en Redis: {e}")
             return resource_count_response
 
-        # --- 3.6 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
+        # --- 3.7 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if valid_user_guid and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:
