@@ -1228,6 +1228,12 @@ parámetros, filas, columnas y duración. En caso de fallo incluye el tipo y un 
 acotado. Las trazas no muestran la consulta, sus parámetros, el usuario, la contraseña
 ni la clave de la API.
 
+Cuando la SolidSET Data API se ejecuta dentro de Docker, los hosts SQL Server
+`localhost`, `127.0.0.1` y `::1` se resuelven como `host.docker.internal`, ya que
+la dirección loopback del contenedor no representa al host. Si SQL Server está en
+otro contenedor debe configurarse su nombre DNS de servicio (por ejemplo,
+`sqlserver`) y ambas aplicaciones deben compartir una red Docker.
+
 #### `POST /api/v1/agent/solidset/instances/{code}/schema/refresh`
 
 Obtiene el catálogo completo desde la SolidSET Data API configurada para la

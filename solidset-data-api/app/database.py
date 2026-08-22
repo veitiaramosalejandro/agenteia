@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, time
 from decimal import Decimal
 import hashlib
+import re
 from time import perf_counter
 from typing import Any, Iterator
 from uuid import UUID
@@ -17,7 +18,7 @@ def _connection_target() -> str:
     instance = (settings.SQL_SERVER_INSTANCE or "").strip()
     port = settings.SQL_SERVER_PORT if not instance else "-"
     return (
-        f"host={settings.SQL_SERVER_HOST.strip()} "
+        f"host={settings.host()} "
         f"instance={instance or '-'} port={port} "
         f"database={settings.SQL_SERVER_DATABASE}"
     )
@@ -26,9 +27,15 @@ def _connection_target() -> str:
 def _safe_error(exc: BaseException) -> str:
     """Return a bounded diagnostic without credentials or multiline payloads."""
     message = " ".join(str(exc).split())
-    for secret in (settings.SQL_SERVER_PASSWORD, settings.SQL_SERVER_USERNAME):
-        if secret:
-            message = message.replace(secret, "***")
+    if settings.SQL_SERVER_PASSWORD:
+        message = message.replace(settings.SQL_SERVER_PASSWORD, "***")
+    if settings.SQL_SERVER_USERNAME:
+        username = re.escape(settings.SQL_SERVER_USERNAME)
+        message = re.sub(
+            rf"(?i)(user(?:name)?\s*[=:]?\s*['\"]?){username}(['\"]?)",
+            r"\1***\2",
+            message,
+        )
     return message[:600]
 
 

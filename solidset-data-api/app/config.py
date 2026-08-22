@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,11 +17,17 @@ class Settings(BaseSettings):
     SQL_SERVER_QUERY_TIMEOUT: int = 120
     SOLIDSET_DATA_API_MAX_ROWS: int = 5000
 
-    def server(self) -> str:
+    def host(self) -> str:
         host = self.SQL_SERVER_HOST.strip().rstrip("\\")
+        running_in_docker = os.path.exists("/.dockerenv") or os.getenv("RUNNING_IN_DOCKER") == "1"
+        if running_in_docker and host.lower() in {"localhost", "127.0.0.1", "::1"}:
+            return "host.docker.internal"
+        return host
+
+    def server(self) -> str:
+        host = self.host()
         instance = (self.SQL_SERVER_INSTANCE or "").strip().strip("\\")
         return f"{host}\\{instance}" if instance else host
 
 
 settings = Settings()
-

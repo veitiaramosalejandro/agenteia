@@ -319,6 +319,10 @@ establecer la conexión. Las trazas `SQL_READ` identifican la operación (por ej
 `dataset:resources`), su duración y un `query_id` seguro sin imprimir el SQL, sus
 parámetros ni credenciales.
 
+Dentro de Docker, `localhost`, `127.0.0.1` y `::1` se convierten automáticamente en
+`host.docker.internal`. Utiliza `SQL_SERVER_HOST=sqlserver` cuando SQL Server sea
+otro contenedor conectado a la misma red Docker.
+
 ### HTTP 401
 
 `X-SolidSET-Data-Key` no coincide con `SOLIDSET_DATA_API_KEY`. Después de
