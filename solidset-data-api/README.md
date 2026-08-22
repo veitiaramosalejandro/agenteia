@@ -175,6 +175,19 @@ Invoke-RestMethod `
 La respuesta indica el catálogo, versión del servidor y disponibilidad de
 `SysResource2Agent`.
 
+### Catálogo estructurado del esquema
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://localhost:8081/api/v1/schema/catalog?tables=SysMeeting,SysMeeting2Resource,SysResources" `
+  -Headers $headers
+```
+
+La respuesta contiene tablas, columnas, claves primarias y claves foráneas. El
+agente consulta este endpoint antes de generar una nueva consulta dinámica y
+guarda snapshots completos por instancia en PostgreSQL. Las credenciales SQL
+Server permanecen únicamente en esta API.
+
 ### Probar un dataset
 
 ```powershell

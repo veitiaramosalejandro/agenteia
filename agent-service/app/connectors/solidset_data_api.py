@@ -205,3 +205,28 @@ def read_active_resource_agent(
             )
         rows = response.json().get("rows") or []
         return dict(rows[0]) if rows else None
+
+
+def read_schema_catalog(
+    configuration: dict[str, Any], tables: list[str] | None = None
+) -> dict[str, Any]:
+    """Read a structured schema fragment from the instance Data API."""
+    with DataAPIConnection(configuration, as_dict=True) as connection:
+        params = {"tables": ",".join(tables or [])} if tables else None
+        try:
+            response = connection.client.get("/api/v1/schema/catalog", params=params)
+        except httpx.HTTPError as exc:
+            raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("detail")
+            except Exception:
+                detail = response.text
+            raise SolidSETDataAPIError(
+                f"Falha ao obter o catálogo de esquema (HTTP {response.status_code}): {detail}"
+            )
+        payload = response.json()
+        return {
+            "databaseName": str(payload.get("databaseName") or ""),
+            "tables": [dict(value) for value in payload.get("tables") or []],
+        }

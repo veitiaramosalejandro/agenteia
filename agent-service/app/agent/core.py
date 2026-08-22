@@ -1051,7 +1051,7 @@ class MachiningAgent:
         return text.strip() or (user_text or "").strip()
 
     def _detect_user_language(self, user_text: str) -> str:
-        """Detección ligera y determinista para ES/PT/EN; español es el fallback."""
+        """Detect ES/PT/EN from the current message; conversation locale is irrelevant."""
         text = f" {self._normalize_context_query(user_text).lower()} "
         scores = {"es": 0, "pt": 0, "en": 0}
         markers = {
@@ -1060,25 +1060,32 @@ class MachiningAgent:
                 " vocês ", " faça ", " forneça ", " intervenções ", " utilizador ",
                 " não ", " olá ", " obrigado ", " obrigada ", " informação ",
                 " informações ", " hoje ", " podes ", " gostaria ", " meu ", " minha ",
-                " é ", " são ", " tem ", " foi ", " uma ", " dos ", " das ",
+                " diga ", " quais ", " quem ", " este ", " desta ", " neste ",
+                " reunião ", " participantes ativos ", " é ", " são ", " tem ",
+                " foi ", " uma ", " os ", " do ", " dos ", " das ",
             ),
             "en": (
                 " good morning ", " good afternoon ", " good evening ", " the ",
                 " please ", " what ", " how ", " channel ", " messages ", " summary ",
                 " user ", " hello ", " thanks ", " show me ", " information ",
-                " today ", " could you ", " would you ", " my ",
+                " today ", " could you ", " would you ", " my ", " tell me ",
+                " which ", " who ", " meeting participants ", " active participants ",
             ),
             "es": (
                 " buenos días ", " buenos dias ", " buenas tardes ", " buenas noches ",
                 " qué ", " cual ", " cuál ", " como ", " cómo ", " necesito ",
                 " resumen ", " canal ", " usuario ", " mensajes ", " hola ", " gracias ",
-                " información ", " hoy ", " puedes ", " gustaría ", " mi ",
+                " información ", " hoy ", " puedes ", " gustaría ", " mi ", " dime ",
+                " quién ", " quien ", " cuáles ", " cuales ", " este ", " esta ",
+                " reunión ", " participantes activos ", " los ", " las ", " del ",
             ),
         }
         for language, words in markers.items():
             scores[language] = sum(1 for word in words if word in text)
         if any(char in text for char in ("ã", "õ", "ç")):
             scores["pt"] += 2
+        if "¿" in text or "¡" in text:
+            scores["es"] += 2
         return max(scores, key=scores.get) if max(scores.values()) > 0 else "es"
 
     def _localized(self, user_text: str, *, es: str, pt: str, en: str) -> str:
@@ -1111,11 +1118,72 @@ class MachiningAgent:
             "programa cnc", "g-code", "código g", "codigo g", "husillo", "spindle",
             "recurso", "recursos", "usuario", "usuarios", "canal", "canales",
             "mensaje", "mensajes", "tarea", "tareas", "actividad", "actividades",
+            "meeting", "meetings", "reunión", "reunion", "reunião", "reuniao",
+            "participante", "participantes", "participant", "participants",
+            "utilizador", "utilizadores", "usuário", "usuários", "canais",
+            "tarefa", "tarefas", "atividade", "atividades", "activity", "activities",
             "cliente", "clientes", "cuenta", "cuentas", "base de datos", "sql",
             "workroom", "chat", "point", "feature flag", "vehicle", "scheduler",
             "endpoint", "api solidset",
         )
         return self._is_sql_business_query(user_text) or any(term in text for term in internal_terms)
+
+    def _is_business_knowledge_query(self, user_text: str) -> bool:
+        """Business entities that must follow Vector DB -> SolidSET Data API."""
+        text = self._normalize_context_query(user_text).lower()
+        terms = (
+            "recurso", "recursos", "resource", "resources", "utilizador", "utilizadores",
+            "usuário", "usuários", "canal", "canales", "channel", "channels", "canais",
+            "workroom", "meeting", "meetings", "reunión", "reunion", "reunião", "reuniao",
+            "participante", "participantes", "participant", "participants", "miembro", "miembros",
+            "membro", "membros", "actividad", "actividades", "activity", "activities",
+            "atividade", "atividades", "tarea", "tareas", "task", "tasks", "tarefa", "tarefas",
+        )
+        return any(term in text for term in terms)
+
+    def _requires_live_business_data(
+        self, user_text: str, meeting_id: Optional[str] = None
+    ) -> bool:
+        """Current rosters/statuses must be verified in SQL, never inferred from RAG."""
+        if not self._is_business_knowledge_query(user_text):
+            return False
+        text = self._normalize_context_query(user_text).lower()
+        live_terms = (
+            "actual", "actuales", "activo", "activos", "activa", "activas",
+            "current", "active", "today", "latest", "ahora", "hoy", "agora", "hoje",
+            "participante", "participantes", "participant", "participants",
+            "miembro", "miembros", "membro", "membros", "nombres", "nomes", "names",
+            "cuánt", "cuant", "quant", "how many", "estado", "status",
+            "lista", "listar", "list", "muestra", "show", "mostra",
+        )
+        if any(term in text for term in live_terms):
+            return True
+        # Dentro de un meeting, una referencia elíptica a sus recursos debe usar
+        # siempre el ID vivo recibido en el payload.
+        return bool(meeting_id) and any(
+            term in text for term in ("recurso", "resource", "utilizador", "usuário")
+        )
+
+    def _business_schema_table_hints(self, user_text: str) -> list[str]:
+        """Select the smallest known schema fragment for dynamic SQL generation."""
+        text = self._normalize_context_query(user_text).lower()
+        hints: list[str] = []
+        groups = (
+            (("meeting", "reunión", "reunion", "reunião", "particip"),
+             ("SysMeeting", "SysMeeting2Resource", "SysResources")),
+            (("canal", "channel", "canais", "workroom"),
+             ("SysWorkRoom", "SysWorkRoomResource", "SysResources")),
+            (("recurso", "resource", "utilizador", "usuário"),
+             ("SysResources", "SysLogin", "SysResource2Agent")),
+            (("tarea", "task", "tarefa"), ("SysTask",)),
+            (("actividad", "activity", "atividade"), ("Activity",)),
+        )
+        for markers, tables in groups:
+            if any(marker in text for marker in markers):
+                for table in tables:
+                    if table not in hints:
+                        hints.append(table)
+        return hints
 
     @staticmethod
     def _contextual_web_query(user_text: str, previous_user_text: Any) -> str:
@@ -1293,43 +1361,134 @@ class MachiningAgent:
     def _resolve_meeting_resource_count_from_db(
         self, user_text: str, meeting_id: Optional[str]
     ) -> Optional[str]:
-        """Count active resource participants in the meeting from message context."""
+        """Resolve participant questions using the meeting carried by the message."""
         text = self._normalize_context_query(user_text)
         if not meeting_id or not self._is_valid_guid(str(meeting_id)):
             return None
-        if not re.search(r"\b(?:meeting|reuni[oó]n|reuni[aã]o)\b", text, re.IGNORECASE):
+
+        resource_intent = re.search(
+            r"\b(?:recursos?|users?|utilizadores?|usuários?|participants?|participantes?|"
+            r"particip\w*|miembros?|membros?)\b",
+            text,
+            re.IGNORECASE,
+        )
+        creator_intent = re.search(
+            r"\b(?:creador|criador|creator|organizador|organizer|responsable|responsável)\b",
+            text,
+            re.IGNORECASE,
+        )
+        meeting_term = re.search(
+            r"\b(?:meeting|reuni[oó]n|reuni[aã]o)\b", text, re.IGNORECASE
+        )
+        if not resource_intent and not creator_intent:
             return None
-        if not re.search(r"\b(?:cu[aá]nt|quant|how\s+many)\w*\b", text, re.IGNORECASE):
-            return None
-        if not re.search(r"\b(?:recursos?|users?|utilizadores?|usuários?|participants?|participantes?)\b", text, re.IGNORECASE):
+        # El IDMeeting del payload establece el ámbito incluso cuando la pregunta
+        # dice solamente «los recursos activos» o «quién es el creador».
+        query_intent = re.search(
+            r"\b(?:cu[aá]nt\w*|quant\w*|how\s+many|dime|di\s+me|cu[aá]les|cuales|"
+            r"quais|which|who|qui[eé]n|quem|lista\w*|muestra\w*|mostra\w*|show|"
+            r"hay|existe\w*|tem|tiene\w*|son|s[aã]o|are|activo\w*|ativo\w*)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if not query_intent and not meeting_term:
             return None
 
         sql = (
-            "SELECT COUNT_BIG(DISTINCT mr.IDResource) AS Total "
+            "SELECT m.ID AS IDMeeting, m.Code AS MeetingCode, m.Active AS MeetingActive, "
+            "m.IDResourceCreator, mr.IDResource, r.DisplayName AS ResourceName "
             "FROM dbo.SysMeeting m WITH (NOLOCK) "
             "INNER JOIN dbo.SysMeeting2Resource mr WITH (NOLOCK) "
             "ON mr.IDMeeting = m.ID "
+            "INNER JOIN dbo.SysResources r WITH (NOLOCK) "
+            "ON r.ResourceId = mr.IDResource "
             "WHERE m.ID = TRY_CONVERT(uniqueidentifier, %s) "
             "AND m.Active = 1 "
             "AND mr.IDResource IS NOT NULL "
             "AND ISNULL(mr.Pending, 0) = 0 "
             "AND ISNULL(mr.IsBlocked, 0) = 0 "
-            "AND ISNULL(mr.IsBanned, 0) = 0"
+            "AND ISNULL(mr.IsBanned, 0) = 0 "
+            "ORDER BY r.DisplayName ASC"
         )
-        print(f"🗄️ Contando recursos do meeting IDMeeting={meeting_id}")
+        print(f"🗄️ Consultando recursos activos do meeting IDMeeting={meeting_id}")
         result = str(query_sql_server.invoke({
             "query": sql.replace("%s", f"'{str(meeting_id)}'", 1)
         }))
         try:
             rows = json.loads(result)
-            total = int(rows[0]["Total"])
         except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError):
+            return self._localized(
+                user_text,
+                es="No pude consultar los participantes del meeting en este momento.",
+                pt="Não foi possível consultar os participantes do meeting neste momento.",
+                en="I could not query the meeting participants at this time.",
+            )
+        if not isinstance(rows, list):
             return None
+
+        unique_rows: list[dict[str, Any]] = []
+        seen_resources: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            resource_id = str(row.get("IDResource") or "").strip()
+            if not resource_id or resource_id.lower() in seen_resources:
+                continue
+            seen_resources.add(resource_id.lower())
+            unique_rows.append(row)
+
+        total = len(unique_rows)
+        count_intent = re.search(
+            r"\b(?:cu[aá]nt\w*|quant\w*|how\s+many|n[uú]mero|numero|total)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if count_intent:
+            return self._localized(
+                user_text,
+                es=f"Este meeting activo tiene **{total} recursos participantes**.",
+                pt=f"Este meeting ativo tem **{total} recursos participantes**.",
+                en=f"This active meeting has **{total} participating resources**.",
+            )
+
+        if creator_intent:
+            creator_id = str(rows[0].get("IDResourceCreator") or "").strip() if rows else ""
+            creator = next(
+                (
+                    row for row in unique_rows
+                    if str(row.get("IDResource") or "").lower() == creator_id.lower()
+                ),
+                None,
+            )
+            creator_name = str((creator or {}).get("ResourceName") or creator_id).strip()
+            if not creator_name:
+                return None
+            return self._localized(
+                user_text,
+                es=f"El creador de este meeting es **{creator_name}**.",
+                pt=f"O criador deste meeting é **{creator_name}**.",
+                en=f"The creator of this meeting is **{creator_name}**.",
+            )
+
+        if not unique_rows:
+            return self._localized(
+                user_text,
+                es="Este meeting activo no tiene recursos participantes activos.",
+                pt="Este meeting ativo não tem recursos participantes ativos.",
+                en="This active meeting has no active participating resources.",
+            )
+
+        names = [
+            str(row.get("ResourceName") or row.get("IDResource") or "").strip()
+            for row in unique_rows
+        ]
+        names = [name for name in names if name]
+        rendered = "\n".join(f"- {name}" for name in names)
         return self._localized(
             user_text,
-            es=f"Este meeting activo tiene **{total} recursos participantes**.",
-            pt=f"Este meeting ativo tem **{total} recursos participantes**.",
-            en=f"This active meeting has **{total} participating resources**.",
+            es=f"Los recursos participantes activos de este meeting son **{total}**:\n{rendered}",
+            pt=f"Os recursos participantes ativos deste meeting são **{total}**:\n{rendered}",
+            en=f"The active participating resources in this meeting are **{total}**:\n{rendered}",
         )
 
     def _normalize_tool_args(
@@ -1347,6 +1506,13 @@ class MachiningAgent:
         if tool_name == "google_web_search":
             query = str(args.get("query") or "").strip()
             args["query"] = query or self._normalize_context_query(user_text)
+
+        elif tool_name == "query_sql_server":
+            parameters = args.get("parameters_json", "[]")
+            if isinstance(parameters, (list, tuple)):
+                args["parameters_json"] = json.dumps(list(parameters), default=str)
+            elif not str(parameters or "").strip():
+                args["parameters_json"] = "[]"
 
         elif tool_name == "solidset_chat_get_messages":
             if args.get("id_login_current") is not None:
@@ -1756,9 +1922,46 @@ class MachiningAgent:
 
             return response_text
 
+        # --- 3.0 REGLA DE NEGOCIO: VECTOR DB -> SOLIDSET DATA API ---
+        # Para entidades internas se busca primero conocimiento ya aprendido por
+        # este agente. Solo evidencia semánticamente relevante evita consultar la
+        # fuente operacional SQL. Nunca se deriva este dominio a Internet.
+        business_knowledge_query = self._is_business_knowledge_query(user_text)
+        live_business_query = self._requires_live_business_data(user_text, meeting_id)
+        business_rag_context = ""
+        if business_knowledge_query and training_enabled and learn_from_system:
+            business_rag_context = self.sistema_aprendizaje.consultar_documentacion(
+                self._normalize_context_query(user_text),
+                agent_resource_id=agent_resource_id or None,
+                canal_id=canal_id,
+                min_score=settings.BUSINESS_RAG_MIN_SCORE,
+            )
+            if business_rag_context and not live_business_query:
+                tool_allowlist = set()
+                print(
+                    "🧠 Consulta de negocio resuelta con referencia vectorial relevante; "
+                    "SQL queda como fallback"
+                )
+            else:
+                tool_allowlist = {"query_sql_server", "get_db_schema"}
+                if live_business_query:
+                    print(
+                        "🗄️ Consulta operacional actual: el payload y SQL son autoritativos; "
+                        "usando SolidSET Data API/SQL Server"
+                    )
+                else:
+                    print(
+                        "🗄️ Sin referencia vectorial suficiente para la consulta de negocio; "
+                        "usando SolidSET Data API/SQL Server"
+                    )
+
+        vector_answers_business_query = bool(
+            business_rag_context and not live_business_query
+        )
+
         # --- 3.1 ANÁLISIS DE INTERVENCIONES DE UNA PERSONA DESDE SQL SERVER ---
         participant_analysis_response = None
-        if valid_user_guid and valid_channel_guid:
+        if not vector_answers_business_query and valid_user_guid and valid_channel_guid:
             participant_analysis_response = self._resolve_channel_participant_analysis(
                 user_id=user_id or "",
                 canal_id=canal_id,
@@ -1775,7 +1978,7 @@ class MachiningAgent:
 
         # --- 3.2 FRECUENCIA DE PARTICIPACIÓN EN EL CANAL DESDE SQL SERVER ---
         participant_frequency_response = None
-        if valid_user_guid and valid_channel_guid:
+        if not vector_answers_business_query and valid_user_guid and valid_channel_guid:
             participant_frequency_response = self._resolve_channel_participant_frequency(
                 user_id=user_id or "",
                 canal_id=canal_id,
@@ -1791,7 +1994,7 @@ class MachiningAgent:
             return participant_frequency_response
 
         # --- 3.3 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
-        if valid_user_guid and valid_channel_guid and self._is_channel_summary_intent(user_text):
+        if not vector_answers_business_query and valid_user_guid and valid_channel_guid and self._is_channel_summary_intent(user_text):
             channel_summary_response = self._resolve_channel_summary_from_db(
                 user_id=user_id,
                 canal_id=canal_id,
@@ -1806,7 +2009,7 @@ class MachiningAgent:
             return channel_summary_response
 
         # --- 3.4 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
-        if valid_user_guid and self._is_channel_names_intent(user_text):
+        if not vector_answers_business_query and valid_user_guid and self._is_channel_names_intent(user_text):
             channel_names_response = self._resolve_channel_names_from_db(user_id, user_text)
             if history:
                 try:
@@ -1817,9 +2020,11 @@ class MachiningAgent:
             return channel_names_response
 
         # --- 3.5 CONTEO DIRECTO DE RECURSOS DEL MEETING DESDE SQL SERVER ---
-        meeting_resource_count_response = self._resolve_meeting_resource_count_from_db(
-            user_text, meeting_id
-        )
+        meeting_resource_count_response = None
+        if not vector_answers_business_query:
+            meeting_resource_count_response = self._resolve_meeting_resource_count_from_db(
+                user_text, meeting_id
+            )
         if meeting_resource_count_response is not None:
             if history:
                 try:
@@ -1830,7 +2035,9 @@ class MachiningAgent:
             return meeting_resource_count_response
 
         # --- 3.6 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
-        resource_count_response = self._resolve_resource_count_from_db(user_text)
+        resource_count_response = None
+        if not vector_answers_business_query:
+            resource_count_response = self._resolve_resource_count_from_db(user_text)
         if resource_count_response is not None:
             if history:
                 try:
@@ -1841,7 +2048,7 @@ class MachiningAgent:
             return resource_count_response
 
         # --- 3.7 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
-        if valid_user_guid and self._is_last_chat_message_intent(user_text):
+        if not vector_answers_business_query and valid_user_guid and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:
                 if history:
@@ -1872,6 +2079,19 @@ class MachiningAgent:
             )
 
         # --- 4. OBTENER CONTEXTOS ---
+
+        # 4.0 Catálogo real para SQL dinámico. Las rutas deterministas anteriores
+        # ya han respondido; llegar aquí significa que necesitamos generar una
+        # consulta nueva sin inventar tablas, columnas ni JOINs.
+        business_schema_context = ""
+        if business_knowledge_query and not vector_answers_business_query:
+            table_hints = self._business_schema_table_hints(user_text)
+            if table_hints:
+                business_schema_context = str(get_db_schema.invoke({
+                    "table_name": ",".join(table_hints)
+                }))
+                if business_schema_context.lower().startswith("error"):
+                    business_schema_context = ""
         
         # 4.1 Contexto del usuario (canales, rol, permisos)
         contexto_usuario = ""
@@ -1880,8 +2100,14 @@ class MachiningAgent:
         
         # 4.2 Contexto RAG (documentos técnicos)
         context_query = self._normalize_context_query(user_text)
-        rag_context = ""
-        if training_enabled and learn_from_system and not external_query_mode and not general_conversation_mode:
+        rag_context = business_rag_context
+        if (
+            not business_knowledge_query
+            and training_enabled
+            and learn_from_system
+            and not external_query_mode
+            and not general_conversation_mode
+        ):
             rag_context = self.sistema_aprendizaje.consultar_documentacion(
                 context_query,
                 agent_resource_id=agent_resource_id or None,
@@ -2005,6 +2231,24 @@ class MachiningAgent:
                 f"Meeting code: {meeting_code or 'no disponible'}\n"
                 "La conversación pertenece a esta reunión; utiliza este contexto sin inventar otros datos."
             )
+
+        if business_knowledge_query:
+            system_prompt += (
+                "\n\n=== REGLA DE DATOS DE NEGOCIO ===\n"
+                "La consulta trata sobre recursos, canales, meetings, actividades o tareas. "
+                "Usa exclusivamente el conocimiento vectorial relevante proporcionado o los "
+                "resultados obtenidos desde SolidSET Data API/SQL Server. No uses Internet, no "
+                "inventes datos y no afirmes que faltan tablas sin haber agotado esas fuentes."
+            )
+            if business_schema_context:
+                system_prompt += (
+                    "\n\n=== CATÁLOGO SQL REAL DE LA INSTANCIA ===\n"
+                    f"{business_schema_context}\n"
+                    "Genera como máximo una consulta SELECT parametrizada usando exclusivamente "
+                    "estas tablas, columnas, claves primarias y claves foráneas. Usa marcadores %s "
+                    "y envía sus valores en parameters_json. Incluye WHERE y TOP cuando la consulta "
+                    "no sea un agregado. No inventes relaciones ni nombres alternativos."
+                )
 
         if message_kind:
             system_prompt += (
@@ -2173,6 +2417,7 @@ class MachiningAgent:
                 except Exception as exc:
                     print(f"⚠️ Falló la búsqueda web previa: {exc}")
         
+        dynamic_sql_attempts = 0
         while iteration < self.max_iterations:
             try:
                 response = llm_for_request.invoke(messages)
@@ -2214,6 +2459,13 @@ class MachiningAgent:
                         user_id=user_id,
                         canal_id=canal_id,
                     )
+                    if business_knowledge_query and tool_name == "query_sql_server":
+                        dynamic_sql_attempts += 1
+                        if dynamic_sql_attempts > 2:
+                            argument_error = (
+                                "No se permiten más reintentos SQL para esta consulta. "
+                                "Responde indicando brevemente que no fue posible obtener datos fiables."
+                            )
                     
                     print(f"🔧 Ejecutando herramienta: {tool_name} con args: {tool_args}")
                     

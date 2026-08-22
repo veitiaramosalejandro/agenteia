@@ -20,10 +20,13 @@ from qdrant_client.models import PointStruct, Distance, VectorParams
 
 from app.config import settings
 from app.connectors.db_client import (
+    get_solidset_schema_snapshot,
     get_solidset_login_for_active_agent,
     list_active_solidset_instances,
+    save_solidset_schema_snapshot,
 )
-from app.connectors.solidset_sql import open_current_connection
+from app.connectors.solidset_data_api import read_schema_catalog
+from app.connectors.solidset_sql import current_instance, open_current_connection
 from app.rag.vector_store import ensure_vector_collection
 
 from app.rag.audio_processor import extract_audio_features
@@ -827,7 +830,7 @@ def google_web_search(query: str) -> str:
 
 
 @tool
-def query_sql_server(query: str) -> str:
+def query_sql_server(query: str, parameters_json: str = "[]") -> str:
     """
     EJECUTA CONSULTAS SELECT EN SQL SERVER.
     
@@ -843,6 +846,8 @@ def query_sql_server(query: str) -> str:
     
     ADVERTENCIA DE SEGURIDAD:
     - Siempre usa filtros WHERE para evitar consultas masivas
+    - Usa marcadores %s y envía los valores como array JSON en parameters_json
+    - Nunca concatena valores del usuario dentro del texto SQL
     - Deriva el filtro desde la petición del usuario cuando mencione un nombre, alias, estado o patrón.
     - No preguntes qué tabla usar si el esquema conocido ya identifica la tabla y columnas.
     - Los agregados COUNT con WHERE son consultas acotadas y no requieren confirmación.
@@ -856,6 +861,11 @@ def query_sql_server(query: str) -> str:
         return "Error de seguridad: La consulta contiene comandos no permitidos."
 
     try:
+        parameters = json.loads(parameters_json or "[]")
+        if not isinstance(parameters, list):
+            return "Error de seguridad: parameters_json debe ser un array JSON."
+        if len(parameters) > 100:
+            return "Error de seguridad: la consulta contiene demasiados parámetros."
         conn = open_current_connection(as_dict=True)
         cursor = conn.cursor(as_dict=True)
 
@@ -873,7 +883,7 @@ def query_sql_server(query: str) -> str:
                 f"Ejemplos de tablas reales: {sample}."
             )
 
-        cursor.execute(clean_query)
+        cursor.execute(clean_query, tuple(parameters))
         rows = cursor.fetchall()
         conn.close()
 
@@ -882,9 +892,9 @@ def query_sql_server(query: str) -> str:
 
         # 🚨 NUEVA VALIDACIÓN: Si son más de 50 filas, advertir
         if len(rows) > 50:
-            return f"⚠️ ADVERTENCIA: La consulta devolvió {len(rows)} filas. Mostrando solo las primeras 15.\n\n{json.dumps(rows[:15])}"
+            return f"⚠️ ADVERTENCIA: La consulta devolvió {len(rows)} filas. Mostrando solo las primeras 15.\n\n{json.dumps(rows[:15], ensure_ascii=False, default=str)}"
 
-        return json.dumps(rows[:15])
+        return json.dumps(rows[:15], ensure_ascii=False, default=str)
 
     except (pymssql.Error, RuntimeError) as db_err:
         return f"Error SQL Server: {str(db_err)}. Ajusta los campos/tablas y vuelve a intentar."
@@ -907,38 +917,59 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
     - NO la uses si el usuario ya sabe qué tabla consultar
     """
     try:
-        conn = open_current_connection(as_dict=True)
-        cursor = conn.cursor(as_dict=True)
-
-        if table_name:
-            query = """
-                SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = %s
-            """
-            cursor.execute(query, (table_name,))
-            rows = cursor.fetchall()
-            conn.close()
-            if not rows:
-                return f"No se encontró la tabla '{table_name}'."
-            # Formatear bonito
-            resultado = f"📋 ESTRUCTURA DE LA TABLA '{table_name}':\n\n"
-            for row in rows:
-                resultado += f"  • {row['COLUMN_NAME']} ({row['DATA_TYPE']}) - {'Puede ser NULL' if row['IS_NULLABLE'] == 'YES' else 'NO NULL'}\n"
-            return resultado
-        else:
-            query = """
-                SELECT TABLE_NAME 
-                FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_TYPE = 'BASE TABLE'
-                ORDER BY TABLE_NAME
-            """
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            conn.close()
-            tables = [r['TABLE_NAME'] for r in rows]
-            return f"📊 TABLAS DISPONIBLES ({len(tables)} en total):\n\n" + "\n".join([f"  • {t}" for t in tables[:30]])
-
+        instance = current_instance()
+        if not instance or not instance.get("DataAPI"):
+            return "Error al consultar el esquema: no existe una SolidSET Data API en contexto."
+        requested = [
+            value.strip() for value in str(table_name or "").split(",") if value.strip()
+        ] or None
+        try:
+            snapshot = get_solidset_schema_snapshot(instance["ID"])
+        except Exception as snapshot_error:
+            snapshot = None
+            print(f"⚠️ Snapshot de esquema no disponible; usando Data API: {snapshot_error}")
+        cached_catalog = (snapshot or {}).get("Catalog")
+        catalog = None
+        if isinstance(cached_catalog, str):
+            try:
+                cached_catalog = json.loads(cached_catalog)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                cached_catalog = None
+        if isinstance(cached_catalog, dict):
+            if not requested:
+                catalog = cached_catalog
+            else:
+                wanted = {value.lower() for value in requested}
+                cached_tables = [
+                    table for table in cached_catalog.get("tables") or []
+                    if str(table.get("tableName") or "").lower() in wanted
+                    or (
+                        f"{table.get('schemaName')}.{table.get('tableName')}".lower()
+                        in wanted
+                    )
+                ]
+                if wanted.issubset({
+                    str(table.get("tableName") or "").lower() for table in cached_tables
+                }):
+                    catalog = {
+                        "databaseName": cached_catalog.get("databaseName"),
+                        "tables": cached_tables,
+                    }
+        if catalog is None:
+            catalog = read_schema_catalog(instance["DataAPI"], requested)
+        if not requested:
+            try:
+                save_solidset_schema_snapshot(instance["ID"], catalog)
+            except Exception as snapshot_error:
+                print(f"⚠️ No se pudo persistir el snapshot de esquema: {snapshot_error}")
+        tables = catalog.get("tables") or []
+        if requested and not tables:
+            return f"No se encontró la tabla '{table_name}'."
+        return json.dumps(
+            {"databaseName": catalog.get("databaseName"), "tables": tables[:100]},
+            ensure_ascii=False,
+            default=str,
+        )
     except Exception as e:
         return f"Error al consultar el esquema: {str(e)}"
 

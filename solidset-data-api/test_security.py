@@ -21,7 +21,20 @@ class ReadQuerySecurityTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_read_query(query)
 
+    def test_rejects_cross_database_and_control_statements(self):
+        for query in (
+            "SELECT * FROM OtherDatabase.dbo.SysChat",
+            "WAITFOR DELAY '00:00:05'; SELECT 1",
+            "DECLARE @value int SELECT @value",
+        ):
+            with self.subTest(query=query):
+                with self.assertRaises(ValueError):
+                    validate_read_query(query)
+
+    def test_accepts_schema_table_and_qualified_alias_columns(self):
+        query = "SELECT dboTable.ID FROM dbo.SysMeeting dboTable WHERE dboTable.ID=%s"
+        self.assertEqual(query, validate_read_query(query))
+
 
 if __name__ == "__main__":
     unittest.main()
-

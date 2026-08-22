@@ -1164,6 +1164,76 @@ Antes del envío, la API valida que `meeting_id` exista en `dbo.SysMeeting`, est
 
 Cuando `Chat.chatQuestion` está presente, el agente recibe `chatQuestion.rawMessage` y `chatQuestion.idChat2` como contexto del mensaje citado. La petición actual continúa siendo `RawMessage`; el mensaje citado no sustituye al autor, los destinatarios ni el meeting actuales y se trata como contenido no confiable, no como una instrucción del sistema.
 
+Las preguntas operativas sobre participantes del meeting se resuelven de forma
+determinista en SQL Server mediante `SysMeeting`, `SysMeeting2Resource` y
+`SysResources`. El `meeting_id` incluido en el payload establece el ámbito de la
+consulta, por lo que no es obligatorio repetir la palabra «meeting» en preguntas
+como «Dime cuáles son los recursos activos». Se excluyen relaciones pendientes,
+bloqueadas o expulsadas y se soportan el conteo, el listado nominal de recursos
+activos y la identificación del recurso creador. Estas consultas no se delegan al
+LLM ni al descubrimiento libre de tablas.
+
+El idioma del `RawMessage` actual tiene prioridad absoluta sobre `Locale`, país,
+instancia, memoria conversacional, documentos recuperados y resultados SQL. La
+API detecta español, portugués o inglés en cada petición y construye o normaliza
+la respuesta en ese mismo idioma. `Locale=pt-PT` únicamente adapta las variantes
+regionales cuando el mensaje está escrito en portugués; no puede convertir una
+pregunta española o inglesa en una respuesta portuguesa.
+
+Para cualquier pregunta sobre recursos, canales, meetings, actividades o tareas
+se aplica obligatoriamente la cadena `Qdrant -> SolidSET Data API -> SQL Server`.
+Primero se consulta el conocimiento vectorial aislado del agente y del canal. Un
+resultado solo se considera referente si alcanza el umbral semántico configurado
+por `BUSINESS_RAG_MIN_SCORE` (valor predeterminado `0.60`). Si no existe evidencia
+suficiente, la API consulta los datos operacionales mediante SolidSET Data API;
+el agente no conecta directamente a SQL Server. Estas intenciones nunca utilizan
+búsqueda web y el LLM no puede reemplazar la consulta por nombres de tablas
+inventados ni por explicaciones genéricas.
+
+Si SQL Server rechaza una columna o tabla, la Data API devuelve un error
+estructurado `COLUMN_NOT_FOUND` o `TABLE_NOT_FOUND` sin exponer la traza completa.
+El agente puede refrescar el fragmento del catálogo y realizar como máximo una
+corrección basada en los identificadores reales; no entra en reintentos ilimitados.
+
+Las preguntas sobre estado vivo u operacional constituyen una excepción de
+autoridad, no de orden: Qdrant se consulta primero, pero una coincidencia histórica
+no puede sustituir los identificadores actuales recibidos en el payload. Consultas
+como «participantes», «nombres», «recursos activos», «estado actual», conteos o
+listados se verifican siempre mediante SolidSET Data API/SQL Server usando
+`Chat.idMeeting`, `Info.meeting_id`, `IDWorkRoom` y los demás identificadores del
+mensaje. Para estos casos SQL es la fuente autoritativa y el LLM solo puede redactar
+los datos obtenidos; no puede responder con instrucciones genéricas sobre meetings.
+
+### Catálogo de esquema y consultas dinámicas seguras
+
+La API del agente nunca descubre el esquema conectándose directamente a SQL
+Server. La SolidSET Data API expone `GET /api/v1/schema/catalog`, autenticado con
+`X-SolidSET-Data-Key`, que devuelve tablas `dbo`, columnas, tipos, nulabilidad,
+claves primarias y claves foráneas. El parámetro opcional `tables` acepta nombres
+separados por coma para devolver únicamente el fragmento necesario.
+
+El agente selecciona tablas candidatas según la entidad de negocio y precarga ese
+fragmento antes de pedir al modelo una consulta nueva. El modelo solo puede generar
+un `SELECT`/CTE, debe usar relaciones presentes en el catálogo, marcadores `%s` y
+el array `parameters_json`. La ejecución continúa pasando por
+`POST /api/v1/query/read`, con límite de filas, timeout, rechazo de escritura,
+comentarios, instrucciones múltiples, sentencias de control y referencias a otras
+bases de datos. Las consultas frecuentes conservan sus plantillas deterministas;
+el SQL dinámico es únicamente el fallback para una intención operacional nueva.
+
+#### `POST /api/v1/agent/solidset/instances/{code}/schema/refresh`
+
+Obtiene el catálogo completo desde la SolidSET Data API configurada para la
+instancia y lo guarda en PostgreSQL en `SysSolidSETSchemaSnapshot`. Devuelve el
+estado, base de datos, número de tablas, hash y fecha de captura. Los mensajes de
+salida están en portugués de Portugal y la descripción de Swagger está en inglés.
+
+#### `GET /api/v1/agent/solidset/instances/{code}/schema`
+
+Devuelve el último snapshot desde PostgreSQL sin abrir una conexión a SQL Server.
+Cada instancia mantiene su propio catálogo y hash, permitiendo soportar versiones
+de esquema diferentes sin mezclar tablas o relaciones entre instalaciones.
+
 En meetings, `Chat.destiny` es la fuente canónica para decidir qué agente responde:
 
 ```text

@@ -6,6 +6,7 @@ from app.connectors.solidset_data_api import (
     _runtime_base_url,
     _strip_sql_comments,
     read_dataset,
+    read_schema_catalog,
 )
 from app.connectors.solidset_sql import connect as connect_solidset_data
 
@@ -93,6 +94,33 @@ class SolidSETDataAPIConnectorTests(unittest.TestCase):
         sent = client_type.return_value.post.call_args.kwargs["json"]
         self.assertEqual([9], sent["parameters"])
         self.assertEqual(500, sent["maxRows"])
+
+    @patch("app.connectors.solidset_data_api.decrypt_api_key", return_value="secret")
+    @patch("app.connectors.solidset_data_api.httpx.Client")
+    def test_reads_filtered_structured_schema_catalog(self, client_type, _decrypt):
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "databaseName": "ISIFrameIsicom",
+            "tables": [{
+                "schemaName": "dbo",
+                "tableName": "SysMeeting",
+                "columns": [{"name": "ID", "dataType": "uniqueidentifier"}],
+                "foreignKeys": [],
+            }],
+        }
+        client_type.return_value.get.return_value = response
+
+        catalog = read_schema_catalog({
+            "BaseUrl": "https://data.example.test",
+            "EncryptedAPIKey": "encrypted",
+        }, ["SysMeeting", "SysMeeting2Resource"])
+
+        self.assertEqual("ISIFrameIsicom", catalog["databaseName"])
+        self.assertEqual("SysMeeting", catalog["tables"][0]["tableName"])
+        self.assertEqual(
+            {"tables": "SysMeeting,SysMeeting2Resource"},
+            client_type.return_value.get.call_args.kwargs["params"],
+        )
 
 
 if __name__ == "__main__":

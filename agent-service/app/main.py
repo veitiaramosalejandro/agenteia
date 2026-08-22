@@ -52,6 +52,7 @@ from app.connectors.db_client import (
     get_agent_model_configuration,
     get_agent_model_configurations,
     get_solidset_instance,
+    get_solidset_schema_snapshot,
     list_active_solidset_instances,
     list_llm_provider_configurations,
     save_agent_knowledge,
@@ -59,9 +60,11 @@ from app.connectors.db_client import (
     save_agent_model_configuration,
     save_agent_response_audit,
     save_solidset_instance,
+    save_solidset_schema_snapshot,
     save_sys_resource_ia,
     touch_agent_session,
 )
+from app.connectors.solidset_data_api import read_schema_catalog
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
 from app.system.resource_ingest import (
@@ -1521,6 +1524,8 @@ async def _process_auto_replies(
             "agent_knowledge": candidate.get("agent_knowledge"),
             "agent_reinforcement": candidate.get("agent_reinforcement"),
             "workroom_id": channel_id,
+            "meeting_id": meeting_id,
+            "meeting_code": meeting_code,
             "country_code": candidate.get("country_code") or "PT",
             "locale": candidate.get("locale") or "pt-PT",
             "time_zone": candidate.get("time_zone") or "Europe/Lisbon",
@@ -3350,6 +3355,61 @@ def test_solidset_instance_database(code: str) -> SolidSETDataAPIConnectionTestR
     return SolidSETDataAPIConnectionTestResponse(
         status="connected", instanceCode=str(instance["Code"]), **result,
     )
+
+
+@app.post(
+    "/api/v1/agent/solidset/instances/{code}/schema/refresh",
+    tags=["SolidSET Configuration"],
+    summary="Refresh the SQL schema snapshot for a SolidSET instance",
+)
+def refresh_solidset_instance_schema(code: str) -> dict[str, Any]:
+    """Reads the schema through Data API and stores the snapshot in PostgreSQL."""
+    instance = get_solidset_instance(code=code.strip(), source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="A instância SolidSET não existe ou está inativa.")
+    if not instance.get("DataAPI"):
+        raise HTTPException(status_code=409, detail="A instância não tem uma SolidSET Data API configurada.")
+    try:
+        catalog = read_schema_catalog(instance["DataAPI"])
+        saved = save_solidset_schema_snapshot(instance["ID"], catalog)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível atualizar o catálogo de esquema da instância.",
+        ) from exc
+    return {
+        "status": "updated",
+        "instanceCode": str(instance["Code"]),
+        "databaseName": catalog.get("databaseName"),
+        "tableCount": len(catalog.get("tables") or []),
+        "schemaHash": saved.get("SchemaHash"),
+        "capturedAt": saved.get("CapturedAt"),
+    }
+
+
+@app.get(
+    "/api/v1/agent/solidset/instances/{code}/schema",
+    tags=["SolidSET Configuration"],
+    summary="Get the cached SQL schema snapshot for a SolidSET instance",
+)
+def get_solidset_instance_schema(code: str) -> dict[str, Any]:
+    """Returns the PostgreSQL snapshot without opening a SQL Server connection."""
+    instance = get_solidset_instance(code=code.strip(), source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="A instância SolidSET não existe ou está inativa.")
+    snapshot = get_solidset_schema_snapshot(instance["ID"])
+    if not snapshot:
+        raise HTTPException(
+            status_code=404,
+            detail="Ainda não existe um snapshot de esquema para esta instância.",
+        )
+    return {
+        "instanceCode": str(instance["Code"]),
+        "databaseName": snapshot.get("DatabaseName"),
+        "schemaHash": snapshot.get("SchemaHash"),
+        "capturedAt": snapshot.get("CapturedAt"),
+        "catalog": snapshot.get("Catalog"),
+    }
 
 
 @app.put(

@@ -67,6 +67,12 @@ def instance_context(instance: dict[str, Any]) -> Iterator[None]:
         _current_instance.reset(token)
 
 
+def current_instance() -> dict[str, Any] | None:
+    """Return the request-scoped instance without exposing mutable global state."""
+    instance = _current_instance.get()
+    return dict(instance) if instance else None
+
+
 def open_current_connection(*, as_dict: bool = False) -> Any:
     instance = _current_instance.get()
     if not instance:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 import pymssql
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -35,6 +36,58 @@ class QueryResponse(BaseModel):
     nextOffset: int | None = None
 
 
+class SchemaColumn(BaseModel):
+    name: str
+    dataType: str
+    nullable: bool
+    maxLength: int | None = None
+    primaryKey: bool = False
+
+
+class SchemaForeignKey(BaseModel):
+    name: str
+    column: str
+    referencedSchema: str
+    referencedTable: str
+    referencedColumn: str
+
+
+class SchemaTable(BaseModel):
+    schemaName: str
+    tableName: str
+    columns: list[SchemaColumn]
+    foreignKeys: list[SchemaForeignKey]
+
+
+class SchemaCatalogResponse(BaseModel):
+    databaseName: str
+    tables: list[SchemaTable]
+
+
+def _sql_error_detail(exc: pymssql.Error) -> tuple[int, dict[str, Any]]:
+    """Return a bounded, structured error that allows one safe schema correction."""
+    message = str(exc)
+    identifier_match = re.search(r"Invalid (?:column|object) name '([^']+)'", message)
+    identifier = identifier_match.group(1) if identifier_match else None
+    if "Invalid column name" in message:
+        return 422, {
+            "code": "COLUMN_NOT_FOUND",
+            "identifier": identifier,
+            "message": "A consulta usa uma coluna inexistente. Atualize o catálogo e corrija a consulta.",
+        }
+    if "Invalid object name" in message:
+        return 422, {
+            "code": "TABLE_NOT_FOUND",
+            "identifier": identifier,
+            "message": "A consulta usa uma tabela inexistente. Atualize o catálogo e corrija a consulta.",
+        }
+    return 503, {
+        "code": "SQL_READ_FAILED",
+        "identifier": None,
+        "message": "A consulta de leitura ao SQL Server falhou.",
+    }
+
+
 def require_api_key(x_solidset_data_key: str | None = Header(None)) -> None:
     if not valid_api_key(x_solidset_data_key, settings.SOLIDSET_DATA_API_KEY):
         raise HTTPException(status_code=401, detail="Credencial da SolidSET Data API inválida.")
@@ -63,11 +116,110 @@ def capabilities() -> dict[str, Any]:
             "serverVersion": str(server.get("ServerVersion") or "")[:255],
             "capabilities": {
                 "readQuery": True,
+                "schemaCatalog": True,
                 "resourceAgents": bool(resource_agent.get("HasResourceAgent")),
             },
         }
     except pymssql.Error as exc:
         raise HTTPException(status_code=503, detail="Não foi possível ligar ao SQL Server.") from exc
+
+
+@app.get(
+    "/api/v1/schema/catalog",
+    response_model=SchemaCatalogResponse,
+    tags=["Database schema"],
+    dependencies=[Depends(require_api_key)],
+    summary="Read the SQL Server schema catalog",
+    description=(
+        "Returns tables, columns, primary keys and foreign keys. Use the optional "
+        "tables parameter to retrieve only the fragment needed for a dynamic query."
+    ),
+)
+def schema_catalog(tables: str | None = Query(None, max_length=4000)) -> SchemaCatalogResponse:
+    requested = {
+        value.strip().lower()
+        for value in str(tables or "").split(",")
+        if value.strip()
+    }
+    try:
+        with connection(as_dict=True) as conn, conn.cursor(as_dict=True) as cursor:
+            cursor.execute("SELECT DB_NAME() AS DatabaseName")
+            database_name = str((cursor.fetchone() or {}).get("DatabaseName") or "")
+            cursor.execute(
+                """
+                SELECT c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE,
+                       c.IS_NULLABLE, c.CHARACTER_MAXIMUM_LENGTH,
+                       CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS IsPrimaryKey
+                FROM INFORMATION_SCHEMA.COLUMNS c
+                LEFT JOIN (
+                    SELECT ku.TABLE_SCHEMA, ku.TABLE_NAME, ku.COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                    INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
+                      ON ku.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+                     AND ku.TABLE_SCHEMA = tc.TABLE_SCHEMA
+                    WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                ) pk ON pk.TABLE_SCHEMA = c.TABLE_SCHEMA
+                    AND pk.TABLE_NAME = c.TABLE_NAME
+                    AND pk.COLUMN_NAME = c.COLUMN_NAME
+                WHERE c.TABLE_SCHEMA = 'dbo'
+                ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION
+                """
+            )
+            column_rows = cursor.fetchall() or []
+            cursor.execute(
+                """
+                SELECT fk.name AS ForeignKeyName,
+                       OBJECT_SCHEMA_NAME(fkc.parent_object_id) AS TableSchema,
+                       OBJECT_NAME(fkc.parent_object_id) AS TableName,
+                       pc.name AS ColumnName,
+                       OBJECT_SCHEMA_NAME(fkc.referenced_object_id) AS ReferencedSchema,
+                       OBJECT_NAME(fkc.referenced_object_id) AS ReferencedTable,
+                       rc.name AS ReferencedColumn
+                FROM sys.foreign_key_columns fkc
+                INNER JOIN sys.foreign_keys fk ON fk.object_id = fkc.constraint_object_id
+                INNER JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id
+                    AND pc.column_id = fkc.parent_column_id
+                INNER JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id
+                    AND rc.column_id = fkc.referenced_column_id
+                ORDER BY TableSchema, TableName, fk.name, fkc.constraint_column_id
+                """
+            )
+            fk_rows = cursor.fetchall() or []
+    except pymssql.Error as exc:
+        raise HTTPException(status_code=503, detail="Não foi possível ler o esquema SQL Server.") from exc
+
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in column_rows:
+        schema_name = str(row.get("TABLE_SCHEMA") or "")
+        table_name = str(row.get("TABLE_NAME") or "")
+        qualified = f"{schema_name}.{table_name}".lower()
+        if requested and table_name.lower() not in requested and qualified not in requested:
+            continue
+        table = grouped.setdefault((schema_name, table_name), {
+            "schemaName": schema_name,
+            "tableName": table_name,
+            "columns": [],
+            "foreignKeys": [],
+        })
+        table["columns"].append({
+            "name": str(row.get("COLUMN_NAME") or ""),
+            "dataType": str(row.get("DATA_TYPE") or ""),
+            "nullable": str(row.get("IS_NULLABLE") or "").upper() == "YES",
+            "maxLength": row.get("CHARACTER_MAXIMUM_LENGTH"),
+            "primaryKey": bool(row.get("IsPrimaryKey")),
+        })
+    for row in fk_rows:
+        key = (str(row.get("TableSchema") or ""), str(row.get("TableName") or ""))
+        if key not in grouped:
+            continue
+        grouped[key]["foreignKeys"].append({
+            "name": str(row.get("ForeignKeyName") or ""),
+            "column": str(row.get("ColumnName") or ""),
+            "referencedSchema": str(row.get("ReferencedSchema") or ""),
+            "referencedTable": str(row.get("ReferencedTable") or ""),
+            "referencedColumn": str(row.get("ReferencedColumn") or ""),
+        })
+    return SchemaCatalogResponse(databaseName=database_name, tables=list(grouped.values()))
 
 
 @app.post(
@@ -86,7 +238,8 @@ def read_query(request: QueryRequest) -> QueryResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except pymssql.Error as exc:
-        raise HTTPException(status_code=503, detail="A consulta SQL Server falhou.") from exc
+        status_code, detail = _sql_error_detail(exc)
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @app.get(

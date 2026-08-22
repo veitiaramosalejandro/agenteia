@@ -71,6 +71,9 @@ class SolidSETOrchestrator:
             "causa raíz", "causa raiz", "por qué", "porque ocurre", "evalúa", "evalua",
         )
         is_general = getattr(self.agent, "_is_general_conversation", lambda _text: False)
+        is_business = getattr(
+            self.agent, "_is_business_knowledge_query", lambda _text: False
+        )
         if metadata.get("response_suggestion_mode"):
             # A suggestion must be grounded in the requester's own agent
             # knowledge. It must not escape to the public web merely because
@@ -78,6 +81,8 @@ class SolidSETOrchestrator:
             route = "work_sql_rag"
         elif is_general(user_text):
             route = "general_conversation"
+        elif is_business(user_text):
+            route = "work_sql_rag"
         elif (
             self.agent._is_external_information_query(user_text)
             or not self.agent._is_internal_domain_query(user_text)
@@ -230,15 +235,26 @@ class SolidSETOrchestrator:
         target = {"es": "español", "pt": "português", "en": "English"}[expected]
         try:
             selected_llm, _, _ = self.agent.get_llm_for_metadata(message_metadata)
-            translated = selected_llm.invoke([
-                SystemMessage(content=(
-                    f"Translate the response to {target}. Preserve names, figures, dates, Markdown and "
-                    "technical identifiers exactly. Return only the translated response."
-                )),
-                HumanMessage(content=response),
-            ])
-            text = translated.content if hasattr(translated, "content") else str(translated)
-            return str(text or "").strip() or response
+            candidate = response
+            for attempt in range(2):
+                translated = selected_llm.invoke([
+                    SystemMessage(content=(
+                        f"MANDATORY OUTPUT LANGUAGE: {target}. Translate the supplied response "
+                        f"entirely to {target}. Do not answer the original question again. Preserve "
+                        "names, figures, dates, Markdown and technical identifiers exactly. Return "
+                        f"only the translated text in {target}; no preface or explanation."
+                    )),
+                    HumanMessage(content=candidate),
+                ])
+                text = translated.content if hasattr(translated, "content") else str(translated)
+                candidate = str(text or "").strip() or candidate
+                if self.agent._detect_user_language(candidate) == expected:
+                    return candidate
+                print(
+                    "⚠️ LangGraph language normalization returned the wrong language; "
+                    f"expected={expected} attempt={attempt + 1}"
+                )
+            return candidate
         except Exception as exc:
             print(f"⚠️ LangGraph language normalization failed: {exc}")
             return response

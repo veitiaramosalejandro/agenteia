@@ -1105,6 +1105,7 @@ class SistemaAprendizaje:
         limit: int = 3,
         agent_resource_id: Optional[str] = None,
         canal_id: Optional[str] = None,
+        min_score: float = 0.0,
     ) -> str:
         """
         Busca en la base de conocimiento (Qdrant) documentos técnicos relevantes.
@@ -1129,6 +1130,8 @@ class SistemaAprendizaje:
         seen_ids = set()
         formatted_results = []
         for hit in resultados:
+            if float(hit.get('score') or 0.0) < max(0.0, min(float(min_score), 1.0)):
+                continue
             payload = hit.get('payload') or {}
             metadata = payload.get('metadatos') if isinstance(payload.get('metadatos'), dict) else {}
             payload_agent = str(

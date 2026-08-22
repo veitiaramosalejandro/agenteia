@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 from uuid import UUID
+import hashlib
+import json
 import threading
 import psycopg
 from psycopg.rows import dict_row
@@ -97,8 +99,65 @@ def ensure_solidset_instance_location_schema() -> None:
                     );
                     CREATE INDEX IF NOT EXISTS "IX_SysSolidSETInstanceLogin_Resource"
                       ON public."SysSolidSETInstanceLogin" ("IDSolidSETInstance", "LastIDResource");
+                    CREATE TABLE IF NOT EXISTS public."SysSolidSETSchemaSnapshot" (
+                      "IDSolidSETInstance" uuid PRIMARY KEY
+                        REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
+                      "DatabaseName" varchar(255),
+                      "SchemaHash" varchar(64) NOT NULL,
+                      "Catalog" jsonb NOT NULL,
+                      "CapturedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
                 ''')
         _solidset_location_schema_ready = True
+
+
+def save_solidset_schema_snapshot(
+    instance_id: str | UUID, catalog: dict[str, Any]
+) -> dict[str, Any]:
+    """Persist the latest structured SQL schema for one SolidSET instance."""
+    ensure_solidset_instance_location_schema()
+    serialized = json.dumps(catalog, ensure_ascii=False, sort_keys=True, default=str)
+    schema_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                INSERT INTO public."SysSolidSETSchemaSnapshot" (
+                    "IDSolidSETInstance", "DatabaseName", "SchemaHash", "Catalog"
+                ) VALUES (%s, %s, %s, %s::jsonb)
+                ON CONFLICT ("IDSolidSETInstance") DO UPDATE SET
+                    "DatabaseName"=EXCLUDED."DatabaseName",
+                    "SchemaHash"=EXCLUDED."SchemaHash",
+                    "Catalog"=EXCLUDED."Catalog",
+                    "CapturedAt"=CURRENT_TIMESTAMP,
+                    "UpdatedAt"=CURRENT_TIMESTAMP
+                RETURNING *
+                ''',
+                (
+                    instance_id,
+                    str(catalog.get("databaseName") or ""),
+                    schema_hash,
+                    serialized,
+                ),
+            )
+            row = cursor.fetchone()
+    return dict(row or {})
+
+
+def get_solidset_schema_snapshot(
+    instance_id: str | UUID,
+) -> dict[str, Any] | None:
+    ensure_solidset_instance_location_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT * FROM public."SysSolidSETSchemaSnapshot" '
+                'WHERE "IDSolidSETInstance"=%s',
+                (instance_id,),
+            )
+            row = cursor.fetchone()
+    return dict(row) if row else None
 
 
 def ensure_solidset_agent_resource_schema() -> None:

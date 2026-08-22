@@ -22,6 +22,24 @@ class LanguageDetectionTests(unittest.TestCase):
     def test_detects_short_spanish_greeting(self):
         self.assertEqual("es", self.agent._detect_user_language("Buenos días"))
 
+    def test_detects_spanish_meeting_question_without_accents(self):
+        self.assertEqual(
+            "es",
+            self.agent._detect_user_language("Dime los participantes del meeting?"),
+        )
+
+    def test_detects_portuguese_meeting_question(self):
+        self.assertEqual(
+            "pt",
+            self.agent._detect_user_language("Diga-me quais são os participantes ativos do meeting?"),
+        )
+
+    def test_detects_english_meeting_question(self):
+        self.assertEqual(
+            "en",
+            self.agent._detect_user_language("Tell me the active participants in the meeting"),
+        )
+
     def test_direct_portuguese_greeting_is_localized(self):
         response = _direct_courtesy_response("Bom dia", "Alejandro Veitia")
         self.assertEqual(
@@ -41,7 +59,7 @@ class LanguageDetectionTests(unittest.TestCase):
         model = MagicMock()
         model.invoke.return_value = MagicMock(content="Bom dia! Como posso ajudar?")
         orchestrator.agent = MagicMock()
-        orchestrator.agent._detect_user_language.side_effect = ["pt", "es"]
+        orchestrator.agent._detect_user_language.side_effect = ["pt", "es", "pt"]
         orchestrator.agent.get_llm_for_metadata.return_value = (model, None, None)
 
         response = orchestrator._ensure_response_language(

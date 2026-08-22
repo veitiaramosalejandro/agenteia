@@ -1,7 +1,9 @@
+import json
 import unittest
 from unittest.mock import patch
 
 from app.agent.core import MachiningAgent
+from app.agent.tools import get_db_schema
 
 
 class ToolArgumentNormalizationTests(unittest.TestCase):
@@ -66,7 +68,15 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
 
     @patch("app.agent.core.query_sql_server")
     def test_meeting_resource_count_uses_current_meeting_id(self, query_tool):
-        query_tool.invoke.return_value = '[{"Total": 4}]'
+        query_tool.invoke.return_value = (
+            '[{"IDMeeting":"7d7a581d-d7c1-4e18-a11b-6d322e4755c6",'
+            '"IDResourceCreator":"resource-1","IDResource":"resource-1",'
+            '"ResourceName":"Alejandro"},{"IDResourceCreator":"resource-1",'
+            '"IDResource":"resource-2","ResourceName":"Victor"},'
+            '{"IDResourceCreator":"resource-1","IDResource":"resource-3",'
+            '"ResourceName":"Paulo"},{"IDResourceCreator":"resource-1",'
+            '"IDResource":"resource-4","ResourceName":"Ana"}]'
+        )
         response = self.agent._resolve_meeting_resource_count_from_db(
             "¿Cuántos recursos tiene este meeting activo?",
             "7d7a581d-d7c1-4e18-a11b-6d322e4755c6",
@@ -74,7 +84,60 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         self.assertEqual("Este meeting activo tiene **4 recursos participantes**.", response)
         sql = query_tool.invoke.call_args.args[0]["query"]
         self.assertIn("dbo.SysMeeting2Resource", sql)
+        self.assertIn("dbo.SysResources", sql)
         self.assertIn("7d7a581d-d7c1-4e18-a11b-6d322e4755c6", sql)
+
+    @patch("app.agent.core.query_sql_server")
+    def test_meeting_active_resources_are_listed_from_payload_context(self, query_tool):
+        query_tool.invoke.return_value = (
+            '[{"IDResourceCreator":"resource-1","IDResource":"resource-1",'
+            '"ResourceName":"Alejandro"},{"IDResourceCreator":"resource-1",'
+            '"IDResource":"resource-2","ResourceName":"Victor"}]'
+        )
+        response = self.agent._resolve_meeting_resource_count_from_db(
+            "Dime cuales son los recursos activos?",
+            "7d7a581d-d7c1-4e18-a11b-6d322e4755c6",
+        )
+        self.assertIn("son **2**", response)
+        self.assertIn("- Alejandro", response)
+        self.assertIn("- Victor", response)
+
+    @patch("app.agent.core.query_sql_server")
+    def test_misspelled_spanish_participant_question_stays_in_spanish(self, query_tool):
+        query_tool.invoke.return_value = (
+            '[{"IDResourceCreator":"resource-1","IDResource":"resource-1",'
+            '"ResourceName":"Alejandro"}]'
+        )
+        response = self.agent._resolve_meeting_resource_count_from_db(
+            "Dime los participanten del meeting?",
+            "7d7a581d-d7c1-4e18-a11b-6d322e4755c6",
+        )
+        self.assertIn("Los recursos participantes activos", response)
+
+    @patch("app.agent.core.query_sql_server")
+    def test_meeting_creator_is_resolved_from_participants(self, query_tool):
+        query_tool.invoke.return_value = (
+            '[{"IDResourceCreator":"resource-1","IDResource":"resource-1",'
+            '"ResourceName":"Alejandro"},{"IDResourceCreator":"resource-1",'
+            '"IDResource":"resource-2","ResourceName":"Victor"}]'
+        )
+        response = self.agent._resolve_meeting_resource_count_from_db(
+            "Quien es el creador?",
+            "7d7a581d-d7c1-4e18-a11b-6d322e4755c6",
+        )
+        self.assertEqual("El creador de este meeting es **Alejandro**.", response)
+
+    @patch("app.agent.core.query_sql_server")
+    def test_meeting_query_failure_does_not_fall_back_to_hallucination(self, query_tool):
+        query_tool.invoke.return_value = "Error: SolidSET Data API indisponível"
+        response = self.agent._resolve_meeting_resource_count_from_db(
+            "¿Quiénes son los participantes?",
+            "7d7a581d-d7c1-4e18-a11b-6d322e4755c6",
+        )
+        self.assertEqual(
+            "No pude consultar los participantes del meeting en este momento.",
+            response,
+        )
 
     def test_channel_names_question_uses_direct_sql_route(self):
         self.assertTrue(
@@ -82,6 +145,83 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
                 "Dime los nombre de los canales existente en el sistema SOLIDSET?"
             )
         )
+
+    def test_business_entities_are_forced_to_internal_knowledge_route(self):
+        examples = (
+            "¿Quiénes son los participantes?",
+            "Lista los recursos activos",
+            "Show the channel tasks",
+            "Quais são as atividades?",
+        )
+        for text in examples:
+            with self.subTest(text=text):
+                self.assertTrue(self.agent._is_business_knowledge_query(text))
+                self.assertTrue(self.agent._is_internal_domain_query(text))
+
+    def test_live_meeting_participants_require_sql_even_with_vector_context(self):
+        meeting_id = "7d7a581d-d7c1-4e18-a11b-6d322e4755c6"
+        self.assertTrue(
+            self.agent._requires_live_business_data(
+                "Dime los nombres de los participantes", meeting_id
+            )
+        )
+        self.assertTrue(
+            self.agent._requires_live_business_data(
+                "¿Cuántos recursos tiene este meeting activo?", meeting_id
+            )
+        )
+
+    def test_descriptive_business_question_can_use_vector_knowledge(self):
+        self.assertFalse(
+            self.agent._requires_live_business_data(
+                "Explica qué es un canal de SolidSET"
+            )
+        )
+
+    def test_dynamic_schema_hints_are_limited_to_business_entities(self):
+        self.assertEqual(
+            ["SysMeeting", "SysMeeting2Resource", "SysResources"],
+            self.agent._business_schema_table_hints(
+                "Dime los participantes del meeting"
+            ),
+        )
+        self.assertEqual(
+            ["SysTask"],
+            self.agent._business_schema_table_hints("Lista las tareas abiertas"),
+        )
+
+    def test_dynamic_sql_parameters_are_normalized_as_json(self):
+        args, error = self.agent._normalize_tool_args(
+            "query_sql_server",
+            {"query": "SELECT * FROM dbo.SysTask WHERE ID=%s", "parameters_json": ["id-1"]},
+            user_text="Busca la tarea",
+            user_id=None,
+            canal_id=None,
+        )
+        self.assertIsNone(error)
+        self.assertEqual('["id-1"]', args["parameters_json"])
+
+    @patch("app.agent.tools.read_schema_catalog")
+    @patch("app.agent.tools.get_solidset_schema_snapshot")
+    @patch("app.agent.tools.current_instance")
+    def test_schema_tool_uses_postgres_snapshot_before_data_api(
+        self, current, snapshot, read_catalog
+    ):
+        current.return_value = {"ID": "instance-1", "DataAPI": {"active": True}}
+        snapshot.return_value = {"Catalog": {
+            "databaseName": "ISIFrameIsicom",
+            "tables": [{
+                "schemaName": "dbo",
+                "tableName": "SysMeeting",
+                "columns": [],
+                "foreignKeys": [],
+            }],
+        }}
+
+        result = json.loads(get_db_schema.invoke({"table_name": "SysMeeting"}))
+
+        self.assertEqual("SysMeeting", result["tables"][0]["tableName"])
+        read_catalog.assert_not_called()
 
     def test_channel_summary_followup_uses_direct_summary_route(self):
         self.assertTrue(
