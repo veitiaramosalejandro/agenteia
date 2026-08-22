@@ -314,6 +314,11 @@ La API está activa, pero no puede conectar con SQL Server. Revisa:
 docker compose logs --tail 100 data-api
 ```
 
+Las trazas `SQL_CONNECT` muestran el destino efectivo y si el error sucede al
+establecer la conexión. Las trazas `SQL_READ` identifican la operación (por ejemplo,
+`dataset:resources`), su duración y un `query_id` seguro sin imprimir el SQL, sus
+parámetros ni credenciales.
+
 ### HTTP 401
 
 `X-SolidSET-Data-Key` no coincide con `SOLIDSET_DATA_API_KEY`. Después de

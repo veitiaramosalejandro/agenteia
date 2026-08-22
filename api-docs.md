@@ -1221,6 +1221,13 @@ comentarios, instrucciones múltiples, sentencias de control y referencias a otr
 bases de datos. Las consultas frecuentes conservan sus plantillas deterministas;
 el SQL dinámico es únicamente el fallback para una intención operacional nueva.
 
+La SolidSET Data API registra trazas operativas seguras para diagnosticar errores
+`503`: intento y resultado de conexión (`host`, instancia, puerto y base de datos),
+etiqueta de la operación, identificador SHA-256 abreviado de la consulta, número de
+parámetros, filas, columnas y duración. En caso de fallo incluye el tipo y un mensaje
+acotado. Las trazas no muestran la consulta, sus parámetros, el usuario, la contraseña
+ni la clave de la API.
+
 #### `POST /api/v1/agent/solidset/instances/{code}/schema/refresh`
 
 Obtiene el catálogo completo desde la SolidSET Data API configurada para la

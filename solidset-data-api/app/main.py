@@ -233,7 +233,12 @@ def read_query(request: QueryRequest) -> QueryResponse:
         query = validate_read_query(request.query)
         limit = min(request.maxRows or settings.SOLIDSET_DATA_API_MAX_ROWS,
                     settings.SOLIDSET_DATA_API_MAX_ROWS)
-        columns, rows = execute_read(query, request.parameters, limit)
+        columns, rows = execute_read(
+            query,
+            request.parameters,
+            limit,
+            operation="ad-hoc-read",
+        )
         return QueryResponse(columns=columns, rows=rows, rowCount=len(rows))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -265,7 +270,10 @@ def read_dataset(
             f"ORDER BY {order_by} OFFSET %s ROWS FETCH NEXT %s ROWS ONLY"
         )
         columns, rows = execute_read(
-            paged_query, [offset, page_size + 1], page_size + 1
+            paged_query,
+            [offset, page_size + 1],
+            page_size + 1,
+            operation=f"dataset:{dataset_code}",
         )
         has_more = len(rows) > page_size
         page = rows[:page_size]
@@ -290,7 +298,12 @@ def read_dataset(
 )
 def read_active_resource_agent(human_resource_id: str) -> QueryResponse:
     try:
-        columns, rows = execute_read(ACTIVE_RESOURCE_AGENT, [human_resource_id], 1)
+        columns, rows = execute_read(
+            ACTIVE_RESOURCE_AGENT,
+            [human_resource_id],
+            1,
+            operation="resource-agent-validation",
+        )
         return QueryResponse(columns=columns, rows=rows, rowCount=len(rows))
     except pymssql.Error as exc:
         raise HTTPException(status_code=503, detail="A validação do agente falhou.") from exc
