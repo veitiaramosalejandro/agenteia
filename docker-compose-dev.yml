@@ -33,7 +33,7 @@ services:
     hostname: nginx
     restart: unless-stopped
     ports:
-      - 80:80
+      - 81:80
     volumes:
       # Desarrollo siempre usa HTTP; no depende de la configuración TLS activa
       # ni monta certificados de producción.
@@ -257,8 +257,8 @@ services:
     hostname: redis-cache
     restart: always
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
-    ports:
-      - 6379:6379
+    #ports:
+    #  - 6379:6379
     volumes:
       - redis_data:/data
     healthcheck:
