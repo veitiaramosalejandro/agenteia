@@ -4290,13 +4290,29 @@ def handle_dialogue(message: FrameworkMessageDTO):
     try:
         # --- 1. VALIDACIONES DE SEGURIDAD ---
         
-        # Validar que el mensaje no esté vacío
+        # Validar que el mensaje no esté vacío.
+        # Em modo "conselhos à minha IA" (advice_mode), o cliente abre a sessão sem texto:
+        # em vez do placeholder genérico, arranca o diálogo com um pedido implícito de sugestão.
+        advice_mode = str((message.Info or {}).get("advice_mode") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         if not req.message or req.message.strip() == "":
-            return ChatConversationResponse(
-                session_id=req.session_id,
-                user_message=req.message,
-                agent_response="Por favor, escreva uma mensagem para que eu possa ajudar."
-            )
+            if advice_mode:
+                req.message = (
+                    "Quero aconselhar a minha IA. "
+                    "Sugere por onde começar e que orientações iniciais me dás."
+                )
+                cache_key = _build_dialogue_cache_key(
+                    req.session_id, req.user_id, effective_canal_id, req.message
+                )
+            else:
+                return ChatConversationResponse(
+                    session_id=req.session_id,
+                    user_message=req.message,
+                    agent_response="Por favor, escreva uma mensagem para que eu possa ajudar."
+                )
         
         # Validar largo del mensaje (prevenir abusos)
         if len(req.message) > 5000:
