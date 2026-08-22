@@ -2225,6 +2225,48 @@ def _release_dialogue_resources_when_done(worker: threading.Thread) -> None:
             pass
 
 
+def _ingestar_instancias_solidset_activas() -> dict[str, Any]:
+    """Ejecuta la ingesta periódica dentro del contexto aislado de cada instancia."""
+    instances = list_active_solidset_instances()
+    eligible = [
+        instance
+        for instance in instances
+        if (instance.get("DataAPI") or {}).get("active")
+        and str((instance.get("DataAPI") or {}).get("BaseUrl") or "").strip()
+    ]
+    if not eligible:
+        raise RuntimeError(
+            "Não existem instâncias SolidSET ativas com uma SolidSET Data API configurada."
+        )
+
+    results: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    for instance in eligible:
+        instance_code = str(instance.get("Code") or instance.get("ID") or "unknown")
+        print(f"🔄 Iniciando aprendizagem BD instance={instance_code}")
+        try:
+            with solidset_sql_instance_context(instance):
+                results[instance_code] = ingestar_sistema_completo(
+                    instance_code=instance_code,
+                )
+        except Exception as exc:
+            errors[instance_code] = str(exc)
+            print(
+                f"⚠️ Aprendizagem BD falhou instance={instance_code}: {exc}"
+            )
+
+    if not results:
+        failed_codes = ", ".join(sorted(errors)) or "unknown"
+        raise RuntimeError(
+            f"A aprendizagem BD falhou em todas as instâncias: {failed_codes}."
+        )
+    return {
+        "status": "completed" if not errors else "partial",
+        "instances": results,
+        "errors": errors,
+    }
+
+
 async def _ciclo_aprendizaje_bd() -> None:
     """Mantiene al agente actualizándose con datos recientes de la base de datos."""
     intervalo = max(60, settings.DB_STUDY_INTERVAL_SECONDS)
@@ -2246,7 +2288,7 @@ async def _ciclo_aprendizaje_bd() -> None:
                 await asyncio.sleep(wait_seconds)
                 continue
 
-            ingesta = asyncio.to_thread(ingestar_sistema_completo)
+            ingesta = asyncio.to_thread(_ingestar_instancias_solidset_activas)
             if settings.DB_STUDY_MAX_RUN_SECONDS > 0:
                 resultado = await asyncio.wait_for(ingesta, timeout=settings.DB_STUDY_MAX_RUN_SECONDS)
             else:

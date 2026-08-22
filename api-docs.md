@@ -1688,6 +1688,13 @@ recurso agente almacenado en PostgreSQL.
 Qdrant dispone de una comprobación TCP de salud. El agente no comienza hasta
 que `vector-db:6333` acepta conexiones, evitando que la creación inicial de la
 colección `machining_docs` falle por una carrera de arranque.
+
+El ciclo periódico de aprendizaje de estructura procesa todas las instancias
+SolidSET activas que tengan una Data API activa. Cada ejecución establece su propio
+contexto de instancia antes de consultar SQL Server y registra el resultado por
+`instanceCode`. Un fallo en una instalación no detiene las demás; el ciclo se marca
+como `partial`. Solo se considera fallido cuando ninguna instancia puede ingerirse.
+
 ## Ingesta retroactiva de conocimiento SolidSET
 
 La ingesta histórica es independiente de las respuestas en tiempo real. Solo
