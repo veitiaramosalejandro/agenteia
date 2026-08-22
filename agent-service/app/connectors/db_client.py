@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 
 from app.config import settings
 from app.llm.secrets import decrypt_api_key, encrypt_api_key
+from app.connectors.solidset_sql import encrypt_sql_password
 
 
 _solidset_location_schema_lock = threading.Lock()
@@ -41,6 +42,49 @@ def ensure_solidset_instance_location_schema() -> None:
                       ADD COLUMN IF NOT EXISTS "CountryCode" varchar(2) NOT NULL DEFAULT 'PT',
                       ADD COLUMN IF NOT EXISTS "Locale" varchar(20) NOT NULL DEFAULT 'pt-PT',
                       ADD COLUMN IF NOT EXISTS "TimeZone" varchar(80) NOT NULL DEFAULT 'Europe/Lisbon';
+                ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS public."SysSolidSETDatabase" (
+                      "ID" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                      "IDSolidSETInstance" uuid NOT NULL UNIQUE
+                        REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
+                      "Host" varchar(255) NOT NULL,
+                      "InstanceName" varchar(255),
+                      "Port" integer NOT NULL DEFAULT 1433,
+                      "DatabaseName" varchar(255) NOT NULL,
+                      "Username" varchar(255) NOT NULL,
+                      "EncryptedPassword" text NOT NULL,
+                      "Encrypt" boolean NOT NULL DEFAULT true,
+                      "TrustServerCertificate" boolean NOT NULL DEFAULT false,
+                      "ConnectionTimeout" integer NOT NULL DEFAULT 15,
+                      "SchemaVersion" varchar(80),
+                      "AdapterCode" varchar(80) NOT NULL DEFAULT 'solidset-v1',
+                      active boolean NOT NULL DEFAULT true,
+                      "LastConnectionAt" timestamptz,
+                      "LastConnectionStatus" varchar(30),
+                      "LastConnectionError" text,
+                      "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      CONSTRAINT "CK_SysSolidSETDatabase_Port" CHECK ("Port" BETWEEN 0 AND 65535)
+                    );
+                    CREATE TABLE IF NOT EXISTS public."SysSolidSETInstanceResource" (
+                      "IDSolidSETInstance" uuid NOT NULL
+                        REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
+                      "IDResource" uuid NOT NULL,
+                      active boolean NOT NULL DEFAULT true,
+                      "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY ("IDSolidSETInstance", "IDResource")
+                    );
+                    CREATE TABLE IF NOT EXISTS public."SysSolidSETInstanceLogin" (
+                      "IDSolidSETInstance" uuid NOT NULL
+                        REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
+                      "IDLogin" uuid NOT NULL, "Username" text, "FullName" text,
+                      "Password" text, "Salt" text, "LastIDResource" uuid,
+                      "ActiveIDLogin2Resource" uuid,
+                      PRIMARY KEY ("IDSolidSETInstance", "IDLogin")
+                    );
+                    CREATE INDEX IF NOT EXISTS "IX_SysSolidSETInstanceLogin_Resource"
+                      ON public."SysSolidSETInstanceLogin" ("IDSolidSETInstance", "LastIDResource");
                 ''')
         _solidset_location_schema_ready = True
 
@@ -206,6 +250,41 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
                 )
                 row = cursor.fetchone()
                 operation = "created"
+            database = configuration.get("Database")
+            if database:
+                encrypted = encrypt_sql_password(database.get("Password"))
+                if not encrypted:
+                    cursor.execute(
+                        'SELECT "EncryptedPassword" FROM public."SysSolidSETDatabase" '
+                        'WHERE "IDSolidSETInstance"=%s', (row["ID"],),
+                    )
+                    previous = cursor.fetchone()
+                    encrypted = previous["EncryptedPassword"] if previous else None
+                if not encrypted:
+                    raise ValueError("Password é obrigatória ao criar a ligação SQL Server.")
+                cursor.execute('''
+                  INSERT INTO public."SysSolidSETDatabase" (
+                    "IDSolidSETInstance", "Host", "InstanceName", "Port", "DatabaseName",
+                    "Username", "EncryptedPassword", "Encrypt", "TrustServerCertificate",
+                    "ConnectionTimeout", "SchemaVersion", "AdapterCode", active
+                  ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  ON CONFLICT ("IDSolidSETInstance") DO UPDATE SET
+                    "Host"=EXCLUDED."Host", "InstanceName"=EXCLUDED."InstanceName",
+                    "Port"=EXCLUDED."Port", "DatabaseName"=EXCLUDED."DatabaseName",
+                    "Username"=EXCLUDED."Username", "EncryptedPassword"=EXCLUDED."EncryptedPassword",
+                    "Encrypt"=EXCLUDED."Encrypt",
+                    "TrustServerCertificate"=EXCLUDED."TrustServerCertificate",
+                    "ConnectionTimeout"=EXCLUDED."ConnectionTimeout",
+                    "SchemaVersion"=EXCLUDED."SchemaVersion", "AdapterCode"=EXCLUDED."AdapterCode",
+                    active=EXCLUDED.active, "UpdatedAt"=CURRENT_TIMESTAMP
+                ''', (
+                    row["ID"], database["Host"], database.get("InstanceName"),
+                    database.get("Port", 1433), database["DatabaseName"], database["Username"],
+                    encrypted, database.get("Encrypt", True),
+                    database.get("TrustServerCertificate", False),
+                    database.get("ConnectionTimeout", 15), database.get("SchemaVersion"),
+                    database.get("AdapterCode", "solidset-v1"), database.get("active", True),
+                ))
     if row is None:
         raise RuntimeError("PostgreSQL no devolvió la instancia SolidSET guardada.")
     result = dict(row)
@@ -238,7 +317,12 @@ def get_solidset_instance(
                 (code, code, source_ip, source_ip, code, code),
             )
             row = cursor.fetchone()
-    return dict(row) if row else None
+            result = dict(row) if row else None
+            if result:
+                cursor.execute('SELECT * FROM public."SysSolidSETDatabase" WHERE "IDSolidSETInstance"=%s', (result["ID"],))
+                database = cursor.fetchone()
+                result["Database"] = dict(database) if database else None
+    return result
 
 
 def list_active_solidset_instances() -> list[dict[str, Any]]:
@@ -248,7 +332,25 @@ def list_active_solidset_instances() -> list[dict[str, Any]]:
             cursor.execute(
                 'SELECT * FROM public."SysSolidSETInstance" WHERE active=true ORDER BY "Code"'
             )
-            return [dict(row) for row in cursor.fetchall()]
+            rows = [dict(row) for row in cursor.fetchall()]
+            for row in rows:
+                cursor.execute('SELECT * FROM public."SysSolidSETDatabase" WHERE "IDSolidSETInstance"=%s', (row["ID"],))
+                database = cursor.fetchone()
+                row["Database"] = dict(database) if database else None
+            return rows
+
+
+def update_solidset_database_connection_status(
+    instance_id: str | UUID, status: str, error: str | None = None,
+) -> None:
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('''UPDATE public."SysSolidSETDatabase"
+              SET "LastConnectionAt"=CURRENT_TIMESTAMP,
+                  "LastConnectionStatus"=%s, "LastConnectionError"=%s,
+                  "UpdatedAt"=CURRENT_TIMESTAMP
+              WHERE "IDSolidSETInstance"=%s''',
+              (status, error, UUID(str(instance_id))))
 
 
 def ensure_llm_provider_schema() -> None:
@@ -567,6 +669,7 @@ def save_sys_resource_ia(configuration: dict[str, Any]) -> dict[str, Any]:
 def get_solidset_login_for_active_agent(
     resource_id: UUID | str,
     preferred_login_id: UUID | str | None = None,
+    instance_id: UUID | str | None = None,
 ) -> dict[str, Any] | None:
     """Obtiene internamente la cuenta de un agente activo; nunca exponer este resultado por API."""
     preferred = UUID(str(preferred_login_id)) if preferred_login_id else None
@@ -576,7 +679,7 @@ def get_solidset_login_for_active_agent(
                 '''
                 SELECT l."IDLogin", l."Username", l."Password", l."Salt",
                        l."LastIDResource", l."ActiveIDLogin2Resource"
-                FROM public."SysLogin" l
+                FROM public."SysSolidSETInstanceLogin" l
                 INNER JOIN public."SysResourceIA" r
                     ON (
                         r."ActiveIDLogin2Resource" IS NOT NULL
@@ -586,6 +689,10 @@ def get_solidset_login_for_active_agent(
                         AND l."LastIDResource" = r."IDResource"
                     )
                 WHERE r."IDResource" = %s
+                  AND l."IDSolidSETInstance" = %s
+                  AND EXISTS (SELECT 1 FROM public."SysSolidSETInstanceResource" ir
+                    WHERE ir."IDSolidSETInstance"=l."IDSolidSETInstance"
+                      AND ir."IDResource"=r."IDResource" AND ir.active=true)
                   AND r.active = true
                   AND NULLIF(l."Username", '') IS NOT NULL
                   AND NULLIF(l."Password", '') IS NOT NULL
@@ -593,7 +700,7 @@ def get_solidset_login_for_active_agent(
                          l."IDLogin"
                 LIMIT 1
                 ''',
-                (UUID(str(resource_id)), preferred),
+                (UUID(str(resource_id)), UUID(str(instance_id)), preferred),
             )
             row = cursor.fetchone()
             return dict(row) if row is not None else None

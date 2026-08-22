@@ -59,6 +59,7 @@ from app.connectors.db_client import (
     save_agent_model_configuration,
     save_agent_response_audit,
     save_solidset_instance,
+    update_solidset_database_connection_status,
     save_sys_resource_ia,
     touch_agent_session,
 )
@@ -70,6 +71,10 @@ from app.system.resource_ingest import (
     ingest_solidset_resources,
     ingest_solidset_workrooms,
     verify_and_sync_solidset_agent_mapping,
+)
+from app.connectors.solidset_sql import (
+    instance_context as solidset_sql_instance_context,
+    test_connection as test_solidset_sql_connection,
 )
 from app.system.reaction_capture import (
     classify_reaction,
@@ -84,13 +89,12 @@ from app.response_queue import AgentResponseQueue
 from app.historical.producer import enqueue_next_batch
 from app.historical.queue import HistoricalQueue
 from app.historical.store import (
+    approve_dry_run_cursors,
     ensure_schema as ensure_historical_schema,
-    get_cursor as get_historical_cursor,
     historical_points,
     list_audits as list_historical_audits,
     list_cursors as list_historical_cursors,
     mark_historical_deleted,
-    set_cursor as set_historical_cursor,
 )
 
 # ============================================================
@@ -451,6 +455,7 @@ def _update_response_status(
     agent_name: Optional[str] = None,
     error: Optional[str] = None,
     response_count: Optional[int] = None,
+    result: Optional[dict[str, Any]] = None,
 ) -> None:
     if not request_id:
         return
@@ -488,6 +493,8 @@ def _update_response_status(
     })
     if response_count is not None:
         data["responseCount"] = response_count
+    if result is not None:
+        data["result"] = result
     if data["completed"]:
         data["completedAt"] = now
     else:
@@ -790,7 +797,9 @@ def _local_temporal_response(
         local_now = datetime.now(ZoneInfo("UTC"))
         time_zone = "UTC"
 
-    language = (locale or "pt-PT").split("-", 1)[0].lower()
+    # The incoming message always decides the response language. Locale only
+    # selects regional conventions within that language (for example pt-PT).
+    language = agent._detect_user_language(raw_text)
     country_names = {
         "PT": {"pt": "Portugal", "es": "Portugal", "en": "Portugal"},
         "ES": {"pt": "Espanha", "es": "España", "en": "Spain"},
@@ -1263,11 +1272,26 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
         selected = _selected_agent_resource_ids(candidate)
         if not channel_id or not selected:
             continue
+        instance = get_solidset_instance(
+            code=str(candidate.get("solidset_instance_code") or "") or None,
+            source_ip=None,
+        )
+        if not instance or not instance.get("Database"):
+            print("⚠️ Agente omitido: instância sem ligação SQL Server configurada")
+            continue
+        try:
+            ensure_payload_agent_workroom_assignments(channel_id, selected)
+            configured_agents = get_active_agents_for_workroom(channel_id, selected)
+        except (ValueError, psycopg.Error) as exc:
+            print(f"⚠️ No se pudo resolver agentes seleccionados para {channel_id}: {exc}")
+            continue
         verified_mappings: dict[str, str] = {}
-        for selected_resource_id in selected:
+        for configured_agent in configured_agents:
+            selected_resource_id = str(configured_agent["IDResource"])
+            expected_agent_id = configured_agent.get("IDAgentResource")
             try:
                 verification = verify_and_sync_solidset_agent_mapping(
-                    selected_resource_id
+                    selected_resource_id, expected_agent_id, instance
                 )
             except (ValueError, pymssql.Error, psycopg.Error) as exc:
                 print(
@@ -1285,18 +1309,6 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 )
                 continue
             verified_mappings[str(selected_resource_id).lower()] = verified_agent_id
-        selected = [
-            resource_id for resource_id in selected
-            if str(resource_id).lower() in verified_mappings
-        ]
-        if not selected:
-            continue
-        try:
-            ensure_payload_agent_workroom_assignments(channel_id, selected)
-            configured_agents = get_active_agents_for_workroom(channel_id, selected)
-        except (ValueError, psycopg.Error) as exc:
-            print(f"⚠️ No se pudo resolver agentes seleccionados para {channel_id}: {exc}")
-            continue
         for configured_agent in configured_agents:
             agent_resource_id = str(configured_agent["IDResource"])
             cached_agent_resource_id = str(
@@ -1370,6 +1382,16 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             })
             routed.append(routed_candidate)
     return routed
+
+
+def _invoke_orchestrator_for_instance(instance_code: str, **kwargs: Any) -> str:
+    if not instance_code:
+        return orchestrator.invoke(**kwargs)
+    instance = get_solidset_instance(code=instance_code, source_ip=None)
+    if not instance or not instance.get("Database"):
+        raise RuntimeError("A instância SolidSET não tem uma ligação SQL Server configurada.")
+    with solidset_sql_instance_context(instance):
+        return orchestrator.invoke(**kwargs)
 
 
 def _learn_agent_interaction(
@@ -1590,7 +1612,8 @@ async def _process_auto_replies(
                     agent_name=agent_name,
                 )
                 response_text = await asyncio.to_thread(
-                    orchestrator.invoke,
+                    _invoke_orchestrator_for_instance,
+                    str(candidate.get("solidset_instance_code") or ""),
                     session_id=session_id,
                     user_text=incoming_text,
                     user_id=user_id,
@@ -1845,32 +1868,13 @@ def _probe_http_json(base_url: str, path: str, timeout_seconds: float = 4.0, ver
         return {"ok": False, "url": target, "error": str(exc)}
 
 
-def _probe_sql_server_connection() -> dict:
-    """Comprueba SQL Server realmente; soporta host\\instancia y puerto dinámico."""
+def _probe_sql_server_connection(instance: dict[str, Any]) -> dict:
+    """Checks the SQL Server connection persisted for one SolidSET instance."""
     try:
-        with pymssql.connect(
-            **settings.sql_server_connection_options(),
-            user=settings.SQL_SERVER_USER,
-            password=settings.SQL_SERVER_PASSWORD,
-            database=settings.SQL_SERVER_DB,
-            login_timeout=min(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-            timeout=min(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                cursor.fetchone()
-        return {
-            "ok": True,
-            "server": settings.sql_server_endpoint_label(),
-            "database": settings.SQL_SERVER_DB,
-        }
+        result = test_solidset_sql_connection(instance)
+        return {"ok": True, **result}
     except Exception as exc:
-        return {
-            "ok": False,
-            "server": settings.sql_server_endpoint_label(),
-            "database": settings.SQL_SERVER_DB,
-            "error": str(exc),
-        }
+        return {"ok": False, "error": str(exc)}
 
 
 def _run_startup_connectivity_checks() -> dict:
@@ -1951,6 +1955,7 @@ def _run_startup_connectivity_checks() -> dict:
                 if notification_url
                 else {"ok": True, "skipped": True, "error": "NotificationUrl_nao_configurado"}
             ),
+            "database": _probe_sql_server_connection(instance),
         })
     checks["solidset_instances"] = {
         "configured": bool(instance_checks),
@@ -1959,8 +1964,11 @@ def _run_startup_connectivity_checks() -> dict:
     }
 
     checks["sql_server"] = {
-        "connection": _probe_sql_server_connection(),
-        "database": settings.SQL_SERVER_DB,
+        "configured": any(bool(item.get("Database")) for item in configured_instances),
+        "instances": [
+            {"code": item["code"], "connection": item["database"]}
+            for item in instance_checks
+        ],
     }
 
     db_url = os.getenv("DB_URL", "")
@@ -1981,6 +1989,10 @@ def _run_startup_connectivity_checks() -> dict:
                 notification = instance.get("notification", {})
                 if not notification.get("ok", False) and not notification.get("skipped"):
                     all_ok = False
+                if not instance.get("database", {}).get("ok", False):
+                    all_ok = False
+            continue
+        if service_name == "sql_server":
             continue
         for probe_name, probe_result in service_data.items():
             if probe_name in {"enabled", "configured", "database"}:
@@ -2031,13 +2043,6 @@ def _log_startup_connectivity(report: dict) -> None:
     print(f"   - Redis URL: {settings.REDIS_URL}")
     print(f"     • TCP: {_probe_to_text(redis.get('tcp', {}))}")
 
-    sql_server = checks.get("sql_server", {})
-    print(
-        f"   - SQL Server: {settings.sql_server_endpoint_label()} "
-        f"| DB: {settings.SQL_SERVER_DB}"
-    )
-    print(f"     • Conexión SQL: {_probe_to_text(sql_server.get('connection', {}))}")
-
     postgres = checks.get("postgres_timescaledb", {})
     db_url = os.getenv("DB_URL", "")
     print(f"   - PostgreSQL/TimescaleDB URL: {db_url or 'DB_URL_no_configurada'}")
@@ -2064,6 +2069,7 @@ def _log_startup_connectivity(report: dict) -> None:
             f"       Notification: {notification.get('configured_url') or instance.get('notification_url') or '-'} "
             f"-> {notification.get('effective_url') or '-'}: {_probe_to_text(notification)}"
         )
+        print(f"       SQL Server: {_probe_to_text(instance.get('database', {}))}")
 
 
 def _build_dialogue_cache_key(session_id: str, user_id: str, canal_id: Optional[str], message: str) -> str:
@@ -2460,6 +2466,36 @@ class SysResourceIAConfigurationResponse(BaseModel):
     configuration: SysResourceIAConfigurationStored
 
 
+class SolidSETDatabaseConfiguration(BaseModel):
+    Host: str = Field(..., min_length=1, max_length=255)
+    InstanceName: Optional[str] = Field(None, max_length=255)
+    Port: int = Field(1433, ge=0, le=65535)
+    DatabaseName: str = Field(..., min_length=1, max_length=255)
+    Username: str = Field(..., min_length=1, max_length=255)
+    Password: Optional[str] = Field(None, max_length=8000)
+    Encrypt: bool = True
+    TrustServerCertificate: bool = False
+    ConnectionTimeout: int = Field(15, ge=1, le=120)
+    SchemaVersion: Optional[str] = Field(None, max_length=80)
+    AdapterCode: str = Field("solidset-v1", min_length=1, max_length=80)
+    active: bool = True
+
+
+class SolidSETDatabaseStored(BaseModel):
+    Host: str
+    InstanceName: Optional[str] = None
+    Port: int
+    DatabaseName: str
+    Username: str
+    Encrypt: bool
+    TrustServerCertificate: bool
+    ConnectionTimeout: int
+    SchemaVersion: Optional[str] = None
+    AdapterCode: str
+    active: bool
+    PasswordConfigured: bool = True
+
+
 class SolidSETInstanceConfiguration(BaseModel):
     Code: str = Field(..., min_length=1, max_length=80)
     Name: str = Field(..., min_length=1, max_length=255)
@@ -2470,6 +2506,7 @@ class SolidSETInstanceConfiguration(BaseModel):
     Locale: str = Field("pt-PT", min_length=2, max_length=20, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
     TimeZone: str = Field("Europe/Lisbon", min_length=1, max_length=80)
     active: bool = True
+    Database: Optional[SolidSETDatabaseConfiguration] = None
 
     class Config:
         extra = "forbid"
@@ -2480,10 +2517,22 @@ class SolidSETInstanceStored(SolidSETInstanceConfiguration):
     CreatedAt: datetime
     UpdatedAt: datetime
 
+    Database: Optional[SolidSETDatabaseStored] = None
+
 
 class SolidSETInstanceConfigurationResponse(BaseModel):
     status: str
     configuration: SolidSETInstanceStored
+
+
+class SolidSETDatabaseConnectionTestResponse(BaseModel):
+    status: str
+    instanceCode: str
+    connected: bool
+    databaseName: Optional[str] = None
+    serverVersion: Optional[str] = None
+    adapterCode: str
+    hasSysResource2Agent: bool
 
 
 class LLMProviderConfiguration(BaseModel):
@@ -2737,6 +2786,21 @@ class SendMessageResultDTO(BaseModel):
     statusUrl: Optional[str] = None
 
 
+class ChatQuestionSuggestionItem(BaseModel):
+    id: str
+    text: str
+
+
+class ChatQuestionSuggestionResponse(BaseModel):
+    requestId: str
+    questionChatId: str
+    status: str
+    code: int
+    language: str
+    suggestions: list[ChatQuestionSuggestionItem]
+    statusUrl: str
+
+
 def _get_payload_value(payload: Optional[dict[str, Any]], *keys: str) -> Any:
     """Obtiene un valor de un objeto FrameworkMessage sin depender del casing."""
     if not isinstance(payload, dict):
@@ -2902,11 +2966,16 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.post(
     "/api/v1/agent/solidset/workrooms/sync",
     response_model=SysWorkRoomIngestResponse,
+    tags=["SolidSET synchronization"],
+    summary="Synchronize workrooms from one SolidSET instance",
 )
-def sync_solidset_workrooms() -> SysWorkRoomIngestResponse:
-    """Sincroniza dbo.SysWorkRoom de SQL Server con PostgreSQL."""
+def sync_solidset_workrooms(instanceCode: str = Query(...)) -> SysWorkRoomIngestResponse:
+    """Synchronizes dbo.SysWorkRoom using the SQL Server connection selected by instanceCode."""
     try:
-        result = ingest_solidset_workrooms()
+        instance = get_solidset_instance(code=instanceCode, source_ip=None)
+        if not instance or not instance.get("Database"):
+            raise HTTPException(status_code=404, detail="A instância ou a ligação SQL Server não existe.")
+        result = ingest_solidset_workrooms(instance)
     except (pymssql.Error, psycopg.Error) as exc:
         print(f"❌ No se pudo sincronizar SysWorkRoom: {exc}")
         raise HTTPException(
@@ -2919,11 +2988,16 @@ def sync_solidset_workrooms() -> SysWorkRoomIngestResponse:
 @app.post(
     "/api/v1/agent/solidset/logins/sync",
     response_model=SysLoginIngestResponse,
+    tags=["SolidSET synchronization"],
+    summary="Synchronize logins from one SolidSET instance",
 )
-def sync_solidset_logins() -> SysLoginIngestResponse:
-    """Sincroniza dbo.SysLogin sin exponer credenciales en la respuesta."""
+def sync_solidset_logins(instanceCode: str = Query(...)) -> SysLoginIngestResponse:
+    """Synchronizes dbo.SysLogin without exposing credentials in the response."""
     try:
-        result = ingest_solidset_logins()
+        instance = get_solidset_instance(code=instanceCode, source_ip=None)
+        if not instance or not instance.get("Database"):
+            raise HTTPException(status_code=404, detail="A instância ou a ligação SQL Server não existe.")
+        result = ingest_solidset_logins(instance)
     except (pymssql.Error, psycopg.Error) as exc:
         print(f"❌ No se pudo sincronizar SysLogin: {exc}")
         raise HTTPException(
@@ -3049,7 +3123,8 @@ async def handle_multi_agent_dialogue(
             request.IDWorkRoom,
         )
         response_text = await asyncio.to_thread(
-            orchestrator.invoke,
+            _invoke_orchestrator_for_instance,
+            str(solidset_instance["Code"]) if solidset_instance else "",
             session_id=isolated_session,
             user_text=request.RawMessage.strip(),
             user_id=str(request.SenderResourceId or "solidset-user"),
@@ -3107,11 +3182,16 @@ async def handle_multi_agent_dialogue(
 @app.post(
     "/api/v1/agent/solidset/chat-workroom/sync",
     response_model=SysChatIAResourceIngestResponse,
+    tags=["SolidSET synchronization"],
+    summary="Synchronize resource and workroom assignments from one instance",
 )
-def sync_solidset_chat_resources() -> SysChatIAResourceIngestResponse:
-    """Sincroniza recursos y salas de SQL Server con SysChatIAResource."""
+def sync_solidset_chat_resources(instanceCode: str = Query(...)) -> SysChatIAResourceIngestResponse:
+    """Synchronizes resource-to-workroom assignments for the selected instance."""
     try:
-        result = ingest_solidset_chat_resources()
+        instance = get_solidset_instance(code=instanceCode, source_ip=None)
+        if not instance or not instance.get("Database"):
+            raise HTTPException(status_code=404, detail="A instância ou a ligação SQL Server não existe.")
+        result = ingest_solidset_chat_resources(instance)
     except (pymssql.Error, psycopg.Error) as exc:
         print(f"❌ No se pudo sincronizar SysChatIAResource: {exc}")
         raise HTTPException(
@@ -3123,11 +3203,16 @@ def sync_solidset_chat_resources() -> SysChatIAResourceIngestResponse:
 @app.post(
     "/api/v1/agent/solidset/resources/sync",
     response_model=SysResourceIAIngestResponse,
+    tags=["SolidSET synchronization"],
+    summary="Synchronize resources from one SolidSET instance",
 )
-def sync_solidset_resources() -> SysResourceIAIngestResponse:
-    """Sincroniza SysResources de SQL Server con SysResourceIA en PostgreSQL."""
+def sync_solidset_resources(instanceCode: str = Query(...)) -> SysResourceIAIngestResponse:
+    """Synchronizes SysResources using the SQL Server connection selected by instanceCode."""
     try:
-        result = ingest_solidset_resources()
+        instance = get_solidset_instance(code=instanceCode, source_ip=None)
+        if not instance or not instance.get("Database"):
+            raise HTTPException(status_code=404, detail="A instância ou a ligação SQL Server não existe.")
+        result = ingest_solidset_resources(instance)
     except (pymssql.Error, psycopg.Error) as exc:
         print(f"❌ No se pudo sincronizar SysResourceIA: {exc}")
         raise HTTPException(
@@ -3168,11 +3253,13 @@ def save_solidset_chat_configuration(
     "/api/v1/agent/solidset/instances",
     response_model=SolidSETInstanceConfigurationResponse,
     status_code=status.HTTP_201_CREATED,
+    tags=["SolidSET instances"],
+    summary="Register or update a SolidSET instance and its SQL Server connection",
 )
 def register_solidset_instance(
     configuration: SolidSETInstanceConfiguration,
 ) -> SolidSETInstanceConfigurationResponse:
-    """Registra o actualiza la URL y origen permitido de una instalación SolidSET."""
+    """Registers instance routing, regional settings, and an encrypted SQL Server profile."""
     payload = configuration.model_dump()
     for field in ("BaseUrl", "NotificationUrl"):
         value = str(payload.get(field) or "").strip().rstrip("/")
@@ -3200,8 +3287,12 @@ def register_solidset_instance(
         ) from exc
     try:
         saved = save_solidset_instance(payload)
+        operation = str(saved.get("_operation", "saved"))
         with _solidset_instance_cache_lock:
             _solidset_instance_cache.clear()
+        saved = get_solidset_instance(code=payload["Code"], source_ip=None) or saved
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3212,10 +3303,46 @@ def register_solidset_instance(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Não foi possível guardar a instância SolidSET no PostgreSQL.",
         ) from exc
-    operation = str(saved.pop("_operation", "saved"))
+    saved.pop("_operation", None)
+    database = saved.get("Database")
+    if database:
+        saved["Database"] = {
+            key: database.get(key) for key in (
+                "Host", "InstanceName", "Port", "DatabaseName", "Username", "Encrypt",
+                "TrustServerCertificate", "ConnectionTimeout", "SchemaVersion", "AdapterCode", "active",
+            )
+        }
+        saved["Database"]["PasswordConfigured"] = bool(database.get("EncryptedPassword"))
     return SolidSETInstanceConfigurationResponse(
         status=operation,
         configuration=SolidSETInstanceStored(**saved),
+    )
+
+
+@app.post(
+    "/api/v1/agent/solidset/instances/{code}/test-connection",
+    response_model=SolidSETDatabaseConnectionTestResponse,
+    tags=["SolidSET instances"],
+    summary="Test the SQL Server connection configured for a SolidSET instance",
+)
+def test_solidset_instance_database(code: str) -> SolidSETDatabaseConnectionTestResponse:
+    """Tests connectivity and basic schema capabilities without exposing credentials."""
+    instance = get_solidset_instance(code=code.strip(), source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="A instância SolidSET não existe ou está inativa.")
+    if not instance.get("Database"):
+        raise HTTPException(status_code=409, detail="A instância não tem uma ligação SQL Server configurada.")
+    try:
+        result = test_solidset_sql_connection(instance)
+        update_solidset_database_connection_status(instance["ID"], "connected")
+    except Exception as exc:
+        update_solidset_database_connection_status(instance["ID"], "failed", str(exc)[:2000])
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível estabelecer ligação ao SQL Server desta instância.",
+        ) from exc
+    return SolidSETDatabaseConnectionTestResponse(
+        status="connected", instanceCode=str(instance["Code"]), **result,
     )
 
 
@@ -3495,14 +3622,47 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
     }
 
 
+def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
+    """Normalizes model output into distinct, user-selectable suggestions."""
+    text = str(raw_response or "").strip()
+    if not text:
+        return []
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.I | re.S)
+    if fenced:
+        text = fenced.group(1).strip()
+    values: list[Any] = []
+    try:
+        decoded = json.loads(text)
+        if isinstance(decoded, list):
+            values = decoded
+        elif isinstance(decoded, dict):
+            values = decoded.get("suggestions") or decoded.get("sugestoes") or []
+    except json.JSONDecodeError:
+        values = re.split(r"\n\s*(?:---SUGGESTION---|\d+[.)]\s+)", text)
+
+    suggestions: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("text") or value.get("response") or value.get("suggestion")
+        candidate = str(value or "").strip().strip('"')
+        normalized = re.sub(r"\s+", " ", candidate).casefold()
+        if not candidate or normalized in seen:
+            continue
+        seen.add(normalized)
+        suggestions.append(candidate)
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
 @app.post(
     "/api/v1/agent/notification/chat-question/suggest-response",
-    response_class=PlainTextResponse,
+    response_model=ChatQuestionSuggestionResponse,
     summary="Suggest a response to a quoted SolidSET chat message",
     responses={
         200: {
-            "description": "RawMessage suggestion only.",
-            "content": {"text/plain": {"schema": {"type": "string"}}},
+            "description": "Independent response suggestions for user selection.",
         },
         404: {"description": "The requester's own AI agent is not active."},
         422: {"description": "The FrameworkMessage lacks required chat context."},
@@ -3511,10 +3671,16 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
 )
 async def suggest_chat_question_response(
     message: FrameworkMessageDTO,
-) -> PlainTextResponse:
-    """Returns only a RawMessage suggestion grounded in the requester's own agent."""
+    request: Request,
+) -> ChatQuestionSuggestionResponse:
+    """Returns suggestions grounded in the requester's agent without sending them."""
     payload = message.model_dump(mode="json")
     context = _chat_question_suggestion_context(payload)
+    chat_payload = _get_payload_value(payload, "Chat", "chat")
+    chat_payload = chat_payload if isinstance(chat_payload, dict) else {}
+    current_message = str(
+        _get_payload_value(chat_payload, "rawMessage", "RawMessage") or ""
+    ).strip()
     request_id = context["request_id"]
     if not request_id:
         raise HTTPException(
@@ -3525,6 +3691,14 @@ async def suggest_chat_question_response(
         raise HTTPException(
             status_code=422,
             detail="Chat.chatQuestion deve conter IDChat2 e RawMessage.",
+        )
+    if current_message:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Chat.RawMessage deve estar vazio para solicitar sugestões; "
+                "o texto a responder deve estar em Chat.chatQuestion.RawMessage."
+            ),
         )
     if not context["requester_resource"]:
         raise HTTPException(
@@ -3542,9 +3716,14 @@ async def suggest_chat_question_response(
     agent_name = ""
     try:
         _update_response_status(request_id, "processing")
+        solidset_instance = _resolve_request_solidset_instance(request)
+        if not solidset_instance or not solidset_instance.get("Database"):
+            raise LookupError("A instância SolidSET não tem ligação SQL Server configurada.")
         verification = await asyncio.to_thread(
             verify_and_sync_solidset_agent_mapping,
             context["requester_resource"],
+            None,
+            solidset_instance,
         )
         if not verification.get("verified"):
             raise LookupError(
@@ -3578,6 +3757,7 @@ async def suggest_chat_question_response(
         )
         metadata = {
             "response_suggestion_mode": True,
+            "response_suggestion_count": 3,
             "chat_id": request_id,
             "quoted_chat_id": context["quoted_chat_id"],
             "quoted_message": context["quoted_message"],
@@ -3611,8 +3791,9 @@ async def suggest_chat_question_response(
             f"session:{context['session_id'] or request_id}:"
             f"question:{context['quoted_chat_id']}"
         )
-        suggestion = await asyncio.to_thread(
-            orchestrator.invoke,
+        raw_suggestions = await asyncio.to_thread(
+            _invoke_orchestrator_for_instance,
+            str(solidset_instance["Code"]),
             session_id=scoped_session,
             user_text=context["quoted_message"],
             user_id=context["requester_resource"],
@@ -3625,17 +3806,37 @@ async def suggest_chat_question_response(
             tool_allowlist=set(),
             auto_reply_mode=True,
         )
-        suggestion = str(suggestion or "").strip()
-        if not suggestion:
-            raise RuntimeError("O modelo não gerou uma sugestão de resposta.")
+        suggestions = _parse_chat_question_suggestions(raw_suggestions, limit=3)
+        if not suggestions:
+            raise RuntimeError("O modelo não gerou sugestões de resposta.")
+        language = agent._detect_user_language(context["quoted_message"])
+        result = {
+            "questionChatId": context["quoted_chat_id"],
+            "language": language,
+            "suggestions": [
+                {"id": str(index), "text": text}
+                for index, text in enumerate(suggestions, start=1)
+            ],
+        }
         _update_response_status(
             request_id,
             "completed",
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
-            response_count=1,
+            response_count=len(suggestions),
+            result=result,
         )
-        return PlainTextResponse(content=suggestion)
+        return ChatQuestionSuggestionResponse(
+            requestId=request_id,
+            questionChatId=context["quoted_chat_id"],
+            status="completed",
+            code=_RESPONSE_STATUS_CODES["completed"],
+            language=language,
+            suggestions=[
+                ChatQuestionSuggestionItem(**item) for item in result["suggestions"]
+            ],
+            statusUrl=f"/api/v1/agent/responses/{request_id}/status",
+        )
     except LookupError as exc:
         _update_response_status(
             request_id,
@@ -3764,30 +3965,34 @@ def approve_historical_dry_run(
     instance = get_solidset_instance(code=instanceCode, source_ip=None)
     if not instance:
         raise HTTPException(status_code=404, detail="Instância não encontrada.")
-    cursor = get_historical_cursor(str(instance["ID"]))
-    set_historical_cursor(
-        str(instance["ID"]),
-        int(cursor["LastIDChat2"]),
-        cursor.get("LastStamp"),
-        "idle",
-    )
-    return {"status":"approved", "lastIDChat2":int(cursor["LastIDChat2"])}
+    approved = approve_dry_run_cursors(str(instance["ID"]))
+    return {"status":"approved", "approvedCursors":approved}
 
 
 @app.get(
     "/api/v1/agent/historical-ingestion/status",
     dependencies=[Depends(_require_historical_admin)],
 )
-def historical_ingestion_status() -> dict[str, Any]:
-    return {"queue":historical_queue.stats(), "cursors":list_historical_cursors()}
+def historical_ingestion_status(
+    resourceId: Optional[uuid.UUID] = Query(None),
+) -> dict[str, Any]:
+    return {
+        "queue":historical_queue.stats(),
+        "cursors":list_historical_cursors(str(resourceId) if resourceId else None),
+    }
 
 
 @app.get(
     "/api/v1/agent/historical-ingestion/batches",
     dependencies=[Depends(_require_historical_admin)],
 )
-def historical_ingestion_batches(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
-    return {"items":list_historical_audits(limit)}
+def historical_ingestion_batches(
+    limit: int = Query(50, ge=1, le=500),
+    resourceId: Optional[uuid.UUID] = Query(None),
+) -> dict[str, Any]:
+    return {
+        "items":list_historical_audits(limit, str(resourceId) if resourceId else None)
+    }
 
 
 @app.delete(
@@ -3795,18 +4000,23 @@ def historical_ingestion_batches(limit: int = Query(50, ge=1, le=500)) -> dict[s
     dependencies=[Depends(_require_historical_admin)],
 )
 def delete_historical_message(
-    id_chat2: int, instanceCode: str = Query(...)
+    id_chat2: int,
+    instanceCode: str = Query(...),
+    sourceType: str = Query("chat", pattern="^(chat|task)$"),
 ) -> dict[str, Any]:
     instance = get_solidset_instance(code=instanceCode, source_ip=None)
     if not instance: raise HTTPException(status_code=404, detail="Instância não encontrada.")
-    points = historical_points(str(instance["ID"]), id_chat2)
+    points = historical_points(str(instance["ID"]), id_chat2, sourceType)
     if points:
         QdrantClient(url=settings.VECTOR_DB_URL).delete(
             collection_name=settings.VECTOR_COLLECTION_NAME,
             points_selector=PointIdsList(points=points), wait=True,
         )
-    deleted = mark_historical_deleted(str(instance["ID"]), id_chat2)
-    return {"status":"deleted", "idChat2":id_chat2, "documents":deleted}
+    deleted = mark_historical_deleted(str(instance["ID"]), id_chat2, sourceType)
+    return {
+        "status":"deleted", "idChat2":id_chat2,
+        "sourceType":sourceType, "documents":deleted,
+    }
 
 
 @app.get("/api/v1/agent/responses/{request_id}/status")
@@ -4255,12 +4465,16 @@ def submit_feedback(req: UserFeedbackRequest):
 )
 def capture_solidset_agent_reaction(
     req: SolidSETReactionCaptureRequest,
+    request: Request,
 ) -> SolidSETReactionCaptureResponse:
     """Captura una reacción ya registrada en SolidSET y la aprende para su agente."""
     try:
         print(req)
-        message = resolve_agent_message(req.IDChat)
-    except (pymssql.Error, psycopg.Error) as exc:
+        instance = _resolve_request_solidset_instance(request)
+        if not instance or not instance.get("Database"):
+            raise RuntimeError("A instância SolidSET não tem ligação SQL Server configurada.")
+        message = resolve_agent_message(req.IDChat, instance)
+    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Não foi possível determinar a mensagem que recebeu a reação.",

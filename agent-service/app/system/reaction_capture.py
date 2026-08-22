@@ -7,6 +7,7 @@ import pymssql
 
 from app.config import settings
 from app.connectors.db_client import _postgres_connection
+from app.connectors.solidset_sql import connect as connect_solidset_sql
 
 
 def classify_reaction(emoji: str, counter: int) -> str:
@@ -40,16 +41,9 @@ def reaction_reward(signal: str, counter: int) -> float:
     return 0.0
 
 
-def resolve_agent_message(id_chat: int) -> dict[str, Any] | None:
+def resolve_agent_message(id_chat: int, instance: dict[str, Any]) -> dict[str, Any] | None:
     """Resuelve el mensaje original en SQL Server y valida su agente en PostgreSQL."""
-    with pymssql.connect(
-        **settings.sql_server_connection_options(),
-        user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD,
-        database=settings.SQL_SERVER_DB,
-        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-    ) as connection:
+    with connect_solidset_sql(instance, as_dict=True) as connection:
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
             '''

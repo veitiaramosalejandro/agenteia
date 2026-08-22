@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_CREDENTIAL_ENCRYPTION_KEY: str = os.getenv("LLM_CREDENTIAL_ENCRYPTION_KEY", "")
+    CREDENTIAL_ENCRYPTION_KEY_FILE: str = os.getenv(
+        "CREDENTIAL_ENCRYPTION_KEY_FILE", "./data/credential.key"
+    )
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.5"))
     AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
@@ -107,16 +110,14 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "pass")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "machining_db")
     
-    # SQL Server (para compatibilidad)
-    SQL_SERVER_HOST: str = os.getenv("SQL_SERVER_HOST", "172.16.10.167")
-    SQL_SERVER_INSTANCE: str = os.getenv("SQL_SERVER_INSTANCE", "").strip()
-    # Desde contenedores Linux se debe usar el puerto TCP de la instancia.
-    # La sintaxis Windows ``.\\INSTANCIA`` depende de SQL Browser y no es
-    # interpretada de forma fiable por FreeTDS/pymssql.
-    SQL_SERVER_PORT: int = int(os.getenv("SQL_SERVER_PORT", "1433"))
-    SQL_SERVER_USER: str = os.getenv("SQL_SERVER_USER", "sa")
-    SQL_SERVER_PASSWORD: str = os.getenv("SQL_SERVER_PASSWORD", "Abcd*1234")
-    SQL_SERVER_DB: str = os.getenv("SQL_SERVER_DB", "ISIFrameIsicom")
+    # Compatibilidad transitoria para módulos de diagnóstico antiguos. Las
+    # conexiones operativas se resuelven exclusivamente desde PostgreSQL.
+    SQL_SERVER_HOST: str = ""
+    SQL_SERVER_INSTANCE: str = ""
+    SQL_SERVER_PORT: int = 0
+    SQL_SERVER_USER: str = ""
+    SQL_SERVER_PASSWORD: str = ""
+    SQL_SERVER_DB: str = ""
     DB_STUDY_INTERVAL_SECONDS: int = int(os.getenv("DB_STUDY_INTERVAL_SECONDS", "3600"))
     DB_STUDY_IDLE_CHECK_SECONDS: int = int(os.getenv("DB_STUDY_IDLE_CHECK_SECONDS", "10"))
     DB_STUDY_MAX_RUN_SECONDS: int = int(os.getenv("DB_STUDY_MAX_RUN_SECONDS", "900"))

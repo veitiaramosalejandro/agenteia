@@ -54,7 +54,10 @@ Como alternativa exclusivamente interna, `scripts/issue-internal-certificate.ps1
 
 La resolución habitual de identidad (`Username`, `FullName`, `IDLogin`, `IDResource`) utiliza exclusivamente la réplica PostgreSQL `SysLogin`; un identificador desconocido no desencadena conexiones a SQL Server. SQL Server queda reservado para ingestas y consultas operativas explícitas. En el perfil CPU de producción, Ollama usa `OLLAMA_KV_CACHE_TYPE=f16` porque una caché V cuantizada requiere Flash Attention.
 
-En el despliegue Windows actual, SQL Server se alcanza desde Docker mediante `SQL_SERVER_DOCKER_HOST=host.docker.internal` y `SQL_SERVER_INSTANCE=SQL2017DEV`. La API compone una única barra invertida y no fuerza el puerto cuando existe una instancia. Catálogo, usuario y contraseña permanecen en `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`.
+En Windows, cada destino SQL Server se obtiene de `SysSolidSETDatabase`. Para
+una instancia instalada en el host puede configurarse `Host=host.docker.internal`
+y un puerto TCP directo, o indicar `InstanceName` cuando SQL Browser sea
+alcanzable. Catálogo, usuario y contraseña ya no proceden del entorno.
 
 El despliegue `docker-compose-prod.yml` utiliza Ollama por CPU de forma predeterminada y no exige el runtime NVIDIA. Cuando `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` funcione correctamente, la aceleración se activa añadiendo el overlay `docker-compose-prod.gpu.yml`. En producción Uvicorn se ejecuta sin `--reload`.
 
@@ -361,7 +364,8 @@ opcional secuencial y `nomic-embed-text` para conservar la colección actual.
 POST /api/v1/agent/solidset/instances
 ```
 
-Registra o actualiza por `Code` las URLs que antes se seleccionaban desde `.env`:
+Registra o actualiza por `Code` las URLs y la conexión SQL Server independiente
+de una instalación. Los campos SQL Server ya no se leen desde `.env`:
 
 ```json
 {
@@ -373,11 +377,61 @@ Registra o actualiza por `Code` las URLs que antes se seleccionaban desde `.env`
   "CountryCode": "PT",
   "Locale": "pt-PT",
   "TimeZone": "Europe/Lisbon",
+  "Database": {
+    "Host": "host.docker.internal",
+    "InstanceName": null,
+    "Port": 57258,
+    "DatabaseName": "DEV_ISIFrameIsicom",
+    "Username": "agent_reader",
+    "Password": "<secret>",
+    "Encrypt": false,
+    "TrustServerCertificate": true,
+    "ConnectionTimeout": 15,
+    "SchemaVersion": "2026.08",
+    "AdapterCode": "solidset-v1",
+    "active": true
+  },
   "active": true
 }
 ```
 
-La configuración se guarda en PostgreSQL `SysSolidSETInstance`. Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`; si encuentra alguna, actualiza esa misma fila y conserva su `ID`. La respuesta indica `status=created` o `status=updated`. Existen índices únicos normalizados para impedir duplicados incluso con diferencias de mayúsculas o una barra final en la URL. `BaseUrl` se utiliza para `/User/LoginJson`, consultas y respuestas; `NotificationUrl` se utiliza únicamente para reenviar al servicio de notificaciones correspondiente.
+La configuración general se guarda en `SysSolidSETInstance` y su conexión en
+`SysSolidSETDatabase`. La contraseña se cifra con Fernet antes de persistirse y
+nunca se devuelve: la respuesta solo contiene `PasswordConfigured=true`. Para
+actualizar una instancia sin cambiar su contraseña se omite `Database.Password`.
+Si no se proporciona `LLM_CREDENTIAL_ENCRYPTION_KEY`, la API genera una clave
+Fernet una sola vez en `/app/data/credential.key`. El directorio `data` ya está
+montado de forma persistente en desarrollo, API, producer y worker. También se
+puede proporcionar la clave como secreto de despliegue; no es una credencial
+SQL Server. El fichero o secreto debe incluirse en las copias de seguridad: si
+se pierde, las contraseñas guardadas no se pueden recuperar.
+Si la variable o el fichero contienen una clave que no es Fernet válida, la
+variable se ignora y el fichero se conserva como
+`credential.key.invalid-<timestamp>` antes de generar una clave correcta.
+
+Dentro de Docker, `Database.Host=localhost`, `127.0.0.1` o `.` se traduce a
+`host.docker.internal`. En una máquina donde SQL Server esté en otro servidor
+debe utilizarse directamente su DNS o IP.
+
+Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`;
+si encuentra alguna, actualiza la misma fila y conserva su `ID`. `BaseUrl` se
+utiliza para login y respuestas; `NotificationUrl`, para notificaciones.
+
+Después del registro se verifica la conexión mediante:
+
+```http
+POST /api/v1/agent/solidset/instances/solidset-lisboa/test-connection
+```
+
+La prueba devuelve el catálogo real, una versión abreviada del servidor, el
+adaptador seleccionado y si existe `dbo.SysResource2Agent`. El resultado queda
+auditado en `LastConnectionAt`, `LastConnectionStatus` y
+`LastConnectionError`; nunca incluye usuario, contraseña ni cadena completa.
+
+`AdapterCode` desacopla las consultas de la versión instalada. Actualmente
+`solidset-v1` representa el esquema conocido. Una instalación con tablas o
+columnas diferentes debe incorporar un nuevo adaptador antes de activarse; no
+se permite usar silenciosamente las consultas de otra versión.
 
 `CountryCode`, `Locale` y `TimeZone` definen el contexto regional de las
 respuestas. `TimeZone` debe ser una zona IANA válida, como `Europe/Lisbon`, y
@@ -391,6 +445,11 @@ El agente recibe estos valores en todas las respuestas de esa instancia. Para
 fecha u hora (`Que dia é hoje?`, `Que horas são?`) se calculan directamente con
 `TimeZone`, sin pedir al LLM que adivine la ubicación; por ello no puede responder
 con la hora de Brasilia cuando la instancia está configurada en Portugal.
+
+El idioma de la pregunta siempre tiene prioridad sobre `Locale`: una pregunta
+en inglés recibe una respuesta en inglés aunque la instancia use `pt-PT`; una
+pregunta en español recibe español. `Locale` solo determina la variante regional
+cuando el idioma coincide y nunca obliga a traducir la respuesta al portugués.
 
 Si el cliente conoce la ubicación efectiva del recurso —por ejemplo, porque el
 usuario está temporalmente en otro país— puede incluir en `Info`, `TimeData` o
@@ -818,16 +877,35 @@ contexto de refuerzo del agente propio del solicitante. No utiliza el agente del
 autor citado, no consulta Internet y trata el texto citado como datos no
 confiables.
 
-Si termina correctamente devuelve HTTP 200 con `Content-Type: text/plain` y
-únicamente el texto apto para asignar a `RawMessage`:
+La operación de sugerencia solo es válida cuando `Chat.RawMessage` está vacío.
+El texto que debe contestarse procede de `Chat.chatQuestion.RawMessage`; si el
+mensaje actual ya contiene texto, el endpoint devuelve HTTP 422 para evitar que
+una respuesta escrita por el usuario sea sustituida.
 
-```text
-Gracias por la información. Revisaré esos puntos y te confirmaré el resultado.
+Si termina correctamente devuelve HTTP 200 con una lista JSON de alternativas
+independientes. El modelo intenta producir tres variantes —directa, breve y
+colaborativa— en el mismo idioma del mensaje citado:
+
+```json
+{
+  "requestId": "1824995",
+  "questionChatId": "1824994",
+  "status": "completed",
+  "code": 5,
+  "language": "pt",
+  "suggestions": [
+    {"id": "1", "text": "Obrigado pela informação. Vou confirmar esse ponto."},
+    {"id": "2", "text": "Entendido, obrigado."},
+    {"id": "3", "text": "Obrigado. Pretende que validemos este ponto em conjunto?"}
+  ],
+  "statusUrl": "/api/v1/agent/responses/1824995/status"
+}
 ```
 
-No devuelve JSON, nombre del agente, prefijo, comillas ni payload de envío. Para
-mostrar progreso mientras la llamada está abierta, WPF puede consultar en
-paralelo:
+Cada `text` es apto para asignarse a `RawMessage`; no contiene nombre del
+agente, prefijo ni payload de envío. La selección pertenece exclusivamente al
+cliente y este endpoint nunca publica ninguna alternativa en SolidSET. Para
+mostrar progreso mientras la llamada está abierta, WPF puede consultar en paralelo:
 
 ```http
 GET /api/v1/agent/responses/{Chat.IDChat2}/status?lang=es
@@ -835,7 +913,9 @@ GET /api/v1/agent/responses/{Chat.IDChat2}/status?lang=es
 
 La secuencia normal es `queued` → `processing` → `searching` → `thinking` →
 `completed`. No aparece `sending`, porque este endpoint nunca publica el texto
-en SolidSET. Los errores de validación devuelven HTTP 422; la ausencia de un
+en SolidSET. Al completarse, el estado incluye también `result.questionChatId`,
+`result.language` y `result.suggestions`, de modo que el cliente puede recuperar
+las alternativas aunque se cierre la petición POST. Los errores de validación devuelven HTTP 422; la ausencia de un
 agente propio activo devuelve HTTP 404; las dependencias o la generación no
 disponibles devuelven HTTP 503 y dejan el estado en `failed`.
 
@@ -1419,43 +1499,38 @@ Cada agente mantiene su propia sesión, memoria y conocimiento.
 ```
 # Conectividad de producción: SQL Server y Qdrant
 
-En este servidor Docker, SQL Server se configura como instancia nombrada. El
-host y la instancia se declaran por separado y la API construye para FreeTDS
-el destino `host.docker.internal\SQL2017DEV` sin forzar el puerto `1433`. No se
-debe usar `.\\SQL2017DEV`: el punto identifica al propio contenedor y las dos
-barras literales provocan un destino inválido.
-
-Variables usadas por `agent-service`:
-
-- `SQL_SERVER_DOCKER_HOST`: host alcanzable desde Docker; normalmente
-  `host.docker.internal` cuando SQL Server está en el mismo servidor Windows.
-- `SQL_SERVER_INSTANCE`: nombre de instancia, actualmente `SQL2017DEV`. Cuando
-  tiene valor, no se envía un puerto explícito y FreeTDS consulta SQL Browser.
-- `SQL_SERVER_DOCKER_PORT`: solamente se utiliza cuando
-  `SQL_SERVER_INSTANCE` está vacío; su valor predeterminado es `1433`.
-- `SQL_SERVER_DB`, `SQL_SERVER_USER` y `SQL_SERVER_PASSWORD`: base de datos y
-  credenciales de SQL Server.
+Cada SQL Server se configura en PostgreSQL mediante el endpoint de instancias.
+Ya no existen variables `SQL_SERVER_HOST`, `SQL_SERVER_INSTANCE`,
+`SQL_SERVER_PORT`, `SQL_SERVER_DB`, `SQL_SERVER_USER` ni
+`SQL_SERVER_PASSWORD` en los ficheros `.env` o Compose. Una instancia nombrada
+usa `Host` más `InstanceName`; para conexión TCP directa se deja
+`InstanceName=null` y se indica el puerto publicado.
 
 El `.env` de producción debe declarar `ENVIRONMENT=production`, utilizar
 `OLLAMA_BASE_URL=http://ollama-llm:11434` y no contener una cuenta global en
 `SOLIDSET_LOGIN_*`; la identidad para responder se obtiene de `SysLogin` según
 el recurso agente seleccionado.
 
-Ejemplo para producción:
+Los endpoints manuales de sincronización requieren ahora el parámetro
+`instanceCode`, por ejemplo
+`POST /api/v1/agent/solidset/resources/sync?instanceCode=solidset-lisboa`.
+Lo mismo aplica a `logins/sync`, `workrooms/sync` y `chat-workroom/sync`.
+La ingesta histórica recorre cada instancia con su propia conexión y cursores;
+una instancia sin conexión configurada se omite, sin recurrir a otra base.
 
-```env
-SQL_SERVER_DOCKER_HOST=host.docker.internal
-SQL_SERVER_INSTANCE=SQL2017DEV
-SQL_SERVER_DOCKER_PORT=1433
-SQL_SERVER_DB=DEV_ISIFrameIsicom
-SQL_SERVER_USER=sa
-SQL_SERVER_PASSWORD=<secreto>
-```
+Después de actualizar una instalación existente, el orden inicial recomendado
+es: registrar de nuevo la instancia con `Database`, ejecutar `test-connection`,
+sincronizar `resources`, `logins`, `workrooms` y `chat-workroom`, y finalmente
+reanudar la ingesta histórica. La sincronización de recursos crea el ámbito de
+instancia necesario; hasta entonces los agentes se omiten deliberadamente.
 
-Si SQL Browser/UDP 1434 no es alcanzable desde Docker, debe dejarse
-`SQL_SERVER_INSTANCE=` vacío y asignar a `SQL_SERVER_DOCKER_PORT` el puerto TCP
-real publicado por `SQL2017DEV`. El Compose preserva expresamente el valor
-vacío para activar este modo de conexión directa.
+`SysSolidSETInstanceResource` registra qué recursos fueron descubiertos en cada
+instalación. La validación histórica exige esa relación además de un agente
+activo, evitando utilizar recursos pertenecientes a otra instancia.
+Las cuentas se replican además en `SysSolidSETInstanceLogin`, cuya clave es
+`(IDSolidSETInstance, IDLogin)`. El login de una respuesta se resuelve por la
+instancia de la URL de destino; aunque dos instalaciones reutilicen el mismo
+GUID de login, sus contraseñas no se sobrescriben entre sí.
 
 La cuenta global antigua de SolidSET queda deshabilitada en
 `docker-compose-prod.yml`. Cada respuesta inicia sesión con el `SysLogin` del
@@ -1466,10 +1541,34 @@ que `vector-db:6333` acepta conexiones, evitando que la creación inicial de la
 colección `machining_docs` falle por una carrera de arranque.
 ## Ingesta retroactiva de conocimiento SolidSET
 
-La ingesta histórica es independiente de las respuestas en tiempo real. Lee
-`dbo.SysChat` incrementalmente por `IDChat2`, resuelve el autor real mediante
-`SysChat2SysResource.IDLogin = SysChat.IDSender`, aplica privacidad y publica
-lotes en `machining:historical-ingestion:v1`.
+La ingesta histórica es independiente de las respuestas en tiempo real. Solo
+crea procesos para recursos con `SysResourceIA.active=true`, un
+`IDAgentResource` y una relación `dbo.SysResource2Agent.Active=1` verificada.
+
+Cada agente activo tiene cursores independientes:
+
+```text
+solidset_chat_history:{IDResource}
+solidset_task_history:{IDResource}
+```
+
+El cursor de chat lee `dbo.SysChat` incrementalmente por `IDChat2` e incluye
+únicamente mensajes que el recurso escribió, recibió como participante o puede
+consultar por sus relaciones activas de `SysChatIAResource`. Los documentos se
+clasifican como `owner`, `workroom`, `private` o `meeting`.
+`SysChat.IDMeeting` es opcional según la instalación. Antes de extraer, el
+productor consulta `INFORMATION_SCHEMA.COLUMNS`; si no existe, proyecta
+`NULL AS IDMeeting` y continúa sin clasificar esos mensajes como meeting.
+
+El cursor de tareas descubre las columnas instaladas de `dbo.SysTask` y sus
+tablas relacionales. Solo extrae tareas donde el recurso aparece como creador,
+responsable, propietario, asignado o participante. Si la instalación no expone
+`IDTask` o una relación verificable con recursos, esta fuente se omite de forma
+segura y nunca se convierte en conocimiento global.
+El descubrimiento incluye `DATA_TYPE`: únicamente columnas
+`uniqueidentifier` pueden relacionarse con un recurso o login. Columnas
+homónimas `tinyint`, `int` u otros tipos se ignoran, y `IDTask` debe ser un
+identificador incremental numérico.
 
 Por seguridad comienza desactivada y en modo simulación:
 
@@ -1504,7 +1603,7 @@ POST /api/v1/agent/historical-ingestion/resume
 POST /api/v1/agent/historical-ingestion/approve-dry-run?instanceCode=local-solidset
 GET  /api/v1/agent/historical-ingestion/status
 GET  /api/v1/agent/historical-ingestion/batches?limit=50
-DELETE /api/v1/agent/historical-ingestion/messages/{idChat2}?instanceCode=local-solidset
+DELETE /api/v1/agent/historical-ingestion/messages/{idChat2}?instanceCode=local-solidset&sourceType=chat
 ```
 
 El cuerpo de `start` es:
@@ -1518,11 +1617,17 @@ ni avanzar `LastIDChat2`. Tras revisar auditoría se llama a
 `approve-dry-run`, y después a `start` con `dryRun=false`.
 
 Los mensajes IA, secretos, mensajes vacíos y registros sin autor/canal se
-rechazan. El conocimiento se duplica de forma controlada por agente con scope
-`owner` o `workroom`; `global` permanece deshabilitado hasta confirmar en SQL
-Server un campo fiable de visibilidad pública. Los puntos Qdrant incluyen
-`agent_resource_id`, `canal_id`, `scope`, `id_chat2` y `content_hash`, de forma
-compatible con los filtros RAG existentes.
+rechazan. El conocimiento se almacena únicamente para el agente objetivo con
+scope `owner`, `workroom`, `private`, `meeting` o `task`; `global` permanece
+deshabilitado. Los puntos Qdrant incluyen `agent_resource_id`, `canal_id`,
+`source_type`, `source_id`, `scope`, `id_chat2` y `content_hash`.
+
+El productor funciona también como reconciliador. Cuando aparece un agente
+activo nuevo, crea automáticamente sus cursores de chat y tareas. Si existen
+documentos anteriores para ese agente, parte del máximo origen confirmado; si
+es realmente nuevo, parte de cero. Activar un agente no reinicia los demás. Un
+agente desactivado deja de producir lotes y el worker vuelve a comprobar su
+estado antes de indexar cualquier trabajo pendiente.
 
 PostgreSQL conserva cursores, auditoría de lotes y la relación exacta entre
 `IDChat2` y `QdrantPointID`. El endpoint DELETE borra los puntos y marca los
@@ -1558,6 +1663,21 @@ la pérdida de mensajes como el reinicio desde cero.
 `GET /api/v1/agent/historical-ingestion/status` muestra ahora también
 `CurrentBatchID`, `LastIDChat2`, `LastRunAt` y el estado de recuperación para
 diagnosticar exactamente dónde continuará la ingesta.
+
+Los estados y auditorías pueden filtrarse por agente:
+
+```http
+GET /api/v1/agent/historical-ingestion/status?resourceId={IDResource}
+GET /api/v1/agent/historical-ingestion/batches?resourceId={IDResource}&limit=50
+```
+
+`approve-dry-run` libera todos los cursores `dry_run` de chat y tareas de la
+instancia seleccionada. El cursor global de versiones anteriores se marca como
+`superseded` y deja de participar en la planificación.
+
+El endpoint DELETE usa `sourceType=chat` de forma predeterminada. Para eliminar
+un documento de tarea se envía `sourceType=task` y el valor de la ruta se
+interpreta como `IDTask`, evitando colisiones entre `IDChat2` e `IDTask`.
 
 Servicios Docker:
 

@@ -4,11 +4,29 @@ from app.main import (
     _attach_solidset_instance,
     _chat_question_suggestion_context,
     _local_temporal_response,
+    _parse_chat_question_suggestions,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
+    def test_parses_distinct_json_suggestions(self):
+        result = _parse_chat_question_suggestions(
+            '["Resposta direta.", "Resposta breve.", "Resposta colaborativa."]'
+        )
+
+        self.assertEqual(
+            ["Resposta direta.", "Resposta breve.", "Resposta colaborativa."],
+            result,
+        )
+
+    def test_parses_fenced_object_and_removes_duplicates(self):
+        result = _parse_chat_question_suggestions(
+            '```json\n{"suggestions":[{"text":"Sim."},{"text":"Sim."},{"text":"Claro."}]}\n```'
+        )
+
+        self.assertEqual(["Sim.", "Claro."], result)
+
     def test_separates_requester_from_quoted_author(self):
         payload = {
             "Sender": {
@@ -85,6 +103,19 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertIn("Portugal", response)
         self.assertIn("Europe/Lisbon", response)
         self.assertNotIn("Brasília", response)
+
+    def test_english_time_keeps_english_with_portugal_locale(self):
+        response = _local_temporal_response(
+            "What time is it?",
+            time_zone="Europe/Lisbon",
+            locale="pt-PT",
+            country_code="PT",
+        )
+
+        self.assertIsNotNone(response)
+        self.assertTrue(response.startswith("The local time is"))
+        self.assertIn("Portugal", response)
+        self.assertNotIn("A hora local", response)
 
     def test_payload_region_overrides_instance_default(self):
         candidates = [{"fingerprint": "message-1", "payload": {

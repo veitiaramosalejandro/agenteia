@@ -101,9 +101,18 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         )
 
     def setUp(self):
+        self.instance_resolver = patch(
+            "app.main.get_solidset_instance",
+            return_value={
+                "ID": str(uuid4()), "Code": "test", "BaseUrl": "http://solidset",
+                "Database": {"Host": "sql", "DatabaseName": "solidset", "active": True},
+            },
+        )
+        self.instance_resolver.start()
+        self.addCleanup(self.instance_resolver.stop)
         self.mapping_verifier = patch(
             "app.main.verify_and_sync_solidset_agent_mapping",
-            side_effect=lambda human_id, expected_id=None: {
+            side_effect=lambda human_id, expected_id=None, instance=None: {
                 "verified": True,
                 "matchesExpected": True,
                 "IDHumanResource": human_id,
@@ -151,7 +160,8 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             routed = _route_candidates_to_selected_agents([candidate])
 
         self.assertEqual([], routed)
-        self.verify_mapping.assert_called_once_with(str(human_agent))
+        self.assertEqual(str(human_agent), self.verify_mapping.call_args.args[0])
+        self.assertEqual(cached_agent, self.verify_mapping.call_args.args[1])
 
     def test_talk_with_agent_selects_only_explicit_ai_destination(self):
         room_id = uuid4()
@@ -321,7 +331,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         registry.assert_called_once_with(str(room_id), [str(requested_agent)])
         self.assertEqual(1, len(routed))
         self.assertEqual(str(requested_agent), routed[0]["agent_resource_id"])
-        self.assertEqual("Asistente IA Victor Vargas", routed[0]["agent_name"])
+        self.assertEqual("Victor Vargas", routed[0]["agent_name"])
         self.assertTrue(routed[0]["is_direct"])
         self.assertEqual(str(sender_resource), routed[0]["reply_resource"])
         self.assertEqual(str(sender_login), routed[0]["reply_login"])
@@ -407,7 +417,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, len(routed))
         self.assertEqual(str(requested_agent), routed[0]["agent_resource_id"])
-        self.assertEqual("Asistente IA Victor Vargas", routed[0]["agent_name"])
+        self.assertEqual("Victor Vargas", routed[0]["agent_name"])
 
     def test_private_self_chat_can_activate_owners_own_agent(self):
         room_id = uuid4()
@@ -451,8 +461,8 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, len(routed))
         self.assertEqual(str(owner_resource), routed[0]["agent_resource_id"])
-        self.assertEqual(str(owner_resource), routed[0]["agent_identity_id"])
-        self.assertEqual("Asistente IA Alejandro Veitia", routed[0]["agent_name"])
+        self.assertEqual(str(agent_identity), routed[0]["agent_identity_id"])
+        self.assertEqual("Alejandro Veitia", routed[0]["agent_name"])
 
     def test_routes_only_active_selected_agents_returned_by_registry(self):
         room_id = uuid4()

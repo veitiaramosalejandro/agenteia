@@ -8,6 +8,7 @@ from collections import Counter
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import pymssql
+from app.connectors.solidset_sql import open_current_connection
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams
 from langchain_ollama import OllamaEmbeddings
@@ -149,14 +150,7 @@ class SistemaAprendizaje:
         timeout = kwargs.get("timeout", settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS)
         for attempt in range(1, kwargs.get("retries", 3) + 1):
             try:
-                return pymssql.connect(
-                    **settings.sql_server_connection_options(),
-                    user=settings.SQL_SERVER_USER,
-                    password=settings.SQL_SERVER_PASSWORD,
-                    database=settings.SQL_SERVER_DB,
-                    timeout=timeout,
-                    login_timeout=timeout,
-                )
+                return open_current_connection(as_dict=False)
             except Exception as e:
                 last_error = e
                 if attempt < kwargs.get("retries", 3):

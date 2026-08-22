@@ -6,6 +6,7 @@ from uuid import UUID
 import pymssql
 
 from app.config import settings
+from app.connectors.solidset_sql import connect as connect_solidset_sql
 from app.connectors.db_client import _postgres_connection
 
 
@@ -67,6 +68,7 @@ LOGIN_QUERY = """
 def verify_and_sync_solidset_agent_mapping(
     human_resource_id: UUID | str,
     expected_agent_resource_id: UUID | str | None = None,
+    instance: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Verifica en SQL Server la relación IA activa y actualiza su réplica local."""
     human_id = UUID(str(human_resource_id))
@@ -75,14 +77,9 @@ def verify_and_sync_solidset_agent_mapping(
         if expected_agent_resource_id
         else None
     )
-    with pymssql.connect(
-        **settings.sql_server_connection_options(),
-        user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD,
-        database=settings.SQL_SERVER_DB,
-        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-    ) as source_connection:
+    if instance is None:
+        raise RuntimeError("A instância SolidSET é obrigatória para verificar o agente.")
+    with connect_solidset_sql(instance, as_dict=True) as source_connection:
         source_cursor = source_connection.cursor(as_dict=True)
         source_cursor.execute(
             """
@@ -127,16 +124,9 @@ def verify_and_sync_solidset_agent_mapping(
     }
 
 
-def ingest_solidset_logins() -> dict[str, int]:
+def ingest_solidset_logins(instance: dict[str, object]) -> dict[str, int]:
     """Sincroniza cuentas SolidSET para autenticar al agente de cada recurso."""
-    with pymssql.connect(
-        **settings.sql_server_connection_options(),
-        user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD,
-        database=settings.SQL_SERVER_DB,
-        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-    ) as source_connection:
+    with connect_solidset_sql(instance, as_dict=True) as source_connection:
         source_cursor = source_connection.cursor(as_dict=True)
         source_cursor.execute(LOGIN_QUERY)
         source_rows = source_cursor.fetchall() or []
@@ -209,6 +199,23 @@ def ingest_solidset_logins() -> dict[str, int]:
                         ) in logins.items()
                     ],
                 )
+                target_cursor.executemany(
+                    '''INSERT INTO public."SysSolidSETInstanceLogin" (
+                      "IDSolidSETInstance", "IDLogin", "Username", "FullName", "Password", "Salt",
+                      "LastIDResource", "ActiveIDLogin2Resource"
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT ("IDSolidSETInstance", "IDLogin") DO UPDATE SET
+                      "Username"=EXCLUDED."Username", "FullName"=EXCLUDED."FullName",
+                      "Password"=EXCLUDED."Password", "Salt"=EXCLUDED."Salt",
+                      "LastIDResource"=EXCLUDED."LastIDResource",
+                      "ActiveIDLogin2Resource"=EXCLUDED."ActiveIDLogin2Resource"''',
+                    [
+                      (instance["ID"], login_id, username, full_name, password, salt,
+                       last_resource_id, active_link_id)
+                      for login_id, (username, full_name, password, salt,
+                                     last_resource_id, active_link_id) in logins.items()
+                    ],
+                )
 
     return {
         "sourceRows": len(source_rows),
@@ -219,16 +226,9 @@ def ingest_solidset_logins() -> dict[str, int]:
     }
 
 
-def ingest_solidset_resources() -> dict[str, int]:
+def ingest_solidset_resources(instance: dict[str, object]) -> dict[str, int]:
     """Sincroniza los recursos de SolidSET desde SQL Server hacia PostgreSQL."""
-    with pymssql.connect(
-        **settings.sql_server_connection_options(),
-        user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD,
-        database=settings.SQL_SERVER_DB,
-        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-    ) as source_connection:
+    with connect_solidset_sql(instance, as_dict=True) as source_connection:
         source_cursor = source_connection.cursor(as_dict=True)
         source_cursor.execute(RESOURCE_QUERY)
         source_rows = source_cursor.fetchall() or []
@@ -284,6 +284,14 @@ def ingest_solidset_resources() -> dict[str, int]:
                         for resource_id, (display_name, active_link_id, agent_resource_id) in resources.items()
                     ],
                 )
+                target_cursor.executemany(
+                    '''INSERT INTO public."SysSolidSETInstanceResource"
+                       ("IDSolidSETInstance", "IDResource", active)
+                       VALUES (%s, %s, true)
+                       ON CONFLICT ("IDSolidSETInstance", "IDResource")
+                       DO UPDATE SET active=true''',
+                    [(instance["ID"], resource_id) for resource_id in resource_ids],
+                )
 
     inserted = len(set(resource_ids) - existing_ids)
     updated = len(existing_ids)
@@ -296,16 +304,9 @@ def ingest_solidset_resources() -> dict[str, int]:
     }
 
 
-def ingest_solidset_chat_resources() -> dict[str, int]:
+def ingest_solidset_chat_resources(instance: dict[str, object]) -> dict[str, int]:
     """Sincroniza las relaciones recurso-sala desde SolidSET."""
-    with pymssql.connect(
-        **settings.sql_server_connection_options(),
-        user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD,
-        database=settings.SQL_SERVER_DB,
-        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-    ) as source_connection:
+    with connect_solidset_sql(instance, as_dict=True) as source_connection:
         source_cursor = source_connection.cursor(as_dict=True)
         source_cursor.execute(CHAT_RESOURCE_QUERY)
         source_rows = source_cursor.fetchall() or []
@@ -372,16 +373,9 @@ def ingest_solidset_chat_resources() -> dict[str, int]:
     }
 
 
-def ingest_solidset_workrooms() -> dict[str, int]:
+def ingest_solidset_workrooms(instance: dict[str, object]) -> dict[str, int]:
     """Sincroniza el catálogo de canales de SolidSET hacia PostgreSQL."""
-    with pymssql.connect(
-        **settings.sql_server_connection_options(),
-        user=settings.SQL_SERVER_USER,
-        password=settings.SQL_SERVER_PASSWORD,
-        database=settings.SQL_SERVER_DB,
-        login_timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-        timeout=max(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
-    ) as source_connection:
+    with connect_solidset_sql(instance, as_dict=True) as source_connection:
         source_cursor = source_connection.cursor(as_dict=True)
         source_cursor.execute(WORKROOM_QUERY)
         source_rows = source_cursor.fetchall() or []
