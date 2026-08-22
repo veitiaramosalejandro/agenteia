@@ -3329,11 +3329,20 @@ def test_solidset_instance_database(code: str) -> SolidSETDataAPIConnectionTestR
     instance = get_solidset_instance(code=code.strip(), source_ip=None)
     if not instance:
         raise HTTPException(status_code=404, detail="A instância SolidSET não existe ou está inativa.")
-    if not instance.get("DataAPI"):
+    data_api = instance.get("DataAPI") or {}
+    if not data_api:
         raise HTTPException(status_code=409, detail="A instância não tem um fornecedor de dados configurado.")
+    print(
+        "🔍 Testando SolidSET Data API "
+        f"instance={instance.get('Code')} base={data_api.get('BaseUrl')}"
+    )
     try:
         result = test_solidset_sql_connection(instance)
     except Exception as exc:
+        print(
+            "❌ Teste SolidSET Data API falhou "
+            f"instance={instance.get('Code')} error={type(exc).__name__}: {str(exc)[:500]}"
+        )
         raise HTTPException(
             status_code=503,
             detail="Não foi possível estabelecer ligação ao fornecedor de dados desta instância.",

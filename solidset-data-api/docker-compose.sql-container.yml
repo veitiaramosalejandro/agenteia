@@ -1,0 +1,9 @@
+services:
+  data-api:
+    networks:
+      - solidset-sql-network
+
+networks:
+  solidset-sql-network:
+    external: true
+    name: ${SQL_SERVER_DOCKER_NETWORK:-network-db01}

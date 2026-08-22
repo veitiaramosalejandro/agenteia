@@ -22,6 +22,11 @@ SQL Server de SolidSET
 El Compose de este directorio es autónomo. No necesita PostgreSQL, Redis,
 Qdrant, Ollama ni los contenedores del agente.
 
+Si SQL Server también se ejecuta en Docker mediante otro Compose, utiliza el
+overlay `docker-compose.sql-container.yml`. Este conecta la Data API a la red
+externa indicada por `SQL_SERVER_DOCKER_NETWORK` y evita colisiones con puertos
+SQL publicados en el host.
+
 ## 2. Requisitos
 
 - Docker Desktop con contenedores Linux.
@@ -120,6 +125,23 @@ Desde el directorio `solidset-data-api`:
 ```powershell
 docker compose up -d --build
 docker compose ps
+```
+
+Cuando SQL Server sea el contenedor `sqlserver` de la red `network-db01`:
+
+```env
+SQL_SERVER_HOST=sqlserver
+SQL_SERVER_INSTANCE=
+SQL_SERVER_PORT=1433
+SQL_SERVER_DATABASE=ISIFrameIsicom
+SQL_SERVER_DOCKER_NETWORK=network-db01
+```
+
+```powershell
+docker compose `
+  -f docker-compose.yml `
+  -f docker-compose.sql-container.yml `
+  up -d --build
 ```
 
 Después del periodo inicial, el estado esperado es `healthy`.

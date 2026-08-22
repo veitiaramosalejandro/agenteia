@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 import pymssql
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.database import connection, execute_read
 from app.security import valid_api_key, validate_read_query
-from app.queries import ACTIVE_RESOURCE_AGENT, DATASETS
+from app.queries import ACTIVE_RESOURCE_AGENT, DATASETS, DATASET_ORDER_BY
 
 
 app = FastAPI(
@@ -29,6 +29,10 @@ class QueryResponse(BaseModel):
     columns: list[str]
     rows: list[dict[str, Any]]
     rowCount: int
+    offset: int | None = None
+    limit: int | None = None
+    hasMore: bool = False
+    nextOffset: int | None = None
 
 
 def require_api_key(x_solidset_data_key: str | None = Header(None)) -> None:
@@ -91,15 +95,36 @@ def read_query(request: QueryRequest) -> QueryResponse:
     tags=["SolidSET datasets"],
     dependencies=[Depends(require_api_key)],
 )
-def read_dataset(dataset: str) -> QueryResponse:
-    query = DATASETS.get(dataset.strip().lower())
+def read_dataset(
+    dataset: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(1000, ge=1),
+) -> QueryResponse:
+    dataset_code = dataset.strip().lower()
+    query = DATASETS.get(dataset_code)
     if not query:
         raise HTTPException(status_code=404, detail="O conjunto de dados não existe.")
     try:
-        columns, rows = execute_read(
-            query, [], settings.SOLIDSET_DATA_API_MAX_ROWS
+        page_size = min(limit, settings.SOLIDSET_DATA_API_MAX_ROWS)
+        order_by = DATASET_ORDER_BY[dataset_code]
+        paged_query = (
+            f"SELECT * FROM ({query.strip().rstrip(';')}) AS DatasetPage "
+            f"ORDER BY {order_by} OFFSET %s ROWS FETCH NEXT %s ROWS ONLY"
         )
-        return QueryResponse(columns=columns, rows=rows, rowCount=len(rows))
+        columns, rows = execute_read(
+            paged_query, [offset, page_size + 1], page_size + 1
+        )
+        has_more = len(rows) > page_size
+        page = rows[:page_size]
+        return QueryResponse(
+            columns=columns,
+            rows=page,
+            rowCount=len(page),
+            offset=offset,
+            limit=page_size,
+            hasMore=has_more,
+            nextOffset=(offset + len(page)) if has_more else None,
+        )
     except pymssql.Error as exc:
         raise HTTPException(status_code=503, detail="A leitura do conjunto de dados falhou.") from exc
 

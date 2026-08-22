@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from decimal import Decimal
+import os
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 import httpx
@@ -13,6 +15,23 @@ from app.llm.secrets import decrypt_api_key
 
 class SolidSETDataAPIError(RuntimeError):
     pass
+
+
+def _runtime_base_url(value: str) -> str:
+    """Resolve host-local URLs from inside the agent container."""
+    base_url = str(value or "").strip().rstrip("/")
+    parsed = urlsplit(base_url)
+    running_in_docker = (
+        os.path.exists("/.dockerenv")
+        or os.getenv("RUNNING_IN_DOCKER") == "1"
+    )
+    if running_in_docker and (parsed.hostname or "").lower() in {
+        "localhost", "127.0.0.1", "::1",
+    }:
+        port = f":{parsed.port}" if parsed.port else ""
+        parsed = parsed._replace(netloc=f"host.docker.internal{port}")
+        return urlunsplit(parsed).rstrip("/")
+    return base_url
 
 
 def _json_parameter(value: Any) -> Any:
@@ -91,7 +110,7 @@ class DataAPICursor:
 
 class DataAPIConnection:
     def __init__(self, configuration: dict[str, Any], *, as_dict: bool = False) -> None:
-        base_url = str(configuration.get("BaseUrl") or "").strip().rstrip("/")
+        base_url = _runtime_base_url(configuration.get("BaseUrl") or "")
         if not base_url:
             raise SolidSETDataAPIError("A URL da SolidSET Data API não está configurada.")
         api_key = decrypt_api_key(configuration.get("EncryptedAPIKey"))
@@ -135,15 +154,31 @@ def connect(configuration: dict[str, Any], *, as_dict: bool = False) -> DataAPIC
 
 def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, Any]]:
     with DataAPIConnection(configuration, as_dict=True) as connection:
-        try:
-            response = connection.client.get(f"/api/v1/datasets/{dataset}")
-        except httpx.HTTPError as exc:
-            raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
-        if response.status_code >= 400:
-            raise SolidSETDataAPIError(
-                f"Falha ao obter dataset {dataset} (HTTP {response.status_code})."
-            )
-        return [dict(row) for row in response.json().get("rows") or []]
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            try:
+                response = connection.client.get(
+                    f"/api/v1/datasets/{dataset}",
+                    params={"offset": offset, "limit": connection.max_rows},
+                )
+            except httpx.HTTPError as exc:
+                raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+            if response.status_code >= 400:
+                raise SolidSETDataAPIError(
+                    f"Falha ao obter dataset {dataset} (HTTP {response.status_code})."
+                )
+            payload = response.json()
+            page = [dict(row) for row in payload.get("rows") or []]
+            rows.extend(page)
+            if not payload.get("hasMore"):
+                return rows
+            next_offset = payload.get("nextOffset")
+            if next_offset is None or int(next_offset) <= offset:
+                raise SolidSETDataAPIError(
+                    f"Paginação inválida no dataset {dataset}."
+                )
+            offset = int(next_offset)
 
 
 def read_active_resource_agent(

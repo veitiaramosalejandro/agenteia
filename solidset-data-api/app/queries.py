@@ -7,7 +7,6 @@ DATASETS = {
           ON l.ActiveIDLogin2Resource = r.ActiveIDLogin2Resource
         LEFT JOIN dbo.SysResource2Agent a
           ON a.IDHumanResource = r.ResourceId AND a.Active = 1
-        ORDER BY r.DisplayName ASC
     """,
     "logins": """
         SELECT Username, FullName, Password, Salt, IDLogin,
@@ -26,8 +25,14 @@ DATASETS = {
           ON l.ActiveIDLogin2Resource = r.ActiveIDLogin2Resource
         INNER JOIN dbo.SysWorkRoomResource wr ON wr.IDResource = r.ResourceId
         INNER JOIN dbo.SysWorkRoom w ON w.IDWorkRoom = wr.IDWorkRoom
-        ORDER BY r.DisplayName ASC
     """,
+}
+
+DATASET_ORDER_BY = {
+    "resources": "ResourceId",
+    "logins": "IDLogin",
+    "workrooms": "IDWorkRoom",
+    "workroom-resources": "IDWorkRoom, ResourceId",
 }
 
 ACTIVE_RESOURCE_AGENT = """
@@ -36,4 +41,3 @@ ACTIVE_RESOURCE_AGENT = """
     WHERE IDHumanResource = %s AND Active = 1
     ORDER BY CreatedUtc DESC
 """
-

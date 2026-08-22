@@ -1,11 +1,59 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from app.connectors.solidset_data_api import DataAPIConnection
+from app.connectors.solidset_data_api import (
+    DataAPIConnection,
+    _runtime_base_url,
+    read_dataset,
+)
 from app.connectors.solidset_sql import connect as connect_solidset_data
 
 
 class SolidSETDataAPIConnectorTests(unittest.TestCase):
+    @patch("app.connectors.solidset_data_api.decrypt_api_key", return_value="secret")
+    @patch("app.connectors.solidset_data_api.httpx.Client")
+    def test_dataset_reads_all_pages(self, client_type, _decrypt):
+        first = Mock(status_code=200)
+        first.json.return_value = {
+            "rows": [{"IDWorkRoom": "1"}],
+            "hasMore": True,
+            "nextOffset": 1,
+        }
+        second = Mock(status_code=200)
+        second.json.return_value = {
+            "rows": [{"IDWorkRoom": "2"}],
+            "hasMore": False,
+            "nextOffset": None,
+        }
+        client_type.return_value.get.side_effect = [first, second]
+
+        rows = read_dataset({
+            "BaseUrl": "https://data.example.test",
+            "EncryptedAPIKey": "encrypted",
+            "MaxRows": 500,
+        }, "workrooms")
+
+        self.assertEqual([{"IDWorkRoom": "1"}, {"IDWorkRoom": "2"}], rows)
+        self.assertEqual(
+            {"offset": 1, "limit": 500},
+            client_type.return_value.get.call_args_list[1].kwargs["params"],
+        )
+
+    @patch("app.connectors.solidset_data_api.os.path.exists", return_value=True)
+    def test_localhost_uses_host_gateway_inside_docker(self, _exists):
+        self.assertEqual(
+            "http://host.docker.internal:8080",
+            _runtime_base_url("http://localhost:8080/"),
+        )
+
+    @patch("app.connectors.solidset_data_api.os.path.exists", return_value=False)
+    @patch.dict("app.connectors.solidset_data_api.os.environ", {}, clear=True)
+    def test_localhost_is_preserved_outside_docker(self, _exists):
+        self.assertEqual(
+            "http://localhost:8080",
+            _runtime_base_url("http://localhost:8080/"),
+        )
+
     def test_direct_sql_fallback_is_disabled(self):
         with self.assertRaisesRegex(RuntimeError, "acesso SQL Server direto está desativado"):
             with connect_solidset_data({"Database": {"active": True}}, as_dict=True):

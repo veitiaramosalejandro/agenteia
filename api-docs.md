@@ -413,7 +413,15 @@ variable se ignora y el fichero se conserva como
 `DataAPI.BaseUrl` debe ser alcanzable desde los contenedores del agente. Si el
 gateway de prueba está en el mismo compose se usa
 `http://solidset-data-api:8080`; si está en el servidor SolidSET se utiliza su
-DNS o IP HTTPS.
+DNS o IP HTTPS. Para facilitar el desarrollo, una URL registrada con
+`localhost`, `127.0.0.1` o `::1` se traduce en tiempo de ejecución a
+`host.docker.internal` cuando el agente está dentro de Docker. Fuera de Docker
+la URL se conserva sin cambios.
+
+Si SQL Server está en otro Compose, la Data API puede iniciarse además con
+`solidset-data-api/docker-compose.sql-container.yml`. El overlay incorpora la
+red externa configurada en `SQL_SERVER_DOCKER_NETWORK` y permite usar el nombre
+del contenedor SQL como `SQL_SERVER_HOST`, sin depender de un puerto del host.
 
 Antes de insertar, la API busca coincidencias por `Code`, `BaseUrl` o `SourceIP`;
 si encuentra alguna, actualiza la misma fila y conserva su `ID`. `BaseUrl` se
@@ -427,7 +435,9 @@ POST /api/v1/agent/solidset/instances/solidset-lisboa/test-connection
 
 La prueba atraviesa la Data API y devuelve el catálogo real, una versión
 abreviada del servidor, el adaptador y si existe `dbo.SysResource2Agent`; nunca
-incluye usuario, contraseña ni cadena completa.
+incluye usuario, contraseña, API key cifrada ni cadena completa. Las trazas del
+servidor muestran únicamente `instance`, `DataAPI.BaseUrl`, el tipo de error y
+una causa técnica abreviada.
 
 El proyecto independiente está en `solidset-data-api/` y expone:
 
@@ -451,6 +461,11 @@ con la validación `agents/{humanResourceId}`, mantienen sus consultas dentro de
 proyecto independiente. Las consultas históricas y de aprendizaje cuyo SQL se
 adapta dinámicamente al esquema utilizan `query/read`, pero también se ejecutan
 exclusivamente dentro del gateway.
+
+`GET /api/v1/datasets/{dataset}` admite `offset` y `limit` y devuelve además
+`hasMore` y `nextOffset`. El conector del agente recorre automáticamente todas
+las páginas, por lo que una instalación con más filas que `MaxRows` no queda
+sincronizada parcialmente.
 
 Para ejecutar el gateway de prueba en la misma máquina:
 
