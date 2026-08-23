@@ -4323,17 +4323,19 @@ async def suggest_chat_question_response(
         or ""
     ).strip()
     request_id = context["request_id"]
+    advice_mode = context["advice_mode"] in {"1", "true", "yes", "sim"}
+    advice_refine = advice_mode and bool(context["quoted_message"])
     ambient_mode = (
-        not context["quoted_chat_id"]
+        advice_mode
         and not context["quoted_message"]
-        and context["advice_mode"] in {"1", "true", "yes", "sim"}
+        and not context["quoted_chat_id"]
     )
     if not request_id:
         raise HTTPException(
             status_code=422,
             detail="O campo Chat.IDChat2 é obrigatório para acompanhar o estado do pedido.",
         )
-    if not ambient_mode and (
+    if not ambient_mode and not advice_refine and (
         not context["quoted_chat_id"] or not context["quoted_message"]
     ):
         raise HTTPException(
@@ -4407,7 +4409,7 @@ async def suggest_chat_question_response(
             context["workroom_id"],
         )
         scope_context = ""
-        if ambient_mode:
+        if ambient_mode or advice_refine:
             with solidset_sql_instance_context(solidset_instance):
                 recent_rows = await asyncio.to_thread(
                     agent.sistema_aprendizaje.obtener_mensajes_chat_desde_bd,
@@ -4428,9 +4430,27 @@ async def suggest_chat_question_response(
                 "the supplied conversation, preserve its predominant language, and do not invent facts.\n\n"
                 f"RECENT CONVERSATION:\n{scope_context}"
             )
+        elif advice_refine:
+            suggestion_source = (
+                "The requester selected the following draft and wants exactly three refined "
+                "alternative messages they could send next in this SolidSET channel. Improve "
+                "clarity and usefulness while preserving the draft intent and predominant "
+                "language. Base every alternative only on the draft and the recent conversation. "
+                "Do not invent facts and do not search the web.\n\n"
+                f"SELECTED DRAFT:\n{context['quoted_message']}\n\n"
+                f"RECENT CONVERSATION:\n{scope_context}"
+            )
         metadata = {
             "response_suggestion_mode": True,
-            "response_suggestion_scope": "channel_or_meeting" if ambient_mode else "quoted_message",
+            "advice_mode": advice_mode,
+            "advice_refine": advice_refine,
+            "response_suggestion_scope": (
+                "advice_refine"
+                if advice_refine
+                else "channel_or_meeting"
+                if ambient_mode
+                else "quoted_message"
+            ),
             "response_suggestion_count": 3,
             "chat_id": request_id,
             "quoted_chat_id": context["quoted_chat_id"],
