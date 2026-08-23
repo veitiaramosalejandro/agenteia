@@ -4346,6 +4346,12 @@ def handle_dialogue(message: FrameworkMessageDTO):
                 agent_response="Mantenha um tom respeitador na conversa. Estou disponível para ajudar com questões técnicas sobre maquinaria e sistemas."
             )
 
+        # Estado de progresso (mesmos textos do chat: A aguardar… / A pensar… / …)
+        info = message.Info or {}
+        dialogue_request_id = str(info.get("request_id") or "").strip() or str(uuid.uuid4())
+        _create_response_status(dialogue_request_id, dialogue_request_id, 1)
+        _update_response_status(dialogue_request_id, "queued")
+
         cached_response_text = _get_cached_dialogue_response(cache_key)
         if cached_response_text:
             elapsed = perf_counter() - request_started_at
@@ -4353,6 +4359,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             print(
                 f"⚡ Cache HIT en diálogo (sesión: {req.session_id}) -> {elapsed:.2f}s"
             )
+            _update_response_status(dialogue_request_id, "completed", response_count=1)
             result = ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
@@ -4373,6 +4380,11 @@ def handle_dialogue(message: FrameworkMessageDTO):
         # Control de admisión: evita que exceso de carga bloquee conversaciones.
         slot_acquired = _dialogue_slots.acquire(timeout=max(0, settings.DIALOGUE_ADMISSION_TIMEOUT_SECONDS))
         if not slot_acquired:
+            _update_response_status(
+                dialogue_request_id,
+                "failed",
+                error="O agente está a processar várias conversas neste momento.",
+            )
             return ChatConversationResponse(
                 session_id=req.session_id,
                 user_message=req.message,
@@ -4382,6 +4394,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
         # Registrar inicio del procesamiento
         print(f"📨 Procesando consulta de usuario {req.user_id} (sesión: {req.session_id})")
         print(f"   Mensaje: {req.message[:100]}...")
+        _update_response_status(dialogue_request_id, "processing")
 
         _start_dialogue()
         dialogue_started = True
@@ -4420,6 +4433,7 @@ def handle_dialogue(message: FrameworkMessageDTO):
             except Exception as exc:
                 error_holder["error"] = exc
 
+        _update_response_status(dialogue_request_id, "thinking")
         worker = threading.Thread(target=_run_agent_dialogue, daemon=True)
         worker.start()
         worker.join(timeout=processing_timeout)
@@ -4428,6 +4442,11 @@ def handle_dialogue(message: FrameworkMessageDTO):
             print(
                 f"⚠️ Timeout de conversación en sesión {req.session_id} tras {processing_timeout}s. "
                 "Se devuelve respuesta controlada y se libera al terminar en segundo plano."
+            )
+            _update_response_status(
+                dialogue_request_id,
+                "failed",
+                error="O pedido está a demorar mais do que o esperado.",
             )
             threading.Thread(
                 target=_release_dialogue_resources_when_done,
@@ -4443,9 +4462,13 @@ def handle_dialogue(message: FrameworkMessageDTO):
             )
 
         if "error" in error_holder:
+            _update_response_status(
+                dialogue_request_id, "failed", error=str(error_holder["error"])
+            )
             raise error_holder["error"]
 
         response_text = response_holder.get("text", "")
+        _update_response_status(dialogue_request_id, "sending")
 
         _store_cached_dialogue_response(cache_key, response_text)
         
@@ -4476,10 +4499,17 @@ def handle_dialogue(message: FrameworkMessageDTO):
             )
         else:
             print(f"⏱️ Diálogo completado en {elapsed:.2f}s (sesión: {req.session_id})")
+        _update_response_status(dialogue_request_id, "completed", response_count=1)
         return result
         
     except Exception as e:
         print(f"❌ Error crítico en /dialogue: {str(e)}")
+        try:
+            rid = str((message.Info or {}).get("request_id") or "").strip()
+            if rid:
+                _update_response_status(rid, "failed", error=str(e))
+        except Exception:
+            pass
         # Capturar error y devolver mensaje amigable
         return ChatConversationResponse(
             session_id=req.session_id,
