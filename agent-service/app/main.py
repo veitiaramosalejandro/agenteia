@@ -2964,7 +2964,37 @@ _FRAMEWORK_MESSAGE_EXAMPLES = {
             "AttentionCallNotificationLevel": 0,
             "AttentionCallNotify": False,
         },
-    }
+    },
+    "emptyContextAdvice": {
+        "summary": "Suggest next messages from channel or meeting context",
+        "description": (
+            "Chat and RawMessage are empty. Info.advice_mode=1 instructs the agent "
+            "to review recent accessible messages from Sender/Destiny.workRoom."
+        ),
+        "value": {
+            "Stamp": "2026-08-23T17:15:06Z",
+            "Sender": {
+                "session": "00000000-0000-0000-0000-000000000000",
+                "login": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "resource": "11111111-1111-4111-8111-111111111111",
+                "workRoom": "33333333-3333-4333-8333-333333333333",
+            },
+            "Destiny": {
+                "workRoom": "33333333-3333-4333-8333-333333333333"
+            },
+            "Kind": 7,
+            "RawMessage": "",
+            "Importance": 1,
+            "Chat": None,
+            "Info": {
+                "session_id": "11111111-1111-4111-8111-111111111111",
+                "advice_mode": "1",
+                "request_id": "66666666-6666-4666-8666-666666666666",
+                "locale": "es-ES",
+                "time_zone": "Europe/Lisbon",
+            },
+        },
+    },
 }
 
 
@@ -3278,6 +3308,10 @@ _CHAT_QUESTION_SUGGESTION_EXAMPLES = {
         },
     }
 }
+
+_CHAT_QUESTION_SUGGESTION_EXAMPLES["emptyContextAdvice"] = (
+    _FRAMEWORK_MESSAGE_EXAMPLES["emptyContextAdvice"]
+)
 
 
 def _get_payload_value(payload: Optional[dict[str, Any]], *keys: str) -> Any:
@@ -4124,7 +4158,9 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
     quoted = quoted if isinstance(quoted, dict) else {}
 
     current_chat_id = str(
-        _get_payload_value(chat, "idChat2", "IDChat2", "idChat") or ""
+        _get_payload_value(chat, "idChat2", "IDChat2", "idChat")
+        or _get_payload_value(info, "request_id", "requestId")
+        or ""
     ).strip()
     quoted_chat_id = str(
         _get_payload_value(quoted, "idChat2", "IDChat2")
@@ -4160,6 +4196,8 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
     ).strip()
     session_id = _valid_framework_identifier(
         _get_payload_value(sender, "session", "IDSession")
+    ) or _valid_framework_identifier(
+        _get_payload_value(info, "session_id", "sessionId")
     )
     return {
         "request_id": current_chat_id,
@@ -4175,7 +4213,37 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
             _get_payload_value(info, "meeting_code", "meetingCode") or ""
         ).strip(),
         "session_id": session_id or "",
+        "advice_mode": str(
+            _get_payload_value(info, "advice_mode", "adviceMode") or ""
+        ).strip().lower(),
     }
+
+
+def _format_suggestion_scope_context(
+    rows: list[dict[str, Any]], *, max_chars: int = 3200
+) -> str:
+    """Builds a bounded, chronological context without exposing technical IDs."""
+    newest_first: list[str] = []
+    used_chars = 0
+    # The data source returns newest first. Select newest messages within the
+    # budget and reverse only the final window to preserve conversational order.
+    for row in rows[:30]:
+        message = " ".join(str(row.get("message") or "").split()).strip()
+        if not message:
+            continue
+        stamp = row.get("timestamp")
+        stamp_text = stamp.strftime("%Y-%m-%d %H:%M") if hasattr(stamp, "strftime") else ""
+        sender_name = str(
+            row.get("sender_full_name") or row.get("sender_username") or "Participante"
+        ).strip()
+        prefix = f"[{stamp_text}] " if stamp_text else ""
+        line = f"{prefix}{sender_name}: {message[:280]}"
+        projected = used_chars + len(line) + (1 if newest_first else 0)
+        if projected > max_chars:
+            break
+        newest_first.append(line)
+        used_chars = projected
+    return "\n".join(reversed(newest_first))
 
 
 def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
@@ -4198,12 +4266,24 @@ def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[
 
     suggestions: list[str] = []
     seen: set[str] = set()
+    rejected_messages = (
+        "consulta es demasiado larga",
+        "reduce tu mensaje",
+        "consulta é demasiado longa",
+        "reduza a sua mensagem",
+        "query is too long",
+        "shorten your message",
+    )
     for value in values:
         if isinstance(value, dict):
             value = value.get("text") or value.get("response") or value.get("suggestion")
         candidate = str(value or "").strip().strip('"')
         normalized = re.sub(r"\s+", " ", candidate).casefold()
-        if not candidate or normalized in seen:
+        if (
+            not candidate
+            or normalized in seen
+            or any(message in normalized for message in rejected_messages)
+        ):
             continue
         seen.add(normalized)
         suggestions.append(candidate)
@@ -4238,18 +4318,30 @@ async def suggest_chat_question_response(
     chat_payload = _get_payload_value(payload, "Chat", "chat")
     chat_payload = chat_payload if isinstance(chat_payload, dict) else {}
     current_message = str(
-        _get_payload_value(chat_payload, "rawMessage", "RawMessage") or ""
+        _get_payload_value(chat_payload, "rawMessage", "RawMessage")
+        or message.RawMessage
+        or ""
     ).strip()
     request_id = context["request_id"]
+    ambient_mode = (
+        not context["quoted_chat_id"]
+        and not context["quoted_message"]
+        and context["advice_mode"] in {"1", "true", "yes", "sim"}
+    )
     if not request_id:
         raise HTTPException(
             status_code=422,
             detail="O campo Chat.IDChat2 é obrigatório para acompanhar o estado do pedido.",
         )
-    if not context["quoted_chat_id"] or not context["quoted_message"]:
+    if not ambient_mode and (
+        not context["quoted_chat_id"] or not context["quoted_message"]
+    ):
         raise HTTPException(
             status_code=422,
-            detail="Chat.chatQuestion deve conter IDChat2 e RawMessage.",
+            detail=(
+                "Chat.chatQuestion deve conter IDChat2 e RawMessage, ou Info.advice_mode "
+                "deve ser 1 para sugerir com base no contexto do canal ou da reunião."
+            ),
         )
     if current_message:
         raise HTTPException(
@@ -4314,12 +4406,36 @@ async def suggest_chat_question_response(
             context["requester_resource"],
             context["workroom_id"],
         )
+        scope_context = ""
+        if ambient_mode:
+            with solidset_sql_instance_context(solidset_instance):
+                recent_rows = await asyncio.to_thread(
+                    agent.sistema_aprendizaje.obtener_mensajes_chat_desde_bd,
+                    user_id=context["requester_resource"],
+                    canal_id=context["workroom_id"],
+                    limit=30,
+                )
+            scope_context = _format_suggestion_scope_context(recent_rows or [])
+            if not scope_context:
+                raise LookupError(
+                    "Não foram encontradas mensagens acessíveis no canal ou na reunião para gerar sugestões."
+                )
+        suggestion_source = context["quoted_message"]
+        if ambient_mode:
+            suggestion_source = (
+                "Review the following recent SolidSET conversation and propose exactly three "
+                "useful messages the requester could send next. Base every suggestion only on "
+                "the supplied conversation, preserve its predominant language, and do not invent facts.\n\n"
+                f"RECENT CONVERSATION:\n{scope_context}"
+            )
         metadata = {
             "response_suggestion_mode": True,
+            "response_suggestion_scope": "channel_or_meeting" if ambient_mode else "quoted_message",
             "response_suggestion_count": 3,
             "chat_id": request_id,
             "quoted_chat_id": context["quoted_chat_id"],
             "quoted_message": context["quoted_message"],
+            "scope_context": scope_context,
             "quoted_sender_resource": context["quoted_resource"],
             "quoted_sender_login": context["quoted_login"],
             "requester_resource": context["requester_resource"],
@@ -4354,7 +4470,7 @@ async def suggest_chat_question_response(
             _invoke_orchestrator_for_instance,
             str(solidset_instance["Code"]),
             session_id=scoped_session,
-            user_text=context["quoted_message"],
+            user_text=suggestion_source,
             user_id=context["requester_resource"],
             canal_id=context["workroom_id"],
             meeting_id=context["meeting_id"] or None,
@@ -4368,9 +4484,11 @@ async def suggest_chat_question_response(
         suggestions = _parse_chat_question_suggestions(raw_suggestions, limit=3)
         if not suggestions:
             raise RuntimeError("O modelo não gerou sugestões de resposta.")
-        language = agent._detect_user_language(context["quoted_message"])
+        language = agent._detect_user_language(
+            context["quoted_message"] or scope_context
+        )
         result = {
-            "questionChatId": context["quoted_chat_id"],
+            "questionChatId": context["quoted_chat_id"] or request_id,
             "language": language,
             "suggestions": [
                 {"id": str(index), "text": text}
@@ -4387,7 +4505,7 @@ async def suggest_chat_question_response(
         )
         return ChatQuestionSuggestionResponse(
             requestId=request_id,
-            questionChatId=context["quoted_chat_id"],
+            questionChatId=context["quoted_chat_id"] or request_id,
             status="completed",
             code=_RESPONSE_STATUS_CODES["completed"],
             language=language,

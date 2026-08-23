@@ -941,6 +941,25 @@ petición de autorrespuesta ni envía nada a SolidSET. El endpoint toma:
 - `Chat.chatQuestion.IDChat2` y `RawMessage` como el mensaje que debe responderse.
 - `Chat.IDWorkRoom`, `Chat.IDMeeting` y `Info.meeting_code` como contexto.
 
+También admite el modo de sugerencia contextual cuando `Chat=null` y
+`RawMessage` está vacío. En ese caso deben enviarse:
+
+- `Info.advice_mode="1"` para activar explícitamente el modo.
+- `Info.request_id` como identificador del estado y del resultado.
+- `Info.session_id` como sesión lógica cuando `Sender.session` sea el GUID vacío.
+- `Sender.resource` como recurso humano solicitante.
+- `Sender.workRoom` o `Destiny.workRoom` como canal que se debe revisar.
+
+En este modo la API consulta, mediante SolidSET Data API, hasta 30 mensajes
+recientes accesibles del canal y construye una ventana cronológica acotada a
+3200 caracteres, priorizando los mensajes más recientes. Ese contexto incluye también la conversación de
+un meeting cuando sus mensajes están asociados al mismo `IDWorkRoom`. Las tres
+sugerencias se basan exclusivamente en esos mensajes, en el conocimiento privado
+del agente y en su contexto de refuerzo. Si el canal no contiene mensajes
+accesibles, la API no inventa contenido y devuelve un error controlado.
+Los avisos técnicos del modelo (por ejemplo, “consulta demasiado larga”) se
+descartan y nunca se devuelven como si fueran una sugerencia conversacional.
+
 Antes de generar, comprueba en SQL Server que el solicitante tiene una relación
 activa en `dbo.SysResource2Agent`, sincroniza `IDAgentResource` y resuelve su
 agente activo en PostgreSQL. La generación utiliza el conocimiento privado y el
@@ -953,11 +972,12 @@ El texto que debe contestarse procede de `Chat.chatQuestion.RawMessage`; si el
 mensaje actual ya contiene texto, el endpoint devuelve HTTP 422 para evitar que
 una respuesta escrita por el usuario sea sustituida.
 
-Swagger incluye el ejemplo `quotedMeetingMessage` con datos completamente
-ficticios. El ejemplo conserva la relación correcta entre `Chat.IDChat2`,
+Swagger incluye los ejemplos `quotedMeetingMessage` y `emptyContextAdvice` con
+datos completamente ficticios. El primero conserva la relación entre `Chat.IDChat2`,
 `chatQuestionMessage`, `Chat.chatQuestion`, el solicitante, el autor citado, el
-canal y el meeting. Ningún GUID, nombre o número de chat del ejemplo pertenece a
-una instalación real de SolidSET.
+canal y el meeting. El segundo documenta una petición sin `Chat` ni texto que
+solicita sugerencias a partir del canal. Ningún GUID, nombre o número de chat de
+los ejemplos pertenece a una instalación real de SolidSET.
 
 Si termina correctamente devuelve HTTP 200 con una lista JSON de alternativas
 independientes. El modelo intenta producir tres variantes —directa, breve y

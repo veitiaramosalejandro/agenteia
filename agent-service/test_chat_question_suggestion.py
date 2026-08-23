@@ -4,6 +4,7 @@ from app.main import (
     app,
     _attach_solidset_instance,
     _chat_question_suggestion_context,
+    _format_suggestion_scope_context,
     _local_temporal_response,
     _parse_chat_question_suggestions,
 )
@@ -26,6 +27,49 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             payload["Chat"]["idSenderResource"],
             payload["Chat"]["chatQuestion"]["idSenderResource"],
         )
+
+    def test_swagger_contains_empty_channel_context_example(self):
+        operation = app.openapi()["paths"][
+            "/api/v1/agent/notification/chat-question/suggest-response"
+        ]["post"]
+        examples = operation["requestBody"]["content"]["application/json"]["examples"]
+        payload = examples["emptyContextAdvice"]["value"]
+
+        # FastAPI omits null fields while encoding OpenAPI examples; omission is
+        # equivalent to Chat=null for this optional FrameworkMessage field.
+        self.assertIsNone(payload.get("Chat"))
+        self.assertEqual("", payload["RawMessage"])
+        self.assertEqual("1", payload["Info"]["advice_mode"])
+        self.assertTrue(payload["Info"]["request_id"])
+
+    def test_empty_advice_payload_uses_info_and_workroom_context(self):
+        payload = {
+            "Sender": {
+                "session": "00000000-0000-0000-0000-000000000000",
+                "login": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "resource": "11111111-1111-4111-8111-111111111111",
+                "workRoom": "33333333-3333-4333-8333-333333333333",
+            },
+            "Destiny": {"workRoom": "33333333-3333-4333-8333-333333333333"},
+            "RawMessage": "",
+            "Chat": None,
+            "Info": {
+                "session_id": "11111111-1111-4111-8111-111111111111",
+                "advice_mode": "1",
+                "request_id": "66666666-6666-4666-8666-666666666666",
+            },
+        }
+
+        context = _chat_question_suggestion_context(payload)
+
+        self.assertEqual("66666666-6666-4666-8666-666666666666", context["request_id"])
+        self.assertEqual("11111111-1111-4111-8111-111111111111", context["session_id"])
+        self.assertEqual("33333333-3333-4333-8333-333333333333", context["workroom_id"])
+        self.assertEqual("1", context["advice_mode"])
+        rendered = _format_suggestion_scope_context(
+            [{"message": "Tema pendiente", "sender_full_name": "Ana", "timestamp": None}]
+        )
+        self.assertEqual("Ana: Tema pendiente", rendered)
 
     def test_swagger_contains_framework_message_examples_for_related_endpoints(self):
         schema = app.openapi()
@@ -65,6 +109,28 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
 
         self.assertEqual(["Sim.", "Claro."], result)
+
+    def test_rejects_model_length_error_as_suggestion(self):
+        result = _parse_chat_question_suggestions(
+            "⚠️ La consulta es demasiado larga. Por favor, reduce tu mensaje."
+        )
+
+        self.assertEqual([], result)
+
+    def test_channel_context_stays_below_prompt_budget_and_keeps_newest(self):
+        rows = [
+            {
+                "message": f"mensaje reciente {index} " + ("x" * 400),
+                "sender_full_name": "Ana",
+                "timestamp": None,
+            }
+            for index in range(30)
+        ]
+
+        rendered = _format_suggestion_scope_context(rows)
+
+        self.assertLessEqual(len(rendered), 3200)
+        self.assertIn("mensaje reciente 0", rendered)
 
     def test_separates_requester_from_quoted_author(self):
         payload = {
