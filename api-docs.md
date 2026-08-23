@@ -890,6 +890,12 @@ POST /api/v1/agent/notification/framework-message
 
 Recibe directamente un `FrameworkMessage` de SolidSET.
 
+Swagger incluye el ejemplo ficticio `meetingAgentQuestion`, reutilizado también
+por `/framework-message/preview` y `/agent/dialogue`. Representa una pregunta de
+un recurso humano a su recurso IA dentro de un meeting, con `talkWithAgent=true`,
+identificadores coherentes de canal/meeting y datos regionales. Los valores no
+pertenecen a usuarios ni instalaciones reales.
+
 En el modo predeterminado `AGENT_RESPONSE_QUEUE_ENABLED=true`, este endpoint
 solo valida la instancia, toma `Chat.IDChat2`, crea el estado y publica el
 mensaje original en Redis Stream. Devuelve inmediatamente; la captura Qdrant,
@@ -946,6 +952,12 @@ La operación de sugerencia solo es válida cuando `Chat.RawMessage` está vací
 El texto que debe contestarse procede de `Chat.chatQuestion.RawMessage`; si el
 mensaje actual ya contiene texto, el endpoint devuelve HTTP 422 para evitar que
 una respuesta escrita por el usuario sea sustituida.
+
+Swagger incluye el ejemplo `quotedMeetingMessage` con datos completamente
+ficticios. El ejemplo conserva la relación correcta entre `Chat.IDChat2`,
+`chatQuestionMessage`, `Chat.chatQuestion`, el solicitante, el autor citado, el
+canal y el meeting. Ningún GUID, nombre o número de chat del ejemplo pertenece a
+una instalación real de SolidSET.
 
 Si termina correctamente devuelve HTTP 200 con una lista JSON de alternativas
 independientes. El modelo intenta producir tres variantes —directa, breve y
