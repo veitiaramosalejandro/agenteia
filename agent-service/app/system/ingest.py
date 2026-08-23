@@ -28,12 +28,13 @@ def _first_value(row: dict, *keys, default=None):
     return default
 
 
-def ingestar_sistema_completo():
+def ingestar_sistema_completo(*, instance_code: str | None = None):
     """Ingesta la estructura real del sistema: canales, roles, usuarios y chat."""
 
     sistema = SistemaAprendizaje()
 
-    print("🔄 Ingestando estructura real del sistema...")
+    instance_label = str(instance_code or "contexto-actual").strip()
+    print(f"🔄 Ingestando estructura real del sistema instance={instance_label}...")
 
     try:
         conn = sistema._connect_sql_with_retry(
@@ -331,6 +332,7 @@ def ingestar_sistema_completo():
         conn.close()
 
         resumen = {
+            "instanceCode": instance_code,
             "canales": len(canales),
             "canales_indexados": canales_indexados,
             "roles": len(roles),
@@ -338,7 +340,7 @@ def ingestar_sistema_completo():
             "chats": chats_ingestados,
         }
 
-        print("\n✅ ¡Sistema real ingerido correctamente!")
+        print(f"\n✅ Sistema real ingerido correctamente instance={instance_label}")
         print(f"   - Canales: {resumen['canales']}")
         print(f"   - Canales indexados: {resumen['canales_indexados']}")
         print(f"   - Roles: {resumen['roles']}")

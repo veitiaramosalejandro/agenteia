@@ -1,6 +1,7 @@
 import unittest
 
 from app.main import (
+    app,
     _attach_solidset_instance,
     _chat_question_suggestion_context,
     _local_temporal_response,
@@ -10,6 +11,44 @@ from app.agent.orchestrator import SolidSETOrchestrator
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
+    def test_swagger_contains_fictitious_quoted_message_example(self):
+        operation = app.openapi()["paths"][
+            "/api/v1/agent/notification/chat-question/suggest-response"
+        ]["post"]
+        examples = operation["requestBody"]["content"]["application/json"]["examples"]
+        payload = examples["quotedMeetingMessage"]["value"]
+
+        self.assertEqual("", payload["Chat"]["rawMessage"])
+        self.assertEqual(990002, payload["Chat"]["idChat2"])
+        self.assertEqual(990001, payload["Chat"]["chatQuestion"]["idChat2"])
+        self.assertTrue(payload["Chat"]["chatQuestion"]["rawMessage"])
+        self.assertNotEqual(
+            payload["Chat"]["idSenderResource"],
+            payload["Chat"]["chatQuestion"]["idSenderResource"],
+        )
+
+    def test_swagger_contains_framework_message_examples_for_related_endpoints(self):
+        schema = app.openapi()
+        endpoints = (
+            "/api/v1/agent/notification/framework-message",
+            "/api/v1/agent/notification/framework-message/preview",
+            "/api/v1/agent/dialogue",
+        )
+        for endpoint in endpoints:
+            with self.subTest(endpoint=endpoint):
+                examples = schema["paths"][endpoint]["post"]["requestBody"]["content"][
+                    "application/json"
+                ]["examples"]
+                payload = examples["meetingAgentQuestion"]["value"]
+                self.assertEqual(990100, payload["Chat"]["idChat2"])
+                self.assertTrue(payload["Chat"]["rawMessage"])
+                selected = [
+                    item
+                    for item in payload["Chat"]["destiny"]
+                    if item.get("type") == 2 and item.get("talkWithAgent") is True
+                ]
+                self.assertEqual(1, len(selected))
+
     def test_parses_distinct_json_suggestions(self):
         result = _parse_chat_question_suggestions(
             '["Resposta direta.", "Resposta breve.", "Resposta colaborativa."]'
