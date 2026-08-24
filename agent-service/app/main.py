@@ -897,6 +897,13 @@ def _is_external_information_query(raw_text: str) -> bool:
 
 
 def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
+    # Final authorization barrier immediately before generation/sending. Never
+    # trust cached/routed candidate fields alone: re-read the original payload.
+    # chat-question suggestions do not use this auto-reply pipeline.
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    if not _payload_has_talk_with_agent(payload):
+        return "talk_with_agent_no_autorizado"
+
     fingerprint = (candidate.get("fingerprint") or "").strip()
     if not fingerprint:
         return "sin_fingerprint"

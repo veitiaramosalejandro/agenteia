@@ -12,6 +12,7 @@ from app.main import (
     _load_response_status,
     _localize_response_status,
     _update_response_status,
+    _auto_reply_rejection_reason,
     _route_candidates_to_selected_agents,
     handle_multi_agent_dialogue,
     notification_listener,
@@ -20,6 +21,28 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    def test_final_send_barrier_rejects_cached_candidate_without_flag(self):
+        candidate = {
+            "fingerprint": "cached-old-worker-candidate",
+            "message": "hola",
+            "channel_id": str(uuid4()),
+            "addressed_to_agent": True,
+            "agent_resource_id": str(uuid4()),
+            "payload": {
+                "Chat": {
+                    "destiny": [{
+                        "idResource": str(uuid4()),
+                        "type": 2,
+                    }]
+                }
+            },
+        }
+
+        self.assertEqual(
+            "talk_with_agent_no_autorizado",
+            _auto_reply_rejection_reason(candidate),
+        )
+
     async def test_framework_endpoint_only_enqueues_original_message(self):
         message = FrameworkMessageDTO(
             RawMessage="Hola",
