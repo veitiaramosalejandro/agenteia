@@ -964,6 +964,30 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     return None
 
 
+def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    destinations = _get_payload_value(chat, "destiny", "Destiny")
+    if not isinstance(destinations, list):
+        return False
+    for destination in destinations:
+        if not isinstance(destination, dict):
+            continue
+        lowered = {str(key).lower(): value for key, value in destination.items()}
+        try:
+            destination_type = int(lowered.get("type"))
+        except (TypeError, ValueError):
+            continue
+        flag = lowered.get("talkwithagent")
+        enabled = (
+            flag is True
+            or (isinstance(flag, int) and flag == 1)
+            or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
+        )
+        if destination_type == 2 and enabled:
+            return True
+    return False
+
+
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     """Selecciona únicamente los recursos destinatarios del mensaje dirigido."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
@@ -976,7 +1000,6 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     # meetings: solo los recursos IA (type=2) marcados con true responden. La
     # mera presencia del campo también impide caer en reglas antiguas y activar
     # por accidente otro agente del canal.
-    has_talk_with_agent_flag = False
     selected_by_flag: list[tuple[int, str]] = []
     if isinstance(chat_destinations, list):
         for destination in chat_destinations:
@@ -985,7 +1008,6 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
             lowered = {str(key).lower(): value for key, value in destination.items()}
             if "talkwithagent" not in lowered:
                 continue
-            has_talk_with_agent_flag = True
             flag = lowered.get("talkwithagent")
             talks_with_agent = (
                 flag is True
@@ -1008,133 +1030,11 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
             except (TypeError, ValueError):
                 sequence = 0
             selected_by_flag.append((sequence, resource))
-    if has_talk_with_agent_flag:
-        selected_by_flag.sort(key=lambda item: item[0])
-        return list(dict.fromkeys(resource for _, resource in selected_by_flag))
-
-    if candidate.get("meeting_id"):
-        if isinstance(chat_destinations, list) and chat_destinations:
-            responders: list[tuple[int, str]] = []
-            for destination in chat_destinations:
-                if not isinstance(destination, dict):
-                    continue
-                lowered = {
-                    str(key).lower(): value for key, value in destination.items()
-                }
-                try:
-                    destination_type = int(lowered.get("type"))
-                except (TypeError, ValueError):
-                    continue
-                if destination_type != 2:
-                    continue
-                resource = str(
-                    lowered.get("idresource") or lowered.get("resource") or ""
-                ).strip()
-                if not resource or resource == str(uuid.UUID(int=0)):
-                    continue
-                try:
-                    sequence = int(lowered.get("sequence") or 0)
-                except (TypeError, ValueError):
-                    sequence = 0
-                responders.append((sequence, resource))
-            responders.sort(key=lambda item: item[0])
-            # La presencia de Chat.destiny es autoritativa en meetings, incluso
-            # si solo contiene type=1 y por tanto no hay agente destinatario.
-            return list(dict.fromkeys(resource for _, resource in responders))
-
-    destination_resources: list[str] = []
-    destiny = payload.get("FrameworkDestiny")
-    if isinstance(destiny, dict):
-        destinations = destiny.get("Dests", destiny.get("dests", []))
-        if isinstance(destinations, list):
-            for destination in destinations:
-                if isinstance(destination, dict):
-                    lowered = {str(key).lower(): value for key, value in destination.items()}
-                    value = lowered.get("resource") or lowered.get("idresource")
-                    if value:
-                        destination_resources.append(str(value).strip())
-
-    destination_resources = list(dict.fromkeys(
-        value for value in destination_resources
-        if value and value != str(uuid.UUID(int=0))
-    ))
-    has_explicit_destinations = bool(destination_resources)
-    # En meetings SolidSET genera una copia técnica para cada participante. La
-    # copia entregada al autor puede incluir su propio recurso en Destiny.dests;
-    # nunca debe activar el agente de la persona que formuló la pregunta.
-    if candidate.get("meeting_id"):
-        sender_resource = str(candidate.get("sender_resource") or "").strip().lower()
-        if not sender_resource:
-            framework_sender = payload.get("FrameworkSender")
-            if isinstance(framework_sender, dict):
-                sender_lower = {
-                    str(key).lower(): value for key, value in framework_sender.items()
-                }
-                sender_resource = str(
-                    sender_lower.get("resource") or sender_lower.get("idresource") or ""
-                ).strip().lower()
-        if sender_resource:
-            destination_resources = [
-                value for value in destination_resources
-                if value.lower() != sender_resource
-            ]
-    if has_explicit_destinations:
-        return destination_resources
-
-    # Chat privado propio: no hay Destiny.dests porque el usuario escribe en su
-    # canal personal. Chat.destiny type=1 identifica al propietario y permite
-    # conversar con su propio agente. Esta regla no aplica a meetings.
-    if not candidate.get("meeting_id"):
-        chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-        chat_lower = {str(key).lower(): value for key, value in chat.items()}
-        channels = chat_lower.get("channels")
-        private_channel = False
-        if isinstance(channels, list):
-            for channel in channels:
-                if not isinstance(channel, dict):
-                    continue
-                lowered_channel = {
-                    str(key).lower(): value for key, value in channel.items()
-                }
-                try:
-                    if int(lowered_channel.get("channelkind")) == 1:
-                        private_channel = True
-                        break
-                except (TypeError, ValueError):
-                    continue
-        if private_channel:
-            private_destinations = chat_lower.get("destiny")
-            owner_resources: list[str] = []
-            if isinstance(private_destinations, list):
-                for destination in private_destinations:
-                    if not isinstance(destination, dict):
-                        continue
-                    lowered = {
-                        str(key).lower(): value for key, value in destination.items()
-                    }
-                    try:
-                        destination_type = int(lowered.get("type"))
-                    except (TypeError, ValueError):
-                        continue
-                    if destination_type != 1:
-                        continue
-                    resource = str(
-                        lowered.get("idresource") or lowered.get("resource") or ""
-                    ).strip()
-                    if resource and resource != str(uuid.UUID(int=0)):
-                        owner_resources.append(resource)
-            if owner_resources:
-                return list(dict.fromkeys(owner_resources))
-
-    selected: list[str] = []
-    for key in ("SelectedAgentResourceIds", "selectedAgentResourceIds", "AgentResourceIds"):
-        values = payload.get(key)
-        if isinstance(values, list):
-            selected.extend(str(value).strip() for value in values if value)
-    destiny_resource = str(candidate.get("destiny_resource") or "").strip()
-    if destiny_resource and destiny_resource != str(uuid.UUID(int=0)):
-        selected.append(destiny_resource)
-    return list(dict.fromkeys(value for value in selected if value))
+    # Mandatory authorization gate: normal chat/channel/meeting traffic may
+    # activate only destinations explicitly marked talkWithAgent=true. The
+    # absence of the property is a denial, never a legacy fallback.
+    selected_by_flag.sort(key=lambda item: item[0])
+    return list(dict.fromkeys(resource for _, resource in selected_by_flag))
 
 
 def _human_reply_destination(candidate: dict) -> dict[str, str]:
@@ -5073,6 +4973,16 @@ def handle_dialogue(
     - Procesa la consulta con el agente
     """
     chat_payload = message.Chat if isinstance(message.Chat, dict) else {}
+    dialogue_payload = message.model_dump(mode="json")
+    if not _payload_has_talk_with_agent(dialogue_payload):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "O agente IA só pode responder quando Chat.destiny inclui um recurso "
+                "de tipo 2 com talkWithAgent=true. O endpoint chat-question/suggest-response "
+                "é a única exceção para conversas internas de sugestões."
+            ),
+        )
     if message.RawMessage is None and _get_payload_value(chat_payload, "rawMessage", "RawMessage") is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

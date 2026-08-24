@@ -251,6 +251,27 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         assign.assert_not_called()
         registry.assert_not_called()
 
+    def test_missing_talk_with_agent_prevents_legacy_fallback(self):
+        room_id = uuid4()
+        agent = uuid4()
+        candidate = {
+            "fingerprint": "talk-with-agent-missing",
+            "channel_id": str(room_id),
+            "payload": {
+                "FrameworkDestiny": {"dests": [{"resource": str(agent), "kind": 2}]},
+                "Chat": {"destiny": [{"iDResource": str(agent), "type": 2}]},
+            },
+        }
+        with (
+            patch("app.main.ensure_payload_agent_workroom_assignments") as assign,
+            patch("app.main.get_active_agents_for_workroom") as registry,
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        self.assertEqual([], routed)
+        assign.assert_not_called()
+        registry.assert_not_called()
+
     def test_channel_id_falls_back_to_chat_channels(self):
         room_id = uuid4()
         normalized = notification_listener._normalize_framework_message({
