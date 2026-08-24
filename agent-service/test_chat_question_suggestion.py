@@ -138,6 +138,18 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
         self.assertEqual([], result)
 
+    def test_rejects_summary_or_embedded_topic_list(self):
+        result = _parse_chat_question_suggestions(
+            '["Resumo da conversa: temas discutidos", '
+            '"1- Música\\n2- Futebol", '
+            '"Podemos aprofundar o impacto desta decisão no próximo prazo?"]'
+        )
+
+        self.assertEqual(
+            ["Podemos aprofundar o impacto desta decisão no próximo prazo?"],
+            result,
+        )
+
     def test_channel_context_stays_below_prompt_budget_and_keeps_newest(self):
         rows = [
             {

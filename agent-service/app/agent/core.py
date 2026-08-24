@@ -1821,6 +1821,8 @@ class MachiningAgent:
         response_suggestion_mode = bool(
             message_metadata and message_metadata.get("response_suggestion_mode")
         )
+        if response_suggestion_mode:
+            general_conversation_mode = False
         valid_user_guid = self._is_valid_guid(user_id)
         valid_channel_guid = self._is_valid_guid(canal_id)
 
@@ -1935,7 +1937,10 @@ class MachiningAgent:
         # Para entidades internas se busca primero conocimiento ya aprendido por
         # este agente. Solo evidencia semánticamente relevante evita consultar la
         # fuente operacional SQL. Nunca se deriva este dominio a Internet.
-        business_knowledge_query = self._is_business_knowledge_query(user_text)
+        business_knowledge_query = (
+            not response_suggestion_mode
+            and self._is_business_knowledge_query(user_text)
+        )
         live_business_query = self._requires_live_business_data(user_text, meeting_id)
         business_rag_context = ""
         if business_knowledge_query and training_enabled and learn_from_system:
@@ -1970,7 +1975,7 @@ class MachiningAgent:
 
         # --- 3.1 ANÁLISIS DE INTERVENCIONES DE UNA PERSONA DESDE SQL SERVER ---
         participant_analysis_response = None
-        if not vector_answers_business_query and valid_user_guid and valid_channel_guid:
+        if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and valid_channel_guid:
             participant_analysis_response = self._resolve_channel_participant_analysis(
                 user_id=user_id or "",
                 canal_id=canal_id,
@@ -1987,7 +1992,7 @@ class MachiningAgent:
 
         # --- 3.2 FRECUENCIA DE PARTICIPACIÓN EN EL CANAL DESDE SQL SERVER ---
         participant_frequency_response = None
-        if not vector_answers_business_query and valid_user_guid and valid_channel_guid:
+        if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and valid_channel_guid:
             participant_frequency_response = self._resolve_channel_participant_frequency(
                 user_id=user_id or "",
                 canal_id=canal_id,
@@ -2003,7 +2008,7 @@ class MachiningAgent:
             return participant_frequency_response
 
         # --- 3.3 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
-        if not vector_answers_business_query and valid_user_guid and valid_channel_guid and self._is_channel_summary_intent(user_text):
+        if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and valid_channel_guid and self._is_channel_summary_intent(user_text):
             channel_summary_response = self._resolve_channel_summary_from_db(
                 user_id=user_id,
                 canal_id=canal_id,
@@ -2018,7 +2023,7 @@ class MachiningAgent:
             return channel_summary_response
 
         # --- 3.4 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
-        if not vector_answers_business_query and valid_user_guid and self._is_channel_names_intent(user_text):
+        if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and self._is_channel_names_intent(user_text):
             channel_names_response = self._resolve_channel_names_from_db(user_id, user_text)
             if history:
                 try:
@@ -2030,7 +2035,7 @@ class MachiningAgent:
 
         # --- 3.5 CONTEO DIRECTO DE RECURSOS DEL MEETING DESDE SQL SERVER ---
         meeting_resource_count_response = None
-        if not vector_answers_business_query:
+        if not response_suggestion_mode and not vector_answers_business_query:
             meeting_resource_count_response = self._resolve_meeting_resource_count_from_db(
                 user_text, meeting_id
             )
@@ -2045,7 +2050,7 @@ class MachiningAgent:
 
         # --- 3.6 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
         resource_count_response = None
-        if not vector_answers_business_query:
+        if not response_suggestion_mode and not vector_answers_business_query:
             resource_count_response = self._resolve_resource_count_from_db(user_text)
         if resource_count_response is not None:
             if history:
@@ -2057,7 +2062,7 @@ class MachiningAgent:
             return resource_count_response
 
         # --- 3.7 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
-        if not vector_answers_business_query and valid_user_guid and self._is_last_chat_message_intent(user_text):
+        if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:
                 if history:
@@ -2109,6 +2114,12 @@ class MachiningAgent:
         
         # 4.2 Contexto RAG (documentos técnicos)
         context_query = self._normalize_context_query(user_text)
+        if response_suggestion_mode:
+            context_query = str(
+                metadata_identity.get("quoted_message")
+                or metadata_identity.get("scope_context")
+                or user_text
+            ).strip()
         rag_context = business_rag_context
         if (
             not business_knowledge_query
@@ -2125,7 +2136,11 @@ class MachiningAgent:
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
         chat_context_bd = ""
-        if valid_user_guid and not external_query_mode and not general_conversation_mode:
+        if response_suggestion_mode:
+            # The endpoint already performed the authorized primary read on the
+            # initial turn. Continuations must use its Redis conversation memory.
+            chat_context_bd = str(metadata_identity.get("scope_context") or "").strip()
+        elif valid_user_guid and not external_query_mode and not general_conversation_mode:
             chat_context_bd = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
                 user_id=user_id,
                 canal_id=canal_id if valid_channel_guid else None,
@@ -2135,7 +2150,8 @@ class MachiningAgent:
         # 4.3.1 Resumen operativo vivo del canal actual
         canal_operativo_context = ""
         if (
-            valid_user_guid
+            not response_suggestion_mode
+            and valid_user_guid
             and valid_channel_guid
             and not external_query_mode
             and not general_conversation_mode
@@ -2313,11 +2329,14 @@ class MachiningAgent:
                     else:
                         system_prompt += (
                             "\n\n=== MODO CONSELHOS À MINHA IA ===\n"
-                            f"Propõe exatamente {suggestion_count} mensagens úteis que o solicitante possa enviar "
-                            "a seguir no canal, com base na conversa recente e no conhecimento "
-                            "privado do agente. Não respondas como assistente nem mencionas IA, "
+                            f"Propõe exatamente {suggestion_count} mensagens prontas a enviar que abram, aprofundem "
+                            "ou façam avançar temas concretos e relevantes do canal, com base prioritária na conversa "
+                            "recente, na identidade do recurso solicitante e no conhecimento privado do agente. "
+                            "Não resumas a conversa, não enumeres os temas discutidos e não uses títulos como "
+                            "'Resumo da conversa' ou 'Temas discutidos'. Não respondas como assistente nem mencionas IA, "
                             "RAG, fontes internas, IDs ou este processo. As alternativas devem ser "
-                            "diferentes, autossuficientes e aptas para RawMessage. Devolve apenas "
+                            "diferentes, naturais, autossuficientes e aptas para RawMessage; cada string deve conter "
+                            "uma única intervenção, sem listas, numeração, títulos ou Markdown. Devolve apenas "
                             f"um array JSON de {suggestion_count} strings, sem Markdown, etiquetas nem explicações. "
                             "Responde sempre em português europeu neste primeiro turno, mesmo que a conversa esteja noutro idioma. Não inventes factos e "
                             "não faças pesquisa web."

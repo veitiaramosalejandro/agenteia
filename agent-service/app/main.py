@@ -4307,15 +4307,28 @@ def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[
         "query is too long",
         "shorten your message",
     )
+    rejected_structures = (
+        "resumo da conversa",
+        "resumen de la conversación",
+        "conversation summary",
+        "temas discutidos",
+        "temas tratados",
+        "topics discussed",
+    )
     for value in values:
         if isinstance(value, dict):
             value = value.get("text") or value.get("response") or value.get("suggestion")
         candidate = str(value or "").strip().strip('"')
         normalized = re.sub(r"\s+", " ", candidate).casefold()
+        contains_internal_list = bool(
+            re.search(r"(?:^|\n)\s*(?:#{1,6}\s*|\d+\s*[-.)]|[-*]\s+)", candidate)
+        )
         if (
             not candidate
             or normalized in seen
             or any(message in normalized for message in rejected_messages)
+            or any(structure in normalized for structure in rejected_structures)
+            or contains_internal_list
         ):
             continue
         seen.add(normalized)
@@ -4507,6 +4520,8 @@ async def suggest_chat_question_response(
             "quoted_sender_login": context["quoted_login"],
             "requester_resource": context["requester_resource"],
             "requester_login": context["requester_login"],
+            "resource_id": context["requester_resource"],
+            "login_id": context["requester_login"],
             "agent_resource_id": context["requester_resource"],
             "agent_identity_id": status_agent_id,
             "agent_name": agent_name,
