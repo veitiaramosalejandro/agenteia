@@ -2311,7 +2311,7 @@ class MachiningAgent:
             ).strip()
             if message_metadata.get("response_suggestion_mode"):
                 suggestion_count = max(
-                    1, min(3, int(message_metadata.get("response_suggestion_count") or 3))
+                    1, min(6, int(message_metadata.get("response_suggestion_count") or 3))
                 )
                 if message_metadata.get("advice_mode"):
                     if message_metadata.get("advice_refine"):
@@ -2329,14 +2329,15 @@ class MachiningAgent:
                     else:
                         system_prompt += (
                             "\n\n=== MODO CONSELHOS À MINHA IA ===\n"
-                            f"Propõe exatamente {suggestion_count} mensagens prontas a enviar que abram, aprofundem "
-                            "ou façam avançar temas concretos e relevantes do canal, com base prioritária na conversa "
+                            f"Identifica exatamente {suggestion_count} temas concretos e relevantes discutidos no canal "
+                            "que possam ser selecionados para aprofundamento, com base prioritária na conversa "
                             "recente, na identidade do recurso solicitante e no conhecimento privado do agente. "
                             "Não resumas a conversa, não enumeres os temas discutidos e não uses títulos como "
-                            "'Resumo da conversa' ou 'Temas discutidos'. Não respondas como assistente nem mencionas IA, "
+                            "'Resumo da conversa' ou 'Temas discutidos' dentro das strings, porque o título é fornecido "
+                            "separadamente pela API. Não respondas como assistente nem mencionas IA, "
                             "RAG, fontes internas, IDs ou este processo. As alternativas devem ser "
-                            "diferentes, naturais, autossuficientes e aptas para RawMessage; cada string deve conter "
-                            "uma única intervenção, sem listas, numeração, títulos ou Markdown. Devolve apenas "
+                            "diferentes, claros e autossuficientes; cada string deve resumir um único tema em uma ou "
+                            "duas frases, sem listas, numeração, títulos ou Markdown. Devolve apenas "
                             f"um array JSON de {suggestion_count} strings, sem Markdown, etiquetas nem explicações. "
                             "Responde sempre em português europeu neste primeiro turno, mesmo que a conversa esteja noutro idioma. Não inventes factos e "
                             "não faças pesquisa web."

@@ -2835,6 +2835,7 @@ class ChatQuestionSuggestionResponse(BaseModel):
     status: str
     code: int
     language: str
+    title: Optional[str] = None
     suggestions: list[ChatQuestionSuggestionItem]
     statusUrl: str
 
@@ -4276,8 +4277,18 @@ def _reset_chat_question_memory(session_id: str) -> None:
 def _suggestion_count(*, initial: bool, completed_turns: int) -> int:
     """Starts broad and progressively narrows continuations from three to one."""
     if initial:
-        return 3
-    return max(1, 3 - max(1, completed_turns))
+        return 4
+    return max(1, 4 - max(1, completed_turns))
+
+
+def _suggestion_title(language: str, *, initial: bool) -> str | None:
+    if not initial:
+        return None
+    return {
+        "pt": "Resumo dos temas discutidos:",
+        "es": "Resumen de los temas discutidos:",
+        "en": "Summary of the topics discussed:",
+    }.get(language, "Resumo dos temas discutidos:")
 
 
 def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
@@ -4359,11 +4370,17 @@ def _repair_chat_question_suggestions(
         f"🩹 Reparando formato de sugestões provider={provider.provider} "
         f"model={provider.model} count={count} language={language}"
     )
+    initial_summary = bool(metadata.get("advice_mode") and not metadata.get("advice_refine"))
+    output_kind = (
+        "resumos independentes de temas concretos discutidos"
+        if initial_summary
+        else "mensagens independentes, naturais e prontas a enviar"
+    )
     repair_prompt = (
-        f"Transforma a saída inválida em exatamente {count} mensagens independentes, naturais "
-        f"e prontas a enviar, integralmente em {target_language}. Cada mensagem deve propor ou "
-        "aprofundar um tema concreto sustentado pelo contexto primário. Não faças um resumo, não "
-        "inventes factos e não uses títulos, Markdown, numeração ou listas dentro das mensagens. "
+        f"Transforma a saída inválida em exatamente {count} {output_kind}, integralmente em "
+        f"{target_language}. Cada string deve conter apenas um tema ou intervenção sustentada pelo "
+        "contexto primário. Não incluas introdução nem o título geral dentro do array, não inventes "
+        "factos e não uses títulos, Markdown, numeração ou listas dentro das strings. "
         f"Devolve apenas um array JSON com exatamente {count} strings.\n\n"
         f"CONTEXTO PRIMÁRIO:\n{grounding_context[:5000]}\n\n"
         f"SAÍDA INVÁLIDA A CORRIGIR:\n{str(raw_response or '')[:5000]}"
@@ -4385,19 +4402,22 @@ def _safe_chat_question_fallback(language: str, count: int) -> list[str]:
             "Podemos confirmar qual dos temas recentes deste canal deve ser tratado primeiro?",
             "Há algum ponto da conversa recente que precise de esclarecimento antes de avançarmos?",
             "Qual deve ser o próximo passo relativamente aos assuntos partilhados neste canal?",
+            "Que outro tema recente do canal merece acompanhamento neste momento?",
         ],
         "es": [
             "¿Podemos confirmar cuál de los temas recientes de este canal debemos tratar primero?",
             "¿Hay algún punto de la conversación reciente que debamos aclarar antes de avanzar?",
             "¿Cuál debería ser el siguiente paso respecto a los asuntos compartidos en este canal?",
+            "¿Qué otro tema reciente del canal necesita seguimiento en este momento?",
         ],
         "en": [
             "Can we confirm which recent topic in this channel should be addressed first?",
             "Is there anything from the recent conversation that needs clarification before we proceed?",
             "What should the next step be regarding the topics shared in this channel?",
+            "Which other recent channel topic needs follow-up at this time?",
         ],
     }
-    return messages.get(language, messages["pt"])[:max(1, min(3, count))]
+    return messages.get(language, messages["pt"])[:max(1, min(4, count))]
 
 
 @app.post(
@@ -4545,8 +4565,10 @@ async def suggest_chat_question_response(
         suggestion_source = context["quoted_message"]
         if ambient_mode:
             suggestion_source = (
-                f"Analisa o contexto SolidSET abaixo e propõe exatamente {suggestion_count} "
-                "mensagens úteis que o solicitante possa enviar a seguir. Responde integralmente "
+                f"Analisa o contexto SolidSET abaixo e identifica exatamente {suggestion_count} "
+                "temas concretos discutidos que possam ser selecionados para aprofundamento. Cada "
+                "elemento deve resumir um único tema em uma ou duas frases, sem introdução, título, "
+                "numeração ou lista interna. Responde integralmente "
                 "em português europeu, mesmo que o contexto esteja noutro idioma. Baseia cada "
                 "sugestão apenas na conversa fornecida e não inventes factos.\n\n"
                 f"CONVERSA RECENTE:\n{scope_context}"
@@ -4641,9 +4663,11 @@ async def suggest_chat_question_response(
                 metadata["response_language"], suggestion_count
             )
         language = metadata["response_language"]
+        title = _suggestion_title(language, initial=ambient_mode)
         result = {
             "questionChatId": context["quoted_chat_id"] or request_id,
             "language": language,
+            "title": title,
             "suggestions": [
                 {"id": str(index), "text": text}
                 for index, text in enumerate(suggestions, start=1)
@@ -4663,6 +4687,7 @@ async def suggest_chat_question_response(
             status="completed",
             code=_RESPONSE_STATUS_CODES["completed"],
             language=language,
+            title=title,
             suggestions=[
                 ChatQuestionSuggestionItem(**item) for item in result["suggestions"]
             ],

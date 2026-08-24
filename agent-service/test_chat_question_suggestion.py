@@ -8,6 +8,7 @@ from app.main import (
     _chat_question_session_id,
     _suggestion_count,
     _safe_chat_question_fallback,
+    _suggestion_title,
     _local_temporal_response,
     _parse_chat_question_suggestions,
 )
@@ -88,10 +89,17 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
 
     def test_suggestions_progressively_narrow(self):
-        self.assertEqual(3, _suggestion_count(initial=True, completed_turns=0))
-        self.assertEqual(2, _suggestion_count(initial=False, completed_turns=1))
-        self.assertEqual(1, _suggestion_count(initial=False, completed_turns=2))
+        self.assertEqual(4, _suggestion_count(initial=True, completed_turns=0))
+        self.assertEqual(3, _suggestion_count(initial=False, completed_turns=1))
+        self.assertEqual(2, _suggestion_count(initial=False, completed_turns=2))
         self.assertEqual(1, _suggestion_count(initial=False, completed_turns=10))
+
+    def test_initial_summary_has_separate_localized_title(self):
+        self.assertEqual(
+            "Resumo dos temas discutidos:",
+            _suggestion_title("pt", initial=True),
+        )
+        self.assertIsNone(_suggestion_title("pt", initial=False))
 
     def test_swagger_contains_framework_message_examples_for_related_endpoints(self):
         schema = app.openapi()
