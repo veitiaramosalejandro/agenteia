@@ -5,6 +5,8 @@ from app.main import (
     _attach_solidset_instance,
     _chat_question_suggestion_context,
     _format_suggestion_scope_context,
+    _chat_question_session_id,
+    _suggestion_count,
     _local_temporal_response,
     _parse_chat_question_suggestions,
 )
@@ -70,6 +72,25 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             [{"message": "Tema pendiente", "sender_full_name": "Ana", "timestamp": None}]
         )
         self.assertEqual("Ana: Tema pendiente", rendered)
+
+    def test_advice_session_is_stable_between_initial_and_continuous_payloads(self):
+        common = {
+            "requester_resource": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+            "workroom_id": "d8e82821-d52f-44bf-9b70-682651a6196e",
+        }
+        initial = {**common, "request_id": "1757618085", "quoted_chat_id": ""}
+        continuous = {**common, "request_id": "1757618087", "quoted_chat_id": "1757618088"}
+
+        self.assertEqual(
+            _chat_question_session_id(initial),
+            _chat_question_session_id(continuous),
+        )
+
+    def test_suggestions_progressively_narrow(self):
+        self.assertEqual(3, _suggestion_count(initial=True, completed_turns=0))
+        self.assertEqual(2, _suggestion_count(initial=False, completed_turns=1))
+        self.assertEqual(1, _suggestion_count(initial=False, completed_turns=2))
+        self.assertEqual(1, _suggestion_count(initial=False, completed_turns=10))
 
     def test_swagger_contains_framework_message_examples_for_related_endpoints(self):
         schema = app.openapi()

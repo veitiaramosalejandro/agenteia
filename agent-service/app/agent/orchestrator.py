@@ -228,7 +228,8 @@ class SolidSETOrchestrator:
         message_metadata: Optional[dict[str, Any]] = None,
     ) -> str:
         """Garantiza ES/PT/EN también para respuestas deterministas construidas por código."""
-        expected = self.agent._detect_user_language(user_text)
+        forced_language = str((message_metadata or {}).get("response_language") or "").strip().lower()
+        expected = forced_language if forced_language in {"es", "pt", "en"} else self.agent._detect_user_language(user_text)
         detected = self.agent._detect_user_language(response)
         if expected == detected or len(response) < 8:
             return response

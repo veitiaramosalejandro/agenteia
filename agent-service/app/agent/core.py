@@ -2294,29 +2294,32 @@ class MachiningAgent:
                 message_metadata.get("quoted_message") or ""
             ).strip()
             if message_metadata.get("response_suggestion_mode"):
+                suggestion_count = max(
+                    1, min(3, int(message_metadata.get("response_suggestion_count") or 3))
+                )
                 if message_metadata.get("advice_mode"):
                     if message_metadata.get("advice_refine"):
                         system_prompt += (
                             "\n\n=== MODO CONSELHOS À MINHA IA (REFINAR) ===\n"
-                            "O solicitante escolheu um rascunho e quer três alternativas refinadas "
+                            f"O solicitante escolheu um rascunho e quer exatamente {suggestion_count} alternativas refinadas "
                             "que possa enviar a seguir no canal. Usa o contexto recente da conversa "
                             "e o conhecimento privado do agente. Não respondas como assistente nem "
                             "mencionas IA, RAG, fontes internas, IDs ou este processo. As alternativas "
                             "devem ser diferentes, autossuficientes e aptas para RawMessage. "
-                            "Devolve apenas um array JSON de três strings, sem Markdown, etiquetas "
-                            "nem explicações. Respeita o idioma do rascunho. Não inventes factos e "
+                            f"Devolve apenas um array JSON de {suggestion_count} strings, sem Markdown, etiquetas "
+                            "nem explicações. Respeita exclusivamente o idioma do rascunho, sem misturar idiomas. Não inventes factos e "
                             "não faças pesquisa web."
                         )
                     else:
                         system_prompt += (
                             "\n\n=== MODO CONSELHOS À MINHA IA ===\n"
-                            "Propõe exatamente três mensagens úteis que o solicitante possa enviar "
+                            f"Propõe exatamente {suggestion_count} mensagens úteis que o solicitante possa enviar "
                             "a seguir no canal, com base na conversa recente e no conhecimento "
                             "privado do agente. Não respondas como assistente nem mencionas IA, "
                             "RAG, fontes internas, IDs ou este processo. As alternativas devem ser "
                             "diferentes, autossuficientes e aptas para RawMessage. Devolve apenas "
-                            "um array JSON de três strings, sem Markdown, etiquetas nem explicações. "
-                            "Respeita o idioma predominante da conversa. Não inventes factos e "
+                            f"um array JSON de {suggestion_count} strings, sem Markdown, etiquetas nem explicações. "
+                            "Responde sempre em português europeu neste primeiro turno, mesmo que a conversa esteja noutro idioma. Não inventes factos e "
                             "não faças pesquisa web."
                         )
                 else:

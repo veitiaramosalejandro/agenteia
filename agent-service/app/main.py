@@ -4246,6 +4246,39 @@ def _format_suggestion_scope_context(
     return "\n".join(reversed(newest_first))
 
 
+def _chat_question_session_id(context: dict[str, str]) -> str:
+    """Keeps all advice turns for one user/channel in the same agent memory."""
+    return (
+        f"solidset:suggestion:agent:{context['requester_resource']}:"
+        f"workroom:{context['workroom_id']}:advice"
+    )
+
+
+def _chat_question_turn_count(session_id: str) -> int:
+    """Returns completed advice turns; failures leave the endpoint usable."""
+    try:
+        history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
+        return sum(1 for item in history.messages if item.type == "ai")
+    except Exception as exc:
+        print(f"⚠️ Não foi possível consultar a memória de sugestões: {exc}")
+        return 0
+
+
+def _reset_chat_question_memory(session_id: str) -> None:
+    """Starts a fresh advice flow when SolidSET sends an initial empty payload."""
+    try:
+        RedisChatMessageHistory(session_id, url=settings.REDIS_URL).clear()
+    except Exception as exc:
+        print(f"⚠️ Não foi possível reiniciar a memória de sugestões: {exc}")
+
+
+def _suggestion_count(*, initial: bool, completed_turns: int) -> int:
+    """Starts broad and progressively narrows continuations from three to one."""
+    if initial:
+        return 3
+    return max(1, 3 - max(1, completed_turns))
+
+
 def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
     """Normalizes model output into distinct, user-selectable suggestions."""
     text = str(raw_response or "").strip()
@@ -4313,6 +4346,7 @@ async def suggest_chat_question_response(
     request: Request,
 ) -> ChatQuestionSuggestionResponse:
     """Returns suggestions grounded in the requester's agent without sending them."""
+    print(message.model_dump_json(indent=2))
     payload = message.model_dump(mode="json")
     context = _chat_question_suggestion_context(payload)
     chat_payload = _get_payload_value(payload, "Chat", "chat")
@@ -4409,7 +4443,10 @@ async def suggest_chat_question_response(
             context["workroom_id"],
         )
         scope_context = ""
-        if ambient_mode or advice_refine:
+        # The channel/meeting is read only for the initial empty payload. Later
+        # turns reuse the same Redis-backed agent memory and refine the selected
+        # suggestion without querying the conversation again.
+        if ambient_mode:
             with solidset_sql_instance_context(solidset_instance):
                 recent_rows = await asyncio.to_thread(
                     agent.sistema_aprendizaje.obtener_mensajes_chat_desde_bd,
@@ -4422,23 +4459,30 @@ async def suggest_chat_question_response(
                 raise LookupError(
                     "Não foram encontradas mensagens acessíveis no canal ou na reunião para gerar sugestões."
                 )
+        scoped_session = _chat_question_session_id(context)
+        if ambient_mode:
+            _reset_chat_question_memory(scoped_session)
+        completed_turns = _chat_question_turn_count(scoped_session)
+        suggestion_count = _suggestion_count(
+            initial=ambient_mode,
+            completed_turns=completed_turns,
+        )
         suggestion_source = context["quoted_message"]
         if ambient_mode:
             suggestion_source = (
-                "Review the following recent SolidSET conversation and propose exactly three "
-                "useful messages the requester could send next. Base every suggestion only on "
-                "the supplied conversation, preserve its predominant language, and do not invent facts.\n\n"
-                f"RECENT CONVERSATION:\n{scope_context}"
+                f"Analisa o contexto SolidSET abaixo e propõe exatamente {suggestion_count} "
+                "mensagens úteis que o solicitante possa enviar a seguir. Responde integralmente "
+                "em português europeu, mesmo que o contexto esteja noutro idioma. Baseia cada "
+                "sugestão apenas na conversa fornecida e não inventes factos.\n\n"
+                f"CONVERSA RECENTE:\n{scope_context}"
             )
         elif advice_refine:
             suggestion_source = (
-                "The requester selected the following draft and wants exactly three refined "
-                "alternative messages they could send next in this SolidSET channel. Improve "
-                "clarity and usefulness while preserving the draft intent and predominant "
-                "language. Base every alternative only on the draft and the recent conversation. "
-                "Do not invent facts and do not search the web.\n\n"
-                f"SELECTED DRAFT:\n{context['quoted_message']}\n\n"
-                f"RECENT CONVERSATION:\n{scope_context}"
+                f"Refina o rascunho selecionado em exatamente {suggestion_count} alternativas "
+                "cada vez mais concretas. Conserva a intenção e responde exclusivamente no idioma "
+                "do rascunho, sem misturar idiomas. Usa o contexto que já está na memória desta "
+                "conversa; não voltes a procurar o canal, não inventes factos e não pesquises na web.\n\n"
+                f"RASCUNHO SELECIONADO:\n{context['quoted_message']}"
             )
         metadata = {
             "response_suggestion_mode": True,
@@ -4451,7 +4495,10 @@ async def suggest_chat_question_response(
                 if ambient_mode
                 else "quoted_message"
             ),
-            "response_suggestion_count": 3,
+            "response_suggestion_count": suggestion_count,
+            "response_language": (
+                "pt" if ambient_mode else agent._detect_user_language(context["quoted_message"])
+            ),
             "chat_id": request_id,
             "quoted_chat_id": context["quoted_chat_id"],
             "quoted_message": context["quoted_message"],
@@ -4481,11 +4528,6 @@ async def suggest_chat_question_response(
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
-        scoped_session = (
-            f"solidset:suggestion:agent:{context['requester_resource']}:"
-            f"session:{context['session_id'] or request_id}:"
-            f"question:{context['quoted_chat_id']}"
-        )
         raw_suggestions = await asyncio.to_thread(
             _invoke_orchestrator_for_instance,
             str(solidset_instance["Code"]),
@@ -4501,12 +4543,12 @@ async def suggest_chat_question_response(
             tool_allowlist=set(),
             auto_reply_mode=True,
         )
-        suggestions = _parse_chat_question_suggestions(raw_suggestions, limit=3)
+        suggestions = _parse_chat_question_suggestions(
+            raw_suggestions, limit=suggestion_count
+        )
         if not suggestions:
             raise RuntimeError("O modelo não gerou sugestões de resposta.")
-        language = agent._detect_user_language(
-            context["quoted_message"] or scope_context
-        )
+        language = metadata["response_language"]
         result = {
             "questionChatId": context["quoted_chat_id"] or request_id,
             "language": language,
