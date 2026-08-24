@@ -6,6 +6,71 @@ from app.system.notification_listener import NotificationApiListener
 
 
 class TestFrameworkMessageCapture(unittest.TestCase):
+    def test_learns_task_extra_data_for_resource_owner_without_raw_message(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        listener.sistema = Mock()
+        listener.sistema.aprender_actividad.return_value = True
+        payload = listener._normalize_framework_message({
+            "Stamp": "2026-08-24T13:57:31Z",
+            "Sender": {"resource": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8"},
+            "Kind": 51,
+            "RawMessage": "",
+            "Chat": {
+                "idWorkRoom": "debf64b2-3b3e-eb11-870c-d850e63f5833",
+                "taskStatusStr": "Pending",
+            },
+            "ExtraData": '{"Name":"tarea nueva","ProgressPercentage":0,'
+                         '"Complexity":1,"Priority":1,"Participants":[]}',
+        })
+        entry = {
+            "source": "framework_hub_realtime",
+            "endpoint": "/frameworkHub/SendMessage",
+            "channel_id": payload["IDWorkRoom"],
+            "data": payload,
+        }
+        owner = {
+            "ID": "7e5e0520-dc47-499d-abb9-f917223ac440",
+            "IDResource": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+        }
+
+        with (
+            patch(
+                "app.system.notification_listener.get_active_agent_identity_for_resource",
+                return_value=owner,
+            ),
+            patch(
+                "app.system.notification_listener.agent_learning_enabled",
+                return_value=True,
+            ),
+        ):
+            learned = listener._learn_entry(entry, "task-extra-data")
+
+        self.assertTrue(learned)
+        self.assertEqual(2, listener.sistema.aprender_actividad.call_count)
+        global_activity, private_activity = [
+            call.args[0] for call in listener.sistema.aprender_actividad.call_args_list
+        ]
+        self.assertEqual("solidset_task_activity", global_activity.tipo)
+        self.assertIn("tarea nueva", global_activity.descripcion)
+        self.assertEqual(
+            "human_resource_structured_activity",
+            private_activity.metadatos["learning_origin"],
+        )
+
+    def test_task_activity_keeps_resource_description_without_auto_reply_authorization(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        activity = listener._structured_resource_activity({
+            "Kind": 51,
+            "RawMessage": "Prueba",
+            "Chat": {"taskStatusStr": "Pending"},
+            "ExtraData": '{"Name":"Tarea de Alejandro","ProgressPercentage":0}',
+        })
+
+        self.assertIsNotNone(activity)
+        self.assertEqual("Prueba", activity["resource_description"])
+        self.assertIn("Tarea de Alejandro", activity["description"])
+        self.assertIn("Descrição do recurso: Prueba", activity["description"])
+
     def test_learns_message_globally_and_for_its_owner_agent(self):
         listener = NotificationApiListener.__new__(NotificationApiListener)
         listener.sistema = Mock()
