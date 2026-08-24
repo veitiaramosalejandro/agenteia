@@ -90,7 +90,11 @@ class SolidSETOrchestrator:
             route = "external_web"
         else:
             route = "work_sql_rag"
-        if any(term in lowered for term in coding_terms):
+        if metadata.get("response_suggestion_mode"):
+            # Advice is a constrained language-generation task. Words from the
+            # channel such as "API" or "aplicações" must not select a coding model.
+            capability = "general"
+        elif any(term in lowered for term in coding_terms):
             capability = "coding"
         elif any(term in lowered for term in reasoning_terms):
             capability = "reasoning"

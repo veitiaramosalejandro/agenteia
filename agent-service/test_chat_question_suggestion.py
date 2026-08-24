@@ -7,6 +7,7 @@ from app.main import (
     _format_suggestion_scope_context,
     _chat_question_session_id,
     _suggestion_count,
+    _safe_chat_question_fallback,
     _local_temporal_response,
     _parse_chat_question_suggestions,
 )
@@ -149,6 +150,12 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             ["Podemos aprofundar o impacto desta decisão no próximo prazo?"],
             result,
         )
+
+    def test_safe_fallback_preserves_language_and_requested_count(self):
+        result = _safe_chat_question_fallback("pt", 2)
+
+        self.assertEqual(2, len(result))
+        self.assertTrue(all("canal" in item or "conversa" in item for item in result))
 
     def test_channel_context_stays_below_prompt_budget_and_keeps_newest(self):
         rows = [
