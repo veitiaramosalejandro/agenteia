@@ -716,7 +716,7 @@ def _legacy_google_web_search(query: str) -> str:
 def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bool:
     """Index web results with deterministic IDs and full provenance."""
     client = QdrantClient(url=settings.VECTOR_DB_URL)
-    embeddings = OllamaEmbeddings(base_url=settings.OLLAMA_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
+    embeddings = OllamaEmbeddings(base_url=settings.EMBEDDING_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
     collections = [c.name for c in client.get_collections().collections]
     probe_vector = None
     if settings.VECTOR_COLLECTION_NAME not in collections:
@@ -1911,7 +1911,7 @@ def learn_new_fact(fact_description: str, category: str = "general") -> str:
     try:
         client = QdrantClient(url=settings.VECTOR_DB_URL)
         embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=settings.EMBEDDING_MODEL_NAME,
         )
 

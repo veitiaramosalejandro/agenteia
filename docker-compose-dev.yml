@@ -1,39 +1,11 @@
 services:
-  # Gateway SQL Server independiente. En una instalación real debe desplegarse
-  # junto al servidor SolidSET/SQL y exponerse al agente mediante HTTPS.
-  solidset-data-api:
-    profiles: ["data-api"]
-    image: solidset-data-api:0.1.0
-    build:
-      context: ./solidset-data-api
-      dockerfile: Dockerfile
-    container_name: solidset_data_api
-    hostname: solidset-data-api
-    restart: unless-stopped
-    ports:
-      - 8081:8080
-    environment:
-      SOLIDSET_DATA_API_KEY: ${SOLIDSET_DATA_API_KEY:-change-this-development-key}
-      SQL_SERVER_HOST: ${SQL_SERVER_DOCKER_HOST:-host.docker.internal}
-      SQL_SERVER_INSTANCE: ${SQL_SERVER_INSTANCE:-SQL2017DEV}
-      SQL_SERVER_PORT: ${SQL_SERVER_DOCKER_PORT:-1433}
-      SQL_SERVER_DATABASE: ${SQL_SERVER_DB:-DEV_ISIFrameIsicom}
-      SQL_SERVER_USERNAME: ${SQL_SERVER_USER:-sa}
-      SQL_SERVER_PASSWORD: ${SQL_SERVER_PASSWORD:-}
-      SQL_SERVER_LOGIN_TIMEOUT: ${DB_INGEST_CONNECT_TIMEOUT_SECONDS:-15}
-      SQL_SERVER_QUERY_TIMEOUT: ${DB_INGEST_QUERY_TIMEOUT_SECONDS:-120}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - machining-network
-
   nginx:
     image: nginx:1.27-alpine
     container_name: machining_nginx
     hostname: nginx
     restart: unless-stopped
     ports:
-      - 81:80
+      - 80:80
     volumes:
       # Desarrollo siempre usa HTTP; no depende de la configuración TLS activa
       # ni monta certificados de producción.
@@ -67,7 +39,8 @@ services:
     environment:
       ENVIRONMENT: development
       RUNNING_IN_DOCKER: "1"
-      OLLAMA_BASE_URL: http://ollama-llm:11434
+      OLLAMA_BASE_URL: http://ollama-chat:11434
+      EMBEDDING_BASE_URL: http://ollama-embeddings:11434
       MODEL_NAME: qwen2.5:7b
       OLLAMA_CONTEXT_LENGTH: 2048
       VECTOR_DB_URL: http://vector-db:6333
@@ -89,8 +62,14 @@ services:
       - ./data:/app/data
       - ./audio:/app/audio
     depends_on:
-      ollama-llm:
+      ollama-chat:
         condition: service_healthy
+      ollama-embeddings:
+        condition: service_healthy
+      ollama-chat-init:
+        condition: service_completed_successfully
+      ollama-embeddings-init:
+        condition: service_completed_successfully
       timescaledb:
         condition: service_healthy
       redis-cache:
@@ -116,7 +95,8 @@ services:
     environment:
       ENVIRONMENT: development
       RUNNING_IN_DOCKER: "1"
-      OLLAMA_BASE_URL: http://ollama-llm:11434
+      OLLAMA_BASE_URL: http://ollama-chat:11434
+      EMBEDDING_BASE_URL: http://ollama-embeddings:11434
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
       POSTGRES_PORT: 5432
@@ -128,8 +108,14 @@ services:
       - ./data:/app/data
       - ./audio:/app/audio
     depends_on:
-      ollama-llm:
+      ollama-chat:
         condition: service_healthy
+      ollama-embeddings:
+        condition: service_healthy
+      ollama-chat-init:
+        condition: service_completed_successfully
+      ollama-embeddings-init:
+        condition: service_completed_successfully
       timescaledb:
         condition: service_healthy
       redis-cache:
@@ -150,14 +136,16 @@ services:
     env_file: [.env]
     environment:
       RUNNING_IN_DOCKER: "1"
-      OLLAMA_BASE_URL: http://ollama-llm:11434
+      OLLAMA_BASE_URL: http://ollama-chat:11434
+      EMBEDDING_BASE_URL: http://ollama-embeddings:11434
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
       REDIS_URL: redis://redis-cache:6379
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: ["./agent-service:/app", "./data:/app/data"]
     depends_on:
-      ollama-llm: {condition: service_healthy}
+      ollama-embeddings: {condition: service_healthy}
+      ollama-embeddings-init: {condition: service_completed_successfully}
       timescaledb: {condition: service_healthy}
       redis-cache: {condition: service_healthy}
       vector-db: {condition: service_healthy}
@@ -169,11 +157,12 @@ services:
       service: historical-worker
     command: ["python", "-m", "app.historical.producer"]
 
-  # 3. Servidor de Modelos Locales (Ollama)
-  ollama-llm:
+  # Runtime interactivo exclusivo. Mantiene el LLM cargado en GPU y no acepta
+  # trabajo de embeddings, evitando expulsiones del modelo y esperas de cola.
+  ollama-chat:
     image: ollama/ollama:latest
-    container_name: machining_ollama
-    hostname: ollama-llm
+    container_name: machining_ollama_chat
+    hostname: ollama-chat
     restart: always
     user: root  # Añadir esta línea
     ports:
@@ -183,14 +172,13 @@ services:
       - ./ollama_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-      # Perfil CPU seguro, equivalente al compose de producción base.
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
       - OLLAMA_CONTEXT_LENGTH=2048
       - OLLAMA_FLASH_ATTENTION=0
       - OLLAMA_KV_CACHE_TYPE=f16
-      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_CHAT_KEEP_ALIVE:-24h}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -204,6 +192,64 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    networks:
+      machining-network:
+        aliases:
+          - ollama-llm
+
+  # Runtime de embeddings aislado en CPU. La ingestión puede avanzar sin
+  # ocupar el slot ni la VRAM reservados para las respuestas interactivas.
+  ollama-embeddings:
+    image: ollama/ollama:latest
+    container_name: machining_ollama_embeddings
+    hostname: ollama-embeddings
+    restart: always
+    user: root
+    ports:
+      - 11435:11434
+    volumes:
+      - ./ollama_embedding_storage:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_EMBEDDING_NUM_PARALLEL:-2}
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_MAX_QUEUE=${OLLAMA_EMBEDDING_MAX_QUEUE:-64}
+      - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_EMBEDDING_KEEP_ALIVE:-24h}
+    cpus: ${OLLAMA_EMBEDDING_CPUS:-2.0}
+    mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-3g}
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - machining-network
+
+  ollama-chat-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama-chat:11434
+    entrypoint: ["ollama"]
+    command: ["pull", "${MODEL_NAME:-qwen2.5:7b}"]
+    depends_on:
+      ollama-chat:
+        condition: service_healthy
+    networks:
+      - machining-network
+
+  ollama-embeddings-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama-embeddings:11434
+    entrypoint: ["ollama"]
+    command: ["pull", "${EMBEDDING_MODEL_NAME:-nomic-embed-text}"]
+    depends_on:
+      ollama-embeddings:
+        condition: service_healthy
     networks:
       - machining-network
 

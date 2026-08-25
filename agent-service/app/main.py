@@ -5493,7 +5493,7 @@ def health_check():
                 "model": (db_llm or {}).get("Model", settings.MODEL_NAME),
                 "base_url": (db_llm or {}).get("BaseUrl") or settings.LLM_BASE_URL or settings.OLLAMA_BASE_URL,
             },
-            "ollama_embeddings": settings.OLLAMA_BASE_URL,
+            "ollama_embeddings": settings.EMBEDDING_BASE_URL,
             "qdrant": settings.VECTOR_DB_URL,
             "redis": settings.REDIS_URL
         },
@@ -5767,13 +5767,20 @@ def test_all_connectivity():
             "error": "SOLIDSET_RESTAPI_BASE_URL não está configurado"
         }
     
-    # Test Ollama
+    # Test the isolated interactive and embedding runtimes independently.
     ollama_result = _probe_http(settings.OLLAMA_BASE_URL, "/api/tags")
-    results["services"]["ollama"] = {
+    results["services"]["ollama_chat"] = {
         "url": settings.OLLAMA_BASE_URL,
         "ok": ollama_result.get("ok", False),
         "status_code": ollama_result.get("status_code"),
         "error": ollama_result.get("error")
+    }
+    embedding_result = _probe_http(settings.EMBEDDING_BASE_URL, "/api/tags")
+    results["services"]["ollama_embeddings"] = {
+        "url": settings.EMBEDDING_BASE_URL,
+        "ok": embedding_result.get("ok", False),
+        "status_code": embedding_result.get("status_code"),
+        "error": embedding_result.get("error"),
     }
     
     # Test Qdrant

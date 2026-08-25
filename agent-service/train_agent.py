@@ -8,7 +8,7 @@ def guardar_conversacion_como_conocimiento(session_id: str, tema: str, resumen_d
     """Guarda un texto de conversación mantenido entre el operario y el agente en Qdrant."""
     client = QdrantClient(url=settings.VECTOR_DB_URL)
     embeddings = OllamaEmbeddings(
-        base_url=settings.OLLAMA_BASE_URL,
+        base_url=settings.EMBEDDING_BASE_URL,
         model=settings.EMBEDDING_MODEL_NAME
     )
     

@@ -22,7 +22,7 @@ def check_knowledge():
     try:
         client = QdrantClient(url=settings.VECTOR_DB_URL)
         embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=settings.EMBEDDING_MODEL_NAME
         )
         

@@ -41,9 +41,10 @@ FastAPI ───────────────► Redis Streams
       │                       ▼
       │                 Agent Workers
       │                       │
-      │             ┌─────────┴─────────┐
-      │             ▼                   ▼
-      │          Ollama/LLM           Qdrant
+      │             ▼
+      │       Ollama Chat/GPU
+      │
+      ├────────────► Ollama Embeddings/CPU ──► Qdrant
       │
       ├────────────► PostgreSQL
       │              configuración, sesiones,
@@ -67,7 +68,8 @@ FastAPI ───────────────► Redis Streams
 | `machining_db` | PostgreSQL/TimescaleDB para configuración y auditoría. |
 | `machining_vector_db` | Qdrant para conocimiento semántico. |
 | `machining_redis` | Colas, estados, memoria temporal y coordinación. |
-| `machining_ollama` | Modelos LLM y embeddings locales. |
+| `machining_ollama_chat` | LLM interactivo aislado y mantenido en GPU. |
+| `machining_ollama_embeddings` | Embeddings e ingestión aislados en CPU. |
 | `machining_nginx` | Reverse proxy del agente. |
 | `n8n` | Automatización opcional de workflows. |
 
@@ -162,9 +164,8 @@ predeterminado.
 Para desarrollo local, Ollama es el proveedor habitual:
 
 ```powershell
-docker exec machining_ollama ollama pull qwen2.5:7b
-docker exec machining_ollama ollama pull nomic-embed-text
-docker exec machining_ollama ollama list
+docker exec machining_ollama_chat ollama list
+docker exec machining_ollama_embeddings ollama list
 ```
 
 ## Datos y persistencia
@@ -174,6 +175,7 @@ docker exec machining_ollama ollama list
 | `postgres_data/` | Configuración, cursores, sesiones y auditoría. |
 | `qdrant_data/` | Vectores y conocimiento recuperable. |
 | `ollama_storage/` | Modelos descargados. |
+| `ollama_embedding_storage/` | Modelo de embeddings del runtime CPU. |
 | `data/` | Clave de cifrado y datos persistentes del agente. |
 | `n8n_data/` | Configuración y workflows de n8n. |
 | `audio/` | Entrada y salida de audio. |
@@ -207,11 +209,12 @@ consultas operativas ni validaciones en SQL Server.
 - 16 GB de RAM como mínimo práctico; 32 GB recomendados.
 - Espacio suficiente para modelos Ollama y Qdrant.
 - SQL Server/SolidSET accesible mediante SolidSET Data API.
-- Puertos disponibles: 80, 8000, 5432, 6333, 6379, 11434 y 5678 según los
+- Puertos disponibles: 80, 8000, 5432, 6333, 6379, 11434, 11435 y 5678 según los
   servicios publicados.
 
-Una GPU no es obligatoria. El Compose base utiliza Ollama por CPU; el overlay
-GPU requiere Docker/NVIDIA configurado correctamente.
+El runtime de chat usa la GPU en desarrollo; el runtime de embeddings queda en
+CPU para no expulsar al modelo interactivo. El overlay GPU aplica la misma
+reserva al despliegue de producción.
 
 ## Inicio rápido de desarrollo
 
@@ -231,12 +234,15 @@ docker compose -f docker-compose-dev.yml up -d --build
 docker compose -f docker-compose-dev.yml ps
 ```
 
-### 3. Descargar modelos
+### 3. Verificar modelos
 
 ```powershell
-docker exec machining_ollama ollama pull qwen2.5:7b
-docker exec machining_ollama ollama pull nomic-embed-text
+docker exec machining_ollama_chat ollama list
+docker exec machining_ollama_embeddings ollama list
 ```
+
+Los servicios de inicialización descargan automáticamente `MODEL_NAME` y
+`EMBEDDING_MODEL_NAME` en sus almacenes independientes durante el arranque.
 
 ### 4. Comprobar servicios
 
@@ -407,8 +413,9 @@ docker compose -f docker-compose-dev.yml logs -f agent-service
 # Logs de workers
 docker compose -f docker-compose-dev.yml logs -f agent-worker historical-worker historical-producer
 
-# Modelos cargados
-docker exec machining_ollama ollama list
+# Modelos instalados en cada runtime
+docker exec machining_ollama_chat ollama list
+docker exec machining_ollama_embeddings ollama list
 
 # Validar Nginx
 docker exec machining_nginx nginx -t

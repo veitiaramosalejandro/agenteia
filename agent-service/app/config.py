@@ -13,7 +13,12 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     
     # Ollama Local Configuration
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11434")
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-chat:11434")
+    # Embeddings use an isolated runtime so indexing cannot evict or queue the
+    # interactive chat model. Falling back preserves non-Docker deployments.
+    EMBEDDING_BASE_URL: str = os.getenv(
+        "EMBEDDING_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://ollama-chat:11434")
+    )
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
@@ -228,7 +233,8 @@ settings = Settings()
 # Imprimir configuración para debug
 if settings.ENVIRONMENT == "development":
     print("🔧 Configuración de desarrollo:")
-    print(f"  - Ollama: {settings.OLLAMA_BASE_URL}")
+    print(f"  - Ollama chat: {settings.OLLAMA_BASE_URL}")
+    print(f"  - Ollama embeddings: {settings.EMBEDDING_BASE_URL}")
     print(f"  - Qdrant: {settings.VECTOR_DB_URL}")
     print(f"  - Redis: {settings.REDIS_URL}")
     print(f"  - PostgreSQL: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}")

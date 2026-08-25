@@ -37,7 +37,7 @@ def ingest_all_documents():
     print("\n🔧 Conectando a Ollama...")
     try:
         embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=settings.EMBEDDING_MODEL_NAME
         )
         # Probar conexión

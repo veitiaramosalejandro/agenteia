@@ -101,7 +101,7 @@ def process_batch(batch: dict[str, Any]) -> dict[str, int]:
         )
         return {"accepted":accepted,"rejected":rejected,"indexed":0}
     if documents:
-        embeddings = OllamaEmbeddings(base_url=settings.OLLAMA_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
+        embeddings = OllamaEmbeddings(base_url=settings.EMBEDDING_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
         client = QdrantClient(url=settings.VECTOR_DB_URL)
         ensure_vector_collection(client, settings.VECTOR_COLLECTION_NAME, embeddings)
         vectors = embeddings.embed_documents([doc["text"] for doc in documents])

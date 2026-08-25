@@ -34,7 +34,7 @@ def test_ingest():
     # 3. Conectar a Ollama
     print("\n🔧 Conectando a Ollama...")
     embeddings = OllamaEmbeddings(
-        base_url=settings.OLLAMA_BASE_URL,
+        base_url=settings.EMBEDDING_BASE_URL,
         model=settings.EMBEDDING_MODEL_NAME
     )
     

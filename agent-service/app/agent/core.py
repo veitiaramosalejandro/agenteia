@@ -2123,6 +2123,7 @@ class MachiningAgent:
         rag_context = business_rag_context
         if (
             not business_knowledge_query
+            and not response_suggestion_mode
             and training_enabled
             and learn_from_system
             and not external_query_mode
@@ -2164,14 +2165,25 @@ class MachiningAgent:
         
         # 4.4 Aprendizaje relevante (actividades pasadas similares)
         aprendizaje_relevante = ""
-        if training_enabled and agent_resource_id and not external_query_mode and not general_conversation_mode:
+        if (
+            not response_suggestion_mode
+            and training_enabled
+            and agent_resource_id
+            and not external_query_mode
+            and not general_conversation_mode
+        ):
             aprendizaje_relevante = self.sistema_aprendizaje.consultar_aprendizaje(
                 context_query,
                 canal_id=canal_id,
                 limit=3,
                 agent_resource_id=agent_resource_id,
             )
-        elif valid_user_guid and not external_query_mode and not general_conversation_mode:
+        elif (
+            not response_suggestion_mode
+            and valid_user_guid
+            and not external_query_mode
+            and not general_conversation_mode
+        ):
             aprendizaje_relevante = self._get_aprendizaje_relevante(context_query, user_id)
 
         memoria_web_reciente = ""

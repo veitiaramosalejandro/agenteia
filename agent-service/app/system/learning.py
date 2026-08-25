@@ -30,7 +30,7 @@ class SistemaAprendizaje:
         embedding_model = (settings.EMBEDDING_MODEL_NAME or "").strip() or "nomic-embed-text"
         self.embedding_model = embedding_model
         self.embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=embedding_model
         )
         self._embeddings_enabled = True
