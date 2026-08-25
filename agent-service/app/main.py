@@ -904,6 +904,11 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     if not _payload_has_talk_with_agent(payload):
         return "talk_with_agent_no_autorizado"
 
+    message = (candidate.get("message") or "").strip()
+    response_requested = _payload_requests_agent_response(payload, message)
+    if not response_requested:
+        return "contenido_solo_aprendizaje"
+
     fingerprint = (candidate.get("fingerprint") or "").strip()
     if not fingerprint:
         return "sin_fingerprint"
@@ -913,7 +918,6 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "mensaje_generado_por_ia"
 
     channel_id = (candidate.get("channel_id") or "").strip()
-    message = (candidate.get("message") or "").strip()
     sender_resource = str(candidate.get("sender_resource") or "")
     sender_name = str(candidate.get("sender_name") or "")
     can_reply_direct = bool(candidate.get("is_direct") and candidate.get("reply_resource"))
@@ -921,7 +925,11 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "mensaje_vacio"
     if not channel_id and not can_reply_direct:
         return "sin_destino_para_responder"
-    if _candidate_is_learning_only(candidate) and not can_reply_direct:
+    if (
+        _candidate_is_learning_only(candidate)
+        and not can_reply_direct
+        and not response_requested
+    ):
         return "respuesta_citada_solo_aprendizaje"
 
     # Con identidad explícita configurada, Destiny es la fuente de verdad. Así
@@ -941,6 +949,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     kind_is_conversational = bool(candidate.get("kind_reply_eligible", True))
     if (
         not kind_is_conversational
+        and not response_requested
         and not _looks_like_question_or_request(message)
         and not mentioned
         and not active_followup
@@ -948,6 +957,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return f"evento_sin_peticion:{candidate.get('message_kind') or 'desconocido'}"
     if (
         not candidate.get("addressed_to_agent")
+        and not response_requested
         and not mentioned
         and not _looks_like_question_or_request(message)
         and not active_followup
@@ -990,9 +1000,23 @@ def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
             or (isinstance(flag, int) and flag == 1)
             or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
         )
-        if destination_type == 2 and enabled:
+        # SolidSET emits type=2 and type=3 for an IA destination, depending on
+        # the question flow that created the chat entry.
+        if destination_type in {2, 3} and enabled:
             return True
     return False
+
+
+def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> bool:
+    """Indica si SolidSET clasificó el mensaje como pregunta (2) o petición (3)."""
+    if "?" in str(raw_text or ""):
+        return True
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    question_type = _get_payload_value(chat, "questionType", "QuestionType")
+    try:
+        return int(question_type) in {2, 3}
+    except (TypeError, ValueError):
+        return False
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
@@ -1004,7 +1028,8 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
 
     # Nueva señal explícita de SolidSET. Cuando Chat.destiny incluye
     # talkWithAgent, esa colección es autoritativa tanto en canales como en
-    # meetings: solo los recursos IA (type=2) marcados con true responden. La
+    # meetings: solo los recursos IA (type=2 o type=3) marcados con true
+    # responden. La
     # mera presencia del campo también impide caer en reglas antiguas y activar
     # por accidente otro agente del canal.
     selected_by_flag: list[tuple[int, str]] = []
@@ -1025,7 +1050,7 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
                 destination_type = int(lowered.get("type"))
             except (TypeError, ValueError):
                 continue
-            if not talks_with_agent or destination_type != 2:
+            if not talks_with_agent or destination_type not in {2, 3}:
                 continue
             resource = str(
                 lowered.get("idresource") or lowered.get("resource") or ""
@@ -1468,7 +1493,15 @@ async def _process_auto_replies(
             or settings.SOLIDSET_LOGIN_USERNAME
             or "solidset.agent"
         ).strip()
-        learning_only = _candidate_is_learning_only(candidate)
+        learning_only = (
+            _candidate_is_learning_only(candidate)
+            and not _payload_requests_agent_response(
+                candidate.get("payload")
+                if isinstance(candidate.get("payload"), dict)
+                else {},
+                incoming_text,
+            )
+        )
         response_text = (
             _learning_acknowledgement(incoming_text)
             if is_direct and learning_only

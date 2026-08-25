@@ -13,6 +13,8 @@ from app.main import (
     _localize_response_status,
     _update_response_status,
     _auto_reply_rejection_reason,
+    _payload_requests_agent_response,
+    _selected_agent_resource_ids,
     _route_candidates_to_selected_agents,
     handle_multi_agent_dialogue,
     notification_listener,
@@ -21,6 +23,60 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    def test_question_request_type_or_question_mark_requests_response(self):
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 3}}, "Háblame de Kimi"
+        ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"QuestionType": "2"}}, "Explícame Kimi"
+        ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 0}}, "Háblame de Kimi?"
+        ))
+        self.assertFalse(_payload_requests_agent_response(
+            {"Chat": {"questionType": 0}}, "Kimi K3 fue presentado en 2026"
+        ))
+
+    def test_type_three_talk_with_agent_is_authorized(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "type-three-question",
+            "message": "Háblame de Kimi K3?",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {"destiny": [{
+                "idResource": str(agent_resource),
+                "type": 3,
+                "talkWithAgent": True,
+            }]}},
+        }
+        self.assertNotEqual(
+            "talk_with_agent_no_autorizado",
+            _auto_reply_rejection_reason(candidate),
+        )
+        self.assertEqual(
+            [str(agent_resource)],
+            _selected_agent_resource_ids(candidate),
+        )
+
+    def test_non_question_is_learning_only_even_when_agent_is_selected(self):
+        candidate = {
+            "fingerprint": "learning-only",
+            "message": "Kimi K3 fue presentado en 2026",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 0,
+                "destiny": [{
+                    "idResource": str(uuid4()),
+                    "type": 3,
+                    "talkWithAgent": True,
+                }],
+            }},
+        }
+        self.assertEqual(
+            "contenido_solo_aprendizaje",
+            _auto_reply_rejection_reason(candidate),
+        )
+
     def test_final_send_barrier_rejects_cached_candidate_without_flag(self):
         candidate = {
             "fingerprint": "cached-old-worker-candidate",

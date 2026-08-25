@@ -1132,13 +1132,13 @@ Cada mensaje humano se indexa primero como aprendizaje global del sistema. Si `I
 Para identificar agentes candidatos, el router admite estas fuentes del payload:
 
 ```text
-Chat.destiny[].talkWithAgent=true + type=2 (prioridad absoluta)
+Chat.destiny[].talkWithAgent=true + type=2 o type=3 (prioridad absoluta)
 Destiny.dests[].resource
 SelectedAgentResourceIds[] (solo cuando Destiny.dests está vacío)
 Destiny.resource (solo cuando Destiny.dests está vacío)
 ```
 
-La nueva señal canónica es `Chat.destiny[].talkWithAgent`. Si el campo aparece en cualquiera de las entradas, esa colección tiene precedencia absoluta: únicamente responde cada entrada con `talkWithAgent=true`, `type=2` y un `idResource` válido. Las entradas humanas (`type=1`), los agentes con `talkWithAgent=false` y cualquier agente presente solamente en las fuentes antiguas quedan excluidos. Si la señal no aparece, se mantienen las reglas de compatibilidad anteriores basadas en `Destiny.dests` y en el contexto de chat privado o meeting.
+La nueva señal canónica es `Chat.destiny[].talkWithAgent`. Si el campo aparece en cualquiera de las entradas, esa colección tiene precedencia absoluta: únicamente se selecciona cada entrada con `talkWithAgent=true`, `type=2` o `type=3` y un `idResource` válido. El agente responde cuando además `Chat.questionType=2` (pregunta), `Chat.questionType=3` (petición), o el texto contiene `?`; en caso contrario, el mensaje queda como contenido de aprendizaje sin generar una respuesta. Las entradas humanas (`type=1`), los agentes con `talkWithAgent=false` y cualquier agente presente solamente en las fuentes antiguas quedan excluidos.
 
 Solo responde el recurso seleccionado si existe en `SysResourceIA`, tiene `active=true` y está habilitado para el canal. Una lista auxiliar `SelectedAgentResourceIds` no puede añadir otros agentes cuando el payload contiene una selección autoritativa.
 
