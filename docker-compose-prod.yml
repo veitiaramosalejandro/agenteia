@@ -1,38 +1,10 @@
 services:
-  # Solo para instalaciones donde este compose se ejecuta junto al SQL Server.
-  # En el diseño distribuido, desplegar solidset-data-api en el servidor SolidSET.
-  solidset-data-api:
-    profiles: ["data-api"]
-    image: solidset-data-api:0.1.0
-    build:
-      context: ./solidset-data-api
-      dockerfile: Dockerfile
-    container_name: solidset_data_api
-    hostname: solidset-data-api
-    restart: unless-stopped
-    ports:
-      - "8081:8080"
-    environment:
-      SOLIDSET_DATA_API_KEY: ${SOLIDSET_DATA_API_KEY:-}
-      SQL_SERVER_HOST: ${SQL_SERVER_DOCKER_HOST:-host.docker.internal}
-      SQL_SERVER_INSTANCE: ${SQL_SERVER_INSTANCE:-SQL2017DEV}
-      SQL_SERVER_PORT: ${SQL_SERVER_DOCKER_PORT:-1433}
-      SQL_SERVER_DATABASE: ${SQL_SERVER_DB:-DEV_ISIFrameIsicom}
-      SQL_SERVER_USERNAME: ${SQL_SERVER_USER:-sa}
-      SQL_SERVER_PASSWORD: ${SQL_SERVER_PASSWORD:-}
-      SQL_SERVER_LOGIN_TIMEOUT: ${DB_INGEST_CONNECT_TIMEOUT_SECONDS:-15}
-      SQL_SERVER_QUERY_TIMEOUT: ${DB_INGEST_QUERY_TIMEOUT_SECONDS:-120}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - machining-network
-
   # API del agente. n8n accede internamente mediante http://agent-service:8000.
   nginx:
     image: nginx:1.27-alpine
     container_name: machining_nginx
     hostname: nginx
-    restart: unless-stopped
+    restart: always
     ports:
       - 80:80
       - 443:443
@@ -65,7 +37,7 @@ services:
     image: agent-beta:0.0.1    
     container_name: machining_agent
     hostname: agent-service
-    restart: unless-stopped
+    restart: always
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"
@@ -81,7 +53,8 @@ services:
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
       DIALOGUE_MAX_CONCURRENT: 1
-      # Cada conexión SQL Server se resuelve por instancia desde PostgreSQL.
+      # SQL_SERVER_HOST/INSTANCE/PORT proceden de .env.production. No deben
+      # interpolarse aquí desde el .env de desarrollo.
       # Las respuestas usan la identidad por recurso almacenada en PostgreSQL.
       # Se neutraliza cualquier cuenta global antigua que permanezca en .env.
       SOLIDSET_LOGIN_USERNAME: ""
@@ -94,15 +67,15 @@ services:
     volumes:      
       - ./data:/app/data
       - ./audio:/app/audio
-    depends_on:
-      ollama-llm:
-        condition: service_healthy
-      timescaledb:
-        condition: service_healthy
-      redis-cache:
-        condition: service_healthy
-      vector-db:
-        condition: service_healthy
+    #depends_on:
+    #  ollama-llm:
+    #    condition: service_healthy
+    #  timescaledb:
+    #    condition: service_healthy
+    #  redis-cache:
+    #    condition: service_healthy
+    #  vector-db:
+    #    condition: service_healthy
     networks:
       - machining-network      
 
@@ -112,7 +85,7 @@ services:
     image: agent-beta:0.0.1
     container_name: machining_agent_worker
     hostname: agent-worker
-    restart: unless-stopped
+    restart: always
     command: ["python", "-m", "app.response_worker"]
     env_file:
       - ${AGENT_ENV_FILE:-.env}
@@ -134,21 +107,21 @@ services:
     volumes:
       - ./data:/app/data
       - ./audio:/app/audio
-    depends_on:
-      ollama-llm:
-        condition: service_healthy
-      timescaledb:
-        condition: service_healthy
-      redis-cache:
-        condition: service_healthy
-      vector-db:
-        condition: service_healthy
+    #depends_on:
+    #  ollama-llm:
+    #    condition: service_healthy
+    #  timescaledb:
+    #    condition: service_healthy
+    #  redis-cache:
+    #    condition: service_healthy
+    #  vector-db:
+    #    condition: service_healthy
     networks:
       - machining-network
 
   historical-worker:
     image: agent-beta:0.0.1
-    restart: unless-stopped
+    restart: always
     command: ["python", "-m", "app.historical.worker"]
     env_file:
       - ${AGENT_ENV_FILE:-.env}
@@ -161,11 +134,11 @@ services:
       REDIS_URL: redis://redis-cache:6379
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: ["./data:/app/data"]
-    depends_on:
-      ollama-llm: {condition: service_healthy}
-      timescaledb: {condition: service_healthy}
-      redis-cache: {condition: service_healthy}
-      vector-db: {condition: service_healthy}
+    #depends_on:
+    #  ollama-llm: {condition: service_healthy}
+    #  timescaledb: {condition: service_healthy}
+    #  redis-cache: {condition: service_healthy}
+    #  vector-db: {condition: service_healthy}
     networks: [machining-network]
 
   historical-producer:
@@ -218,9 +191,12 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
       interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
+      timeout: 5s
+      # En producción Qdrant puede tardar varios minutos en recuperar WAL,
+      # colecciones e índices existentes. Durante este período Compose no debe
+      # bloquear todos los servicios dependientes marcándolo como unhealthy.
+      retries: 60
+      start_period: 120s
     networks:
       - machining-network
 

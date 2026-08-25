@@ -414,6 +414,7 @@ class NotificationApiListener:
             "Stamp", "Sender", "Destiny", "Kind", "IDNotification", "RawMessage",
             "RawMessageHtml", "Args", "Chat", "ChatData", "WorkRoomData",
             "Importance", "Priority", "Modifiers", "VisibilityLevel", "MaskMessage", "Info",
+            "ExtraData", "TaskData", "ActivityData",
         ]
         payload_lower = {str(key).lower(): value for key, value in payload.items()}
         for field_name in top_level_names:
@@ -480,6 +481,80 @@ class NotificationApiListener:
         normalized["FrameworkSender"] = sender
         normalized["FrameworkDestiny"] = destiny
         return normalized
+
+    @staticmethod
+    def _structured_resource_activity(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Extracts bounded, whitelisted activity facts from untrusted ExtraData."""
+        chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+        chat_lower = {str(key).lower(): value for key, value in chat.items()}
+        raw_extra = payload.get("ExtraData") or chat_lower.get("extradata")
+        if isinstance(raw_extra, str):
+            if not raw_extra.strip() or len(raw_extra) > 50000:
+                return None
+            try:
+                raw_extra = json.loads(raw_extra)
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(raw_extra, dict):
+            return None
+        extra = {str(key).lower(): value for key, value in raw_extra.items()}
+        task_data = payload.get("TaskData") if isinstance(payload.get("TaskData"), dict) else {}
+        task_lower = {str(key).lower(): value for key, value in task_data.items()}
+        name = str(
+            extra.get("name")
+            or task_lower.get("taskshortname")
+            or chat_lower.get("taskshortname")
+            or ""
+        ).strip()[:300]
+        framework_kind = payload.get("FrameworkKind") or payload.get("Kind")
+        is_task_event = str(framework_kind).strip() == "51" or bool(name)
+        if not is_task_event:
+            return None
+
+        allowed_scalar_fields = (
+            "typetocreate", "importance", "typelocation", "kind",
+            "runningstatus", "progresspercentage", "complexity", "priority",
+        )
+        facts = {
+            key: extra.get(key)
+            for key in allowed_scalar_fields
+            if isinstance(extra.get(key), (str, int, float, bool))
+        }
+        task_status = str(
+            chat_lower.get("taskstatusstr") or chat_lower.get("taskstatus") or ""
+        ).strip()[:100]
+        participants = extra.get("participants")
+        participant_resources: list[str] = []
+        if isinstance(participants, list):
+            for participant in participants[:50]:
+                if not isinstance(participant, dict):
+                    continue
+                lowered = {str(key).lower(): value for key, value in participant.items()}
+                resource = str(lowered.get("idresource") or "").strip()
+                if resource and resource not in participant_resources:
+                    participant_resources.append(resource[:80])
+
+        details = [f"Tarefa: {name or 'sem nome'}"]
+        if task_status:
+            details.append(f"Estado: {task_status}")
+        if "progresspercentage" in facts:
+            details.append(f"Progresso: {facts['progresspercentage']}%")
+        if "priority" in facts:
+            details.append(f"Prioridade: {facts['priority']}")
+        if "complexity" in facts:
+            details.append(f"Complexidade: {facts['complexity']}")
+        raw_message = str(payload.get("RawMessage") or chat_lower.get("rawmessage") or "").strip()
+        if raw_message:
+            details.append(f"Descrição do recurso: {raw_message[:1000]}")
+        return {
+            "type": "solidset_task_activity",
+            "description": "Atividade de tarefa observada | " + " | ".join(details),
+            "facts": facts,
+            "task_name": name,
+            "task_status": task_status,
+            "participant_resources": participant_resources,
+            "resource_description": raw_message[:1000],
+        }
 
     def _destiny_addresses_agent(self, destiny: Dict[str, Any]) -> bool:
         """Comprueba el destino directo y cada entrada de Destiny.dests."""
@@ -1085,6 +1160,7 @@ class NotificationApiListener:
         sender_resource = payload.get("IDSenderResource") if payload else None
         sender_name = payload.get("SenderFullName") if payload else None
         raw_message = payload.get("RawMessage") if payload else None
+        structured_activity = self._structured_resource_activity(payload) if payload else None
         channel_name = payload.get("ChannelName") or payload.get("OriginChannelName") if payload else None
         channel_kind = payload.get("ChannelKind") or payload.get("OriginChannelKind") if payload else None
         is_public = payload.get("IsPublic") if payload else None
@@ -1120,7 +1196,10 @@ class NotificationApiListener:
         if len(short_data) > 600:
             short_data = short_data[:600] + "..."
 
-        if source == "solidset_restapi_chat" and raw_message:
+        if structured_activity:
+            source = structured_activity["type"]
+            summary = structured_activity["description"]
+        elif source == "solidset_restapi_chat" and raw_message:
             scope = "canal_publico" if str(is_public) in {"1", "True", "true"} else "chat_privado"
             summary = (
                 f"Chat REST API ({scope})"
@@ -1170,6 +1249,7 @@ class NotificationApiListener:
                 "fingerprint": fingerprint,
                 "captured_at": datetime.utcnow().isoformat(),
                 "payload": data,
+                "structured_activity": structured_activity,
             },
         )
         learned_global = self.sistema.aprender_actividad(actividad)
@@ -1179,7 +1259,7 @@ class NotificationApiListener:
         # guarda una segunda representación privada etiquetada para ese agente.
         # consultar_documentacion filtra agent_resource_id y evita que otro
         # agente utilice este patrón personal.
-        if sender_resource and raw_message:
+        if sender_resource and (raw_message or structured_activity):
             try:
                 owner_agent = get_active_agent_identity_for_resource(sender_resource)
             except Exception as exc:
@@ -1191,7 +1271,11 @@ class NotificationApiListener:
                     "agent_resource_id": str(owner_agent["IDResource"]),
                     "agent_identity_id": str(owner_agent["ID"]),
                     "scope": "agent_owner_behavior",
-                    "learning_origin": "human_resource_message",
+                    "learning_origin": (
+                        "human_resource_structured_activity"
+                        if structured_activity
+                        else "human_resource_message"
+                    ),
                 })
                 private_activity = Actividad(
                     id=f"agent_owner_{owner_agent['ID']}_{fingerprint[:20]}",
@@ -1199,8 +1283,12 @@ class NotificationApiListener:
                     canal_id=actividad.canal_id,
                     tipo="agent_owner_behavior",
                     descripcion=(
-                        "Patrón comunicativo y conocimiento expresado por el "
-                        f"recurso humano propietario: {summary}"
+                        (
+                            "Actividad operativa observada del recurso humano propietario: "
+                            if structured_activity
+                            else "Patrón comunicativo y conocimiento expresado por el recurso humano propietario: "
+                        )
+                        + summary
                     ),
                     timestamp=event_timestamp,
                     metadatos=private_metadata,
