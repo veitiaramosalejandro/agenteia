@@ -1593,6 +1593,7 @@ async def _process_auto_replies(
                     "human_chat_resource_name": candidate.get("reply_resource_name"),
                     "solidset_base_url": candidate.get("solidset_base_url"),
                     "preview_only": preview_only,
+                    "question_chat_id": int(candidate.get("chat_id") or 0) or None,
                 },
             )
             send_result_text = str(send_result)

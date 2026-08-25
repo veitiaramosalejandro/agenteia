@@ -1060,6 +1060,7 @@ def solidset_send_chat_message(
     human_chat_resource_name: Optional[str] = None,
     solidset_base_url: Optional[str] = None,
     preview_only: bool = False,
+    question_chat_id: Optional[int] = None,
 ) -> str:
     """
     ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
@@ -1179,6 +1180,11 @@ def solidset_send_chat_message(
         form_payload["Info[meeting_mirror_general]"] = "1"
     if generated_by_ia:
         form_payload["Info[generated_by_ia]"] = "1"
+        qid = int(question_chat_id or 0)
+        if qid > 0:
+            # Ancla la pregunta del usuario (ChatQuestionMessage vía ChatData.IDChat).
+            form_payload["ChatData.IDChat"] = qid
+            form_payload["Info[ia_question_chat_id]"] = str(qid)
         sender_agent_resource_id = str(
             agent_identity_id or agent_resource_id or ""
         ).strip()
