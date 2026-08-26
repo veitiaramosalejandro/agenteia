@@ -23,23 +23,26 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
-    def test_question_request_or_any_question_mark_requests_response(self):
+    def test_question_type_response_contract(self):
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"questionType": 3}}, "Háblame de Kimi"
         ))
-        self.assertTrue(_payload_requests_agent_response(
+        self.assertFalse(_payload_requests_agent_response(
             {"Chat": {"QuestionType": "2"}}, "Explícame Kimi"
+        ))
+        self.assertFalse(_payload_requests_agent_response(
+            {"Chat": {"QuestionType": "2"}}, "¿Explícame Kimi?"
         ))
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Háblame de Kimi?"
         ))
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"questionType": 1}},
-            "Que tareas tiene asignado el recurso Alejandro Veitia?",
-        ))
-        self.assertFalse(_payload_requests_agent_response(
-            {"Chat": {"questionType": 1}},
             "Que tareas tiene asignado el recurso Alejandro Veitia",
+        ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 1}},
+            "Que tareas tiene asignado el recurso Alejandro Veitia?",
         ))
         self.assertFalse(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Kimi K3 fue presentado en 2026"
@@ -114,7 +117,8 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             _selected_agent_resource_ids(candidate),
         )
 
-    def test_non_question_is_learning_only_even_when_agent_is_selected(self):
+    def test_question_type_one_responds_without_question_mark(self):
+        agent_resource = uuid4()
         candidate = {
             "fingerprint": "learning-only",
             "message": "Kimi K3 fue presentado en 2026",
@@ -122,18 +126,18 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "payload": {"Chat": {
                 "questionType": 1,
                 "destiny": [{
-                    "idResource": str(uuid4()),
+                    "idResource": str(agent_resource),
                     "type": 2,
                     "talkWithAgent": True,
                 }],
             }},
+            "agent_resource_id": str(agent_resource),
+            "addressed_to_agent": True,
+            "is_direct": True,
         }
-        self.assertEqual(
-            "contenido_solo_aprendizaje",
-            _auto_reply_rejection_reason(candidate),
-        )
+        self.assertIsNone(_auto_reply_rejection_reason(candidate))
 
-    def test_type_two_with_question_type_two_is_authorized(self):
+    def test_type_two_with_question_type_two_is_learning_only(self):
         agent_resource = uuid4()
         candidate = {
             "fingerprint": "type-two-question",
@@ -148,13 +152,9 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                 }],
             }},
         }
-        self.assertNotEqual(
-            "talk_with_agent_no_autorizado",
-            _auto_reply_rejection_reason(candidate),
-        )
         self.assertEqual(
-            [str(agent_resource)],
-            _selected_agent_resource_ids(candidate),
+            "contenido_solo_aprendizaje",
+            _auto_reply_rejection_reason(candidate),
         )
 
     def test_final_send_barrier_rejects_cached_candidate_without_flag(self):
@@ -166,6 +166,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "agent_resource_id": str(uuid4()),
             "payload": {
                 "Chat": {
+                    "questionType": 3,
                     "destiny": [{
                         "idResource": str(uuid4()),
                         "type": 2,
@@ -337,6 +338,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     "dests": [{"resource": str(unselected_agent), "kind": 2}],
                 },
                 "Chat": {
+                    "questionType": 3,
                     "resourceTable": [{
                         "idResource": str(sender_resource),
                         "userName": "Alejandro Veitia",
@@ -491,7 +493,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     }],
                 },
                 "SelectedAgentResourceIds": [str(other_participant)],
-                "Chat": {"resourceTable": [{"idResource": str(other_participant)}]},
+                "Chat": {
+                    "questionType": 3,
+                    "resourceTable": [{"idResource": str(other_participant)}],
+                },
             },
         }
         configured = [{
@@ -567,6 +572,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     ],
                 },
                 "Chat": {
+                    "questionType": 3,
                     "destiny": [
                         {
                             "idResource": str(sender_agent),
@@ -611,6 +617,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                 "FrameworkSender": {"resource": str(owner_resource)},
                 "FrameworkDestiny": {"workRoom": str(room_id), "dests": []},
                 "Chat": {
+                    "questionType": 3,
                     "channels": [{
                         "idChannel": str(room_id),
                         "channelKind": 1,
@@ -652,7 +659,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "fingerprint": "message-1",
             "channel_id": str(room_id),
             "sender_resource": str(uuid4()),
-            "payload": {"SelectedAgentResourceIds": [str(first), str(second)]},
+            "payload": {
+                "SelectedAgentResourceIds": [str(first), str(second)],
+                "Chat": {"questionType": 3},
+            },
         }
         configured = [
             {"IDResource": first, "IDAgentResource": uuid4(), "Name": "Agente A"},

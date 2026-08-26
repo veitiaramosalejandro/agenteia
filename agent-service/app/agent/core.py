@@ -1061,6 +1061,7 @@ class MachiningAgent:
                 " não ", " olá ", " obrigado ", " obrigada ", " informação ",
                 " informações ", " hoje ", " podes ", " gostaria ", " meu ", " minha ",
                 " diga ", " quais ", " quem ", " este ", " desta ", " neste ",
+                " fale-me ", " fale ",
                 " reunião ", " participantes ativos ", " é ", " são ", " tem ",
                 " foi ", " uma ", " os ", " do ", " dos ", " das ",
             ),
@@ -1877,7 +1878,10 @@ class MachiningAgent:
             r"\b(?:para obter|para obtener|to obtain|get)\b.{0,80}\b(?:site|sitio|website|página|pagina)\b",
             r"\b(?:há informações|hay información|there is information)\b.{0,80}\b(?:site|sitio|website|página|pagina)\b",
             r"\b(?:n[aã]o (?:tenho|h[aá])|no (?:tengo|hay)|i (?:do not|don't) have)\b.{0,100}\b(?:informa[cç][oõ]es|informaci[oó]n|information)\b",
+            r"\b(?:n[aã]o encontrei|no encontr[eé]|i (?:did not|didn't) find)\b.{0,100}\b(?:informa[cç][oõ]es|informaci[oó]n|information)\b",
             r"\b(?:n[aã]o sei|no s[eé]|i do not know|i don't know)\b",
+            r"\b(?:falta de contexto|mais contexto|m[aá]s contexto|more context)\b",
+            r"\b(?:pode|puede|can you)\s+(?:fornecer|proporcionar|provide)\s+(?:mais|m[aá]s|more)\s+(?:detalhes|detalles|details)\b",
         )
         return not text or any(re.search(pattern, text) for pattern in redirect_patterns)
 

@@ -1037,14 +1037,21 @@ def _payload_has_learning_only_destination(payload: dict[str, Any]) -> bool:
 
 
 def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> bool:
-    """Acepta pregunta/petición explícita o cualquier texto dirigido con '?'."""
+    """Apply SolidSET's explicit QuestionType response contract.
+
+    Type 1 has priority and type 3 is an explicit request. Type 0 is
+    unclassified and may respond only when the text contains ``?``. Type 2
+    and missing/unknown values remain learning-only.
+    """
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     question_type = _get_payload_value(chat, "questionType", "QuestionType")
     try:
         normalized_type = int(question_type)
     except (TypeError, ValueError):
         return False
-    return normalized_type in {2, 3} or "?" in str(raw_text or "")
+    if normalized_type in {1, 3}:
+        return True
+    return normalized_type == 0 and "?" in str(raw_text or "")
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
@@ -1515,6 +1522,11 @@ async def _process_auto_replies(
                     f"para enrutamiento: {exc}"
                 )
         message_metadata["agent_relevant_knowledge"] = relevant_agent_knowledge
+        print(
+            "🧠 Conocimiento privado preseleccionado "
+            f"resource={agent_resource_id or '-'} workroom={channel_id or '-'} "
+            f"found={bool(relevant_agent_knowledge)} chars={len(relevant_agent_knowledge)}"
+        )
         status_agent_id = agent_identity_id or agent_resource_id
         _update_response_status(
             response_request_id,

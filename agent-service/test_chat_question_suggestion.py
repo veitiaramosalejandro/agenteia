@@ -299,6 +299,9 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
             "Não tenho informações específicas sobre quando chegou."
         ))
+        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
+            "No encontré información sobre Robotea; proporcione más detalles."
+        ))
         self.assertEqual(
             "El valor es 42.",
             MachiningAgent._extract_concrete_answer('{"answer":"El valor es 42."}'),
@@ -325,6 +328,12 @@ class TestChatQuestionSuggestion(unittest.TestCase):
                 "Dependerá de tus preferencias, presupuesto y fechas disponibles.",
                 "es",
             )
+        )
+
+    def test_short_portuguese_request_keeps_portuguese(self):
+        agent_instance = MachiningAgent.__new__(MachiningAgent)
+        self.assertEqual(
+            "pt", agent_instance._detect_user_language("Fale-me sobre Robotea")
         )
 
     def test_channel_context_stays_below_prompt_budget_and_keeps_newest(self):
