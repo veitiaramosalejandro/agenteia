@@ -1344,6 +1344,86 @@ class MachiningAgent:
             en=f"Tasks for **{resource_term}** (newest first):\n" + "\n".join(lines),
         )
 
+    def _extract_activity_resource_term(self, user_text: str) -> Optional[str]:
+        """Extrae el recurso mencionado en una consulta de actividades."""
+        text = self._normalize_context_query(user_text)
+        if not re.search(
+            r"\b(?:actividades?|activities|atividades?)\b", text, re.IGNORECASE
+        ):
+            return None
+        match = re.search(
+            r"\b(?:recurso|resource|utilizador|usu[aá]rio)\s+(.+?)\s*[?.!]*$",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        term = " ".join(match.group(1).strip(" ¿?¡!.,").split())
+        return term[:160] or None
+
+    def _resolve_resource_activities_from_db(self, user_text: str) -> Optional[str]:
+        """Consulta Activity para un recurso resuelto por nombre o login."""
+        resource_term = self._extract_activity_resource_term(user_text)
+        if not resource_term:
+            return None
+        sql = (
+            "SELECT TOP 50 a.IDActivity, a.subject, a.description, a.startDate, "
+            "a.status, a.endDate, a.type, a.priority, a.isPlanned, "
+            "a.ModifiedTime, a.CreatedTime, a.IDResource, a.IDResourceAssign, "
+            "a.activityCode, a.IDSysActivityType, a.duration, a.kind, "
+            "a.TotalWorkDuration, a.AssignedResourcesList, a.WorkStatus, "
+            "a.typeLocation, a.AppointmentType, r.DisplayName AS ResourceName, "
+            "l.FullName AS UserFullName, l.Username "
+            "FROM dbo.Activity a WITH (NOLOCK) "
+            "INNER JOIN dbo.SysResources r WITH (NOLOCK) "
+            "ON r.ResourceId = a.IDResource "
+            "LEFT JOIN dbo.SysLogin l WITH (NOLOCK) "
+            "ON l.ActiveIDLogin2Resource = r.ActiveIDLogin2Resource "
+            "WHERE UPPER(CONCAT(COALESCE(l.FullName, ''), ' ', "
+            "COALESCE(l.Username, ''), ' ', COALESCE(r.DisplayName, ''))) "
+            "LIKE UPPER(%s) "
+            "ORDER BY a.CreatedTime DESC"
+        )
+        result = str(query_sql_server.invoke({
+            "query": sql,
+            "parameters_json": json.dumps([f"%{resource_term}%"]),
+        }))
+        if result.startswith("La consulta se ejecutó correctamente"):
+            return self._localized(
+                user_text,
+                es=f"No encontré actividades para el recurso **{resource_term}**.",
+                pt=f"Não encontrei atividades para o recurso **{resource_term}**.",
+                en=f"I found no activities for resource **{resource_term}**.",
+            )
+        try:
+            rows = json.loads(result)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+        if not isinstance(rows, list):
+            return None
+        lines: list[str] = []
+        for row in rows[:15]:
+            if not isinstance(row, dict):
+                continue
+            title = str(
+                row.get("subject") or row.get("activityCode") or "Actividad sin nombre"
+            ).strip()
+            status = row.get("WorkStatus") if row.get("WorkStatus") is not None else row.get("status")
+            details = [f"estado {status}" if status is not None else ""]
+            if row.get("startDate") is not None:
+                details.append(f"inicio {row['startDate']}")
+            if row.get("endDate") is not None:
+                details.append(f"fin {row['endDate']}")
+            lines.append(f"- **{title}** — {', '.join(value for value in details if value)}")
+        if not lines:
+            return None
+        return self._localized(
+            user_text,
+            es=f"Actividades de **{resource_term}** (más recientes primero):\n" + "\n".join(lines),
+            pt=f"Atividades de **{resource_term}** (mais recentes primeiro):\n" + "\n".join(lines),
+            en=f"Activities for **{resource_term}** (newest first):\n" + "\n".join(lines),
+        )
+
     def _extract_resource_count_term(self, user_text: str) -> Optional[str]:
         """Extrae el nombre/prefijo pedido en preguntas como 'cuántos recursos Dev'."""
         text = self._normalize_context_query(user_text)
@@ -2154,7 +2234,20 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando consulta de tareas en Redis: {e}")
             return resource_tasks_response
 
-        # --- 3.8 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
+        # --- 3.8 ACTIVIDADES DE UN RECURSO DESDE ACTIVITY ---
+        resource_activities_response = None
+        if not response_suggestion_mode and not vector_answers_business_query:
+            resource_activities_response = self._resolve_resource_activities_from_db(user_text)
+        if resource_activities_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(resource_activities_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando consulta de actividades en Redis: {e}")
+            return resource_activities_response
+
+        # --- 3.9 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:

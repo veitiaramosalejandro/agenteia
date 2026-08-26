@@ -155,6 +155,14 @@ FORMATO Y REGLAS DE RESPUESTA DE DATOS:
   Columnas principales: ModifiedTime, CreatedTime, IDResource, IDResourceAssign, Code,
   Status, Archived, ShortName, importance, IDTask, StartDate, EndDate, IDActivity,
   WorkStatus, ProgressPercentage, Priority, TaskKind e IDTaskExternal.
+- `dbo.Activity`: actividades. Para las actividades de un recurso usa
+  `Activity.IDResource = SysResources.ResourceId` y ordena normalmente por
+  `Activity.CreatedTime DESC`. `IDResourceCreation` e `IDResourceAssign` tienen
+  significados distintos y no sustituyen el vínculo principal. Columnas funcionales:
+  IDActivity, subject, description, startDate, status, endDate, type, priority,
+  isPlanned, ModifiedTime, CreatedTime, IDResource, IDResourceAssign, activityCode,
+  IDSysActivityType, duration, kind, TotalWorkDuration, AssignedResourcesList,
+  WorkStatus, typeLocation y AppointmentType.
 
 Al presentar personas asociadas a recursos, une `SysResources.ActiveIDLogin2Resource` con
 `SysLogin.ActiveIDLogin2Resource` y muestra `SysLogin.FullName` o `SysLogin.Username`. No presentes

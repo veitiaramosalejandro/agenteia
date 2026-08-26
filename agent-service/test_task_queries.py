@@ -50,6 +50,31 @@ class TestTaskQueries(unittest.TestCase):
             "Alejandro Veitia pertenece al recurso de desarrollo"
         ))
 
+    def test_activity_lookup_uses_parameter_and_activity_resource(self):
+        rows = [{
+            "subject": "Reunión de planificación",
+            "WorkStatus": 1,
+            "startDate": "2026-08-26T10:00:00",
+            "endDate": "2026-08-26T11:00:00",
+        }]
+        from unittest.mock import Mock
+        invoke = Mock(return_value=json.dumps(rows))
+        with patch(
+            "app.agent.core.query_sql_server",
+            SimpleNamespace(invoke=invoke),
+        ):
+            response = self.agent._resolve_resource_activities_from_db(
+                "Que actividades tiene el recurso Alejandro Veitia"
+            )
+
+        args = invoke.call_args.args[0]
+        self.assertIn("FROM dbo.Activity a", args["query"])
+        self.assertIn("r.ResourceId = a.IDResource", args["query"])
+        self.assertIn("LIKE UPPER(%s)", args["query"])
+        self.assertNotIn("Alejandro Veitia", args["query"])
+        self.assertEqual(["%Alejandro Veitia%"], json.loads(args["parameters_json"]))
+        self.assertIn("Reunión de planificación", response)
+
 
 if __name__ == "__main__":
     unittest.main()

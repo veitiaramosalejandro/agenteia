@@ -840,6 +840,7 @@ def query_sql_server(query: str, parameters_json: str = "[]") -> str:
     - Cuando el usuario pida información de máquinas/activos (dbo.Asset)
     - Cuando el usuario pregunte por saldos, deudas o inventarios
     - Cuando el usuario pida tareas o estados de tareas (dbo.SysTask)
+    - Cuando el usuario pida actividades o estados de actividades (dbo.Activity)
     
     CUÁNDO NO USARLA:
     - NO la uses para explorar la estructura de tablas (usa get_db_schema)
