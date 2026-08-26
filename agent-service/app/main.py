@@ -901,6 +901,8 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     # trust cached/routed candidate fields alone: re-read the original payload.
     # chat-question suggestions do not use this auto-reply pipeline.
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    if _payload_has_learning_only_destination(payload):
+        return "contenido_solo_aprendizaje"
     if not _payload_has_talk_with_agent(payload):
         return "talk_with_agent_no_autorizado"
 
@@ -1000,25 +1002,48 @@ def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
             or (isinstance(flag, int) and flag == 1)
             or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
         )
-        # SolidSET emits type=2 and type=3 for an IA destination, depending on
-        # the question flow that created the chat entry.
-        if destination_type in {2, 3} and enabled:
+        # type=2 autoriza conversación. type=3 es contenido de aprendizaje y
+        # nunca puede abrir la barrera de respuesta.
+        if destination_type == 2 and enabled:
+            return True
+    return False
+
+
+def _payload_has_learning_only_destination(payload: dict[str, Any]) -> bool:
+    """Reconoce el destino type=3, que nunca autoriza una respuesta."""
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    destinations = _get_payload_value(chat, "destiny", "Destiny")
+    if not isinstance(destinations, list):
+        return False
+    for destination in destinations:
+        if not isinstance(destination, dict):
+            continue
+        lowered = {str(key).lower(): value for key, value in destination.items()}
+        try:
+            destination_type = int(lowered.get("type"))
+        except (TypeError, ValueError):
+            continue
+        flag = lowered.get("talkwithagent")
+        enabled = (
+            flag is True
+            or (isinstance(flag, int) and flag == 1)
+            or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
+        )
+        if destination_type == 3 and enabled:
             return True
     return False
 
 
 def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> bool:
-    """Detecta una pregunta/petición explícita o redactada sin signo final."""
-    text = str(raw_text or "")
-    if "?" in text:
+    """Acepta pregunta (2), petición (3) o la excepción textual del signo '?'."""
+    if "?" in str(raw_text or ""):
         return True
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     question_type = _get_payload_value(chat, "questionType", "QuestionType")
     try:
-        explicitly_classified = int(question_type) in {2, 3}
+        return int(question_type) in {2, 3}
     except (TypeError, ValueError):
-        explicitly_classified = False
-    return explicitly_classified or _looks_like_question_or_request(text)
+        return False
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
@@ -1030,8 +1055,8 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
 
     # Nueva señal explícita de SolidSET. Cuando Chat.destiny incluye
     # talkWithAgent, esa colección es autoritativa tanto en canales como en
-    # meetings: solo los recursos IA (type=2 o type=3) marcados con true
-    # responden. La
+    # meetings: solo los recursos IA type=2 marcados con true responden.
+    # type=3 queda exclusivamente en el flujo de aprendizaje. La
     # mera presencia del campo también impide caer en reglas antiguas y activar
     # por accidente otro agente del canal.
     selected_by_flag: list[tuple[int, str]] = []
@@ -1052,7 +1077,7 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
                 destination_type = int(lowered.get("type"))
             except (TypeError, ValueError):
                 continue
-            if not talks_with_agent or destination_type not in {2, 3}:
+            if not talks_with_agent or destination_type != 2:
                 continue
             resource = str(
                 lowered.get("idresource") or lowered.get("resource") or ""

@@ -33,7 +33,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Háblame de Kimi?"
         ))
-        self.assertTrue(_payload_requests_agent_response(
+        self.assertFalse(_payload_requests_agent_response(
             {"Chat": {"questionType": 1}},
             "Que tareas tiene asignado el recurso Alejandro Veitia",
         ))
@@ -41,24 +41,51 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             {"Chat": {"questionType": 0}}, "Kimi K3 fue presentado en 2026"
         ))
 
-    def test_type_three_talk_with_agent_is_authorized(self):
+    def test_type_two_question_type_one_with_question_mark_is_authorized(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "type-two-question-mark",
+            "message": "Que tareas tiene asignadas?",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 1,
+                "destiny": [{
+                    "idResource": str(agent_resource),
+                    "type": 2,
+                    "talkWithAgent": True,
+                }],
+            }},
+        }
+        self.assertNotEqual(
+            "contenido_solo_aprendizaje",
+            _auto_reply_rejection_reason(candidate),
+        )
+        self.assertEqual(
+            [str(agent_resource)],
+            _selected_agent_resource_ids(candidate),
+        )
+
+    def test_destination_type_three_is_learning_only(self):
         agent_resource = uuid4()
         candidate = {
             "fingerprint": "type-three-question",
             "message": "Háblame de Kimi K3?",
             "channel_id": str(uuid4()),
-            "payload": {"Chat": {"destiny": [{
-                "idResource": str(agent_resource),
-                "type": 3,
-                "talkWithAgent": True,
-            }]}},
+            "payload": {"Chat": {
+                "questionType": 2,
+                "destiny": [{
+                    "idResource": str(agent_resource),
+                    "type": 3,
+                    "talkWithAgent": True,
+                }],
+            }},
         }
-        self.assertNotEqual(
-            "talk_with_agent_no_autorizado",
+        self.assertEqual(
+            "contenido_solo_aprendizaje",
             _auto_reply_rejection_reason(candidate),
         )
         self.assertEqual(
-            [str(agent_resource)],
+            [],
             _selected_agent_resource_ids(candidate),
         )
 
@@ -68,10 +95,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "message": "Kimi K3 fue presentado en 2026",
             "channel_id": str(uuid4()),
             "payload": {"Chat": {
-                "questionType": 0,
+                "questionType": 1,
                 "destiny": [{
                     "idResource": str(uuid4()),
-                    "type": 3,
+                    "type": 2,
                     "talkWithAgent": True,
                 }],
             }},
@@ -79,6 +106,30 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             "contenido_solo_aprendizaje",
             _auto_reply_rejection_reason(candidate),
+        )
+
+    def test_type_two_with_question_type_two_is_authorized(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "type-two-question",
+            "message": "Que tareas tiene asignadas",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 2,
+                "destiny": [{
+                    "idResource": str(agent_resource),
+                    "type": 2,
+                    "talkWithAgent": True,
+                }],
+            }},
+        }
+        self.assertNotEqual(
+            "talk_with_agent_no_autorizado",
+            _auto_reply_rejection_reason(candidate),
+        )
+        self.assertEqual(
+            [str(agent_resource)],
+            _selected_agent_resource_ids(candidate),
         )
 
     def test_final_send_barrier_rejects_cached_candidate_without_flag(self):
