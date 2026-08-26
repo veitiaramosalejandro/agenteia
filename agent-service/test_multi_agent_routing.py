@@ -33,6 +33,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Háblame de Kimi?"
         ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 1}},
+            "Que tareas tiene asignado el recurso Alejandro Veitia",
+        ))
         self.assertFalse(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Kimi K3 fue presentado en 2026"
         ))

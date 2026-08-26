@@ -1008,15 +1008,17 @@ def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
 
 
 def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> bool:
-    """Indica si SolidSET clasificó el mensaje como pregunta (2) o petición (3)."""
-    if "?" in str(raw_text or ""):
+    """Detecta una pregunta/petición explícita o redactada sin signo final."""
+    text = str(raw_text or "")
+    if "?" in text:
         return True
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     question_type = _get_payload_value(chat, "questionType", "QuestionType")
     try:
-        return int(question_type) in {2, 3}
+        explicitly_classified = int(question_type) in {2, 3}
     except (TypeError, ValueError):
-        return False
+        explicitly_classified = False
+    return explicitly_classified or _looks_like_question_or_request(text)
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
