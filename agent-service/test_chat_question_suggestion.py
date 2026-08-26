@@ -9,10 +9,12 @@ from app.main import (
     _suggestion_count,
     _safe_chat_question_fallback,
     _suggestion_title,
+    _suggestion_tool_allowlist,
     _local_temporal_response,
     _parse_chat_question_suggestions,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
+from app.agent.core import MachiningAgent
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
@@ -243,6 +245,28 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         })
 
         self.assertEqual("work_sql_rag", result["route"])
+
+    def test_task_suggestion_is_classified_for_live_sql_grounding(self):
+        machining_agent = MachiningAgent.__new__(MachiningAgent)
+        quoted = "Que tareas tiene asignado el recurso Alejandro Veitia"
+        self.assertTrue(machining_agent._is_business_knowledge_query(quoted))
+        self.assertTrue(machining_agent._requires_live_business_data(quoted))
+        self.assertEqual(
+            ["SysResources", "SysLogin", "SysResource2Agent", "SysTask"],
+            machining_agent._business_schema_table_hints(quoted),
+        )
+        self.assertEqual(
+            {"query_sql_server", "get_db_schema"},
+            _suggestion_tool_allowlist(
+                quoted, ambient_mode=False, advice_refine=False
+            ),
+        )
+        self.assertEqual(
+            set(),
+            _suggestion_tool_allowlist(
+                quoted, ambient_mode=True, advice_refine=False
+            ),
+        )
 
     def test_portugal_date_uses_configured_region(self):
         response = _local_temporal_response(

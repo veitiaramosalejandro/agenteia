@@ -4260,6 +4260,17 @@ def _suggestion_title(language: str, *, initial: bool) -> str | None:
     }.get(language, "Resumo dos temas discutidos:")
 
 
+def _suggestion_tool_allowlist(
+    quoted_message: str, *, ambient_mode: bool, advice_refine: bool
+) -> set[str]:
+    """Give quoted business questions the framework-message read capabilities."""
+    if ambient_mode or advice_refine:
+        return set()
+    if agent._is_business_knowledge_query(quoted_message):
+        return {"query_sql_server", "get_db_schema"}
+    return set()
+
+
 def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
     """Normalizes model output into distinct, user-selectable suggestions."""
     text = str(raw_response or "").strip()
@@ -4590,6 +4601,17 @@ async def suggest_chat_question_response(
                 or "Europe/Lisbon"
             ),
         }
+        suggestion_tool_allowlist = _suggestion_tool_allowlist(
+            context["quoted_message"],
+            ambient_mode=ambient_mode,
+            advice_refine=advice_refine,
+        )
+        if suggestion_tool_allowlist:
+            # A suggestion about live business data needs the same read-only
+            # SQL/schema capabilities as framework-message. The endpoint still
+            # only returns drafts and never sends or mutates anything.
+            suggestion_tool_allowlist = {"query_sql_server", "get_db_schema"}
+            metadata["ground_with_live_business_data"] = True
         _update_response_status(
             request_id,
             "thinking",
@@ -4608,7 +4630,7 @@ async def suggest_chat_question_response(
             message_kind=str(message.Kind or "ChatMessage"),
             message_category="chat_question_response_suggestion",
             message_metadata=metadata,
-            tool_allowlist=set(),
+            tool_allowlist=suggestion_tool_allowlist,
             auto_reply_mode=True,
         )
         suggestions = _parse_chat_question_suggestions(
