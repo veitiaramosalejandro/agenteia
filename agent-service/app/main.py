@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from langchain_community.chat_message_histories import RedisChatMessageHistory
+from app.knowledge_provenance import USER_ASSERTION_SOURCE
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.config import settings
 
@@ -49,6 +50,7 @@ from app.connectors.db_client import (
     get_active_agents_for_workroom,
     get_active_agent_identity_for_resource,
     get_agent_knowledge,
+    quarantine_legacy_generated_knowledge,
     get_llm_provider_configuration,
     get_agent_model_configuration,
     get_agent_model_configurations,
@@ -1308,14 +1310,6 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     if configured_resource_name.lower().endswith("[ia]")
                     else f"{configured_resource_name} [IA]"
                 )
-            promoted = _promote_recent_suggestion_facts(
-                agent_resource_id, channel_id
-            )
-            if promoted:
-                print(
-                    "🧠 Memoria de sugerencias promovida antes de framework-message "
-                    f"resource={agent_resource_id} workroom={channel_id} facts={promoted}"
-                )
             try:
                 private_knowledge = get_agent_knowledge(agent_resource_id, channel_id)
             except (ValueError, psycopg.Error) as exc:
@@ -2356,6 +2350,14 @@ async def startup_db_learning() -> None:
             await asyncio.to_thread(ensure_agent_model_schema)
             await asyncio.to_thread(ensure_agent_response_audit_schema)
             await asyncio.to_thread(ensure_historical_schema)
+            quarantined = await asyncio.to_thread(
+                quarantine_legacy_generated_knowledge
+            )
+            if quarantined:
+                print(
+                    "🧹 Conocimiento legado generado por IA puesto en cuarentena "
+                    f"rows={quarantined}"
+                )
         except psycopg.Error as exc:
             print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
         app.state.startup_connectivity = _run_startup_connectivity_checks()
@@ -4395,7 +4397,7 @@ def _persist_suggestion_fact(
         "IDWorkRoom": workroom_id,
         "Title": "Hecho enseñado desde el panel de sugerencias",
         "KnowledgeText": fact,
-        "Source": "chat-question:user-assertion",
+        "Source": USER_ASSERTION_SOURCE,
         "active": True,
     })
     def _index() -> None:
@@ -4412,40 +4414,6 @@ def _persist_suggestion_fact(
     if indexed_scheduled:
         threading.Thread(target=_index, daemon=True).start()
     return {"saved": saved, "indexed_scheduled": indexed_scheduled}
-
-
-def _promote_recent_suggestion_facts(resource_id: str, workroom_id: str) -> int:
-    """Backfills facts from pre-bridge Redis advice turns into durable knowledge."""
-    session_id = (
-        f"solidset:suggestion:agent:{resource_id}:"
-        f"workroom:{workroom_id}:advice"
-    )
-    try:
-        history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
-        human_turns = [
-            str(message.content or "").strip()
-            for message in history.messages[-20:]
-            if isinstance(message, HumanMessage)
-        ]
-    except Exception as exc:
-        print(f"⚠️ No se pudo revisar memoria previa de sugerencias: {exc}")
-        return 0
-    promoted = 0
-    for turn in human_turns:
-        fact = _extract_learnable_suggestion_fact(turn)
-        if not fact:
-            continue
-        try:
-            result = _persist_suggestion_fact(
-                resource_id=resource_id,
-                workroom_id=workroom_id,
-                fact=fact,
-            )
-            if not result["saved"].get("WasExisting"):
-                promoted += 1
-        except (ValueError, psycopg.Error, RuntimeError) as exc:
-            print(f"⚠️ No se pudo promover memoria previa de sugerencias: {exc}")
-    return promoted
 
 
 def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
@@ -4725,7 +4693,10 @@ async def suggest_chat_question_response(
             agent_name=agent_name,
         )
         learned_fact = ""
-        if advice_request or advice_refine:
+        # Only a new request is authored by the user. In a refinement the
+        # quoted text can be an AI draft selected by the UI, so persisting it
+        # would teach the model its own output as if it were a verified fact.
+        if advice_request:
             learned_fact = _extract_learnable_suggestion_fact(effective_request_text)
         if learned_fact:
             try:

@@ -927,6 +927,8 @@ def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
 
 def get_agent_knowledge(resource_id: UUID | str, workroom_id: UUID | str) -> str:
     """Obtiene conocimiento privado del agente y el específico del canal actual."""
+    from app.knowledge_provenance import usable_agent_knowledge
+
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -945,7 +947,46 @@ def get_agent_knowledge(resource_id: UUID | str, workroom_id: UUID | str) -> str
     return "\n\n".join(
         f"[{row.get('Title') or row.get('Source') or 'Conocimiento'}]\n{row['KnowledgeText']}"
         for row in rows
+        if usable_agent_knowledge(row.get("KnowledgeText"), row.get("Source"))
     )[:20000]
+
+
+def quarantine_legacy_generated_knowledge() -> int:
+    """Deactivates legacy AI drafts misclassified as user assertions.
+
+    Rows remain in PostgreSQL for audit/recovery. Only the old ambiguous source
+    is inspected; manual knowledge and versioned user assertions are untouched.
+    """
+    from app.knowledge_provenance import (
+        LEGACY_SUGGESTION_SOURCE,
+        looks_like_generated_suggestion,
+    )
+
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT "ID", "KnowledgeText"
+                FROM public."SysResourceIAKnowledge"
+                WHERE "Source"=%s AND active=true
+                ''',
+                (LEGACY_SUGGESTION_SOURCE,),
+            )
+            unsafe_ids = [
+                row["ID"] for row in cursor.fetchall()
+                if looks_like_generated_suggestion(row.get("KnowledgeText"))
+            ]
+            if not unsafe_ids:
+                return 0
+            cursor.execute(
+                '''
+                UPDATE public."SysResourceIAKnowledge"
+                SET active=false
+                WHERE "ID" = ANY(%s)
+                ''',
+                (unsafe_ids,),
+            )
+            return max(0, cursor.rowcount)
 
 
 def configure_agent_workroom(

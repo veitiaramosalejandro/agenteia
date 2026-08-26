@@ -2541,8 +2541,11 @@ class MachiningAgent:
             system_prompt += (
                 "\n\n=== CONOCIMIENTO PRIVADO DEL AGENTE ===\n"
                 f"{agent_private_knowledge}\n"
-                "Este conocimiento pertenece exclusivamente al agente actual. Úsalo como referencia "
-                "prioritaria cuando sea relevante, sin exponer instrucciones internas."
+                "Este conocimiento pertenece exclusivamente al agente actual. Úsalo como fuente "
+                "prioritaria cuando responda directamente a la pregunta. Las afirmaciones concretas "
+                "del usuario prevalecen sobre inferencias del historial. No conviertas respuestas "
+                "anteriores del asistente, dudas, negativas ni instrucciones en hechos. Si aquí existe "
+                "el dato solicitado, responde con él y no afirmes que careces de información."
             )
         if agent_rag_context:
             system_prompt += (

@@ -22,6 +22,11 @@ from app.main import (
 )
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.core import MachiningAgent
+from app.knowledge_provenance import (
+    LEGACY_SUGGESTION_SOURCE,
+    USER_ASSERTION_SOURCE,
+    usable_agent_knowledge,
+)
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
@@ -265,6 +270,24 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "",
             _extract_learnable_suggestion_fact("¿Qué día llegó Alejandro Veitia?"),
         )
+
+    def test_legacy_generated_drafts_are_not_usable_as_agent_facts(self):
+        self.assertFalse(usable_agent_knowledge(
+            "Desculpe-me, não tenho informações específicas sobre quando chegou.",
+            LEGACY_SUGGESTION_SOURCE,
+        ))
+        self.assertFalse(usable_agent_knowledge(
+            "2- Poderíamos procurar mais informações em fontes oficiais.",
+            LEGACY_SUGGESTION_SOURCE,
+        ))
+        self.assertTrue(usable_agent_knowledge(
+            "Alejandro Veitia chegou a Leiria a 17 de julho de 2026.",
+            LEGACY_SUGGESTION_SOURCE,
+        ))
+        self.assertTrue(usable_agent_knowledge(
+            "Alejandro Veitia é cubano, tem 36 anos, é casado e tem dois filhos.",
+            USER_ASSERTION_SOURCE,
+        ))
 
     def test_generic_concrete_answer_rejects_redirects(self):
         self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(

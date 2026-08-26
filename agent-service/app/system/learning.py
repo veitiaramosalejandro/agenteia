@@ -1211,11 +1211,17 @@ class SistemaAprendizaje:
             query_filter={"agent_resource_id": str(agent_resource_id)},
             limit=max(limit * 4, limit),
         )
+        from app.knowledge_provenance import usable_agent_knowledge
+
         useful: list[str] = []
         for hit in results:
             if float(hit.get("score") or 0.0) < max(0.0, min(float(min_score), 1.0)):
                 continue
             payload = hit.get("payload") or {}
+            if not usable_agent_knowledge(
+                payload.get("page_content"), payload.get("source")
+            ):
+                continue
             payload_channel = str(payload.get("canal_id") or "").strip()
             if canal_id and payload_channel and payload_channel != str(canal_id):
                 continue
