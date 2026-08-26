@@ -4268,9 +4268,11 @@ def _suggestion_tool_allowlist(
     """Mirror framework-message read routing while preserving suggestion output."""
     if ambient_mode or advice_refine:
         return set()
+    if agent._is_business_knowledge_query(quoted_message):
+        return {"query_sql_server", "get_db_schema"}
     if agent._is_external_information_query(quoted_message):
         return {"google_web_search"}
-    return {"query_sql_server", "get_db_schema"}
+    return set()
 
 
 def _verified_suggestion_business_context(
@@ -4304,13 +4306,18 @@ def _is_business_recommendation_request(text: str) -> bool:
 
 def _is_concrete_suggestion_answer_request(text: str) -> bool:
     """True when the advice UI should return one verified answer, not options."""
-    return bool(
-        not _is_business_recommendation_request(text)
-        and (
-            agent._is_external_information_query(text)
-            or agent._is_business_knowledge_query(text)
+    normalized = " ".join(str(text or "").strip().casefold().split())
+    factual_form = bool(
+        "?" in normalized
+        or "¿" in normalized
+        or re.match(
+            r"^(?:qu[eé]|cu[aá]l|cu[aá]nt[oa]s?|c[oó]mo|d[oó]nde|cu[aá]ndo|"
+            r"qual|quais|quanto|quantos|como|onde|quando|what|which|how|where|when)\b",
+            normalized,
+            flags=re.IGNORECASE,
         )
     )
+    return bool(not _is_business_recommendation_request(text) and factual_form)
 
 
 def _suggestion_request_text(quoted_message: str) -> str:
@@ -4340,6 +4347,12 @@ def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[
             values = decoded
         elif isinstance(decoded, dict):
             values = decoded.get("suggestions") or decoded.get("sugestoes") or []
+            if not values:
+                single = (
+                    decoded.get("string") or decoded.get("text")
+                    or decoded.get("response") or decoded.get("suggestion")
+                )
+                values = [single] if single else []
     except json.JSONDecodeError:
         values = re.split(r"\n\s*(?:---SUGGESTION---|\d+[.)]\s+)", text)
 
@@ -4795,10 +4808,18 @@ async def suggest_chat_question_response(
                 )
             ]
         if not suggestions:
-            print("⚠️ O modelo não respeitou o contrato após reparação; usando sugestões seguras.")
-            suggestions = _safe_chat_question_fallback(
-                metadata["response_language"], suggestion_count
-            )
+            if concrete_answer_mode:
+                print("⚠️ Não foi possível verificar uma resposta concreta para a sugestão.")
+                suggestions = [{
+                    "pt": "Não consegui verificar o dado solicitado neste momento; prefiro não indicar um valor sem confirmação.",
+                    "es": "No pude verificar el dato solicitado en este momento; prefiero no indicar un valor sin confirmación.",
+                    "en": "I could not verify the requested fact at this time, so I will not provide an unconfirmed value.",
+                }.get(metadata["response_language"], "Não consegui verificar o dado solicitado neste momento.")]
+            else:
+                print("⚠️ O modelo não respeitou o contrato após reparação; usando sugestões seguras.")
+                suggestions = _safe_chat_question_fallback(
+                    metadata["response_language"], suggestion_count
+                )
         language = metadata["response_language"]
         title = _suggestion_title(language, initial=ambient_mode)
         result = {

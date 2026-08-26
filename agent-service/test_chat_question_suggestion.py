@@ -234,6 +234,29 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertFalse(_is_concrete_suggestion_answer_request(
             "¿Qué tarea debería ponerle a Alejandro Veitia?"
         ))
+        self.assertTrue(_is_concrete_suggestion_answer_request(
+            "¿Cuál es la capital de Francia?"
+        ))
+
+    def test_parser_accepts_single_string_object(self):
+        self.assertEqual(
+            ["A temperatura atual é 22 °C."],
+            _parse_chat_question_suggestions(
+                '{"string":"A temperatura atual é 22 °C."}', limit=1
+            ),
+        )
+
+    def test_generic_concrete_answer_rejects_redirects(self):
+        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
+            "Puede consultar un sitio especializado para obtener el dato."
+        ))
+        self.assertFalse(MachiningAgent._is_deflecting_concrete_answer(
+            "El valor verificado es 42, actualizado a las 12:00."
+        ))
+        self.assertEqual(
+            "El valor es 42.",
+            MachiningAgent._extract_concrete_answer('{"answer":"El valor es 42."}'),
+        )
 
     def test_detects_and_cleans_incomplete_markdown_response(self):
         incomplete = "Há previsão para os próximos dias. Para consultar o detalhe no site ["
@@ -367,7 +390,7 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            {"query_sql_server", "get_db_schema"},
+            set(),
             _suggestion_tool_allowlist(
                 "Explica el procedimiento interno de mantenimiento",
                 ambient_mode=False,

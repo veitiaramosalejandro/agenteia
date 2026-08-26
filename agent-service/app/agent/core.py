@@ -1107,7 +1107,15 @@ class MachiningAgent:
             text,
             flags=re.IGNORECASE,
         ))
-        return looks_like_url or any(term in text for term in terms)
+        freshness_request = bool(
+            re.search(
+                r"\b(?:actual|actuales|atual|atuais|current|latest|últim[oa]s?|"
+                r"recent|reciente|hoje|hoy|today|agora|ahora|now)\b",
+                text,
+            )
+            and ("?" in text or "¿" in text)
+        )
+        return looks_like_url or any(term in text for term in terms) or freshness_request
 
     def _is_internal_domain_query(self, user_text: str) -> bool:
         """Reconoce el dominio de trabajo; lo informativo restante puede resolverse en web."""
@@ -1832,6 +1840,52 @@ class MachiningAgent:
             )
             text = text[: sentence_start + 1 if sentence_start >= 0 else dangling]
         return text.strip()
+
+    @staticmethod
+    def _extract_concrete_answer(response: str) -> str:
+        """Normalizes common model envelopes without depending on one JSON schema."""
+        text = str(response or "").strip()
+        try:
+            decoded = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return text
+        if isinstance(decoded, list) and decoded:
+            value = decoded[0]
+        elif isinstance(decoded, dict):
+            value = next(
+                (decoded.get(key) for key in (
+                    "string", "text", "response", "answer", "suggestion"
+                ) if decoded.get(key)),
+                "",
+            )
+        else:
+            value = decoded
+        if isinstance(value, dict):
+            value = next(
+                (value.get(key) for key in ("text", "response", "answer") if value.get(key)),
+                "",
+            )
+        return str(value or "").strip()
+
+    @staticmethod
+    def _is_deflecting_concrete_answer(response: str) -> bool:
+        """Rejects answers that redirect the user instead of using retrieved evidence."""
+        text = " ".join(str(response or "").casefold().split())
+        redirect_patterns = (
+            r"\b(?:pode|puede|puedes|can)\s+(?:consultar|visitar|acceder|access|visit)\b",
+            r"\b(?:consulte|consulta|acesse|accede|visit)\s+(?:o |el |the )?(?:site|sitio|website|página|pagina)\b",
+            r"\b(?:para obter|para obtener|to obtain|get)\b.{0,80}\b(?:site|sitio|website|página|pagina)\b",
+            r"\b(?:há informações|hay información|there is information)\b.{0,80}\b(?:site|sitio|website|página|pagina)\b",
+        )
+        return not text or any(re.search(pattern, text) for pattern in redirect_patterns)
+
+    @staticmethod
+    def _unverified_concrete_answer(language: str) -> str:
+        return {
+            "pt": "Não consegui verificar o dado solicitado com a evidência disponível neste momento; prefiro não indicar um valor sem confirmação.",
+            "es": "No pude verificar el dato solicitado con la evidencia disponible en este momento; prefiero no indicar un valor sin confirmación.",
+            "en": "I could not verify the requested fact with the evidence currently available, so I will not provide an unconfirmed value.",
+        }.get(language, "No pude verificar el dato solicitado con la evidencia disponible.")
 
     def _synthesize_tool_response(self, messages: list, user_text: str) -> Optional[str]:
         """Convierte resultados técnicos de tools en una respuesta segura de negocio."""
@@ -2907,6 +2961,27 @@ class MachiningAgent:
                     response_text = str(repaired_text or "").strip()
                     if self._has_incomplete_response_markup(response_text):
                         response_text = self._discard_incomplete_response_tail(response_text)
+                if message_metadata.get("concrete_answer_mode"):
+                    concrete_answer = self._extract_concrete_answer(response_text)
+                    if self._is_deflecting_concrete_answer(concrete_answer):
+                        print("⚠️ Resposta concreta evasiva; refazendo com a evidência recuperada")
+                        retry_messages = list(messages)
+                        retry_messages.append(SystemMessage(content=(
+                            "La respuesta anterior desvió al usuario a otra fuente. Contesta ahora "
+                            "directamente con el dato solicitado usando exclusivamente la evidencia "
+                            "ya incluida en esta conversación. No recomiendes sitios ni expliques dónde "
+                            "buscar. Si la evidencia no contiene el dato, indica claramente que no puede "
+                            "verificarse. Devuelve solamente la respuesta, sin JSON ni Markdown."
+                        )))
+                        retried = request_llm.invoke(retry_messages)
+                        concrete_answer = self._extract_concrete_answer(
+                            retried.content if hasattr(retried, "content") else str(retried)
+                        )
+                    if self._is_deflecting_concrete_answer(concrete_answer):
+                        concrete_answer = self._unverified_concrete_answer(
+                            str(message_metadata.get("response_language") or "es")
+                        )
+                    response_text = json.dumps([concrete_answer], ensure_ascii=False)
                 break
         
         # --- 8. MANEJO DE CASOS LÍMITE ---
