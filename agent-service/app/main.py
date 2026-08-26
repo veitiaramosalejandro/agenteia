@@ -4289,6 +4289,19 @@ def _verified_suggestion_business_context(
     return ""
 
 
+def _is_business_recommendation_request(text: str) -> bool:
+    """Distinguishes analysis/proposals from a literal operational listing."""
+    normalized = " ".join(str(text or "").strip().casefold().split())
+    return bool(re.search(
+        r"\b(?:qu[eé]\s+(?:tarea\s+)?(?:deber[ií]a|podr[ií]a)|"
+        r"propon(?:es|dr[ií]as?)|recomiend(?:as|a)|sugier(?:es|e)|"
+        r"devo|poderia|prop[oõ]es|recomend(?:as|a)|suger(?:es|e)|"
+        r"should|could|propose|recommend|suggest)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    ))
+
+
 def _suggestion_request_text(quoted_message: str) -> str:
     """Remove the UI wrapper so intent and language come from the real request."""
     text = str(quoted_message or "").strip()
@@ -4628,6 +4641,9 @@ async def suggest_chat_question_response(
                 f"RASCUNHO SELECIONADO:\n{context['quoted_message']}"
             )
         verified_business_context = ""
+        business_recommendation = _is_business_recommendation_request(
+            effective_request_text
+        )
         if advice_request or (
             not ambient_mode
             and not advice_refine
@@ -4703,7 +4719,7 @@ async def suggest_chat_question_response(
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
-        if verified_business_context:
+        if verified_business_context and not business_recommendation:
             # Deterministic operational resolvers already produced the grounded
             # answer. Do not let a second model pass omit rows or alter facts.
             raw_suggestions = json.dumps(
@@ -4735,7 +4751,10 @@ async def suggest_chat_question_response(
                     item, metadata["response_language"]
                 )
             ]
-        if not verified_business_context and len(suggestions) != suggestion_count:
+        if (
+            (not verified_business_context or business_recommendation)
+            and len(suggestions) != suggestion_count
+        ):
             repaired_raw = await asyncio.to_thread(
                 _repair_chat_question_suggestions,
                 raw_suggestions,

@@ -1806,6 +1806,33 @@ class MachiningAgent:
         )
         return any(marker in text for marker in markers)
 
+    @staticmethod
+    def _has_incomplete_response_markup(response: str) -> bool:
+        """Detects model output cut in the middle of Markdown or a URL."""
+        text = str(response or "").strip()
+        if not text:
+            return True
+        return bool(
+            text.count("[") != text.count("]")
+            or text.count("(") != text.count(")")
+            or text.count("```") % 2
+            or re.search(r"(?:https?://|\[[^\]]*)$", text, flags=re.IGNORECASE)
+        )
+
+    @staticmethod
+    def _discard_incomplete_response_tail(response: str) -> str:
+        """Keeps only complete prose if a constrained repair also fails."""
+        text = str(response or "").strip()
+        dangling = text.rfind("[") if text.count("[") > text.count("]") else -1
+        if dangling >= 0:
+            sentence_start = max(
+                text.rfind(".", 0, dangling),
+                text.rfind("!", 0, dangling),
+                text.rfind("?", 0, dangling),
+            )
+            text = text[: sentence_start + 1 if sentence_start >= 0 else dangling]
+        return text.strip()
+
     def _synthesize_tool_response(self, messages: list, user_text: str) -> Optional[str]:
         """Convierte resultados técnicos de tools en una respuesta segura de negocio."""
         try:
@@ -2526,7 +2553,29 @@ class MachiningAgent:
                 suggestion_count = max(
                     1, min(6, int(message_metadata.get("response_suggestion_count") or 3))
                 )
-                if message_metadata.get("advice_mode"):
+                if message_metadata.get("advice_request"):
+                    suggestion_language = {
+                        "es": "español",
+                        "pt": "português europeu",
+                        "en": "inglés",
+                    }.get(
+                        str(message_metadata.get("response_language") or "pt"),
+                        "português europeu",
+                    )
+                    system_prompt += (
+                        "\n\n=== MODO CONSULTA AL AGENTE PROPIO ===\n"
+                        f"Responde a la petición del usuario con exactamente {suggestion_count} "
+                        "propuestas concretas, útiles y diferentes. Son recomendaciones para el "
+                        "propio usuario, no mensajes destinados a otra persona. Analiza primero los "
+                        "datos operativos y el conocimiento disponibles. Si pide proponer una tarea, "
+                        "no listes simplemente las tareas existentes ni respondas con preguntas: "
+                        "propón tareas nuevas plausibles, explica brevemente por qué encajan y evita "
+                        "duplicar tareas existentes. Si falta algún dato, declara una suposición prudente "
+                        "dentro de la propuesta. Devuelve únicamente un array JSON de "
+                        f"{suggestion_count} strings, completamente en {suggestion_language}, sin "
+                        "Markdown, títulos, numeración ni mezcla de idiomas. No inventes hechos."
+                    )
+                elif message_metadata.get("advice_mode"):
                     if message_metadata.get("advice_refine"):
                         system_prompt += (
                             "\n\n=== MODO CONSELHOS À MINHA IA (REFINAR) ===\n"
@@ -2820,6 +2869,23 @@ class MachiningAgent:
             else:
                 # Respuesta final del modelo
                 response_text = response.content if hasattr(response, 'content') else str(response)
+                if self._has_incomplete_response_markup(response_text):
+                    print("⚠️ Respuesta incompleta detectada; solicitando reescritura antes del envío")
+                    messages.extend([
+                        response,
+                        HumanMessage(content=(
+                            "La respuesta anterior quedó incompleta. Reescríbela entera y autosuficiente, "
+                            "sin enlaces Markdown ni URLs incompletas. Usa solamente los datos ya "
+                            "disponibles, no inventes direcciones ni hechos y devuelve solo la respuesta final."
+                        )),
+                    ])
+                    repaired = request_llm.invoke(messages)
+                    repaired_text = (
+                        repaired.content if hasattr(repaired, "content") else str(repaired)
+                    )
+                    response_text = str(repaired_text or "").strip()
+                    if self._has_incomplete_response_markup(response_text):
+                        response_text = self._discard_incomplete_response_tail(response_text)
                 break
         
         # --- 8. MANEJO DE CASOS LÍMITE ---

@@ -16,6 +16,7 @@ from app.main import (
     _local_temporal_response,
     _parse_chat_question_suggestions,
     _suggestion_language_is_consistent,
+    _is_business_recommendation_request,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.core import MachiningAgent
@@ -210,6 +211,26 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
         self.assertEqual(2, len(result))
         self.assertTrue(all("canal" in item or "conversa" in item for item in result))
+
+    def test_distinguishes_task_proposal_from_task_listing(self):
+        self.assertTrue(_is_business_recommendation_request(
+            "¿Qué tarea debería ponerle al recurso Alejandro Veitia?"
+        ))
+        self.assertTrue(_is_business_recommendation_request(
+            "¿Qué me propones para ponerle como nueva tarea?"
+        ))
+        self.assertFalse(_is_business_recommendation_request(
+            "¿Qué tareas tiene asignadas Alejandro Veitia?"
+        ))
+
+    def test_detects_and_cleans_incomplete_markdown_response(self):
+        incomplete = "Há previsão para os próximos dias. Para consultar o detalhe no site ["
+
+        self.assertTrue(MachiningAgent._has_incomplete_response_markup(incomplete))
+        self.assertEqual(
+            "Há previsão para os próximos dias.",
+            MachiningAgent._discard_incomplete_response_tail(incomplete),
+        )
 
     def test_detects_mixed_language_suggestion(self):
         mixed = (
