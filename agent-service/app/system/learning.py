@@ -1193,6 +1193,39 @@ class SistemaAprendizaje:
                 useful.append(content[:1600])
         return "\n---\n".join(useful)
 
+    def consultar_conocimiento_agente(
+        self,
+        query: str,
+        *,
+        agent_resource_id: str,
+        canal_id: Optional[str] = None,
+        limit: int = 3,
+        min_score: float = 0.0,
+    ) -> str:
+        """Retrieves only durable knowledge owned by the selected agent."""
+        query_vector = self._embed_query_safe(query, context="consultar_conocimiento_agente")
+        if query_vector is None or not agent_resource_id:
+            return ""
+        results = self._search_aprendizaje(
+            query_vector,
+            query_filter={"agent_resource_id": str(agent_resource_id)},
+            limit=max(limit * 4, limit),
+        )
+        useful: list[str] = []
+        for hit in results:
+            if float(hit.get("score") or 0.0) < max(0.0, min(float(min_score), 1.0)):
+                continue
+            payload = hit.get("payload") or {}
+            payload_channel = str(payload.get("canal_id") or "").strip()
+            if canal_id and payload_channel and payload_channel != str(canal_id):
+                continue
+            content = str(payload.get("page_content") or "").strip()
+            if content:
+                useful.append(content[:1200])
+            if len(useful) >= limit:
+                break
+        return "\n---\n".join(useful)
+
     # ============================================================
     # 4. APRENDER DE LAS ACTIVIDADES (RAG)
     # ============================================================

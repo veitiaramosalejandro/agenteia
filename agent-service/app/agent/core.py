@@ -2067,6 +2067,17 @@ class MachiningAgent:
             and message_metadata
             and message_metadata.get("advice_refine")
         )
+        agent_rag_context = ""
+        if agent_resource_id and training_enabled and learn_from_system:
+            try:
+                agent_rag_context = self.sistema_aprendizaje.consultar_conocimiento_agente(
+                    user_text,
+                    agent_resource_id=agent_resource_id,
+                    canal_id=canal_id,
+                    min_score=settings.BUSINESS_RAG_MIN_SCORE,
+                )
+            except Exception as exc:
+                print(f"⚠️ No se pudo consultar conocimiento semántico del agente: {exc}")
         if response_suggestion_mode:
             general_conversation_mode = False
         valid_user_guid = self._is_valid_guid(user_id)
@@ -2081,6 +2092,11 @@ class MachiningAgent:
             if tool_allowlist is None:
                 tool_allowlist = set()
         elif general_conversation_mode:
+            tool_allowlist = set()
+        elif agent_rag_context:
+            # A relevant durable fact owned by this agent takes precedence over
+            # sending an internal/personal question to public web search.
+            external_query_mode = False
             tool_allowlist = set()
         elif (
             self._is_external_information_query(user_text)
@@ -2527,6 +2543,13 @@ class MachiningAgent:
                 f"{agent_private_knowledge}\n"
                 "Este conocimiento pertenece exclusivamente al agente actual. Úsalo como referencia "
                 "prioritaria cuando sea relevante, sin exponer instrucciones internas."
+            )
+        if agent_rag_context:
+            system_prompt += (
+                "\n\n=== CONOCIMIENTO PERSISTENTE RELEVANTE RECUPERADO ===\n"
+                f"{agent_rag_context}\n"
+                "Este contenido está aislado para el agente y canal actuales. Úsalo para responder "
+                "la pregunta cuando sea pertinente; no lo sustituyas por búsquedas públicas."
             )
         if agent_reinforcement:
             system_prompt += (

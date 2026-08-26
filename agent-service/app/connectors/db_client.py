@@ -884,6 +884,28 @@ def ensure_payload_agent_workroom_assignments(
 def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
+            source = str(knowledge.get("Source", "manual") or "manual")
+            # Automatic chat learning is idempotent: retries of the same
+            # notification must not create dozens of identical facts.
+            if source.startswith("chat-question"):
+                cursor.execute(
+                    '''
+                    SELECT * FROM public."SysResourceIAKnowledge"
+                    WHERE "IDResource"=%s
+                      AND "IDWorkRoom" IS NOT DISTINCT FROM %s
+                      AND "KnowledgeText"=%s
+                      AND "Source"=%s
+                      AND active=true
+                    ORDER BY "Stamp" DESC LIMIT 1
+                    ''',
+                    (
+                        knowledge["IDResource"], knowledge.get("IDWorkRoom"),
+                        knowledge["KnowledgeText"], source,
+                    ),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    return {**dict(existing), "WasExisting": True}
             cursor.execute(
                 '''
                 INSERT INTO public."SysResourceIAKnowledge" (
@@ -894,13 +916,13 @@ def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
                 (
                     knowledge["IDResource"], knowledge.get("IDWorkRoom"),
                     knowledge.get("Title"), knowledge["KnowledgeText"],
-                    knowledge.get("Source", "manual"), knowledge.get("active", True),
+                    source, knowledge.get("active", True),
                 ),
             )
             saved = cursor.fetchone()
     if saved is None:
         raise RuntimeError("PostgreSQL no devolvió el conocimiento guardado.")
-    return dict(saved)
+    return {**dict(saved), "WasExisting": False}
 
 
 def get_agent_knowledge(resource_id: UUID | str, workroom_id: UUID | str) -> str:

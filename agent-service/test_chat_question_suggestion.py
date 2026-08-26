@@ -18,6 +18,7 @@ from app.main import (
     _suggestion_language_is_consistent,
     _is_business_recommendation_request,
     _is_concrete_suggestion_answer_request,
+    _extract_learnable_suggestion_fact,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.core import MachiningAgent
@@ -244,6 +245,25 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             _parse_chat_question_suggestions(
                 '{"string":"A temperatura atual é 22 °C."}', limit=1
             ),
+        )
+
+    def test_extracts_verifiable_fact_but_not_drafting_instruction(self):
+        fact = "Alejandro Veitia llegó a Leiria el día 17 de julio de 2026"
+
+        self.assertEqual(fact, _extract_learnable_suggestion_fact(fact))
+        self.assertEqual(
+            "Alejandro Veitia trabaja habitualmente desde Leiria",
+            _extract_learnable_suggestion_fact(
+                "Alejandro Veitia trabaja habitualmente desde Leiria"
+            ),
+        )
+        self.assertEqual(
+            "",
+            _extract_learnable_suggestion_fact("Haz la primera sugerencia más corta"),
+        )
+        self.assertEqual(
+            "",
+            _extract_learnable_suggestion_fact("¿Qué día llegó Alejandro Veitia?"),
         )
 
     def test_generic_concrete_answer_rejects_redirects(self):

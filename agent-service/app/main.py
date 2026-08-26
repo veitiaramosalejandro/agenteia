@@ -1308,6 +1308,14 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     if configured_resource_name.lower().endswith("[ia]")
                     else f"{configured_resource_name} [IA]"
                 )
+            promoted = _promote_recent_suggestion_facts(
+                agent_resource_id, channel_id
+            )
+            if promoted:
+                print(
+                    "🧠 Memoria de sugerencias promovida antes de framework-message "
+                    f"resource={agent_resource_id} workroom={channel_id} facts={promoted}"
+                )
             try:
                 private_knowledge = get_agent_knowledge(agent_resource_id, channel_id)
             except (ValueError, psycopg.Error) as exc:
@@ -4330,6 +4338,116 @@ def _suggestion_request_text(quoted_message: str) -> str:
     ).strip()
 
 
+def _extract_learnable_suggestion_fact(text: str) -> str:
+    """Selects declarative, verifiable user facts; excludes drafting commands."""
+    candidate = _suggestion_request_text(text)
+    normalized = " ".join(candidate.casefold().split())
+    if not 12 <= len(candidate) <= 2000 or "?" in candidate or "¿" in candidate:
+        return ""
+    drafting_command = re.match(
+        r"^(?:haz|haga|refina|refine|reescribe|reescreve|reformula|cambia|cambie|"
+        r"altera|muda|añade|adiciona|agrega|quita|remove|dame|dê-me|prop[oó]n|"
+        r"sugiere|sugere|quiero|quero|prefiero|prefiro|la primera|la segunda|"
+        r"a primeira|a segunda|first|second|make|rewrite|change|add|remove)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if drafting_command:
+        return ""
+    conversational_feedback = re.match(
+        r"^(?:s[ií]|sim|yes|no|n[aã]o|ok|vale|gracias|obrigad[oa]|thanks|"
+        r"me gusta|gosto|est[aá] bien|est[aá] correcto|esa opci[oó]n|esta opci[oó]n)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if conversational_feedback:
+        return ""
+    explicit_fact = bool(re.match(
+        r"^(?:dato|hecho|informaci[oó]n correcta|correcci[oó]n|facto|"
+        r"informa[cç][aã]o correta|corre[cç][aã]o|fact|correct information|correction)\b",
+        normalized,
+    ))
+    verifiable_anchor = bool(
+        re.search(r"\b\d{1,4}(?:[./:-]\d{1,4})+(?:[t ]\d{1,2}:\d{2})?\b", normalized)
+        or re.search(r"\b\d+(?:[.,]\d+)?\s*(?:€|\$|%|kg|km|h|horas?|dias?|days?)\b", normalized)
+        or re.search(r"\b\d{1,2}\s+de\s+[a-zà-ÿ]+\s+(?:de|del(?:\s+año)?|do(?:\s+ano)?)\s+\d{4}\b", normalized)
+        or re.search(r"\b[a-zà-ÿ]+\s+\d{1,2},?\s+\d{4}\b", normalized)
+        or re.search(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", normalized)
+    )
+    declarative_relation = bool(re.search(
+        r"\b(?:es|son|era|fue|ser[aá]|est[aá]|tiene|lleg[oó]|comenz[oó]|"
+        r"é|s[aã]o|era|foi|ser[aá]|est[aá]|tem|chegou|come[cç]ou|"
+        r"is|are|was|will be|has|arrived|started)\b",
+        normalized,
+    ))
+    # After excluding questions, commands and feedback, a sufficiently formed
+    # declarative sentence is a user assertion. Provenance keeps it distinct
+    # from authoritative SQL data and allows later correction/governance.
+    word_count = len(re.findall(r"\b[\wÀ-ÿ'-]+\b", candidate))
+    return candidate if explicit_fact or verifiable_anchor or declarative_relation or word_count >= 5 else ""
+
+
+def _persist_suggestion_fact(
+    *, resource_id: str, workroom_id: str, fact: str
+) -> dict[str, Any]:
+    saved = save_agent_knowledge({
+        "IDResource": resource_id,
+        "IDWorkRoom": workroom_id,
+        "Title": "Hecho enseñado desde el panel de sugerencias",
+        "KnowledgeText": fact,
+        "Source": "chat-question:user-assertion",
+        "active": True,
+    })
+    def _index() -> None:
+        try:
+            indexed = agent.sistema_aprendizaje.aprender_conocimiento_agente(saved)
+            print(
+                "🧠 Hecho del panel indexado "
+                f"knowledge_id={saved.get('ID')} indexed={indexed}"
+            )
+        except Exception as exc:
+            print(f"⚠️ No se pudo indexar el hecho del panel: {exc}")
+
+    indexed_scheduled = not bool(saved.get("WasExisting"))
+    if indexed_scheduled:
+        threading.Thread(target=_index, daemon=True).start()
+    return {"saved": saved, "indexed_scheduled": indexed_scheduled}
+
+
+def _promote_recent_suggestion_facts(resource_id: str, workroom_id: str) -> int:
+    """Backfills facts from pre-bridge Redis advice turns into durable knowledge."""
+    session_id = (
+        f"solidset:suggestion:agent:{resource_id}:"
+        f"workroom:{workroom_id}:advice"
+    )
+    try:
+        history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
+        human_turns = [
+            str(message.content or "").strip()
+            for message in history.messages[-20:]
+            if isinstance(message, HumanMessage)
+        ]
+    except Exception as exc:
+        print(f"⚠️ No se pudo revisar memoria previa de sugerencias: {exc}")
+        return 0
+    promoted = 0
+    for turn in human_turns:
+        fact = _extract_learnable_suggestion_fact(turn)
+        if not fact:
+            continue
+        try:
+            result = _persist_suggestion_fact(
+                resource_id=resource_id,
+                workroom_id=workroom_id,
+                fact=fact,
+            )
+            if not result["saved"].get("WasExisting"):
+                promoted += 1
+        except (ValueError, psycopg.Error, RuntimeError) as exc:
+            print(f"⚠️ No se pudo promover memoria previa de sugerencias: {exc}")
+    return promoted
+
+
 def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
     """Normalizes model output into distinct, user-selectable suggestions."""
     text = str(raw_response or "").strip()
@@ -4606,6 +4724,27 @@ async def suggest_chat_question_response(
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
+        learned_fact = ""
+        if advice_request or advice_refine:
+            learned_fact = _extract_learnable_suggestion_fact(effective_request_text)
+        if learned_fact:
+            try:
+                persisted = await asyncio.to_thread(
+                    _persist_suggestion_fact,
+                    resource_id=context["requester_resource"],
+                    workroom_id=context["workroom_id"],
+                    fact=learned_fact,
+                )
+                print(
+                    "🧠 Hecho aprendido desde chat-question "
+                    f"resource={context['requester_resource']} "
+                    f"workroom={context['workroom_id']} "
+                    f"knowledge_id={persisted['saved'].get('ID')}"
+                )
+            except (ValueError, psycopg.Error, RuntimeError) as exc:
+                # Suggestion generation remains available if durable learning
+                # is temporarily unavailable; the error is observable in logs.
+                print(f"⚠️ No se pudo persistir el hecho del panel: {exc}")
         private_knowledge = await asyncio.to_thread(
             get_agent_knowledge,
             context["requester_resource"],
