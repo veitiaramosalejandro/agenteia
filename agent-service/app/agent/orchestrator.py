@@ -7,6 +7,8 @@ from typing import Any, Optional, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agent.language import LanguageResolver
+
 
 class AgentGraphState(TypedDict, total=False):
     session_id: str
@@ -32,6 +34,10 @@ class SolidSETOrchestrator:
 
     def __init__(self, agent: Any):
         self.agent = agent
+        # Lightweight test agents and external adapters are not required to
+        # construct the resolver themselves.
+        if not getattr(self.agent, "language_resolver", None):
+            self.agent.language_resolver = LanguageResolver()
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -236,12 +242,32 @@ class SolidSETOrchestrator:
         message_metadata: Optional[dict[str, Any]] = None,
     ) -> str:
         """Garantiza ES/PT/EN también para respuestas deterministas construidas por código."""
-        forced_language = str((message_metadata or {}).get("response_language") or "").strip().lower()
-        expected = forced_language if forced_language in {"es", "pt", "en"} else self.agent._detect_user_language(user_text)
+        metadata = message_metadata or {}
+        forced_language = str(
+            metadata.get("response_language")
+            or metadata.get("resolved_language")
+            or ""
+        ).strip().lower()
+        expected = (
+            forced_language
+            if re.fullmatch(r"[a-z]{2,3}", forced_language)
+            else self.agent._detect_user_language(
+                user_text, str(metadata.get("locale") or "")
+            )
+        )
         detected = self.agent._detect_user_language(response)
         if expected == detected or len(response) < 8:
             return response
-        target = {"es": "español", "pt": "português", "en": "English"}[expected]
+        language_name = getattr(self.agent, "_language_name", None)
+        target = (
+            language_name(expected)
+            if callable(language_name)
+            else {
+                "es": "español",
+                "pt": "português europeu",
+                "en": "English",
+            }.get(expected, expected)
+        )
         try:
             selected_llm, _, _ = self.agent.get_llm_for_metadata(message_metadata)
             candidate = response
@@ -283,6 +309,24 @@ class SolidSETOrchestrator:
         tool_allowlist: Optional[set[str]] = None,
         auto_reply_mode: bool = False,
     ) -> str:
+        metadata = dict(message_metadata or {})
+        decision = self.agent.language_resolver.resolve(
+            user_text,
+            session_id=session_id,
+            locale=str(metadata.get("locale") or ""),
+            preferred_language=str(metadata.get("preferred_language") or ""),
+            default_language=str(metadata.get("instance_language") or ""),
+        )
+        metadata.update({
+            "resolved_language": decision.language,
+            "language_confidence": decision.confidence,
+            "language_source": decision.source,
+        })
+        print(
+            "🌐 Idioma resuelto "
+            f"language={decision.language} confidence={decision.confidence:.3f} "
+            f"source={decision.source} session={session_id}"
+        )
         result = self.graph.invoke({
             "session_id": session_id,
             "user_text": user_text,
@@ -292,7 +336,7 @@ class SolidSETOrchestrator:
             "meeting_code": meeting_code,
             "message_kind": message_kind,
             "message_category": message_category,
-            "message_metadata": message_metadata,
+            "message_metadata": metadata,
             "tool_allowlist": tool_allowlist,
             "auto_reply_mode": auto_reply_mode,
             "started_at": perf_counter(),

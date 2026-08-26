@@ -648,11 +648,12 @@ def _is_informational_learning_message(raw_text: str) -> bool:
 
 def _learning_acknowledgement(raw_text: str) -> str:
     language = agent._detect_user_language(raw_text)
-    return {
+    messages = {
         "pt": "Agradeço a informação. Vou tê-la em conta.",
         "en": "Thank you for the information. I will take it into account.",
         "es": "Gracias por la información. La tendré en cuenta.",
-    }[language]
+    }
+    return messages.get(language, messages["en"])
 
 
 def _quoted_reply_is_learning_only(candidate: dict[str, Any]) -> bool:
@@ -804,7 +805,7 @@ def _local_temporal_response(
 
     # The incoming message always decides the response language. Locale only
     # selects regional conventions within that language (for example pt-PT).
-    language = agent._detect_user_language(raw_text)
+    language = agent._detect_user_language(raw_text, locale)
     country_names = {
         "PT": {"pt": "Portugal", "es": "Portugal", "en": "Portugal"},
         "ES": {"pt": "Espanha", "es": "España", "en": "Spain"},
@@ -871,11 +872,12 @@ def _direct_courtesy_response(
         "boa noite", "good morning", "good afternoon", "good evening", "hello", "hi",
     }
     if text.rstrip("!?., ") in greeting_terms:
-        return {
+        greetings = {
             "pt": f"Olá{greeting_name}! É um prazer cumprimentá-lo. Como posso ajudar?",
             "en": f"Hello{greeting_name}! It is a pleasure to greet you. How can I help?",
             "es": f"¡Hola{greeting_name}! Es un placer saludarte. ¿En qué puedo ayudarte?",
-        }[language]
+        }
+        return greetings.get(language, greetings["en"])
     if _looks_like_question_or_request(text):
         return None
     if any(term in text for term in ("obrigado", "obrigada", "boa explicação", "boa explicacao", "muito bom")):
@@ -4514,31 +4516,28 @@ def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[
 
 
 def _suggestion_language_is_consistent(text: str, language: str) -> bool:
-    """Rejects obvious code-switching before a suggestion reaches the UI."""
-    normalized = re.sub(r"\s+", " ", str(text or "").strip().casefold())
-    if not normalized:
+    """Rejects statistically confident code-switching before reaching the UI."""
+    candidate = re.sub(r"\s+", " ", str(text or "").strip())
+    expected = agent.language_resolver.normalize_language(language)
+    if not candidate or not expected:
         return False
-    foreign_markers = {
-        "es": (
-            r"\bif you\b", r"\blet me know\b", r"\bdo you have\b",
-            r"\byou can\b", r"\byour\b", r"\bperhaps try\b",
-            r"\bsomething adventurous\b", r"\btailored recommendations\b",
-            r"\bse quiseres\b", r"\bpodemos confirmar\b",
-        ),
-        "pt": (
-            r"\bif you\b", r"\blet me know\b", r"\bdo you have\b",
-            r"\byou can\b", r"\byour\b", r"\bperhaps try\b",
-            r"\bsi quieres\b", r"\bpodemos confirmar cuál\b",
-        ),
-        "en": (
-            r"\bsi quieres\b", r"\bqué te gustaría\b", r"\bdependerá de\b",
-            r"\bse quiseres\b", r"\bgostarias de\b", r"\bdependerá das\b",
-        ),
-    }
-    return not any(
-        re.search(pattern, normalized, flags=re.IGNORECASE)
-        for pattern in foreign_markers.get(language, ())
+
+    # Inspect the whole answer and meaningful sentence-sized segments. This
+    # catches a foreign-language paragraph without maintaining vocabulary lists.
+    segments = [candidate]
+    segments.extend(
+        segment.strip()
+        for segment in re.split(r"(?:[.!?]+|\n+)", candidate)
+        if len(segment.split()) >= 4
     )
+    for segment in segments:
+        decision = agent.language_resolver.detect(segment)
+        if (
+            decision.confidence >= settings.LANGUAGE_MIN_CONFIDENCE
+            and decision.language != expected
+        ):
+            return False
+    return True
 
 
 def _repair_chat_question_suggestions(
@@ -4550,9 +4549,9 @@ def _repair_chat_question_suggestions(
     metadata: dict[str, Any],
 ) -> str:
     """Uses a small constrained pass when the main agent violates the JSON contract."""
-    target_language = {"pt": "português europeu", "es": "español", "en": "English"}.get(
-        language, "português europeu"
-    )
+    target_language = {
+        "pt": "português europeu", "es": "español", "en": "English"
+    }.get(language, agent._language_name(language))
     request_llm, _, provider = agent.get_llm_for_metadata({
         **metadata,
         "model_capability": "general",
@@ -4830,6 +4829,14 @@ async def suggest_chat_question_response(
                     f"{verified_business_context}\n\nRedige a sugestão com estes dados; "
                     "não devolvas apenas um título e não inventes informação."
                 )
+        suggestion_locale = str(
+            _get_payload_value(message.Info, "locale") or "pt-PT"
+        )
+        language_decision = agent.language_resolver.resolve(
+            effective_request_text or suggestion_source,
+            session_id=scoped_session,
+            locale=suggestion_locale,
+        )
         metadata = {
             "response_suggestion_mode": True,
             "advice_mode": advice_mode and not advice_request,
@@ -4847,8 +4854,11 @@ async def suggest_chat_question_response(
             ),
             "response_suggestion_count": suggestion_count,
             "response_language": (
-                "pt" if ambient_mode else agent._detect_user_language(effective_request_text)
+                "pt" if ambient_mode else language_decision.language
             ),
+            "resolved_language": "pt" if ambient_mode else language_decision.language,
+            "language_confidence": language_decision.confidence,
+            "language_source": language_decision.source,
             "chat_id": request_id,
             "quoted_chat_id": context["quoted_chat_id"],
             "quoted_message": context["quoted_message"],
@@ -4869,7 +4879,7 @@ async def suggest_chat_question_response(
             "recipient_count": 1,
             "importance": int(message.Importance or 0),
             "country_code": str(_get_payload_value(message.Info, "country_code") or "PT"),
-            "locale": str(_get_payload_value(message.Info, "locale") or "pt-PT"),
+            "locale": suggestion_locale,
             "time_zone": str(
                 _get_payload_value(message.Info, "time_zone", "timezone")
                 or "Europe/Lisbon"

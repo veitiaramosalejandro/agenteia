@@ -55,6 +55,13 @@ class Settings(BaseSettings):
 
     # Redis Cache / Memory
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")
+    LANGUAGE_MIN_CONFIDENCE: float = max(
+        0.0, min(float(os.getenv("LANGUAGE_MIN_CONFIDENCE", "0.75")), 1.0)
+    )
+    LANGUAGE_SESSION_TTL_SECONDS: int = max(
+        300, int(os.getenv("LANGUAGE_SESSION_TTL_SECONDS", "86400"))
+    )
+    LANGUAGE_DEFAULT: str = os.getenv("LANGUAGE_DEFAULT", "pt").strip().lower()
     AGENT_RESPONSE_STATUS_TTL_SECONDS: int = max(
         600, int(os.getenv("AGENT_RESPONSE_STATUS_TTL_SECONDS", "86400"))
     )

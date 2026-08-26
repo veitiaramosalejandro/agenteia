@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AI
 
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.identity import AgentIdentityService
+from app.agent.language import LanguageResolver
 from app.agent.tools import (
     fetch_external_api,
     google_web_search,
@@ -100,6 +101,7 @@ class MachiningAgent:
         # Sistema de aprendizaje contextual
         self.sistema_aprendizaje = SistemaAprendizaje()
         self.identity_service = AgentIdentityService()
+        self.language_resolver = LanguageResolver()
         
         # Configuración de memoria
         self.max_history_messages = 12  # Máximo de mensajes a mantener sin resumir
@@ -531,7 +533,7 @@ class MachiningAgent:
         if not person_name:
             return None
         language = self._detect_user_language(user_text)
-        language_name = {"es": "español", "pt": "português", "en": "English"}[language]
+        language_name = self._language_name(language)
         message_limit = self._channel_summary_limit(user_text)
         print(
             f"🗄️ Análisis directo de intervenciones; participante={person_name!r} "
@@ -698,9 +700,9 @@ class MachiningAgent:
         if not rows:
             return "No encontré conversaciones recientes accesibles en el canal actual."
         try:
-            language_name = {"es": "español", "pt": "português", "en": "English"}[
+            language_name = self._language_name(
                 self._detect_user_language(user_text)
-            ]
+            )
             # SQL devuelve los más recientes primero; se invierte para resumir en orden temporal.
             chronological_rows = list(reversed(rows))
             lines = []
@@ -1050,47 +1052,30 @@ class MachiningAgent:
         )
         return text.strip() or (user_text or "").strip()
 
-    def _detect_user_language(self, user_text: str) -> str:
-        """Detect ES/PT/EN from the current message; conversation locale is irrelevant."""
-        text = f" {self._normalize_context_query(user_text).lower()} "
-        scores = {"es": 0, "pt": 0, "en": 0}
-        markers = {
-            "pt": (
-                " bom dia ", " boa tarde ", " boa noite ", " tudo bem ", " você ",
-                " vocês ", " faça ", " forneça ", " intervenções ", " utilizador ",
-                " não ", " olá ", " obrigado ", " obrigada ", " informação ",
-                " informações ", " hoje ", " podes ", " gostaria ", " meu ", " minha ",
-                " diga ", " quais ", " quem ", " este ", " desta ", " neste ",
-                " fale-me ", " fale ",
-                " reunião ", " participantes ativos ", " é ", " são ", " tem ",
-                " foi ", " uma ", " os ", " do ", " dos ", " das ",
-            ),
-            "en": (
-                " good morning ", " good afternoon ", " good evening ", " the ",
-                " please ", " what ", " how ", " channel ", " messages ", " summary ",
-                " user ", " hello ", " thanks ", " show me ", " information ",
-                " today ", " could you ", " would you ", " my ", " tell me ",
-                " which ", " who ", " meeting participants ", " active participants ",
-            ),
-            "es": (
-                " buenos días ", " buenos dias ", " buenas tardes ", " buenas noches ",
-                " qué ", " cual ", " cuál ", " como ", " cómo ", " necesito ",
-                " resumen ", " canal ", " usuario ", " mensajes ", " hola ", " gracias ",
-                " información ", " hoy ", " puedes ", " gustaría ", " mi ", " dime ",
-                " quién ", " quien ", " cuáles ", " cuales ", " este ", " esta ",
-                " reunión ", " participantes activos ", " los ", " las ", " del ",
-            ),
-        }
-        for language, words in markers.items():
-            scores[language] = sum(1 for word in words if word in text)
-        if any(char in text for char in ("ã", "õ", "ç")):
-            scores["pt"] += 2
-        if "¿" in text or "¡" in text:
-            scores["es"] += 2
-        return max(scores, key=scores.get) if max(scores.values()) > 0 else "es"
+    def _detect_user_language(self, user_text: str, locale: str = "") -> str:
+        """Statistically detect language; locale is only an ambiguity fallback."""
+        resolver = getattr(self, "language_resolver", None)
+        if resolver is None:
+            resolver = LanguageResolver()
+            self.language_resolver = resolver
+        return resolver.resolve(
+            self._normalize_context_query(user_text),
+            locale=locale,
+            remember=False,
+        ).language
+
+    @staticmethod
+    def _language_name(language: str) -> str:
+        return {
+            "es": "español", "pt": "português", "en": "English",
+            "fr": "français", "de": "Deutsch", "it": "italiano",
+            "nl": "Nederlands", "ca": "català", "gl": "galego",
+        }.get(language, f"language code {language}")
 
     def _localized(self, user_text: str, *, es: str, pt: str, en: str) -> str:
-        return {"es": es, "pt": pt, "en": en}[self._detect_user_language(user_text)]
+        return {"es": es, "pt": pt, "en": en}.get(
+            self._detect_user_language(user_text), en
+        )
 
     def _is_external_information_query(self, user_text: str) -> bool:
         text = self._normalize_context_query(user_text).lower()
@@ -2622,6 +2607,9 @@ class MachiningAgent:
             country_code = str(message_metadata.get("country_code") or "").strip()
             locale = str(message_metadata.get("locale") or "").strip()
             time_zone = str(message_metadata.get("time_zone") or "").strip()
+            resolved_language = str(
+                message_metadata.get("resolved_language") or ""
+            ).strip().lower()
             if country_code or locale or time_zone:
                 system_prompt += (
                     "\n\n=== CONTEXTO REGIONAL VERIFICADO ===\n"
@@ -2634,6 +2622,15 @@ class MachiningAgent:
                     "portugués con pt-PT usa portugués europeo, no portugués brasileño. No deduzcas "
                     "otra ubicación por el idioma ni menciones una ciudad que no haya sido proporcionada."
                 )
+            if resolved_language:
+                system_prompt += (
+                    "\n\n=== IDIOMA DE RESPUESTA RESUELTO ===\n"
+                    f"Idioma: {self._language_name(resolved_language)} "
+                    f"({resolved_language}).\n"
+                    "Responde íntegramente en este idioma. Esta decisión ya combina detección "
+                    "estadística, memoria conversacional y metadatos regionales; no vuelvas a "
+                    "inferir el idioma a partir del tema o de nombres propios."
+                )
             quoted_message = str(
                 message_metadata.get("quoted_message") or ""
             ).strip()
@@ -2642,14 +2639,14 @@ class MachiningAgent:
                     1, min(6, int(message_metadata.get("response_suggestion_count") or 3))
                 )
                 if message_metadata.get("concrete_answer_mode"):
+                    response_language = str(
+                        message_metadata.get("response_language") or "pt"
+                    )
                     answer_language = {
                         "es": "español",
                         "pt": "português europeu",
                         "en": "inglés",
-                    }.get(
-                        str(message_metadata.get("response_language") or "pt"),
-                        "português europeu",
-                    )
+                    }.get(response_language, self._language_name(response_language))
                     system_prompt += (
                         "\n\n=== MODO RESPUESTA CONCRETA VERIFICADA ===\n"
                         "La solicitud tiene una respuesta factual que puede verificarse. Devuelve "
@@ -2663,14 +2660,14 @@ class MachiningAgent:
                         "sin numeración, títulos ni mezcla de idiomas."
                     )
                 elif message_metadata.get("advice_request"):
+                    response_language = str(
+                        message_metadata.get("response_language") or "pt"
+                    )
                     suggestion_language = {
                         "es": "español",
                         "pt": "português europeu",
                         "en": "inglés",
-                    }.get(
-                        str(message_metadata.get("response_language") or "pt"),
-                        "português europeu",
-                    )
+                    }.get(response_language, self._language_name(response_language))
                     system_prompt += (
                         "\n\n=== MODO CONSULTA AL AGENTE PROPIO ===\n"
                         f"Responde a la petición del usuario con exactamente {suggestion_count} "
@@ -2714,14 +2711,14 @@ class MachiningAgent:
                             "não faças pesquisa web."
                         )
                 else:
+                    response_language = str(
+                        message_metadata.get("response_language") or "pt"
+                    )
                     suggestion_language = {
                         "es": "español",
                         "pt": "português europeu",
                         "en": "inglés",
-                    }.get(
-                        str(message_metadata.get("response_language") or "pt"),
-                        "português europeu",
-                    )
+                    }.get(response_language, self._language_name(response_language))
                     system_prompt += (
                         "\n\n=== MODO SUGERENCIA DE RESPUESTA ===\n"
                         f"Redacta exactamente {suggestion_count} respuestas alternativas que el recurso humano solicitante pueda enviar "
