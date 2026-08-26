@@ -4360,6 +4360,34 @@ def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[
     return suggestions
 
 
+def _suggestion_language_is_consistent(text: str, language: str) -> bool:
+    """Rejects obvious code-switching before a suggestion reaches the UI."""
+    normalized = re.sub(r"\s+", " ", str(text or "").strip().casefold())
+    if not normalized:
+        return False
+    foreign_markers = {
+        "es": (
+            r"\bif you\b", r"\blet me know\b", r"\bdo you have\b",
+            r"\byou can\b", r"\byour\b", r"\bperhaps try\b",
+            r"\bsomething adventurous\b", r"\btailored recommendations\b",
+            r"\bse quiseres\b", r"\bpodemos confirmar\b",
+        ),
+        "pt": (
+            r"\bif you\b", r"\blet me know\b", r"\bdo you have\b",
+            r"\byou can\b", r"\byour\b", r"\bperhaps try\b",
+            r"\bsi quieres\b", r"\bpodemos confirmar cuál\b",
+        ),
+        "en": (
+            r"\bsi quieres\b", r"\bqué te gustaría\b", r"\bdependerá de\b",
+            r"\bse quiseres\b", r"\bgostarias de\b", r"\bdependerá das\b",
+        ),
+    }
+    return not any(
+        re.search(pattern, normalized, flags=re.IGNORECASE)
+        for pattern in foreign_markers.get(language, ())
+    )
+
+
 def _repair_chat_question_suggestions(
     raw_response: Any,
     *,
@@ -4571,7 +4599,9 @@ async def suggest_chat_question_response(
                     "Não foram encontradas mensagens acessíveis no canal ou na reunião para gerar sugestões."
                 )
         scoped_session = _chat_question_session_id(context)
-        if ambient_mode:
+        # A new explicit request (quoted id absent/zero) starts a fresh advice
+        # flow. Old turns from the channel must not reduce an unrelated request.
+        if ambient_mode or advice_request:
             _reset_chat_question_memory(scoped_session)
         completed_turns = _chat_question_turn_count(scoped_session)
         suggestion_count = _suggestion_count(
@@ -4699,6 +4729,12 @@ async def suggest_chat_question_response(
             suggestions = _parse_chat_question_suggestions(
                 raw_suggestions, limit=suggestion_count
             )
+            suggestions = [
+                item for item in suggestions
+                if _suggestion_language_is_consistent(
+                    item, metadata["response_language"]
+                )
+            ]
         if not verified_business_context and len(suggestions) != suggestion_count:
             repaired_raw = await asyncio.to_thread(
                 _repair_chat_question_suggestions,
@@ -4715,6 +4751,12 @@ async def suggest_chat_question_response(
             suggestions = _parse_chat_question_suggestions(
                 repaired_raw, limit=suggestion_count
             )
+            suggestions = [
+                item for item in suggestions
+                if _suggestion_language_is_consistent(
+                    item, metadata["response_language"]
+                )
+            ]
         if not suggestions:
             print("⚠️ O modelo não respeitou o contrato após reparação; usando sugestões seguras.")
             suggestions = _safe_chat_question_fallback(

@@ -15,6 +15,7 @@ from app.main import (
     _suggestion_request_text,
     _local_temporal_response,
     _parse_chat_question_suggestions,
+    _suggestion_language_is_consistent,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.core import MachiningAgent
@@ -209,6 +210,20 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
         self.assertEqual(2, len(result))
         self.assertTrue(all("canal" in item or "conversa" in item for item in result))
+
+    def test_detects_mixed_language_suggestion(self):
+        mixed = (
+            "Eso dependerá de tus preferencias; perhaps try something adventurous. "
+            "If you have a destination in mind, let me know."
+        )
+
+        self.assertFalse(_suggestion_language_is_consistent(mixed, "es"))
+        self.assertTrue(
+            _suggestion_language_is_consistent(
+                "Dependerá de tus preferencias, presupuesto y fechas disponibles.",
+                "es",
+            )
+        )
 
     def test_channel_context_stays_below_prompt_budget_and_keeps_newest(self):
         rows = [
