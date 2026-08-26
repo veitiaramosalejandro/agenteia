@@ -41,7 +41,7 @@ services:
       RUNNING_IN_DOCKER: "1"
       OLLAMA_BASE_URL: http://ollama-chat:11434
       EMBEDDING_BASE_URL: http://ollama-embeddings:11434
-      MODEL_NAME: qwen2.5:7b
+      MODEL_NAME: qwen2.5:3b
       OLLAMA_CONTEXT_LENGTH: 2048
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb

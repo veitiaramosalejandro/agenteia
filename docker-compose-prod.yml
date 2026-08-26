@@ -222,7 +222,7 @@ services:
     environment:
       OLLAMA_HOST: http://ollama-chat:11434
     entrypoint: ["ollama"]
-    command: ["pull", "${MODEL_NAME:-qwen2.5:7b}"]
+    command: ["pull", "${MODEL_NAME:-qwen2.5:3b}"]
     depends_on:
       ollama-chat:
         condition: service_healthy

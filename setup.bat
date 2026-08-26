@@ -17,7 +17,7 @@ timeout /t 15 /nobreak > nul
 REM 2. Descargar modelos
 echo.
 echo [2/5] 📦 Descargando modelos de Ollama...
-docker exec machining_ollama ollama pull qwen2.5:7b
+docker exec machining_ollama ollama pull qwen2.5:3b
 docker exec machining_ollama ollama pull nomic-embed-text
 
 REM 3. Crear entorno virtual

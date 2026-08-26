@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
     AZURE_OPENAI_DEPLOYMENT: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:7b")
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:3b")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     EMBEDDING_VECTOR_SIZE: int = max(0, int(os.getenv("EMBEDDING_VECTOR_SIZE", "0")))
     LLM_MAX_OUTPUT_TOKENS: int = max(128, int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1024")))
