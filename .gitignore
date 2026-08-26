@@ -14,3 +14,4 @@ certbot/www/
 .env.production
 .env
 solidset-data-api/.env
+ollama_embedding_storage/

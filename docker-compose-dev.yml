@@ -5,7 +5,7 @@ services:
     hostname: nginx
     restart: unless-stopped
     ports:
-      - 80:80
+      - 81:80
     volumes:
       # Desarrollo siempre usa HTTP; no depende de la configuración TLS activa
       # ni monta certificados de producción.
