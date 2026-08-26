@@ -1094,7 +1094,7 @@ class MachiningAgent:
     def _is_external_information_query(self, user_text: str) -> bool:
         text = self._normalize_context_query(user_text).lower()
         terms = (
-            "tiempo", "tempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
+            "tiempo", "tempo", "temperatura", "temperature", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
             "weather", "forecast", "previsão", "previsao", "noticias", "news",
             "resultado deportivo", "precio actual", "cotizacion", "cotización",
             "partido", "partidos", "juega", "juegan", "calendario", "temporada",
@@ -2553,7 +2553,28 @@ class MachiningAgent:
                 suggestion_count = max(
                     1, min(6, int(message_metadata.get("response_suggestion_count") or 3))
                 )
-                if message_metadata.get("advice_request"):
+                if message_metadata.get("concrete_answer_mode"):
+                    answer_language = {
+                        "es": "español",
+                        "pt": "português europeu",
+                        "en": "inglés",
+                    }.get(
+                        str(message_metadata.get("response_language") or "pt"),
+                        "português europeu",
+                    )
+                    system_prompt += (
+                        "\n\n=== MODO RESPUESTA CONCRETA VERIFICADA ===\n"
+                        "La solicitud tiene una respuesta factual que puede verificarse. Devuelve "
+                        "exactamente una respuesta directa que conteste la pregunta, no consejos sobre "
+                        "dónde buscar, no alternativas y no preguntas de seguimiento. Usa primero los "
+                        "datos operativos o resultados de búsqueda proporcionados. Para información "
+                        "actual indica el valor concreto y, cuando esté disponible, la hora o fecha de "
+                        "referencia. Si la evidencia no contiene el dato solicitado, dilo claramente; "
+                        "no inventes el valor. No digas simplemente que un sitio contiene la información. "
+                        f"Devuelve únicamente un array JSON con un string completamente en {answer_language}, "
+                        "sin numeración, títulos ni mezcla de idiomas."
+                    )
+                elif message_metadata.get("advice_request"):
                     suggestion_language = {
                         "es": "español",
                         "pt": "português europeu",

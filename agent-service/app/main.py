@@ -889,7 +889,7 @@ def _is_external_information_query(raw_text: str) -> bool:
     """Separa consultas externas actuales de conocimiento operativo de trabajo."""
     text = " ".join((raw_text or "").strip().lower().split())
     external_terms = (
-        "tiempo", "tempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
+        "tiempo", "tempo", "temperatura", "temperature", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
         "weather", "forecast", "previsão", "previsao", "noticias", "news",
         "resultado deportivo", "precio actual", "cotizacion", "cotización",
     )
@@ -4302,6 +4302,17 @@ def _is_business_recommendation_request(text: str) -> bool:
     ))
 
 
+def _is_concrete_suggestion_answer_request(text: str) -> bool:
+    """True when the advice UI should return one verified answer, not options."""
+    return bool(
+        not _is_business_recommendation_request(text)
+        and (
+            agent._is_external_information_query(text)
+            or agent._is_business_knowledge_query(text)
+        )
+    )
+
+
 def _suggestion_request_text(quoted_message: str) -> str:
     """Remove the UI wrapper so intent and language come from the real request."""
     text = str(quoted_message or "").strip()
@@ -4621,6 +4632,12 @@ async def suggest_chat_question_response(
             initial=ambient_mode,
             completed_turns=completed_turns,
         )
+        concrete_answer_mode = bool(
+            advice_request
+            and _is_concrete_suggestion_answer_request(effective_request_text)
+        )
+        if concrete_answer_mode:
+            suggestion_count = 1
         suggestion_source = effective_request_text
         if ambient_mode:
             suggestion_source = (
@@ -4665,6 +4682,7 @@ async def suggest_chat_question_response(
             "advice_mode": advice_mode and not advice_request,
             "advice_refine": advice_refine,
             "advice_request": advice_request,
+            "concrete_answer_mode": concrete_answer_mode,
             "response_suggestion_scope": (
                 "advice_refine"
                 if advice_refine

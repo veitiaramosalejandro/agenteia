@@ -17,6 +17,7 @@ from app.main import (
     _parse_chat_question_suggestions,
     _suggestion_language_is_consistent,
     _is_business_recommendation_request,
+    _is_concrete_suggestion_answer_request,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.core import MachiningAgent
@@ -221,6 +222,17 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         ))
         self.assertFalse(_is_business_recommendation_request(
             "¿Qué tareas tiene asignadas Alejandro Veitia?"
+        ))
+
+    def test_concrete_answers_are_separated_from_recommendations(self):
+        self.assertTrue(_is_concrete_suggestion_answer_request(
+            "Qual é a temperatura atual em Leiria?"
+        ))
+        self.assertTrue(_is_concrete_suggestion_answer_request(
+            "¿Qué tareas tiene asignadas Alejandro Veitia?"
+        ))
+        self.assertFalse(_is_concrete_suggestion_answer_request(
+            "¿Qué tarea debería ponerle a Alejandro Veitia?"
         ))
 
     def test_detects_and_cleans_incomplete_markdown_response(self):

@@ -51,6 +51,8 @@ services:
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
       POSTGRES_PORT: 5432
+      MODEL_NAME: qwen2.5:3b
+      OLLAMA_CONTEXT_LENGTH: 2048
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
       DIALOGUE_MAX_CONCURRENT: 1
@@ -174,8 +176,9 @@ services:
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-4096}
-      - OLLAMA_FLASH_ATTENTION=0
+      - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_KV_CACHE_TYPE=f16
+      - LLAMA_ARG_FIT_TARGET=512
       - OLLAMA_KEEP_ALIVE=${OLLAMA_CHAT_KEEP_ALIVE:-24h}
     healthcheck:
       test: ["CMD", "ollama", "list"]
