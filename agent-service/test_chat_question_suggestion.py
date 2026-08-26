@@ -296,6 +296,9 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertFalse(MachiningAgent._is_deflecting_concrete_answer(
             "El valor verificado es 42, actualizado a las 12:00."
         ))
+        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
+            "Não tenho informações específicas sobre quando chegou."
+        ))
         self.assertEqual(
             "El valor es 42.",
             MachiningAgent._extract_concrete_answer('{"answer":"El valor es 42."}'),
@@ -399,6 +402,38 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "session_id": "suggestion-test",
             "user_text": "¿Cuál fue el último resultado deportivo?",
             "message_metadata": {"response_suggestion_mode": True},
+        })
+
+        self.assertEqual("work_sql_rag", result["route"])
+
+    def test_relevant_private_knowledge_prevents_external_web_route(self):
+        class ExternalTopicAgent:
+            @staticmethod
+            def _is_general_conversation(_text):
+                return False
+
+            @staticmethod
+            def _is_business_knowledge_query(_text):
+                return False
+
+            @staticmethod
+            def _is_external_information_query(_text):
+                return True
+
+            @staticmethod
+            def _is_internal_domain_query(_text):
+                return False
+
+        orchestrator = SolidSETOrchestrator.__new__(SolidSETOrchestrator)
+        orchestrator.agent = ExternalTopicAgent()
+        result = orchestrator._classify({
+            "session_id": "private-fact-test",
+            "user_text": "Quando chegou Alejandro a Leiria?",
+            "message_metadata": {
+                "agent_relevant_knowledge": (
+                    "Alejandro chegou a Leiria a 17 de julho de 2026."
+                )
+            },
         })
 
         self.assertEqual("work_sql_rag", result["route"])

@@ -5,6 +5,37 @@ from app.system.learning import SistemaAprendizaje
 
 
 class TestSistemaAprendizaje(unittest.TestCase):
+    def test_private_knowledge_search_isolated_from_chat_interactions(self):
+        sistema = SistemaAprendizaje.__new__(SistemaAprendizaje)
+        sistema._embed_query_safe = lambda *_args, **_kwargs: [0.1, 0.2]
+        captured = {}
+
+        def search(_vector, query_filter=None, limit=10):
+            captured["filter"] = query_filter
+            return [{
+                "score": 0.8,
+                "payload": {
+                    "scope": "agent",
+                    "source": "chat-question:user-assertion:v2",
+                    "canal_id": "room-1",
+                    "page_content": "Hecho privado verificado.",
+                },
+            }]
+
+        sistema._search_aprendizaje = search
+        result = sistema.consultar_conocimiento_agente(
+            "pregunta",
+            agent_resource_id="resource-1",
+            canal_id="room-1",
+            min_score=0.6,
+        )
+
+        self.assertEqual(
+            {"agent_resource_id": "resource-1", "scope": "agent"},
+            captured["filter"],
+        )
+        self.assertEqual("Hecho privado verificado.", result)
+
     def test_consultar_aprendizaje_combines_channel_and_general_results(self):
         sistema = SistemaAprendizaje.__new__(SistemaAprendizaje)
         sistema.embeddings = SimpleNamespace(embed_query=lambda query: [0.1, 0.2, 0.3])

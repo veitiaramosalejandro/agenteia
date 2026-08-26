@@ -1208,12 +1208,18 @@ class SistemaAprendizaje:
             return ""
         results = self._search_aprendizaje(
             query_vector,
-            query_filter={"agent_resource_id": str(agent_resource_id)},
+            # The resource id is also present on chats/interactions. Restrict
+            # this method to durable agent facts, never prior model answers.
+            query_filter={
+                "agent_resource_id": str(agent_resource_id),
+                "scope": "agent",
+            },
             limit=max(limit * 4, limit),
         )
         from app.knowledge_provenance import usable_agent_knowledge
 
         useful: list[str] = []
+        seen_content: set[str] = set()
         for hit in results:
             if float(hit.get("score") or 0.0) < max(0.0, min(float(min_score), 1.0)):
                 continue
@@ -1226,8 +1232,10 @@ class SistemaAprendizaje:
             if canal_id and payload_channel and payload_channel != str(canal_id):
                 continue
             content = str(payload.get("page_content") or "").strip()
-            if content:
+            content_key = " ".join(content.casefold().split())
+            if content and content_key not in seen_content:
                 useful.append(content[:1200])
+                seen_content.add(content_key)
             if len(useful) >= limit:
                 break
         return "\n---\n".join(useful)

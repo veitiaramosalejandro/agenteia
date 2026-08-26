@@ -79,6 +79,10 @@ class SolidSETOrchestrator:
             # knowledge. It must not escape to the public web merely because
             # the quoted text is outside the internal-domain classifier.
             route = "work_sql_rag"
+        elif str(metadata.get("agent_relevant_knowledge") or "").strip():
+            # Agent-scoped evidence takes precedence over the generic web
+            # classifier for personal facts and internal conversation context.
+            route = "work_sql_rag"
         elif is_general(user_text):
             route = "general_conversation"
         elif is_business(user_text):

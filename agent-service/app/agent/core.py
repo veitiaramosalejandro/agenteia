@@ -1876,6 +1876,8 @@ class MachiningAgent:
             r"\b(?:consulte|consulta|acesse|accede|visit)\s+(?:o |el |the )?(?:site|sitio|website|página|pagina)\b",
             r"\b(?:para obter|para obtener|to obtain|get)\b.{0,80}\b(?:site|sitio|website|página|pagina)\b",
             r"\b(?:há informações|hay información|there is information)\b.{0,80}\b(?:site|sitio|website|página|pagina)\b",
+            r"\b(?:n[aã]o (?:tenho|h[aá])|no (?:tengo|hay)|i (?:do not|don't) have)\b.{0,100}\b(?:informa[cç][oõ]es|informaci[oó]n|information)\b",
+            r"\b(?:n[aã]o sei|no s[eé]|i do not know|i don't know)\b",
         )
         return not text or any(re.search(pattern, text) for pattern in redirect_patterns)
 
@@ -2067,8 +2069,10 @@ class MachiningAgent:
             and message_metadata
             and message_metadata.get("advice_refine")
         )
-        agent_rag_context = ""
-        if agent_resource_id and training_enabled and learn_from_system:
+        agent_rag_context = str(
+            metadata_identity.get("agent_relevant_knowledge") or ""
+        ).strip()
+        if not agent_rag_context and agent_resource_id and training_enabled and learn_from_system:
             try:
                 agent_rag_context = self.sistema_aprendizaje.consultar_conocimiento_agente(
                     user_text,
@@ -3026,9 +3030,35 @@ class MachiningAgent:
                 "Inténtalo nuevamente en unos instantes."
             )
 
+        # A negative/deflecting answer contradicts an agent-scoped fact that
+        # was retrieved for this exact question. Repair it before any web
+        # fallback can overwrite private evidence with an external search.
+        if (
+            agent_rag_context
+            and not response_suggestion_mode
+            and self._is_deflecting_concrete_answer(response_text)
+        ):
+            print("⚠️ Respuesta contradice conocimiento privado; regenerando")
+            repair_messages = list(messages)
+            repair_messages.append(SystemMessage(content=(
+                "La respuesta anterior afirmó que faltaba información, pero existe evidencia "
+                "privada relevante en CONOCIMIENTO PERSISTENTE RELEVANTE RECUPERADO. Responde "
+                "directamente a la pregunta usando esa evidencia. No busques en Internet, no "
+                "pidas más contexto y no menciones sistemas internos. Devuelve solo la respuesta."
+            )))
+            repaired = request_llm.invoke(repair_messages)
+            response_text = str(
+                repaired.content if hasattr(repaired, "content") else repaired
+            ).strip()
+            if self._is_deflecting_concrete_answer(response_text):
+                # Safe deterministic fallback: the retrieved payload is itself
+                # a scoped user assertion, not an untrusted chat transcript.
+                response_text = agent_rag_context.split("\n---\n", 1)[0].strip()
+
         # Respaldo determinista: no depender únicamente de que el LLM decida usar la tool.
         if (
             not self._is_sql_business_query(user_text)
+            and not agent_rag_context
             and (
                 external_query_mode
                 or self._response_needs_web_fallback(response_text, herramientas_usadas)

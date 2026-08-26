@@ -1498,6 +1498,23 @@ async def _process_auto_replies(
         agent_resource_id = str(candidate.get("agent_resource_id") or "").strip()
         agent_identity_id = str(candidate.get("agent_identity_id") or "").strip()
         agent_name = str(candidate.get("agent_name") or agent_resource_id).strip()
+        relevant_agent_knowledge = ""
+        if agent_resource_id:
+            try:
+                relevant_agent_knowledge = (
+                    agent.sistema_aprendizaje.consultar_conocimiento_agente(
+                        incoming_text,
+                        agent_resource_id=agent_resource_id,
+                        canal_id=channel_id,
+                        min_score=settings.BUSINESS_RAG_MIN_SCORE,
+                    )
+                )
+            except Exception as exc:
+                print(
+                    "⚠️ No se pudo preseleccionar conocimiento privado "
+                    f"para enrutamiento: {exc}"
+                )
+        message_metadata["agent_relevant_knowledge"] = relevant_agent_knowledge
         status_agent_id = agent_identity_id or agent_resource_id
         _update_response_status(
             response_request_id,
@@ -1558,7 +1575,10 @@ async def _process_auto_replies(
             )
         if response_text is None:
             try:
-                external_query = _is_external_information_query(incoming_text)
+                external_query = bool(
+                    not relevant_agent_knowledge
+                    and _is_external_information_query(incoming_text)
+                )
                 if external_query:
                     _update_response_status(
                         response_request_id,
