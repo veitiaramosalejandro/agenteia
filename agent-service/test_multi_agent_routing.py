@@ -23,15 +23,19 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
-    def test_question_request_type_or_question_mark_requests_response(self):
+    def test_question_request_or_type_one_question_mark_requests_response(self):
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"questionType": 3}}, "Háblame de Kimi"
         ))
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"QuestionType": "2"}}, "Explícame Kimi"
         ))
-        self.assertTrue(_payload_requests_agent_response(
+        self.assertFalse(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Háblame de Kimi?"
+        ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 1}},
+            "Que tareas tiene asignado el recurso Alejandro Veitia?",
         ))
         self.assertFalse(_payload_requests_agent_response(
             {"Chat": {"questionType": 1}},

@@ -1035,15 +1035,16 @@ def _payload_has_learning_only_destination(payload: dict[str, Any]) -> bool:
 
 
 def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> bool:
-    """Acepta pregunta (2), petición (3) o la excepción textual del signo '?'."""
-    if "?" in str(raw_text or ""):
-        return True
+    """Acepta pregunta (2), petición (3) o questionType=1 con signo '?'."""
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     question_type = _get_payload_value(chat, "questionType", "QuestionType")
     try:
-        return int(question_type) in {2, 3}
+        normalized_type = int(question_type)
     except (TypeError, ValueError):
         return False
+    return normalized_type in {2, 3} or (
+        normalized_type == 1 and "?" in str(raw_text or "")
+    )
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
