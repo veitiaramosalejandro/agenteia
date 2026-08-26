@@ -3303,7 +3303,9 @@ def _get_payload_value(payload: Optional[dict[str, Any]], *keys: str) -> Any:
 def _valid_framework_identifier(value: Any) -> Optional[str]:
     """Descarta identificadores vacíos que SolidSET usa como valor nulo."""
     normalized = str(value or "").strip()
-    if not normalized or normalized == "00000000-0000-0000-0000-000000000000":
+    if not normalized or normalized in {
+        "0", "00000000-0000-0000-0000-000000000000",
+    }:
         return None
     return normalized
 
@@ -4271,6 +4273,34 @@ def _suggestion_tool_allowlist(
     return {"query_sql_server", "get_db_schema"}
 
 
+def _verified_suggestion_business_context(
+    solidset_instance: dict[str, Any], quoted_message: str
+) -> str:
+    """Reuse deterministic framework-message resolvers before drafting."""
+    with solidset_sql_instance_context(solidset_instance):
+        for resolver in (
+            agent._resolve_resource_tasks_from_db,
+            agent._resolve_resource_activities_from_db,
+            agent._resolve_resource_count_from_db,
+        ):
+            result = resolver(quoted_message)
+            if result:
+                return str(result).strip()
+    return ""
+
+
+def _suggestion_request_text(quoted_message: str) -> str:
+    """Remove the UI wrapper so intent and language come from the real request."""
+    text = str(quoted_message or "").strip()
+    return re.sub(
+        r"^(?:pedido do utilizador|petici[oó]n del usuario|user request)\s*:\s*",
+        "",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
     """Normalizes model output into distinct, user-selectable suggestions."""
     text = str(raw_response or "").strip()
@@ -4433,7 +4463,13 @@ async def suggest_chat_question_response(
     ).strip()
     request_id = context["request_id"]
     advice_mode = context["advice_mode"] in {"1", "true", "yes", "sim"}
-    advice_refine = advice_mode and bool(context["quoted_message"])
+    advice_refine = bool(
+        advice_mode and context["quoted_message"] and context["quoted_chat_id"]
+    )
+    advice_request = bool(
+        advice_mode and context["quoted_message"] and not context["quoted_chat_id"]
+    )
+    effective_request_text = _suggestion_request_text(context["quoted_message"])
     ambient_mode = (
         advice_mode
         and not context["quoted_message"]
@@ -4444,7 +4480,7 @@ async def suggest_chat_question_response(
             status_code=422,
             detail="O campo Chat.IDChat2 é obrigatório para acompanhar o estado do pedido.",
         )
-    if not ambient_mode and not advice_refine and (
+    if not ambient_mode and not advice_refine and not advice_request and (
         not context["quoted_chat_id"] or not context["quoted_message"]
     ):
         raise HTTPException(
@@ -4542,7 +4578,7 @@ async def suggest_chat_question_response(
             initial=ambient_mode,
             completed_turns=completed_turns,
         )
-        suggestion_source = context["quoted_message"]
+        suggestion_source = effective_request_text
         if ambient_mode:
             suggestion_source = (
                 f"Analisa o contexto SolidSET abaixo e identifica exatamente {suggestion_count} "
@@ -4561,25 +4597,46 @@ async def suggest_chat_question_response(
                 "conversa; não voltes a procurar o canal, não inventes factos e não pesquises na web.\n\n"
                 f"RASCUNHO SELECIONADO:\n{context['quoted_message']}"
             )
+        verified_business_context = ""
+        if advice_request or (
+            not ambient_mode
+            and not advice_refine
+            and agent._is_business_knowledge_query(context["quoted_message"])
+        ):
+            verified_business_context = await asyncio.to_thread(
+                _verified_suggestion_business_context,
+                solidset_instance,
+                effective_request_text,
+            )
+            if verified_business_context:
+                suggestion_source = (
+                    f"{suggestion_source}\n\nDADOS OPERACIONAIS VERIFICADOS:\n"
+                    f"{verified_business_context}\n\nRedige a sugestão com estes dados; "
+                    "não devolvas apenas um título e não inventes informação."
+                )
         metadata = {
             "response_suggestion_mode": True,
-            "advice_mode": advice_mode,
+            "advice_mode": advice_mode and not advice_request,
             "advice_refine": advice_refine,
+            "advice_request": advice_request,
             "response_suggestion_scope": (
                 "advice_refine"
                 if advice_refine
+                else "advice_request"
+                if advice_request
                 else "channel_or_meeting"
                 if ambient_mode
                 else "quoted_message"
             ),
             "response_suggestion_count": suggestion_count,
             "response_language": (
-                "pt" if ambient_mode else agent._detect_user_language(context["quoted_message"])
+                "pt" if ambient_mode else agent._detect_user_language(effective_request_text)
             ),
             "chat_id": request_id,
             "quoted_chat_id": context["quoted_chat_id"],
             "quoted_message": context["quoted_message"],
             "scope_context": scope_context,
+            "verified_business_context": verified_business_context,
             "quoted_sender_resource": context["quoted_resource"],
             "quoted_sender_login": context["quoted_login"],
             "requester_resource": context["requester_resource"],
@@ -4602,7 +4659,7 @@ async def suggest_chat_question_response(
             ),
         }
         suggestion_tool_allowlist = _suggestion_tool_allowlist(
-            context["quoted_message"],
+            effective_request_text,
             ambient_mode=ambient_mode,
             advice_refine=advice_refine,
         )
@@ -4616,31 +4673,43 @@ async def suggest_chat_question_response(
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
-        raw_suggestions = await asyncio.to_thread(
-            _invoke_orchestrator_for_instance,
-            str(solidset_instance["Code"]),
-            session_id=scoped_session,
-            user_text=suggestion_source,
-            user_id=context["requester_resource"],
-            canal_id=context["workroom_id"],
-            meeting_id=context["meeting_id"] or None,
-            meeting_code=context["meeting_code"] or None,
-            message_kind=str(message.Kind or "ChatMessage"),
-            message_category="chat_question_response_suggestion",
-            message_metadata=metadata,
-            tool_allowlist=suggestion_tool_allowlist,
-            auto_reply_mode=True,
-        )
-        suggestions = _parse_chat_question_suggestions(
-            raw_suggestions, limit=suggestion_count
-        )
-        if len(suggestions) != suggestion_count:
+        if verified_business_context:
+            # Deterministic operational resolvers already produced the grounded
+            # answer. Do not let a second model pass omit rows or alter facts.
+            raw_suggestions = json.dumps(
+                [verified_business_context], ensure_ascii=False
+            )
+            suggestions = [verified_business_context]
+        else:
+            raw_suggestions = await asyncio.to_thread(
+                _invoke_orchestrator_for_instance,
+                str(solidset_instance["Code"]),
+                session_id=scoped_session,
+                user_text=suggestion_source,
+                user_id=context["requester_resource"],
+                canal_id=context["workroom_id"],
+                meeting_id=context["meeting_id"] or None,
+                meeting_code=context["meeting_code"] or None,
+                message_kind=str(message.Kind or "ChatMessage"),
+                message_category="chat_question_response_suggestion",
+                message_metadata=metadata,
+                tool_allowlist=suggestion_tool_allowlist,
+                auto_reply_mode=True,
+            )
+            suggestions = _parse_chat_question_suggestions(
+                raw_suggestions, limit=suggestion_count
+            )
+        if not verified_business_context and len(suggestions) != suggestion_count:
             repaired_raw = await asyncio.to_thread(
                 _repair_chat_question_suggestions,
                 raw_suggestions,
                 count=suggestion_count,
                 language=metadata["response_language"],
-                grounding_context=(scope_context or context["quoted_message"]),
+                grounding_context=(
+                    verified_business_context
+                    or scope_context
+                    or context["quoted_message"]
+                ),
                 metadata=metadata,
             )
             suggestions = _parse_chat_question_suggestions(

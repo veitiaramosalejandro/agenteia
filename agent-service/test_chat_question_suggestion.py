@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from app.main import (
     app,
@@ -10,6 +11,8 @@ from app.main import (
     _safe_chat_question_fallback,
     _suggestion_title,
     _suggestion_tool_allowlist,
+    _verified_suggestion_business_context,
+    _suggestion_request_text,
     _local_temporal_response,
     _parse_chat_question_suggestions,
 )
@@ -89,6 +92,46 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             _chat_question_session_id(initial),
             _chat_question_session_id(continuous),
         )
+
+    def test_zero_quoted_chat_id_is_a_new_advice_request_not_a_refinement(self):
+        context = _chat_question_suggestion_context({
+            "Sender": {
+                "resource": "11111111-1111-4111-8111-111111111111",
+            },
+            "Chat": {
+                "idChat2": 123,
+                "idSenderResource": "11111111-1111-4111-8111-111111111111",
+                "idWorkRoom": "33333333-3333-4333-8333-333333333333",
+                "chatQuestion": {
+                    "idChat2": 0,
+                    "rawMessage": (
+                        "Pedido do utilizador:\nQue tareas tiene asignado "
+                        "el recurso Alejandro Veitia"
+                    ),
+                },
+            },
+            "Info": {"advice_mode": "1"},
+        })
+
+        self.assertEqual("", context["quoted_chat_id"])
+        self.assertTrue(context["quoted_message"].startswith("Pedido do utilizador"))
+        self.assertEqual(
+            "Que tareas tiene asignado el recurso Alejandro Veitia",
+            _suggestion_request_text(context["quoted_message"]),
+        )
+
+    def test_task_advice_preloads_verified_operational_context(self):
+        with patch.object(
+            MachiningAgent,
+            "_resolve_resource_tasks_from_db",
+            return_value="Tareas verificadas: T-1 y T-2",
+        ):
+            result = _verified_suggestion_business_context(
+                {"Code": "test"},
+                "Que tareas tiene asignado el recurso Alejandro Veitia",
+            )
+
+        self.assertEqual("Tareas verificadas: T-1 y T-2", result)
 
     def test_suggestions_progressively_narrow(self):
         self.assertEqual(4, _suggestion_count(initial=True, completed_turns=0))
