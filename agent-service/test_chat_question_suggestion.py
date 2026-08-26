@@ -267,6 +267,22 @@ class TestChatQuestionSuggestion(unittest.TestCase):
                 quoted, ambient_mode=True, advice_refine=False
             ),
         )
+        self.assertEqual(
+            {"google_web_search"},
+            _suggestion_tool_allowlist(
+                "¿Qué tiempo hará mañana en Lisboa?",
+                ambient_mode=False,
+                advice_refine=False,
+            ),
+        )
+        self.assertEqual(
+            {"query_sql_server", "get_db_schema"},
+            _suggestion_tool_allowlist(
+                "Explica el procedimiento interno de mantenimiento",
+                ambient_mode=False,
+                advice_refine=False,
+            ),
+        )
 
     def test_portugal_date_uses_configured_region(self):
         response = _local_temporal_response(
