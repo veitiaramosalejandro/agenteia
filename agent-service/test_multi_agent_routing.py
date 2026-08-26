@@ -23,14 +23,14 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
-    def test_question_request_or_type_one_question_mark_requests_response(self):
+    def test_question_request_or_any_question_mark_requests_response(self):
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"questionType": 3}}, "Háblame de Kimi"
         ))
         self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"QuestionType": "2"}}, "Explícame Kimi"
         ))
-        self.assertFalse(_payload_requests_agent_response(
+        self.assertTrue(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Háblame de Kimi?"
         ))
         self.assertTrue(_payload_requests_agent_response(
@@ -44,6 +44,27 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Kimi K3 fue presentado en 2026"
         ))
+
+    def test_type_two_question_type_zero_with_question_mark_is_authorized(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "type-two-question-type-zero",
+            "message": "Qual é a temperatura atual em Leiria?",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 0,
+                "destiny": [{
+                    "idResource": str(agent_resource),
+                    "type": 2,
+                    "talkWithAgent": True,
+                }],
+            }},
+            "agent_resource_id": str(agent_resource),
+            "addressed_to_agent": True,
+            "is_direct": True,
+        }
+
+        self.assertIsNone(_auto_reply_rejection_reason(candidate))
 
     def test_type_two_question_type_one_with_question_mark_is_authorized(self):
         agent_resource = uuid4()
