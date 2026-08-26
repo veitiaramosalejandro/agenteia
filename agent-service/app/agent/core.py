@@ -1155,6 +1155,8 @@ class MachiningAgent:
             "miembro", "miembros", "membro", "membros", "nombres", "nomes", "names",
             "cuánt", "cuant", "quant", "how many", "estado", "status",
             "lista", "listar", "list", "muestra", "show", "mostra",
+            "asignado", "asignada", "asignados", "asignadas", "assigned",
+            "atribuído", "atribuida", "atribuídos", "atribuidas",
         )
         if any(term in text for term in live_terms):
             return True
@@ -1261,8 +1263,86 @@ class MachiningAgent:
             "muestra", "buscar", "busca", "consulta", "dime", "cuales", "cuáles",
             "quantos", "quantas", "existem", "mostra", "nomes", "quais",
             "how many", "list", "show", "which", "what are",
+            "tiene", "tienen", "asignado", "asignada", "asignados", "asignadas",
+            "has", "have", "assigned", "tem", "têm", "atribuído", "atribuida",
         )
         return any(term in text for term in data_terms) and any(term in text for term in query_terms)
+
+    def _extract_task_resource_term(self, user_text: str) -> Optional[str]:
+        """Extrae el nombre tras 'recurso' en consultas de tareas asignadas."""
+        text = self._normalize_context_query(user_text)
+        if not re.search(r"\b(?:tareas?|tasks?|tarefas?)\b", text, re.IGNORECASE):
+            return None
+        match = re.search(
+            r"\b(?:recurso|resource|utilizador|usu[aá]rio)\s+(.+?)\s*[?.!]*$",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        term = " ".join(match.group(1).strip(" ¿?¡!.,").split())
+        return term[:160] or None
+
+    def _resolve_resource_tasks_from_db(self, user_text: str) -> Optional[str]:
+        """Consulta SysTask para un recurso identificado por su nombre/login."""
+        resource_term = self._extract_task_resource_term(user_text)
+        if not resource_term:
+            return None
+        sql = (
+            "SELECT TOP 50 t.ModifiedTime, t.CreatedTime, t.IDResource, "
+            "t.IDResourceAssign, t.Code, t.Status, t.Archived, t.ShortName, "
+            "t.importance, t.IDTask, t.StartDate, t.EndDate, t.IDActivity, "
+            "t.WorkStatus, t.ProgressPercentage, t.Priority, t.TaskKind, "
+            "t.IDTaskExternal, r.DisplayName AS ResourceName, "
+            "l.FullName AS UserFullName, l.Username "
+            "FROM dbo.SysTask t WITH (NOLOCK) "
+            "INNER JOIN dbo.SysResources r WITH (NOLOCK) "
+            "ON r.ResourceId = t.IDResource "
+            "LEFT JOIN dbo.SysLogin l WITH (NOLOCK) "
+            "ON l.ActiveIDLogin2Resource = r.ActiveIDLogin2Resource "
+            "WHERE UPPER(CONCAT(COALESCE(l.FullName, ''), ' ', "
+            "COALESCE(l.Username, ''), ' ', COALESCE(r.DisplayName, ''))) "
+            "LIKE UPPER(%s) "
+            "ORDER BY t.CreatedTime DESC"
+        )
+        result = str(query_sql_server.invoke({
+            "query": sql,
+            "parameters_json": json.dumps([f"%{resource_term}%"]),
+        }))
+        if result.startswith("La consulta se ejecutó correctamente"):
+            return self._localized(
+                user_text,
+                es=f"No encontré tareas para el recurso **{resource_term}**.",
+                pt=f"Não encontrei tarefas para o recurso **{resource_term}**.",
+                en=f"I found no tasks for resource **{resource_term}**.",
+            )
+        try:
+            rows = json.loads(result)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+        if not isinstance(rows, list):
+            return None
+        lines: list[str] = []
+        for row in rows[:15]:
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("ShortName") or row.get("Code") or "Tarea sin nombre").strip()
+            status = row.get("WorkStatus") if row.get("WorkStatus") is not None else row.get("Status")
+            progress = row.get("ProgressPercentage")
+            details = [f"estado {status}" if status is not None else ""]
+            if progress is not None:
+                details.append(f"progreso {progress}%")
+            if row.get("EndDate") is not None:
+                details.append(f"fin {row['EndDate']}")
+            lines.append(f"- **{title}** — {', '.join(value for value in details if value)}")
+        if not lines:
+            return None
+        return self._localized(
+            user_text,
+            es=f"Tareas de **{resource_term}** (más recientes primero):\n" + "\n".join(lines),
+            pt=f"Tarefas de **{resource_term}** (mais recentes primeiro):\n" + "\n".join(lines),
+            en=f"Tasks for **{resource_term}** (newest first):\n" + "\n".join(lines),
+        )
 
     def _extract_resource_count_term(self, user_text: str) -> Optional[str]:
         """Extrae el nombre/prefijo pedido en preguntas como 'cuántos recursos Dev'."""
@@ -2061,7 +2141,20 @@ class MachiningAgent:
                     print(f"⚠️ Error guardando conteo de recursos en Redis: {e}")
             return resource_count_response
 
-        # --- 3.7 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
+        # --- 3.7 TAREAS ASIGNADAS A UN RECURSO DESDE SYSTASK ---
+        resource_tasks_response = None
+        if not response_suggestion_mode and not vector_answers_business_query:
+            resource_tasks_response = self._resolve_resource_tasks_from_db(user_text)
+        if resource_tasks_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(resource_tasks_response)
+                except Exception as e:
+                    print(f"⚠️ Error guardando consulta de tareas en Redis: {e}")
+            return resource_tasks_response
+
+        # --- 3.8 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and self._is_last_chat_message_intent(user_text):
             direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
             if direct_response is not None:

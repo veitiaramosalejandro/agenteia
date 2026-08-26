@@ -148,6 +148,13 @@ FORMATO Y REGLAS DE RESPUESTA DE DATOS:
 - `dbo.SysWorkRoom`: canales/salas (IDWorkRoom, Name, Description, Kind).
 - `dbo.SysResources`: recursos/personas (ResourceId, DisplayName, ActiveIDLogin2Resource).
 - `dbo.SysLogin`: cuentas/login (IDLogin, LastIDResource, Username, FullName, ActiveIDLogin2Resource).
+- `dbo.SysTask`: tareas. Para las tareas de un recurso usa `SysTask.IDResource` como
+  vínculo con `SysResources.ResourceId` y ordena normalmente por `SysTask.CreatedTime DESC`.
+  `IDResourceCreation` identifica el recurso creador e `IDResourceAssign` es un campo
+  distinto: no los sustituyas por `IDResource` al responder "tareas de un recurso".
+  Columnas principales: ModifiedTime, CreatedTime, IDResource, IDResourceAssign, Code,
+  Status, Archived, ShortName, importance, IDTask, StartDate, EndDate, IDActivity,
+  WorkStatus, ProgressPercentage, Priority, TaskKind e IDTaskExternal.
 
 Al presentar personas asociadas a recursos, une `SysResources.ActiveIDLogin2Resource` con
 `SysLogin.ActiveIDLogin2Resource` y muestra `SysLogin.FullName` o `SysLogin.Username`. No presentes
