@@ -938,7 +938,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     ):
         return "respuesta_citada_solo_aprendizaje"
 
-    # Con identidad explícita configurada, Destiny es la fuente de verdad. Así
+    # Con identidad explícita configurada, Chat.resourceTable es la fuente de verdad. Así
     # una mención textual dentro de un canal ajeno no provoca una respuesta.
     has_configured_recipient_identity = bool(
         (settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip()
@@ -989,7 +989,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 
 def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-    destinations = _get_payload_value(chat, "destiny", "Destiny")
+    destinations = _get_payload_value(chat, "resourceTable", "ResourceTable")
     if not isinstance(destinations, list):
         return False
     for destination in destinations:
@@ -1016,7 +1016,7 @@ def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
 def _payload_has_learning_only_destination(payload: dict[str, Any]) -> bool:
     """Reconoce el destino type=3, que nunca autoriza una respuesta."""
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-    destinations = _get_payload_value(chat, "destiny", "Destiny")
+    destinations = _get_payload_value(chat, "resourceTable", "ResourceTable")
     if not isinstance(destinations, list):
         return False
     for destination in destinations:
@@ -1061,9 +1061,9 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
-    chat_destinations = chat_lower.get("destiny")
+    chat_destinations = chat_lower.get("resourcetable")
 
-    # Nueva señal explícita de SolidSET. Cuando Chat.destiny incluye
+    # Señal explícita de SolidSET. Cuando Chat.resourceTable incluye
     # talkWithAgent, esa colección es autoritativa tanto en canales como en
     # meetings: solo los recursos IA type=2 marcados con true responden.
     # type=3 queda exclusivamente en el flujo de aprendizaje. La
@@ -1107,16 +1107,15 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
 
 
 def _human_reply_destination(candidate: dict) -> dict[str, str]:
-    """Resuelve el type=1 de Chat.destiny al invertir humano -> IA en la respuesta."""
+    """Resuelve el humano type=1 desde Chat.resourceTable para invertir la respuesta."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
-    destinations = chat_lower.get("destiny")
     resource_table = chat_lower.get("resourcetable")
     sender_resource = str(candidate.get("sender_resource") or "").strip()
     humans: list[tuple[int, dict[str, str]]] = []
-    if isinstance(destinations, list):
-        for destination in destinations:
+    if isinstance(resource_table, list):
+        for destination in resource_table:
             if not isinstance(destination, dict):
                 continue
             lowered = {str(key).lower(): value for key, value in destination.items()}
@@ -1144,20 +1143,6 @@ def _human_reply_destination(candidate: dict) -> dict[str, str]:
     if humans:
         humans.sort(key=lambda item: item[0])
         selected_human = humans[0][1]
-        if not selected_human["resource_name"] and isinstance(resource_table, list):
-            for participant in resource_table:
-                if not isinstance(participant, dict):
-                    continue
-                lowered = {str(key).lower(): value for key, value in participant.items()}
-                participant_resource = str(
-                    lowered.get("idresource") or lowered.get("resource") or ""
-                ).strip()
-                if participant_resource.lower() != selected_human["resource"].lower():
-                    continue
-                selected_human["resource_name"] = str(
-                    lowered.get("username") or lowered.get("resourcename") or ""
-                ).strip()
-                break
         return selected_human
     return {
         "resource": sender_resource,
@@ -1170,7 +1155,7 @@ def _selected_agent_chat_destination(candidate: dict, agent_resource_id: str) ->
     """Conserva nombre/login del destino IA marcado con talkWithAgent."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-    destinations = {str(k).lower(): v for k, v in chat.items()}.get("destiny")
+    destinations = {str(k).lower(): v for k, v in chat.items()}.get("resourcetable")
     if isinstance(destinations, list):
         for destination in destinations:
             if not isinstance(destination, dict):
@@ -5386,7 +5371,7 @@ def handle_dialogue(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "O agente IA só pode responder quando Chat.destiny inclui um recurso "
+                "O agente IA só pode responder quando Chat.resourceTable inclui um recurso "
                 "de tipo 2 com talkWithAgent=true. O endpoint chat-question/suggest-response "
                 "é a única exceção para conversas internas de sugestões."
             ),

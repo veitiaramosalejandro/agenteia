@@ -56,7 +56,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(uuid4()),
             "payload": {"Chat": {
                 "questionType": 0,
-                "destiny": [{
+                "resourceTable": [{
                     "idResource": str(agent_resource),
                     "type": 2,
                     "talkWithAgent": True,
@@ -77,7 +77,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(uuid4()),
             "payload": {"Chat": {
                 "questionType": 1,
-                "destiny": [{
+                "resourceTable": [{
                     "idResource": str(agent_resource),
                     "type": 2,
                     "talkWithAgent": True,
@@ -101,7 +101,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(uuid4()),
             "payload": {"Chat": {
                 "questionType": 2,
-                "destiny": [{
+                "resourceTable": [{
                     "idResource": str(agent_resource),
                     "type": 3,
                     "talkWithAgent": True,
@@ -125,7 +125,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(uuid4()),
             "payload": {"Chat": {
                 "questionType": 1,
-                "destiny": [{
+                "resourceTable": [{
                     "idResource": str(agent_resource),
                     "type": 2,
                     "talkWithAgent": True,
@@ -145,7 +145,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(uuid4()),
             "payload": {"Chat": {
                 "questionType": 2,
-                "destiny": [{
+                "resourceTable": [{
                     "idResource": str(agent_resource),
                     "type": 2,
                     "talkWithAgent": True,
@@ -167,7 +167,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "payload": {
                 "Chat": {
                     "questionType": 3,
-                    "destiny": [{
+                "resourceTable": [{
                         "idResource": str(uuid4()),
                         "type": 2,
                     }]
@@ -265,6 +265,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "app.main.get_solidset_instance",
             return_value={
                 "ID": str(uuid4()), "Code": "test", "BaseUrl": "http://solidset",
+                "DataAPI": "http://solidset-data-api",
                 "Database": {"Host": "sql", "DatabaseName": "solidset", "active": True},
             },
         )
@@ -300,7 +301,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(room_id),
             "payload": {
                 "Chat": {
-                    "destiny": [{
+                "resourceTable": [{
                         "idResource": str(human_agent),
                         "type": 2,
                         "talkWithAgent": True,
@@ -339,14 +340,11 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                 },
                 "Chat": {
                     "questionType": 3,
-                    "resourceTable": [{
-                        "idResource": str(sender_resource),
-                        "userName": "Alejandro Veitia",
-                    }],
-                    "destiny": [
+                    "resourceTable": [
                         {
                             "iDLogin": str(sender_login),
                             "iDResource": str(sender_resource),
+                            "userName": "Alejandro Veitia",
                             "type": 1,
                             "sequence": 0,
                         },
@@ -363,6 +361,12 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                             "sequence": 2,
                         },
                     ],
+                    # Chat.destiny ya no decide qué agente responde.
+                    "destiny": [{
+                        "iDResource": str(unselected_agent),
+                        "type": 2,
+                        "talkWithAgent": True,
+                    }],
                 },
             },
         }
@@ -395,7 +399,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(room_id),
             "payload": {
                 "FrameworkDestiny": {"dests": [{"resource": str(agent), "kind": 2}]},
-                "Chat": {"destiny": [{
+                "Chat": {"resourceTable": [{
                     "iDResource": str(agent),
                     "type": 2,
                     "talkWithAgent": False,
@@ -420,7 +424,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(room_id),
             "payload": {
                 "FrameworkDestiny": {"dests": [{"resource": str(agent), "kind": 2}]},
-                "Chat": {"destiny": [{"iDResource": str(agent), "type": 2}]},
+                "Chat": {"resourceTable": [{"iDResource": str(agent), "type": 2}]},
             },
         }
         with (
@@ -535,7 +539,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     "dests": [{"resource": str(sender_agent), "kind": 2, "sequence": 1}],
                 },
                 "Chat": {
-                    "destiny": [{
+                "resourceTable": [{
                         "idResource": str(sender_agent),
                         "type": 1,
                         "sequence": 0,
