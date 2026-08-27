@@ -1189,16 +1189,13 @@ def _selected_agent_chat_destination(candidate: dict, agent_resource_id: str) ->
     """Conserva nombre/login del destino IA marcado con talkWithAgent."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-<<<<<<< HEAD
     chat_lower = {str(k).lower(): v for k, v in chat.items()}
     for collection_name in ("destiny", "resourcetable"):
         destinations = chat_lower.get(collection_name)
         if not isinstance(destinations, list):
             continue
-=======
     destinations = {str(k).lower(): v for k, v in chat.items()}.get("resourcetable")
     if isinstance(destinations, list):
->>>>>>> 62d543856b08dc150e75e1dc941a9d85d1049d46
         for destination in destinations:
             if not isinstance(destination, dict):
                 continue
