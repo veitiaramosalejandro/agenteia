@@ -995,7 +995,6 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 
 def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-<<<<<<< HEAD
     rows = []
     destiny = _get_payload_value(chat, "destiny", "Destiny")
     resource_table = _get_payload_value(chat, "resourceTable", "ResourceTable")
@@ -1004,10 +1003,6 @@ def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
     if isinstance(resource_table, list):
         rows.extend(resource_table)
     if not rows:
-=======
-    destinations = _get_payload_value(chat, "resourceTable", "ResourceTable")
-    if not isinstance(destinations, list):
->>>>>>> 62d543856b08dc150e75e1dc941a9d85d1049d46
         return False
     for destination in rows:
         if not isinstance(destination, dict):
@@ -1078,7 +1073,6 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
-<<<<<<< HEAD
     chat_destinations = chat_lower.get("destiny")
     resource_table = chat_lower.get("resourcetable")
 
@@ -1087,16 +1081,6 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     # canales como en meetings: solo los recursos IA (type=2) marcados con true
     # responden. La mera presencia del campo también impide caer en reglas
     # antiguas y activar por accidente otro agente del canal.
-=======
-    chat_destinations = chat_lower.get("resourcetable")
-
-    # Señal explícita de SolidSET. Cuando Chat.resourceTable incluye
-    # talkWithAgent, esa colección es autoritativa tanto en canales como en
-    # meetings: solo los recursos IA type=2 marcados con true responden.
-    # type=3 queda exclusivamente en el flujo de aprendizaje. La
-    # mera presencia del campo también impide caer en reglas antiguas y activar
-    # por accidente otro agente del canal.
->>>>>>> 62d543856b08dc150e75e1dc941a9d85d1049d46
     selected_by_flag: list[tuple[int, str]] = []
 
     def _collect_from_rows(rows: Any) -> None:
