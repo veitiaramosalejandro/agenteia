@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from app.main import (
     app,
@@ -9,10 +10,23 @@ from app.main import (
     _suggestion_count,
     _safe_chat_question_fallback,
     _suggestion_title,
+    _suggestion_tool_allowlist,
+    _verified_suggestion_business_context,
+    _suggestion_request_text,
     _local_temporal_response,
     _parse_chat_question_suggestions,
+    _suggestion_language_is_consistent,
+    _is_business_recommendation_request,
+    _is_concrete_suggestion_answer_request,
+    _extract_learnable_suggestion_fact,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
+from app.agent.core import MachiningAgent
+from app.knowledge_provenance import (
+    LEGACY_SUGGESTION_SOURCE,
+    USER_ASSERTION_SOURCE,
+    usable_agent_knowledge,
+)
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
@@ -87,6 +101,46 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             _chat_question_session_id(initial),
             _chat_question_session_id(continuous),
         )
+
+    def test_zero_quoted_chat_id_is_a_new_advice_request_not_a_refinement(self):
+        context = _chat_question_suggestion_context({
+            "Sender": {
+                "resource": "11111111-1111-4111-8111-111111111111",
+            },
+            "Chat": {
+                "idChat2": 123,
+                "idSenderResource": "11111111-1111-4111-8111-111111111111",
+                "idWorkRoom": "33333333-3333-4333-8333-333333333333",
+                "chatQuestion": {
+                    "idChat2": 0,
+                    "rawMessage": (
+                        "Pedido do utilizador:\nQue tareas tiene asignado "
+                        "el recurso Alejandro Veitia"
+                    ),
+                },
+            },
+            "Info": {"advice_mode": "1"},
+        })
+
+        self.assertEqual("", context["quoted_chat_id"])
+        self.assertTrue(context["quoted_message"].startswith("Pedido do utilizador"))
+        self.assertEqual(
+            "Que tareas tiene asignado el recurso Alejandro Veitia",
+            _suggestion_request_text(context["quoted_message"]),
+        )
+
+    def test_task_advice_preloads_verified_operational_context(self):
+        with patch.object(
+            MachiningAgent,
+            "_resolve_resource_tasks_from_db",
+            return_value="Tareas verificadas: T-1 y T-2",
+        ):
+            result = _verified_suggestion_business_context(
+                {"Code": "test"},
+                "Que tareas tiene asignado el recurso Alejandro Veitia",
+            )
+
+        self.assertEqual("Tareas verificadas: T-1 y T-2", result)
 
     def test_suggestions_progressively_narrow(self):
         self.assertEqual(4, _suggestion_count(initial=True, completed_turns=0))
@@ -164,6 +218,123 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
         self.assertEqual(2, len(result))
         self.assertTrue(all("canal" in item or "conversa" in item for item in result))
+
+    def test_distinguishes_task_proposal_from_task_listing(self):
+        self.assertTrue(_is_business_recommendation_request(
+            "¿Qué tarea debería ponerle al recurso Alejandro Veitia?"
+        ))
+        self.assertTrue(_is_business_recommendation_request(
+            "¿Qué me propones para ponerle como nueva tarea?"
+        ))
+        self.assertFalse(_is_business_recommendation_request(
+            "¿Qué tareas tiene asignadas Alejandro Veitia?"
+        ))
+
+    def test_concrete_answers_are_separated_from_recommendations(self):
+        self.assertTrue(_is_concrete_suggestion_answer_request(
+            "Qual é a temperatura atual em Leiria?"
+        ))
+        self.assertTrue(_is_concrete_suggestion_answer_request(
+            "¿Qué tareas tiene asignadas Alejandro Veitia?"
+        ))
+        self.assertFalse(_is_concrete_suggestion_answer_request(
+            "¿Qué tarea debería ponerle a Alejandro Veitia?"
+        ))
+        self.assertTrue(_is_concrete_suggestion_answer_request(
+            "¿Cuál es la capital de Francia?"
+        ))
+
+    def test_parser_accepts_single_string_object(self):
+        self.assertEqual(
+            ["A temperatura atual é 22 °C."],
+            _parse_chat_question_suggestions(
+                '{"string":"A temperatura atual é 22 °C."}', limit=1
+            ),
+        )
+
+    def test_extracts_verifiable_fact_but_not_drafting_instruction(self):
+        fact = "Alejandro Veitia llegó a Leiria el día 17 de julio de 2026"
+
+        self.assertEqual(fact, _extract_learnable_suggestion_fact(fact))
+        self.assertEqual(
+            "Alejandro Veitia trabaja habitualmente desde Leiria",
+            _extract_learnable_suggestion_fact(
+                "Alejandro Veitia trabaja habitualmente desde Leiria"
+            ),
+        )
+        self.assertEqual(
+            "",
+            _extract_learnable_suggestion_fact("Haz la primera sugerencia más corta"),
+        )
+        self.assertEqual(
+            "",
+            _extract_learnable_suggestion_fact("¿Qué día llegó Alejandro Veitia?"),
+        )
+
+    def test_legacy_generated_drafts_are_not_usable_as_agent_facts(self):
+        self.assertFalse(usable_agent_knowledge(
+            "Desculpe-me, não tenho informações específicas sobre quando chegou.",
+            LEGACY_SUGGESTION_SOURCE,
+        ))
+        self.assertFalse(usable_agent_knowledge(
+            "2- Poderíamos procurar mais informações em fontes oficiais.",
+            LEGACY_SUGGESTION_SOURCE,
+        ))
+        self.assertTrue(usable_agent_knowledge(
+            "Alejandro Veitia chegou a Leiria a 17 de julho de 2026.",
+            LEGACY_SUGGESTION_SOURCE,
+        ))
+        self.assertTrue(usable_agent_knowledge(
+            "Alejandro Veitia é cubano, tem 36 anos, é casado e tem dois filhos.",
+            USER_ASSERTION_SOURCE,
+        ))
+
+    def test_generic_concrete_answer_rejects_redirects(self):
+        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
+            "Puede consultar un sitio especializado para obtener el dato."
+        ))
+        self.assertFalse(MachiningAgent._is_deflecting_concrete_answer(
+            "El valor verificado es 42, actualizado a las 12:00."
+        ))
+        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
+            "Não tenho informações específicas sobre quando chegou."
+        ))
+        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
+            "No encontré información sobre Robotea; proporcione más detalles."
+        ))
+        self.assertEqual(
+            "El valor es 42.",
+            MachiningAgent._extract_concrete_answer('{"answer":"El valor es 42."}'),
+        )
+
+    def test_detects_and_cleans_incomplete_markdown_response(self):
+        incomplete = "Há previsão para os próximos dias. Para consultar o detalhe no site ["
+
+        self.assertTrue(MachiningAgent._has_incomplete_response_markup(incomplete))
+        self.assertEqual(
+            "Há previsão para os próximos dias.",
+            MachiningAgent._discard_incomplete_response_tail(incomplete),
+        )
+
+    def test_detects_mixed_language_suggestion(self):
+        mixed = (
+            "Eso dependerá de tus preferencias; perhaps try something adventurous. "
+            "If you have a destination in mind, let me know."
+        )
+
+        self.assertFalse(_suggestion_language_is_consistent(mixed, "es"))
+        self.assertTrue(
+            _suggestion_language_is_consistent(
+                "Dependerá de tus preferencias, presupuesto y fechas disponibles.",
+                "es",
+            )
+        )
+
+    def test_short_portuguese_request_keeps_portuguese(self):
+        agent_instance = MachiningAgent.__new__(MachiningAgent)
+        self.assertEqual(
+            "pt", agent_instance._detect_user_language("Fale-me sobre Robotea")
+        )
 
     def test_channel_context_stays_below_prompt_budget_and_keeps_newest(self):
         rows = [
@@ -243,6 +414,76 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         })
 
         self.assertEqual("work_sql_rag", result["route"])
+
+    def test_relevant_private_knowledge_prevents_external_web_route(self):
+        class ExternalTopicAgent:
+            @staticmethod
+            def _is_general_conversation(_text):
+                return False
+
+            @staticmethod
+            def _is_business_knowledge_query(_text):
+                return False
+
+            @staticmethod
+            def _is_external_information_query(_text):
+                return True
+
+            @staticmethod
+            def _is_internal_domain_query(_text):
+                return False
+
+        orchestrator = SolidSETOrchestrator.__new__(SolidSETOrchestrator)
+        orchestrator.agent = ExternalTopicAgent()
+        result = orchestrator._classify({
+            "session_id": "private-fact-test",
+            "user_text": "Quando chegou Alejandro a Leiria?",
+            "message_metadata": {
+                "agent_relevant_knowledge": (
+                    "Alejandro chegou a Leiria a 17 de julho de 2026."
+                )
+            },
+        })
+
+        self.assertEqual("work_sql_rag", result["route"])
+
+    def test_task_suggestion_is_classified_for_live_sql_grounding(self):
+        machining_agent = MachiningAgent.__new__(MachiningAgent)
+        quoted = "Que tareas tiene asignado el recurso Alejandro Veitia"
+        self.assertTrue(machining_agent._is_business_knowledge_query(quoted))
+        self.assertTrue(machining_agent._requires_live_business_data(quoted))
+        self.assertEqual(
+            ["SysResources", "SysLogin", "SysResource2Agent", "SysTask"],
+            machining_agent._business_schema_table_hints(quoted),
+        )
+        self.assertEqual(
+            {"query_sql_server", "get_db_schema"},
+            _suggestion_tool_allowlist(
+                quoted, ambient_mode=False, advice_refine=False
+            ),
+        )
+        self.assertEqual(
+            set(),
+            _suggestion_tool_allowlist(
+                quoted, ambient_mode=True, advice_refine=False
+            ),
+        )
+        self.assertEqual(
+            {"google_web_search"},
+            _suggestion_tool_allowlist(
+                "¿Qué tiempo hará mañana en Lisboa?",
+                ambient_mode=False,
+                advice_refine=False,
+            ),
+        )
+        self.assertEqual(
+            set(),
+            _suggestion_tool_allowlist(
+                "Explica el procedimiento interno de mantenimiento",
+                ambient_mode=False,
+                advice_refine=False,
+            ),
+        )
 
     def test_portugal_date_uses_configured_region(self):
         response = _local_temporal_response(

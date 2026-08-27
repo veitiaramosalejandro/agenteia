@@ -12,7 +12,7 @@ def ingestar_audios_a_qdrant(audio_dir: str = "/app/audio"):
     """Indexa patrones de audio .pcm en Qdrant, evitando duplicados por contenido."""
     client = QdrantClient(url=settings.VECTOR_DB_URL)
     embeddings = OllamaEmbeddings(
-        base_url=settings.OLLAMA_BASE_URL,
+        base_url=settings.EMBEDDING_BASE_URL,
         model=settings.EMBEDDING_MODEL_NAME
     )
     

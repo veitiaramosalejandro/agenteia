@@ -13,7 +13,7 @@ def get_rag_context(query: str, limit: int = 3) -> str:
     """
     try:
         embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=settings.EMBEDDING_MODEL_NAME
         )
         query_vector = embeddings.embed_query(query)

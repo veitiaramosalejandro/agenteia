@@ -30,7 +30,7 @@ class SistemaAprendizaje:
         embedding_model = (settings.EMBEDDING_MODEL_NAME or "").strip() or "nomic-embed-text"
         self.embedding_model = embedding_model
         self.embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=embedding_model
         )
         self._embeddings_enabled = True
@@ -1191,6 +1191,97 @@ class SistemaAprendizaje:
             content = str(payload.get("page_content") or "").strip()
             if content:
                 useful.append(content[:1600])
+        return "\n---\n".join(useful)
+
+    def consultar_conocimiento_agente(
+        self,
+        query: str,
+        *,
+        agent_resource_id: str,
+        canal_id: Optional[str] = None,
+        limit: int = 3,
+        min_score: float = 0.0,
+    ) -> str:
+        """Retrieves only durable knowledge owned by the selected agent."""
+        query_vector = self._embed_query_safe(query, context="consultar_conocimiento_agente")
+        if query_vector is None or not agent_resource_id:
+            return ""
+        results = self._search_aprendizaje(
+            query_vector,
+            # The resource id is also present on chats/interactions. Restrict
+            # this method to durable agent facts, never prior model answers.
+            query_filter={
+                "agent_resource_id": str(agent_resource_id),
+                "scope": "agent",
+            },
+            limit=max(limit * 4, limit),
+        )
+        from app.knowledge_provenance import usable_agent_knowledge
+
+        useful: list[str] = []
+        seen_content: set[str] = set()
+        for hit in results:
+            if float(hit.get("score") or 0.0) < max(0.0, min(float(min_score), 1.0)):
+                continue
+            payload = hit.get("payload") or {}
+            if not usable_agent_knowledge(
+                payload.get("page_content"), payload.get("source")
+            ):
+                continue
+            payload_channel = str(payload.get("canal_id") or "").strip()
+            if canal_id and payload_channel and payload_channel != str(canal_id):
+                continue
+            content = str(payload.get("page_content") or "").strip()
+            content_key = " ".join(content.casefold().split())
+            if content and content_key not in seen_content:
+                useful.append(content[:1200])
+                seen_content.add(content_key)
+            if len(useful) >= limit:
+                break
+        return "\n---\n".join(useful)
+
+    def consultar_conocimiento_sistema(
+        self,
+        query: str,
+        *,
+        solidset_instance_id: str,
+        agent_resource_id: Optional[str] = None,
+        limit: int = 5,
+        min_score: float = 0.0,
+    ) -> str:
+        """Recupera la fotografía SQL materializada, aislada por instancia y recurso."""
+        if not solidset_instance_id:
+            return ""
+        query_vector = self._embed_query_safe(query, context="consultar_conocimiento_sistema")
+        if query_vector is None:
+            return ""
+        results = self._search_aprendizaje(
+            query_vector,
+            query_filter={
+                "source": "solidset_system_snapshot",
+                "solidset_instance_id": str(solidset_instance_id),
+            },
+            limit=max(limit * 8, 20),
+        )
+        useful: list[str] = []
+        seen: set[str] = set()
+        expected_resource = str(agent_resource_id or "").lower()
+        for hit in results:
+            if float(hit.get("score") or 0.0) < max(0.0, min(float(min_score), 1.0)):
+                continue
+            payload = hit.get("payload") or {}
+            related = [str(value).lower() for value in payload.get("related_resource_ids") or []]
+            # Datos relacionados con recursos concretos solo son visibles para
+            # el propietario del agente. Los catálogos sin recurso son comunes.
+            if related and expected_resource and expected_resource not in related:
+                continue
+            content = str(payload.get("page_content") or "").strip()
+            key = " ".join(content.casefold().split())
+            if content and key not in seen:
+                useful.append(content[:1600])
+                seen.add(key)
+            if len(useful) >= limit:
+                break
         return "\n---\n".join(useful)
 
     # ============================================================

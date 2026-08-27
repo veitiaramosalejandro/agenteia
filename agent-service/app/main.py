@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from langchain_community.chat_message_histories import RedisChatMessageHistory
+from app.knowledge_provenance import USER_ASSERTION_SOURCE
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.config import settings
 
@@ -49,6 +50,7 @@ from app.connectors.db_client import (
     get_active_agents_for_workroom,
     get_active_agent_identity_for_resource,
     get_agent_knowledge,
+    quarantine_legacy_generated_knowledge,
     get_llm_provider_configuration,
     get_agent_model_configuration,
     get_agent_model_configurations,
@@ -98,6 +100,11 @@ from app.historical.store import (
     list_audits as list_historical_audits,
     list_cursors as list_historical_cursors,
     mark_historical_deleted,
+)
+from app.system.system_knowledge_ingest import (
+    create_run as create_system_knowledge_run,
+    get_run_status as get_system_knowledge_run_status,
+    run_system_knowledge_ingestion,
 )
 
 # ============================================================
@@ -273,6 +280,7 @@ orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
 response_queue = AgentResponseQueue()
 historical_queue = HistoricalQueue()
+_system_knowledge_tasks: dict[str, asyncio.Task[Any]] = {}
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
@@ -646,11 +654,12 @@ def _is_informational_learning_message(raw_text: str) -> bool:
 
 def _learning_acknowledgement(raw_text: str) -> str:
     language = agent._detect_user_language(raw_text)
-    return {
+    messages = {
         "pt": "Agradeço a informação. Vou tê-la em conta.",
         "en": "Thank you for the information. I will take it into account.",
         "es": "Gracias por la información. La tendré en cuenta.",
-    }[language]
+    }
+    return messages.get(language, messages["en"])
 
 
 def _quoted_reply_is_learning_only(candidate: dict[str, Any]) -> bool:
@@ -802,7 +811,7 @@ def _local_temporal_response(
 
     # The incoming message always decides the response language. Locale only
     # selects regional conventions within that language (for example pt-PT).
-    language = agent._detect_user_language(raw_text)
+    language = agent._detect_user_language(raw_text, locale)
     country_names = {
         "PT": {"pt": "Portugal", "es": "Portugal", "en": "Portugal"},
         "ES": {"pt": "Espanha", "es": "España", "en": "Spain"},
@@ -869,11 +878,12 @@ def _direct_courtesy_response(
         "boa noite", "good morning", "good afternoon", "good evening", "hello", "hi",
     }
     if text.rstrip("!?., ") in greeting_terms:
-        return {
+        greetings = {
             "pt": f"Olá{greeting_name}! É um prazer cumprimentá-lo. Como posso ajudar?",
             "en": f"Hello{greeting_name}! It is a pleasure to greet you. How can I help?",
             "es": f"¡Hola{greeting_name}! Es un placer saludarte. ¿En qué puedo ayudarte?",
-        }[language]
+        }
+        return greetings.get(language, greetings["en"])
     if _looks_like_question_or_request(text):
         return None
     if any(term in text for term in ("obrigado", "obrigada", "boa explicação", "boa explicacao", "muito bom")):
@@ -889,7 +899,7 @@ def _is_external_information_query(raw_text: str) -> bool:
     """Separa consultas externas actuales de conocimiento operativo de trabajo."""
     text = " ".join((raw_text or "").strip().lower().split())
     external_terms = (
-        "tiempo", "tempo", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
+        "tiempo", "tempo", "temperatura", "temperature", "clima", "pronostico", "pronóstico", "meteorologia", "meteorología",
         "weather", "forecast", "previsão", "previsao", "noticias", "news",
         "resultado deportivo", "precio actual", "cotizacion", "cotización",
     )
@@ -901,8 +911,15 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     # trust cached/routed candidate fields alone: re-read the original payload.
     # chat-question suggestions do not use this auto-reply pipeline.
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    if _payload_has_learning_only_destination(payload):
+        return "contenido_solo_aprendizaje"
     if not _payload_has_talk_with_agent(payload):
         return "talk_with_agent_no_autorizado"
+
+    message = (candidate.get("message") or "").strip()
+    response_requested = _payload_requests_agent_response(payload, message)
+    if not response_requested:
+        return "contenido_solo_aprendizaje"
 
     fingerprint = (candidate.get("fingerprint") or "").strip()
     if not fingerprint:
@@ -913,7 +930,6 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "mensaje_generado_por_ia"
 
     channel_id = (candidate.get("channel_id") or "").strip()
-    message = (candidate.get("message") or "").strip()
     sender_resource = str(candidate.get("sender_resource") or "")
     sender_name = str(candidate.get("sender_name") or "")
     can_reply_direct = bool(candidate.get("is_direct") and candidate.get("reply_resource"))
@@ -921,10 +937,14 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return "mensaje_vacio"
     if not channel_id and not can_reply_direct:
         return "sin_destino_para_responder"
-    if _candidate_is_learning_only(candidate) and not can_reply_direct:
+    if (
+        _candidate_is_learning_only(candidate)
+        and not can_reply_direct
+        and not response_requested
+    ):
         return "respuesta_citada_solo_aprendizaje"
 
-    # Con identidad explícita configurada, Destiny es la fuente de verdad. Así
+    # Con identidad explícita configurada, Chat.resourceTable es la fuente de verdad. Así
     # una mención textual dentro de un canal ajeno no provoca una respuesta.
     has_configured_recipient_identity = bool(
         (settings.SOLIDSET_LOGIN_RESOURCE_ID or "").strip()
@@ -941,6 +961,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     kind_is_conversational = bool(candidate.get("kind_reply_eligible", True))
     if (
         not kind_is_conversational
+        and not response_requested
         and not _looks_like_question_or_request(message)
         and not mentioned
         and not active_followup
@@ -948,6 +969,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         return f"evento_sin_peticion:{candidate.get('message_kind') or 'desconocido'}"
     if (
         not candidate.get("addressed_to_agent")
+        and not response_requested
         and not mentioned
         and not _looks_like_question_or_request(message)
         and not active_followup
@@ -973,6 +995,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 
 def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+<<<<<<< HEAD
     rows = []
     destiny = _get_payload_value(chat, "destiny", "Destiny")
     resource_table = _get_payload_value(chat, "resourceTable", "ResourceTable")
@@ -981,6 +1004,10 @@ def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
     if isinstance(resource_table, list):
         rows.extend(resource_table)
     if not rows:
+=======
+    destinations = _get_payload_value(chat, "resourceTable", "ResourceTable")
+    if not isinstance(destinations, list):
+>>>>>>> 62d543856b08dc150e75e1dc941a9d85d1049d46
         return False
     for destination in rows:
         if not isinstance(destination, dict):
@@ -996,9 +1023,54 @@ def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
             or (isinstance(flag, int) and flag == 1)
             or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
         )
+        # type=2 autoriza conversación. type=3 es contenido de aprendizaje y
+        # nunca puede abrir la barrera de respuesta.
         if destination_type == 2 and enabled:
             return True
     return False
+
+
+def _payload_has_learning_only_destination(payload: dict[str, Any]) -> bool:
+    """Reconoce el destino type=3, que nunca autoriza una respuesta."""
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    destinations = _get_payload_value(chat, "resourceTable", "ResourceTable")
+    if not isinstance(destinations, list):
+        return False
+    for destination in destinations:
+        if not isinstance(destination, dict):
+            continue
+        lowered = {str(key).lower(): value for key, value in destination.items()}
+        try:
+            destination_type = int(lowered.get("type"))
+        except (TypeError, ValueError):
+            continue
+        flag = lowered.get("talkwithagent")
+        enabled = (
+            flag is True
+            or (isinstance(flag, int) and flag == 1)
+            or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
+        )
+        if destination_type == 3 and enabled:
+            return True
+    return False
+
+
+def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> bool:
+    """Apply SolidSET's explicit QuestionType response contract.
+
+    Type 1 has priority and type 3 is an explicit request. Type 0 is
+    unclassified and may respond only when the text contains ``?``. Type 2
+    and missing/unknown values remain learning-only.
+    """
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    question_type = _get_payload_value(chat, "questionType", "QuestionType")
+    try:
+        normalized_type = int(question_type)
+    except (TypeError, ValueError):
+        return False
+    if normalized_type in {1, 3}:
+        return True
+    return normalized_type == 0 and "?" in str(raw_text or "")
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
@@ -1006,6 +1078,7 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
+<<<<<<< HEAD
     chat_destinations = chat_lower.get("destiny")
     resource_table = chat_lower.get("resourcetable")
 
@@ -1014,6 +1087,16 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     # canales como en meetings: solo los recursos IA (type=2) marcados con true
     # responden. La mera presencia del campo también impide caer en reglas
     # antiguas y activar por accidente otro agente del canal.
+=======
+    chat_destinations = chat_lower.get("resourcetable")
+
+    # Señal explícita de SolidSET. Cuando Chat.resourceTable incluye
+    # talkWithAgent, esa colección es autoritativa tanto en canales como en
+    # meetings: solo los recursos IA type=2 marcados con true responden.
+    # type=3 queda exclusivamente en el flujo de aprendizaje. La
+    # mera presencia del campo también impide caer en reglas antiguas y activar
+    # por accidente otro agente del canal.
+>>>>>>> 62d543856b08dc150e75e1dc941a9d85d1049d46
     selected_by_flag: list[tuple[int, str]] = []
 
     def _collect_from_rows(rows: Any) -> None:
@@ -1058,16 +1141,15 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
 
 
 def _human_reply_destination(candidate: dict) -> dict[str, str]:
-    """Resuelve el type=1 de Chat.destiny al invertir humano -> IA en la respuesta."""
+    """Resuelve el humano type=1 desde Chat.resourceTable para invertir la respuesta."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
-    destinations = chat_lower.get("destiny")
     resource_table = chat_lower.get("resourcetable")
     sender_resource = str(candidate.get("sender_resource") or "").strip()
     humans: list[tuple[int, dict[str, str]]] = []
-    if isinstance(destinations, list):
-        for destination in destinations:
+    if isinstance(resource_table, list):
+        for destination in resource_table:
             if not isinstance(destination, dict):
                 continue
             lowered = {str(key).lower(): value for key, value in destination.items()}
@@ -1095,20 +1177,6 @@ def _human_reply_destination(candidate: dict) -> dict[str, str]:
     if humans:
         humans.sort(key=lambda item: item[0])
         selected_human = humans[0][1]
-        if not selected_human["resource_name"] and isinstance(resource_table, list):
-            for participant in resource_table:
-                if not isinstance(participant, dict):
-                    continue
-                lowered = {str(key).lower(): value for key, value in participant.items()}
-                participant_resource = str(
-                    lowered.get("idresource") or lowered.get("resource") or ""
-                ).strip()
-                if participant_resource.lower() != selected_human["resource"].lower():
-                    continue
-                selected_human["resource_name"] = str(
-                    lowered.get("username") or lowered.get("resourcename") or ""
-                ).strip()
-                break
         return selected_human
     return {
         "resource": sender_resource,
@@ -1121,11 +1189,16 @@ def _selected_agent_chat_destination(candidate: dict, agent_resource_id: str) ->
     """Conserva nombre/login del destino IA marcado con talkWithAgent."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+<<<<<<< HEAD
     chat_lower = {str(k).lower(): v for k, v in chat.items()}
     for collection_name in ("destiny", "resourcetable"):
         destinations = chat_lower.get(collection_name)
         if not isinstance(destinations, list):
             continue
+=======
+    destinations = {str(k).lower(): v for k, v in chat.items()}.get("resourcetable")
+    if isinstance(destinations, list):
+>>>>>>> 62d543856b08dc150e75e1dc941a9d85d1049d46
         for destination in destinations:
             if not isinstance(destination, dict):
                 continue
@@ -1453,6 +1526,8 @@ async def _process_auto_replies(
             "country_code": candidate.get("country_code") or "PT",
             "locale": candidate.get("locale") or "pt-PT",
             "time_zone": candidate.get("time_zone") or "Europe/Lisbon",
+            "solidset_instance_id": candidate.get("solidset_instance_id"),
+            "solidset_instance_code": candidate.get("solidset_instance_code"),
         }
         if not incoming_text or (not channel_id and not reply_resource):
             continue
@@ -1461,6 +1536,28 @@ async def _process_auto_replies(
         agent_resource_id = str(candidate.get("agent_resource_id") or "").strip()
         agent_identity_id = str(candidate.get("agent_identity_id") or "").strip()
         agent_name = str(candidate.get("agent_name") or agent_resource_id).strip()
+        relevant_agent_knowledge = ""
+        if agent_resource_id:
+            try:
+                relevant_agent_knowledge = (
+                    agent.sistema_aprendizaje.consultar_conocimiento_agente(
+                        incoming_text,
+                        agent_resource_id=agent_resource_id,
+                        canal_id=channel_id,
+                        min_score=settings.BUSINESS_RAG_MIN_SCORE,
+                    )
+                )
+            except Exception as exc:
+                print(
+                    "⚠️ No se pudo preseleccionar conocimiento privado "
+                    f"para enrutamiento: {exc}"
+                )
+        message_metadata["agent_relevant_knowledge"] = relevant_agent_knowledge
+        print(
+            "🧠 Conocimiento privado preseleccionado "
+            f"resource={agent_resource_id or '-'} workroom={channel_id or '-'} "
+            f"found={bool(relevant_agent_knowledge)} chars={len(relevant_agent_knowledge)}"
+        )
         status_agent_id = agent_identity_id or agent_resource_id
         _update_response_status(
             response_request_id,
@@ -1484,7 +1581,15 @@ async def _process_auto_replies(
             or settings.SOLIDSET_LOGIN_USERNAME
             or "solidset.agent"
         ).strip()
-        learning_only = _candidate_is_learning_only(candidate)
+        learning_only = (
+            _candidate_is_learning_only(candidate)
+            and not _payload_requests_agent_response(
+                candidate.get("payload")
+                if isinstance(candidate.get("payload"), dict)
+                else {},
+                incoming_text,
+            )
+        )
         response_text = (
             _learning_acknowledgement(incoming_text)
             if is_direct and learning_only
@@ -1513,7 +1618,10 @@ async def _process_auto_replies(
             )
         if response_text is None:
             try:
-                external_query = _is_external_information_query(incoming_text)
+                external_query = bool(
+                    not relevant_agent_knowledge
+                    and _is_external_information_query(incoming_text)
+                )
                 if external_query:
                     _update_response_status(
                         response_request_id,
@@ -2305,6 +2413,14 @@ async def startup_db_learning() -> None:
             await asyncio.to_thread(ensure_agent_model_schema)
             await asyncio.to_thread(ensure_agent_response_audit_schema)
             await asyncio.to_thread(ensure_historical_schema)
+            quarantined = await asyncio.to_thread(
+                quarantine_legacy_generated_knowledge
+            )
+            if quarantined:
+                print(
+                    "🧹 Conocimiento legado generado por IA puesto en cuarentena "
+                    f"rows={quarantined}"
+                )
         except psycopg.Error as exc:
             print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
         app.state.startup_connectivity = _run_startup_connectivity_checks()
@@ -2485,6 +2601,11 @@ class SolidSETInstanceStored(SolidSETInstanceConfiguration):
 class SolidSETInstanceConfigurationResponse(BaseModel):
     status: str
     configuration: SolidSETInstanceStored
+
+
+class SolidSETInstanceListResponse(BaseModel):
+    total: int
+    items: list[SolidSETInstanceStored]
 
 
 class SolidSETDataAPIConnectionTestResponse(BaseModel):
@@ -3258,7 +3379,9 @@ def _get_payload_value(payload: Optional[dict[str, Any]], *keys: str) -> Any:
 def _valid_framework_identifier(value: Any) -> Optional[str]:
     """Descarta identificadores vacíos que SolidSET usa como valor nulo."""
     normalized = str(value or "").strip()
-    if not normalized or normalized == "00000000-0000-0000-0000-000000000000":
+    if not normalized or normalized in {
+        "0", "00000000-0000-0000-0000-000000000000",
+    }:
         return None
     return normalized
 
@@ -3575,6 +3698,8 @@ async def handle_multi_agent_dialogue(
                 "agent_reinforcement": reinforcement,
                 "workroom_id": str(request.IDWorkRoom),
                 "source": "solidset_multi_agent",
+                "solidset_instance_id": str(solidset_instance["ID"]) if solidset_instance else "",
+                "solidset_instance_code": str(solidset_instance["Code"]) if solidset_instance else "",
             },
             auto_reply_mode=True,
         )
@@ -3765,6 +3890,70 @@ def register_solidset_instance(
         status=operation,
         configuration=SolidSETInstanceStored(**saved),
     )
+
+
+def _public_solidset_instance(instance: dict[str, Any]) -> dict[str, Any]:
+    """Returns instance configuration without encrypted or clear-text credentials."""
+    public = dict(instance)
+    data_api = public.get("DataAPI")
+    if isinstance(data_api, dict):
+        public["DataAPI"] = {
+            key: data_api.get(key) for key in (
+                "BaseUrl", "TimeoutSeconds", "MaxRows", "VerifyTLS", "active",
+            )
+        }
+        public["DataAPI"]["APIKeyConfigured"] = bool(
+            data_api.get("EncryptedAPIKey") or data_api.get("APIKeyConfigured")
+        )
+    else:
+        public["DataAPI"] = None
+    public.pop("EncryptedAPIKey", None)
+    public.pop("APIKey", None)
+    return public
+
+
+@app.get(
+    "/api/v1/agent/solidset/instances",
+    response_model=SolidSETInstanceListResponse,
+    tags=["SolidSET instances"],
+    summary="List SolidSET instances",
+)
+def read_solidset_instances(
+    activeOnly: bool = Query(False, description="Return only active instances."),
+) -> SolidSETInstanceListResponse:
+    """Lists configured instances without exposing Data API credentials."""
+    try:
+        rows = list_active_solidset_instances(active_only=activeOnly)
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=503, detail="Não foi possível consultar as instâncias SolidSET."
+        ) from exc
+    items = [SolidSETInstanceStored(**_public_solidset_instance(row)) for row in rows]
+    return SolidSETInstanceListResponse(total=len(items), items=items)
+
+
+@app.get(
+    "/api/v1/agent/solidset/instances/{code}",
+    response_model=SolidSETInstanceStored,
+    tags=["SolidSET instances"],
+    summary="Get one SolidSET instance",
+)
+def read_solidset_instance(code: str) -> SolidSETInstanceStored:
+    """Returns one configured instance by code, including inactive instances."""
+    normalized_code = code.strip()
+    if not normalized_code:
+        raise HTTPException(status_code=422, detail="Code é obrigatório.")
+    try:
+        instance = get_solidset_instance(
+            code=normalized_code, source_ip=None, active_only=False,
+        )
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=503, detail="Não foi possível consultar a instância SolidSET."
+        ) from exc
+    if not instance:
+        raise HTTPException(status_code=404, detail="A instância SolidSET não existe.")
+    return SolidSETInstanceStored(**_public_solidset_instance(instance))
 
 
 @app.post(
@@ -4215,6 +4404,152 @@ def _suggestion_title(language: str, *, initial: bool) -> str | None:
     }.get(language, "Resumo dos temas discutidos:")
 
 
+def _suggestion_tool_allowlist(
+    quoted_message: str, *, ambient_mode: bool, advice_refine: bool
+) -> set[str]:
+    """Mirror framework-message read routing while preserving suggestion output."""
+    if ambient_mode or advice_refine:
+        return set()
+    if agent._is_business_knowledge_query(quoted_message):
+        return {"query_sql_server", "get_db_schema"}
+    if agent._is_external_information_query(quoted_message):
+        return {"google_web_search"}
+    return set()
+
+
+def _verified_suggestion_business_context(
+    solidset_instance: dict[str, Any], quoted_message: str
+) -> str:
+    """Reuse deterministic framework-message resolvers before drafting."""
+    with solidset_sql_instance_context(solidset_instance):
+        for resolver in (
+            agent._resolve_resource_tasks_from_db,
+            agent._resolve_resource_activities_from_db,
+            agent._resolve_resource_count_from_db,
+        ):
+            result = resolver(quoted_message)
+            if result:
+                return str(result).strip()
+    return ""
+
+
+def _is_business_recommendation_request(text: str) -> bool:
+    """Distinguishes analysis/proposals from a literal operational listing."""
+    normalized = " ".join(str(text or "").strip().casefold().split())
+    return bool(re.search(
+        r"\b(?:qu[eé]\s+(?:tarea\s+)?(?:deber[ií]a|podr[ií]a)|"
+        r"propon(?:es|dr[ií]as?)|recomiend(?:as|a)|sugier(?:es|e)|"
+        r"devo|poderia|prop[oõ]es|recomend(?:as|a)|suger(?:es|e)|"
+        r"should|could|propose|recommend|suggest)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    ))
+
+
+def _is_concrete_suggestion_answer_request(text: str) -> bool:
+    """True when the advice UI should return one verified answer, not options."""
+    normalized = " ".join(str(text or "").strip().casefold().split())
+    factual_form = bool(
+        "?" in normalized
+        or "¿" in normalized
+        or re.match(
+            r"^(?:qu[eé]|cu[aá]l|cu[aá]nt[oa]s?|c[oó]mo|d[oó]nde|cu[aá]ndo|"
+            r"qual|quais|quanto|quantos|como|onde|quando|what|which|how|where|when)\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
+    return bool(not _is_business_recommendation_request(text) and factual_form)
+
+
+def _suggestion_request_text(quoted_message: str) -> str:
+    """Remove the UI wrapper so intent and language come from the real request."""
+    text = str(quoted_message or "").strip()
+    return re.sub(
+        r"^(?:pedido do utilizador|petici[oó]n del usuario|user request)\s*:\s*",
+        "",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
+def _extract_learnable_suggestion_fact(text: str) -> str:
+    """Selects declarative, verifiable user facts; excludes drafting commands."""
+    candidate = _suggestion_request_text(text)
+    normalized = " ".join(candidate.casefold().split())
+    if not 12 <= len(candidate) <= 2000 or "?" in candidate or "¿" in candidate:
+        return ""
+    drafting_command = re.match(
+        r"^(?:haz|haga|refina|refine|reescribe|reescreve|reformula|cambia|cambie|"
+        r"altera|muda|añade|adiciona|agrega|quita|remove|dame|dê-me|prop[oó]n|"
+        r"sugiere|sugere|quiero|quero|prefiero|prefiro|la primera|la segunda|"
+        r"a primeira|a segunda|first|second|make|rewrite|change|add|remove)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if drafting_command:
+        return ""
+    conversational_feedback = re.match(
+        r"^(?:s[ií]|sim|yes|no|n[aã]o|ok|vale|gracias|obrigad[oa]|thanks|"
+        r"me gusta|gosto|est[aá] bien|est[aá] correcto|esa opci[oó]n|esta opci[oó]n)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if conversational_feedback:
+        return ""
+    explicit_fact = bool(re.match(
+        r"^(?:dato|hecho|informaci[oó]n correcta|correcci[oó]n|facto|"
+        r"informa[cç][aã]o correta|corre[cç][aã]o|fact|correct information|correction)\b",
+        normalized,
+    ))
+    verifiable_anchor = bool(
+        re.search(r"\b\d{1,4}(?:[./:-]\d{1,4})+(?:[t ]\d{1,2}:\d{2})?\b", normalized)
+        or re.search(r"\b\d+(?:[.,]\d+)?\s*(?:€|\$|%|kg|km|h|horas?|dias?|days?)\b", normalized)
+        or re.search(r"\b\d{1,2}\s+de\s+[a-zà-ÿ]+\s+(?:de|del(?:\s+año)?|do(?:\s+ano)?)\s+\d{4}\b", normalized)
+        or re.search(r"\b[a-zà-ÿ]+\s+\d{1,2},?\s+\d{4}\b", normalized)
+        or re.search(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", normalized)
+    )
+    declarative_relation = bool(re.search(
+        r"\b(?:es|son|era|fue|ser[aá]|est[aá]|tiene|lleg[oó]|comenz[oó]|"
+        r"é|s[aã]o|era|foi|ser[aá]|est[aá]|tem|chegou|come[cç]ou|"
+        r"is|are|was|will be|has|arrived|started)\b",
+        normalized,
+    ))
+    # After excluding questions, commands and feedback, a sufficiently formed
+    # declarative sentence is a user assertion. Provenance keeps it distinct
+    # from authoritative SQL data and allows later correction/governance.
+    word_count = len(re.findall(r"\b[\wÀ-ÿ'-]+\b", candidate))
+    return candidate if explicit_fact or verifiable_anchor or declarative_relation or word_count >= 5 else ""
+
+
+def _persist_suggestion_fact(
+    *, resource_id: str, workroom_id: str, fact: str
+) -> dict[str, Any]:
+    saved = save_agent_knowledge({
+        "IDResource": resource_id,
+        "IDWorkRoom": workroom_id,
+        "Title": "Hecho enseñado desde el panel de sugerencias",
+        "KnowledgeText": fact,
+        "Source": USER_ASSERTION_SOURCE,
+        "active": True,
+    })
+    def _index() -> None:
+        try:
+            indexed = agent.sistema_aprendizaje.aprender_conocimiento_agente(saved)
+            print(
+                "🧠 Hecho del panel indexado "
+                f"knowledge_id={saved.get('ID')} indexed={indexed}"
+            )
+        except Exception as exc:
+            print(f"⚠️ No se pudo indexar el hecho del panel: {exc}")
+
+    indexed_scheduled = not bool(saved.get("WasExisting"))
+    if indexed_scheduled:
+        threading.Thread(target=_index, daemon=True).start()
+    return {"saved": saved, "indexed_scheduled": indexed_scheduled}
+
+
 def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[str]:
     """Normalizes model output into distinct, user-selectable suggestions."""
     text = str(raw_response or "").strip()
@@ -4230,6 +4565,12 @@ def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[
             values = decoded
         elif isinstance(decoded, dict):
             values = decoded.get("suggestions") or decoded.get("sugestoes") or []
+            if not values:
+                single = (
+                    decoded.get("string") or decoded.get("text")
+                    or decoded.get("response") or decoded.get("suggestion")
+                )
+                values = [single] if single else []
     except json.JSONDecodeError:
         values = re.split(r"\n\s*(?:---SUGGESTION---|\d+[.)]\s+)", text)
 
@@ -4274,6 +4615,31 @@ def _parse_chat_question_suggestions(raw_response: Any, limit: int = 3) -> list[
     return suggestions
 
 
+def _suggestion_language_is_consistent(text: str, language: str) -> bool:
+    """Rejects statistically confident code-switching before reaching the UI."""
+    candidate = re.sub(r"\s+", " ", str(text or "").strip())
+    expected = agent.language_resolver.normalize_language(language)
+    if not candidate or not expected:
+        return False
+
+    # Inspect the whole answer and meaningful sentence-sized segments. This
+    # catches a foreign-language paragraph without maintaining vocabulary lists.
+    segments = [candidate]
+    segments.extend(
+        segment.strip()
+        for segment in re.split(r"(?:[.!?]+|\n+)", candidate)
+        if len(segment.split()) >= 4
+    )
+    for segment in segments:
+        decision = agent.language_resolver.detect(segment)
+        if (
+            decision.confidence >= settings.LANGUAGE_MIN_CONFIDENCE
+            and decision.language != expected
+        ):
+            return False
+    return True
+
+
 def _repair_chat_question_suggestions(
     raw_response: Any,
     *,
@@ -4283,9 +4649,9 @@ def _repair_chat_question_suggestions(
     metadata: dict[str, Any],
 ) -> str:
     """Uses a small constrained pass when the main agent violates the JSON contract."""
-    target_language = {"pt": "português europeu", "es": "español", "en": "English"}.get(
-        language, "português europeu"
-    )
+    target_language = {
+        "pt": "português europeu", "es": "español", "en": "English"
+    }.get(language, agent._language_name(language))
     request_llm, _, provider = agent.get_llm_for_metadata({
         **metadata,
         "model_capability": "general",
@@ -4377,7 +4743,13 @@ async def suggest_chat_question_response(
     ).strip()
     request_id = context["request_id"]
     advice_mode = context["advice_mode"] in {"1", "true", "yes", "sim"}
-    advice_refine = advice_mode and bool(context["quoted_message"])
+    advice_refine = bool(
+        advice_mode and context["quoted_message"] and context["quoted_chat_id"]
+    )
+    advice_request = bool(
+        advice_mode and context["quoted_message"] and not context["quoted_chat_id"]
+    )
+    effective_request_text = _suggestion_request_text(context["quoted_message"])
     ambient_mode = (
         advice_mode
         and not context["quoted_message"]
@@ -4388,7 +4760,7 @@ async def suggest_chat_question_response(
             status_code=422,
             detail="O campo Chat.IDChat2 é obrigatório para acompanhar o estado do pedido.",
         )
-    if not ambient_mode and not advice_refine and (
+    if not ambient_mode and not advice_refine and not advice_request and (
         not context["quoted_chat_id"] or not context["quoted_message"]
     ):
         raise HTTPException(
@@ -4451,6 +4823,30 @@ async def suggest_chat_question_response(
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
+        learned_fact = ""
+        # Only a new request is authored by the user. In a refinement the
+        # quoted text can be an AI draft selected by the UI, so persisting it
+        # would teach the model its own output as if it were a verified fact.
+        if advice_request:
+            learned_fact = _extract_learnable_suggestion_fact(effective_request_text)
+        if learned_fact:
+            try:
+                persisted = await asyncio.to_thread(
+                    _persist_suggestion_fact,
+                    resource_id=context["requester_resource"],
+                    workroom_id=context["workroom_id"],
+                    fact=learned_fact,
+                )
+                print(
+                    "🧠 Hecho aprendido desde chat-question "
+                    f"resource={context['requester_resource']} "
+                    f"workroom={context['workroom_id']} "
+                    f"knowledge_id={persisted['saved'].get('ID')}"
+                )
+            except (ValueError, psycopg.Error, RuntimeError) as exc:
+                # Suggestion generation remains available if durable learning
+                # is temporarily unavailable; the error is observable in logs.
+                print(f"⚠️ No se pudo persistir el hecho del panel: {exc}")
         private_knowledge = await asyncio.to_thread(
             get_agent_knowledge,
             context["requester_resource"],
@@ -4479,14 +4875,22 @@ async def suggest_chat_question_response(
                     "Não foram encontradas mensagens acessíveis no canal ou na reunião para gerar sugestões."
                 )
         scoped_session = _chat_question_session_id(context)
-        if ambient_mode:
+        # A new explicit request (quoted id absent/zero) starts a fresh advice
+        # flow. Old turns from the channel must not reduce an unrelated request.
+        if ambient_mode or advice_request:
             _reset_chat_question_memory(scoped_session)
         completed_turns = _chat_question_turn_count(scoped_session)
         suggestion_count = _suggestion_count(
             initial=ambient_mode,
             completed_turns=completed_turns,
         )
-        suggestion_source = context["quoted_message"]
+        concrete_answer_mode = bool(
+            advice_request
+            and _is_concrete_suggestion_answer_request(effective_request_text)
+        )
+        if concrete_answer_mode:
+            suggestion_count = 1
+        suggestion_source = effective_request_text
         if ambient_mode:
             suggestion_source = (
                 f"Analisa o contexto SolidSET abaixo e identifica exatamente {suggestion_count} "
@@ -4505,25 +4909,61 @@ async def suggest_chat_question_response(
                 "conversa; não voltes a procurar o canal, não inventes factos e não pesquises na web.\n\n"
                 f"RASCUNHO SELECIONADO:\n{context['quoted_message']}"
             )
+        verified_business_context = ""
+        business_recommendation = _is_business_recommendation_request(
+            effective_request_text
+        )
+        if advice_request or (
+            not ambient_mode
+            and not advice_refine
+            and agent._is_business_knowledge_query(context["quoted_message"])
+        ):
+            verified_business_context = await asyncio.to_thread(
+                _verified_suggestion_business_context,
+                solidset_instance,
+                effective_request_text,
+            )
+            if verified_business_context:
+                suggestion_source = (
+                    f"{suggestion_source}\n\nDADOS OPERACIONAIS VERIFICADOS:\n"
+                    f"{verified_business_context}\n\nRedige a sugestão com estes dados; "
+                    "não devolvas apenas um título e não inventes informação."
+                )
+        suggestion_locale = str(
+            _get_payload_value(message.Info, "locale") or "pt-PT"
+        )
+        language_decision = agent.language_resolver.resolve(
+            effective_request_text or suggestion_source,
+            session_id=scoped_session,
+            locale=suggestion_locale,
+        )
         metadata = {
             "response_suggestion_mode": True,
-            "advice_mode": advice_mode,
+            "advice_mode": advice_mode and not advice_request,
             "advice_refine": advice_refine,
+            "advice_request": advice_request,
+            "concrete_answer_mode": concrete_answer_mode,
             "response_suggestion_scope": (
                 "advice_refine"
                 if advice_refine
+                else "advice_request"
+                if advice_request
                 else "channel_or_meeting"
                 if ambient_mode
                 else "quoted_message"
             ),
             "response_suggestion_count": suggestion_count,
             "response_language": (
-                "pt" if ambient_mode else agent._detect_user_language(context["quoted_message"])
+                "pt" if ambient_mode else language_decision.language
             ),
+            "resolved_language": "pt" if ambient_mode else language_decision.language,
+            "language_confidence": language_decision.confidence,
+            "language_source": language_decision.source,
             "chat_id": request_id,
             "quoted_chat_id": context["quoted_chat_id"],
             "quoted_message": context["quoted_message"],
             "scope_context": scope_context,
+            "verified_business_context": verified_business_context,
             "quoted_sender_resource": context["quoted_resource"],
             "quoted_sender_login": context["quoted_login"],
             "requester_resource": context["requester_resource"],
@@ -4539,53 +4979,99 @@ async def suggest_chat_question_response(
             "recipient_count": 1,
             "importance": int(message.Importance or 0),
             "country_code": str(_get_payload_value(message.Info, "country_code") or "PT"),
-            "locale": str(_get_payload_value(message.Info, "locale") or "pt-PT"),
+            "locale": suggestion_locale,
             "time_zone": str(
                 _get_payload_value(message.Info, "time_zone", "timezone")
                 or "Europe/Lisbon"
             ),
+            "solidset_instance_id": str(solidset_instance["ID"]),
+            "solidset_instance_code": str(solidset_instance["Code"]),
         }
+        suggestion_tool_allowlist = _suggestion_tool_allowlist(
+            effective_request_text,
+            ambient_mode=ambient_mode,
+            advice_refine=advice_refine,
+        )
+        if suggestion_tool_allowlist:
+            # Same read-only knowledge routing as framework-message. The
+            # endpoint still only returns drafts and never sends or mutates.
+            metadata["ground_with_current_knowledge"] = True
         _update_response_status(
             request_id,
             "thinking",
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
-        raw_suggestions = await asyncio.to_thread(
-            _invoke_orchestrator_for_instance,
-            str(solidset_instance["Code"]),
-            session_id=scoped_session,
-            user_text=suggestion_source,
-            user_id=context["requester_resource"],
-            canal_id=context["workroom_id"],
-            meeting_id=context["meeting_id"] or None,
-            meeting_code=context["meeting_code"] or None,
-            message_kind=str(message.Kind or "ChatMessage"),
-            message_category="chat_question_response_suggestion",
-            message_metadata=metadata,
-            tool_allowlist=set(),
-            auto_reply_mode=True,
-        )
-        suggestions = _parse_chat_question_suggestions(
-            raw_suggestions, limit=suggestion_count
-        )
-        if len(suggestions) != suggestion_count:
+        if verified_business_context and not business_recommendation:
+            # Deterministic operational resolvers already produced the grounded
+            # answer. Do not let a second model pass omit rows or alter facts.
+            raw_suggestions = json.dumps(
+                [verified_business_context], ensure_ascii=False
+            )
+            suggestions = [verified_business_context]
+        else:
+            raw_suggestions = await asyncio.to_thread(
+                _invoke_orchestrator_for_instance,
+                str(solidset_instance["Code"]),
+                session_id=scoped_session,
+                user_text=suggestion_source,
+                user_id=context["requester_resource"],
+                canal_id=context["workroom_id"],
+                meeting_id=context["meeting_id"] or None,
+                meeting_code=context["meeting_code"] or None,
+                message_kind=str(message.Kind or "ChatMessage"),
+                message_category="chat_question_response_suggestion",
+                message_metadata=metadata,
+                tool_allowlist=suggestion_tool_allowlist,
+                auto_reply_mode=True,
+            )
+            suggestions = _parse_chat_question_suggestions(
+                raw_suggestions, limit=suggestion_count
+            )
+            suggestions = [
+                item for item in suggestions
+                if _suggestion_language_is_consistent(
+                    item, metadata["response_language"]
+                )
+            ]
+        if (
+            (not verified_business_context or business_recommendation)
+            and len(suggestions) != suggestion_count
+        ):
             repaired_raw = await asyncio.to_thread(
                 _repair_chat_question_suggestions,
                 raw_suggestions,
                 count=suggestion_count,
                 language=metadata["response_language"],
-                grounding_context=(scope_context or context["quoted_message"]),
+                grounding_context=(
+                    verified_business_context
+                    or scope_context
+                    or context["quoted_message"]
+                ),
                 metadata=metadata,
             )
             suggestions = _parse_chat_question_suggestions(
                 repaired_raw, limit=suggestion_count
             )
+            suggestions = [
+                item for item in suggestions
+                if _suggestion_language_is_consistent(
+                    item, metadata["response_language"]
+                )
+            ]
         if not suggestions:
-            print("⚠️ O modelo não respeitou o contrato após reparação; usando sugestões seguras.")
-            suggestions = _safe_chat_question_fallback(
-                metadata["response_language"], suggestion_count
-            )
+            if concrete_answer_mode:
+                print("⚠️ Não foi possível verificar uma resposta concreta para a sugestão.")
+                suggestions = [{
+                    "pt": "Não consegui verificar o dado solicitado neste momento; prefiro não indicar um valor sem confirmação.",
+                    "es": "No pude verificar el dato solicitado en este momento; prefiero no indicar un valor sin confirmación.",
+                    "en": "I could not verify the requested fact at this time, so I will not provide an unconfirmed value.",
+                }.get(metadata["response_language"], "Não consegui verificar o dado solicitado neste momento.")]
+            else:
+                print("⚠️ O modelo não respeitou o contrato após reparação; usando sugestões seguras.")
+                suggestions = _safe_chat_question_fallback(
+                    metadata["response_language"], suggestion_count
+                )
         language = metadata["response_language"]
         title = _suggestion_title(language, initial=ambient_mode)
         result = {
@@ -4677,6 +5163,14 @@ class HistoricalIngestionStartRequest(BaseModel):
     dryRun: bool = True
 
 
+class SystemKnowledgeIngestionStartRequest(BaseModel):
+    instanceCode: str = Field(..., min_length=1, max_length=100)
+    tables: Optional[list[str]] = Field(None, max_length=50)
+
+    class Config:
+        extra = "forbid"
+
+
 def _require_historical_admin(
     x_agent_admin_key: str = Header(
         ...,
@@ -4689,6 +5183,76 @@ def _require_historical_admin(
         raise HTTPException(status_code=503, detail="Configure HISTORICAL_INGESTION_ADMIN_KEY.")
     if x_agent_admin_key != configured:
         raise HTTPException(status_code=401, detail="Credencial administrativa inválida.")
+
+
+async def _execute_system_knowledge_run(
+    run_id: str, instance: dict[str, Any], tables: list[str] | None,
+) -> None:
+    try:
+        await asyncio.to_thread(run_system_knowledge_ingestion, run_id, instance, tables)
+    except Exception as exc:
+        print(f"❌ Ingesta de conocimiento SQL run={run_id}: {exc}", flush=True)
+    finally:
+        _system_knowledge_tasks.pop(run_id, None)
+
+
+@app.post(
+    "/api/v1/agent/system-knowledge-ingestion/start",
+    status_code=202,
+    tags=["Historical Ingestion"],
+    dependencies=[Depends(_require_historical_admin)],
+)
+async def start_system_knowledge_ingestion(
+    configuration: SystemKnowledgeIngestionStartRequest,
+) -> dict[str, Any]:
+    """Inicia la materialización semántica de entidades SQL Server."""
+    instance = get_solidset_instance(code=configuration.instanceCode, source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instância SolidSET não encontrada.")
+    if not instance.get("DataAPI"):
+        raise HTTPException(status_code=409, detail="A instância não possui Data API ativa.")
+    try:
+        run_id = await asyncio.to_thread(create_system_knowledge_run, instance)
+    except (psycopg.Error, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Não foi possível criar a execução.") from exc
+    task = _system_knowledge_tasks.get(run_id)
+    if task is None or task.done():
+        _system_knowledge_tasks[run_id] = asyncio.create_task(
+            _execute_system_knowledge_run(run_id, instance, configuration.tables)
+        )
+    return {
+        "status": "accepted", "runId": run_id,
+        "statusUrl": f"/api/v1/agent/system-knowledge-ingestion/status?runId={run_id}",
+    }
+
+
+@app.get(
+    "/api/v1/agent/system-knowledge-ingestion/status",
+    tags=["Historical Ingestion"],
+    dependencies=[Depends(_require_historical_admin)],
+)
+def system_knowledge_ingestion_status(
+    runId: Optional[uuid.UUID] = Query(None),
+    instanceCode: Optional[str] = Query(None, min_length=1, max_length=100),
+) -> dict[str, Any]:
+    """Devuelve progreso persistente y confirma si la carga terminó."""
+    if not runId and not instanceCode:
+        raise HTTPException(status_code=422, detail="Informe runId ou instanceCode.")
+    instance_id = None
+    if instanceCode:
+        instance = get_solidset_instance(code=instanceCode, source_ip=None)
+        if not instance:
+            raise HTTPException(status_code=404, detail="Instância SolidSET não encontrada.")
+        instance_id = str(instance["ID"])
+    try:
+        result = get_system_knowledge_run_status(
+            run_id=str(runId) if runId else None, instance_id=instance_id,
+        )
+    except (psycopg.Error, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Estado da ingestão indisponível.") from exc
+    if not result:
+        raise HTTPException(status_code=404, detail="Execução de ingestão não encontrada.")
+    return result
 
 
 @app.post(
@@ -5002,7 +5566,7 @@ def handle_dialogue(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "O agente IA só pode responder quando Chat.destiny inclui um recurso "
+                "O agente IA só pode responder quando Chat.resourceTable inclui um recurso "
                 "de tipo 2 com talkWithAgent=true. O endpoint chat-question/suggest-response "
                 "é a única exceção para conversas internas de sugestões."
             ),
@@ -5509,7 +6073,7 @@ def health_check():
                 "model": (db_llm or {}).get("Model", settings.MODEL_NAME),
                 "base_url": (db_llm or {}).get("BaseUrl") or settings.LLM_BASE_URL or settings.OLLAMA_BASE_URL,
             },
-            "ollama_embeddings": settings.OLLAMA_BASE_URL,
+            "ollama_embeddings": settings.EMBEDDING_BASE_URL,
             "qdrant": settings.VECTOR_DB_URL,
             "redis": settings.REDIS_URL
         },
@@ -5783,13 +6347,20 @@ def test_all_connectivity():
             "error": "SOLIDSET_RESTAPI_BASE_URL não está configurado"
         }
     
-    # Test Ollama
+    # Test the isolated interactive and embedding runtimes independently.
     ollama_result = _probe_http(settings.OLLAMA_BASE_URL, "/api/tags")
-    results["services"]["ollama"] = {
+    results["services"]["ollama_chat"] = {
         "url": settings.OLLAMA_BASE_URL,
         "ok": ollama_result.get("ok", False),
         "status_code": ollama_result.get("status_code"),
         "error": ollama_result.get("error")
+    }
+    embedding_result = _probe_http(settings.EMBEDDING_BASE_URL, "/api/tags")
+    results["services"]["ollama_embeddings"] = {
+        "url": settings.EMBEDDING_BASE_URL,
+        "ok": embedding_result.get("ok", False),
+        "status_code": embedding_result.get("status_code"),
+        "error": embedding_result.get("error"),
     }
     
     # Test Qdrant

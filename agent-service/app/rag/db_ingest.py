@@ -23,7 +23,7 @@ class DatabaseIngestor:
     
     def __init__(self):
         self.embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=settings.EMBEDDING_MODEL_NAME
         )
         self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL)

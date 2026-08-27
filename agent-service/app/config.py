@@ -13,7 +13,12 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     
     # Ollama Local Configuration
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-llm:11434")
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-chat:11434")
+    # Embeddings use an isolated runtime so indexing cannot evict or queue the
+    # interactive chat model. Falling back preserves non-Docker deployments.
+    EMBEDDING_BASE_URL: str = os.getenv(
+        "EMBEDDING_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://ollama-chat:11434")
+    )
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
@@ -25,7 +30,7 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
     AZURE_OPENAI_DEPLOYMENT: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:7b")
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:3b")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     EMBEDDING_VECTOR_SIZE: int = max(0, int(os.getenv("EMBEDDING_VECTOR_SIZE", "0")))
     LLM_MAX_OUTPUT_TOKENS: int = max(128, int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1024")))
@@ -50,6 +55,13 @@ class Settings(BaseSettings):
 
     # Redis Cache / Memory
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")
+    LANGUAGE_MIN_CONFIDENCE: float = max(
+        0.0, min(float(os.getenv("LANGUAGE_MIN_CONFIDENCE", "0.75")), 1.0)
+    )
+    LANGUAGE_SESSION_TTL_SECONDS: int = max(
+        300, int(os.getenv("LANGUAGE_SESSION_TTL_SECONDS", "86400"))
+    )
+    LANGUAGE_DEFAULT: str = os.getenv("LANGUAGE_DEFAULT", "pt").strip().lower()
     AGENT_RESPONSE_STATUS_TTL_SECONDS: int = max(
         600, int(os.getenv("AGENT_RESPONSE_STATUS_TTL_SECONDS", "86400"))
     )
@@ -99,6 +111,9 @@ class Settings(BaseSettings):
         10, int(os.getenv("HISTORICAL_INGESTION_POLL_SECONDS", "60"))
     )
     HISTORICAL_INGESTION_ADMIN_KEY: str = os.getenv("HISTORICAL_INGESTION_ADMIN_KEY", "")
+    SYSTEM_KNOWLEDGE_BATCH_SIZE: int = max(
+        50, min(1000, int(os.getenv("SYSTEM_KNOWLEDGE_BATCH_SIZE", "500")))
+    )
     AGENT_TEMPORAL_STATE_TTL_SECONDS: int = max(
         300, int(os.getenv("AGENT_TEMPORAL_STATE_TTL_SECONDS", "3600"))
     )
@@ -228,7 +243,8 @@ settings = Settings()
 # Imprimir configuración para debug
 if settings.ENVIRONMENT == "development":
     print("🔧 Configuración de desarrollo:")
-    print(f"  - Ollama: {settings.OLLAMA_BASE_URL}")
+    print(f"  - Ollama chat: {settings.OLLAMA_BASE_URL}")
+    print(f"  - Ollama embeddings: {settings.EMBEDDING_BASE_URL}")
     print(f"  - Qdrant: {settings.VECTOR_DB_URL}")
     print(f"  - Redis: {settings.REDIS_URL}")
     print(f"  - PostgreSQL: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}")

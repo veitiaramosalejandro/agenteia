@@ -359,7 +359,8 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_solidset_instance(
-    *, code: str | None = None, source_ip: str | None = None
+    *, code: str | None = None, source_ip: str | None = None,
+    active_only: bool = True,
 ) -> dict[str, Any] | None:
     """Resuelve una instancia activa por código explícito o IP directa."""
     ensure_solidset_instance_location_schema()
@@ -370,7 +371,7 @@ def get_solidset_instance(
             cursor.execute(
                 '''
                 SELECT * FROM public."SysSolidSETInstance"
-                WHERE active = true
+                WHERE (%s = false OR active = true)
                   AND ((NULLIF(%s::text, '') IS NOT NULL
                         AND LOWER("Code") = LOWER(%s::text))
                     OR (NULLIF(%s::text, '') IS NOT NULL
@@ -380,7 +381,7 @@ def get_solidset_instance(
                               THEN 0 ELSE 1 END
                 LIMIT 1
                 ''',
-                (code, code, source_ip, source_ip, code, code),
+                (active_only, code, code, source_ip, source_ip, code, code),
             )
             row = cursor.fetchone()
             result = dict(row) if row else None
@@ -391,13 +392,12 @@ def get_solidset_instance(
     return result
 
 
-def list_active_solidset_instances() -> list[dict[str, Any]]:
+def list_active_solidset_instances(*, active_only: bool = True) -> list[dict[str, Any]]:
     ensure_solidset_instance_location_schema()
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                'SELECT * FROM public."SysSolidSETInstance" WHERE active=true ORDER BY "Code"'
-            )
+            cursor.execute('''SELECT * FROM public."SysSolidSETInstance"
+              WHERE (%s = false OR active=true) ORDER BY "Code"''', (active_only,))
             rows = [dict(row) for row in cursor.fetchall()]
             for row in rows:
                 cursor.execute('SELECT * FROM public."SysSolidSETDataAPI" WHERE "IDSolidSETInstance"=%s', (row["ID"],))
@@ -884,6 +884,28 @@ def ensure_payload_agent_workroom_assignments(
 def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
+            source = str(knowledge.get("Source", "manual") or "manual")
+            # Automatic chat learning is idempotent: retries of the same
+            # notification must not create dozens of identical facts.
+            if source.startswith("chat-question"):
+                cursor.execute(
+                    '''
+                    SELECT * FROM public."SysResourceIAKnowledge"
+                    WHERE "IDResource"=%s
+                      AND "IDWorkRoom" IS NOT DISTINCT FROM %s
+                      AND "KnowledgeText"=%s
+                      AND "Source"=%s
+                      AND active=true
+                    ORDER BY "Stamp" DESC LIMIT 1
+                    ''',
+                    (
+                        knowledge["IDResource"], knowledge.get("IDWorkRoom"),
+                        knowledge["KnowledgeText"], source,
+                    ),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    return {**dict(existing), "WasExisting": True}
             cursor.execute(
                 '''
                 INSERT INTO public."SysResourceIAKnowledge" (
@@ -894,17 +916,19 @@ def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
                 (
                     knowledge["IDResource"], knowledge.get("IDWorkRoom"),
                     knowledge.get("Title"), knowledge["KnowledgeText"],
-                    knowledge.get("Source", "manual"), knowledge.get("active", True),
+                    source, knowledge.get("active", True),
                 ),
             )
             saved = cursor.fetchone()
     if saved is None:
         raise RuntimeError("PostgreSQL no devolvió el conocimiento guardado.")
-    return dict(saved)
+    return {**dict(saved), "WasExisting": False}
 
 
 def get_agent_knowledge(resource_id: UUID | str, workroom_id: UUID | str) -> str:
     """Obtiene conocimiento privado del agente y el específico del canal actual."""
+    from app.knowledge_provenance import usable_agent_knowledge
+
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -923,7 +947,46 @@ def get_agent_knowledge(resource_id: UUID | str, workroom_id: UUID | str) -> str
     return "\n\n".join(
         f"[{row.get('Title') or row.get('Source') or 'Conocimiento'}]\n{row['KnowledgeText']}"
         for row in rows
+        if usable_agent_knowledge(row.get("KnowledgeText"), row.get("Source"))
     )[:20000]
+
+
+def quarantine_legacy_generated_knowledge() -> int:
+    """Deactivates legacy AI drafts misclassified as user assertions.
+
+    Rows remain in PostgreSQL for audit/recovery. Only the old ambiguous source
+    is inspected; manual knowledge and versioned user assertions are untouched.
+    """
+    from app.knowledge_provenance import (
+        LEGACY_SUGGESTION_SOURCE,
+        looks_like_generated_suggestion,
+    )
+
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT "ID", "KnowledgeText"
+                FROM public."SysResourceIAKnowledge"
+                WHERE "Source"=%s AND active=true
+                ''',
+                (LEGACY_SUGGESTION_SOURCE,),
+            )
+            unsafe_ids = [
+                row["ID"] for row in cursor.fetchall()
+                if looks_like_generated_suggestion(row.get("KnowledgeText"))
+            ]
+            if not unsafe_ids:
+                return 0
+            cursor.execute(
+                '''
+                UPDATE public."SysResourceIAKnowledge"
+                SET active=false
+                WHERE "ID" = ANY(%s)
+                ''',
+                (unsafe_ids,),
+            )
+            return max(0, cursor.rowcount)
 
 
 def configure_agent_workroom(

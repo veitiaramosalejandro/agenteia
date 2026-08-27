@@ -29,7 +29,7 @@ class SolidSetApiIngestor:
         self.client = QdrantClient(url=settings.VECTOR_DB_URL)
         self.collection = settings.VECTOR_COLLECTION_NAME
         self.embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=settings.EMBEDDING_MODEL_NAME,
         )
         self._ensure_collection()

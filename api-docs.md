@@ -1138,7 +1138,7 @@ SelectedAgentResourceIds[] (solo cuando Destiny.dests está vacío)
 Destiny.resource (solo cuando Destiny.dests está vacío)
 ```
 
-La nueva señal canónica es `Chat.destiny[].talkWithAgent`. Si el campo aparece en cualquiera de las entradas, esa colección tiene precedencia absoluta: únicamente responde cada entrada con `talkWithAgent=true`, `type=2` y un `idResource` válido. Las entradas humanas (`type=1`), los agentes con `talkWithAgent=false` y cualquier agente presente solamente en las fuentes antiguas quedan excluidos. Si la señal no aparece, se mantienen las reglas de compatibilidad anteriores basadas en `Destiny.dests` y en el contexto de chat privado o meeting.
+La nueva señal canónica es `Chat.destiny[].talkWithAgent`. Si el campo aparece en cualquiera de las entradas, esa colección tiene precedencia absoluta. Únicamente se selecciona una entrada con `talkWithAgent=true`, `type=2` y un `idResource` válido. Además, el agente responde cuando `Chat.questionType=2` (pregunta), `Chat.questionType=3` (petición), o cuando el texto contiene el signo `?` aunque `questionType=1`. No se aplican otras heurísticas lingüísticas. Un destino `type=3` es siempre contenido de aprendizaje y nunca genera respuesta, incluso si contiene `talkWithAgent=true`, `questionType=2/3` o un signo `?`. Las demás combinaciones quedan exclusivamente en aprendizaje. Las entradas humanas (`type=1`), los agentes con `talkWithAgent=false` y cualquier agente presente solamente en fuentes antiguas quedan excluidos.
 
 Solo responde el recurso seleccionado si existe en `SysResourceIA`, tiene `active=true` y está habilitado para el canal. Una lista auxiliar `SelectedAgentResourceIds` no puede añadir otros agentes cuando el payload contiene una selección autoritativa.
 

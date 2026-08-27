@@ -716,7 +716,7 @@ def _legacy_google_web_search(query: str) -> str:
 def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bool:
     """Index web results with deterministic IDs and full provenance."""
     client = QdrantClient(url=settings.VECTOR_DB_URL)
-    embeddings = OllamaEmbeddings(base_url=settings.OLLAMA_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
+    embeddings = OllamaEmbeddings(base_url=settings.EMBEDDING_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
     collections = [c.name for c in client.get_collections().collections]
     probe_vector = None
     if settings.VECTOR_COLLECTION_NAME not in collections:
@@ -839,6 +839,8 @@ def query_sql_server(query: str, parameters_json: str = "[]") -> str:
     - Cuando el usuario pida historial de actividades (dbo.Activity)
     - Cuando el usuario pida información de máquinas/activos (dbo.Asset)
     - Cuando el usuario pregunte por saldos, deudas o inventarios
+    - Cuando el usuario pida tareas o estados de tareas (dbo.SysTask)
+    - Cuando el usuario pida actividades o estados de actividades (dbo.Activity)
     
     CUÁNDO NO USARLA:
     - NO la uses para explorar la estructura de tablas (usa get_db_schema)
@@ -1911,7 +1913,7 @@ def learn_new_fact(fact_description: str, category: str = "general") -> str:
     try:
         client = QdrantClient(url=settings.VECTOR_DB_URL)
         embeddings = OllamaEmbeddings(
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=settings.EMBEDDING_BASE_URL,
             model=settings.EMBEDDING_MODEL_NAME,
         )
 

@@ -13,6 +13,8 @@ from app.main import (
     _localize_response_status,
     _update_response_status,
     _auto_reply_rejection_reason,
+    _payload_requests_agent_response,
+    _selected_agent_resource_ids,
     _route_candidates_to_selected_agents,
     handle_multi_agent_dialogue,
     notification_listener,
@@ -21,6 +23,140 @@ from app.main import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    def test_question_type_response_contract(self):
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 3}}, "Háblame de Kimi"
+        ))
+        self.assertFalse(_payload_requests_agent_response(
+            {"Chat": {"QuestionType": "2"}}, "Explícame Kimi"
+        ))
+        self.assertFalse(_payload_requests_agent_response(
+            {"Chat": {"QuestionType": "2"}}, "¿Explícame Kimi?"
+        ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 0}}, "Háblame de Kimi?"
+        ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 1}},
+            "Que tareas tiene asignado el recurso Alejandro Veitia",
+        ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {"questionType": 1}},
+            "Que tareas tiene asignado el recurso Alejandro Veitia?",
+        ))
+        self.assertFalse(_payload_requests_agent_response(
+            {"Chat": {"questionType": 0}}, "Kimi K3 fue presentado en 2026"
+        ))
+
+    def test_type_two_question_type_zero_with_question_mark_is_authorized(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "type-two-question-type-zero",
+            "message": "Qual é a temperatura atual em Leiria?",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 0,
+                "resourceTable": [{
+                    "idResource": str(agent_resource),
+                    "type": 2,
+                    "talkWithAgent": True,
+                }],
+            }},
+            "agent_resource_id": str(agent_resource),
+            "addressed_to_agent": True,
+            "is_direct": True,
+        }
+
+        self.assertIsNone(_auto_reply_rejection_reason(candidate))
+
+    def test_type_two_question_type_one_with_question_mark_is_authorized(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "type-two-question-mark",
+            "message": "Que tareas tiene asignadas?",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 1,
+                "resourceTable": [{
+                    "idResource": str(agent_resource),
+                    "type": 2,
+                    "talkWithAgent": True,
+                }],
+            }},
+        }
+        self.assertNotEqual(
+            "contenido_solo_aprendizaje",
+            _auto_reply_rejection_reason(candidate),
+        )
+        self.assertEqual(
+            [str(agent_resource)],
+            _selected_agent_resource_ids(candidate),
+        )
+
+    def test_destination_type_three_is_learning_only(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "type-three-question",
+            "message": "Háblame de Kimi K3?",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 2,
+                "resourceTable": [{
+                    "idResource": str(agent_resource),
+                    "type": 3,
+                    "talkWithAgent": True,
+                }],
+            }},
+        }
+        self.assertEqual(
+            "contenido_solo_aprendizaje",
+            _auto_reply_rejection_reason(candidate),
+        )
+        self.assertEqual(
+            [],
+            _selected_agent_resource_ids(candidate),
+        )
+
+    def test_question_type_one_responds_without_question_mark(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "learning-only",
+            "message": "Kimi K3 fue presentado en 2026",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 1,
+                "resourceTable": [{
+                    "idResource": str(agent_resource),
+                    "type": 2,
+                    "talkWithAgent": True,
+                }],
+            }},
+            "agent_resource_id": str(agent_resource),
+            "addressed_to_agent": True,
+            "is_direct": True,
+        }
+        self.assertIsNone(_auto_reply_rejection_reason(candidate))
+
+    def test_type_two_with_question_type_two_is_learning_only(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "type-two-question",
+            "message": "Que tareas tiene asignadas",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 2,
+                "resourceTable": [{
+                    "idResource": str(agent_resource),
+                    "type": 2,
+                    "talkWithAgent": True,
+                }],
+            }},
+        }
+        self.assertEqual(
+            "contenido_solo_aprendizaje",
+            _auto_reply_rejection_reason(candidate),
+        )
+
     def test_final_send_barrier_rejects_cached_candidate_without_flag(self):
         candidate = {
             "fingerprint": "cached-old-worker-candidate",
@@ -30,7 +166,8 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "agent_resource_id": str(uuid4()),
             "payload": {
                 "Chat": {
-                    "destiny": [{
+                    "questionType": 3,
+                "resourceTable": [{
                         "idResource": str(uuid4()),
                         "type": 2,
                     }]
@@ -128,6 +265,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "app.main.get_solidset_instance",
             return_value={
                 "ID": str(uuid4()), "Code": "test", "BaseUrl": "http://solidset",
+                "DataAPI": "http://solidset-data-api",
                 "Database": {"Host": "sql", "DatabaseName": "solidset", "active": True},
             },
         )
@@ -163,7 +301,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(room_id),
             "payload": {
                 "Chat": {
-                    "destiny": [{
+                "resourceTable": [{
                         "idResource": str(human_agent),
                         "type": 2,
                         "talkWithAgent": True,
@@ -201,14 +339,12 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     "dests": [{"resource": str(unselected_agent), "kind": 2}],
                 },
                 "Chat": {
-                    "resourceTable": [{
-                        "idResource": str(sender_resource),
-                        "userName": "Alejandro Veitia",
-                    }],
-                    "destiny": [
+                    "questionType": 3,
+                    "resourceTable": [
                         {
                             "iDLogin": str(sender_login),
                             "iDResource": str(sender_resource),
+                            "userName": "Alejandro Veitia",
                             "type": 1,
                             "sequence": 0,
                         },
@@ -225,6 +361,12 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                             "sequence": 2,
                         },
                     ],
+                    # Chat.destiny ya no decide qué agente responde.
+                    "destiny": [{
+                        "iDResource": str(unselected_agent),
+                        "type": 2,
+                        "talkWithAgent": True,
+                    }],
                 },
             },
         }
@@ -257,7 +399,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(room_id),
             "payload": {
                 "FrameworkDestiny": {"dests": [{"resource": str(agent), "kind": 2}]},
-                "Chat": {"destiny": [{
+                "Chat": {"resourceTable": [{
                     "iDResource": str(agent),
                     "type": 2,
                     "talkWithAgent": False,
@@ -282,7 +424,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "channel_id": str(room_id),
             "payload": {
                 "FrameworkDestiny": {"dests": [{"resource": str(agent), "kind": 2}]},
-                "Chat": {"destiny": [{"iDResource": str(agent), "type": 2}]},
+                "Chat": {"resourceTable": [{"iDResource": str(agent), "type": 2}]},
             },
         }
         with (
@@ -355,7 +497,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     }],
                 },
                 "SelectedAgentResourceIds": [str(other_participant)],
-                "Chat": {"resourceTable": [{"idResource": str(other_participant)}]},
+                "Chat": {
+                    "questionType": 3,
+                    "resourceTable": [{"idResource": str(other_participant)}],
+                },
             },
         }
         configured = [{
@@ -394,7 +539,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     "dests": [{"resource": str(sender_agent), "kind": 2, "sequence": 1}],
                 },
                 "Chat": {
-                    "destiny": [{
+                "resourceTable": [{
                         "idResource": str(sender_agent),
                         "type": 1,
                         "sequence": 0,
@@ -431,6 +576,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                     ],
                 },
                 "Chat": {
+                    "questionType": 3,
                     "destiny": [
                         {
                             "idResource": str(sender_agent),
@@ -475,6 +621,7 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                 "FrameworkSender": {"resource": str(owner_resource)},
                 "FrameworkDestiny": {"workRoom": str(room_id), "dests": []},
                 "Chat": {
+                    "questionType": 3,
                     "channels": [{
                         "idChannel": str(room_id),
                         "channelKind": 1,
@@ -516,7 +663,10 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "fingerprint": "message-1",
             "channel_id": str(room_id),
             "sender_resource": str(uuid4()),
-            "payload": {"SelectedAgentResourceIds": [str(first), str(second)]},
+            "payload": {
+                "SelectedAgentResourceIds": [str(first), str(second)],
+                "Chat": {"questionType": 3},
+            },
         }
         configured = [
             {"IDResource": first, "IDAgentResource": uuid4(), "Name": "Agente A"},
