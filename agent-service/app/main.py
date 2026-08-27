@@ -973,10 +973,16 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 
 def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-    destinations = _get_payload_value(chat, "destiny", "Destiny")
-    if not isinstance(destinations, list):
+    rows = []
+    destiny = _get_payload_value(chat, "destiny", "Destiny")
+    resource_table = _get_payload_value(chat, "resourceTable", "ResourceTable")
+    if isinstance(destiny, list):
+        rows.extend(destiny)
+    if isinstance(resource_table, list):
+        rows.extend(resource_table)
+    if not rows:
         return False
-    for destination in destinations:
+    for destination in rows:
         if not isinstance(destination, dict):
             continue
         lowered = {str(key).lower(): value for key, value in destination.items()}
@@ -1001,15 +1007,19 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
     chat_destinations = chat_lower.get("destiny")
+    resource_table = chat_lower.get("resourcetable")
 
-    # Nueva señal explícita de SolidSET. Cuando Chat.destiny incluye
-    # talkWithAgent, esa colección es autoritativa tanto en canales como en
-    # meetings: solo los recursos IA (type=2) marcados con true responden. La
-    # mera presencia del campo también impide caer en reglas antiguas y activar
-    # por accidente otro agente del canal.
+    # Nueva señal explícita de SolidSET. Cuando Chat.destiny / resourceTable
+    # incluyen talkWithAgent, esas colecciones son autoritativas tanto en
+    # canales como en meetings: solo los recursos IA (type=2) marcados con true
+    # responden. La mera presencia del campo también impide caer en reglas
+    # antiguas y activar por accidente otro agente del canal.
     selected_by_flag: list[tuple[int, str]] = []
-    if isinstance(chat_destinations, list):
-        for destination in chat_destinations:
+
+    def _collect_from_rows(rows: Any) -> None:
+        if not isinstance(rows, list):
+            return
+        for destination in rows:
             if not isinstance(destination, dict):
                 continue
             lowered = {str(key).lower(): value for key, value in destination.items()}
@@ -1037,6 +1047,9 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
             except (TypeError, ValueError):
                 sequence = 0
             selected_by_flag.append((sequence, resource))
+
+    _collect_from_rows(chat_destinations)
+    _collect_from_rows(resource_table)
     # Mandatory authorization gate: normal chat/channel/meeting traffic may
     # activate only destinations explicitly marked talkWithAgent=true. The
     # absence of the property is a denial, never a legacy fallback.
@@ -1108,8 +1121,11 @@ def _selected_agent_chat_destination(candidate: dict, agent_resource_id: str) ->
     """Conserva nombre/login del destino IA marcado con talkWithAgent."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-    destinations = {str(k).lower(): v for k, v in chat.items()}.get("destiny")
-    if isinstance(destinations, list):
+    chat_lower = {str(k).lower(): v for k, v in chat.items()}
+    for collection_name in ("destiny", "resourcetable"):
+        destinations = chat_lower.get(collection_name)
+        if not isinstance(destinations, list):
+            continue
         for destination in destinations:
             if not isinstance(destination, dict):
                 continue
