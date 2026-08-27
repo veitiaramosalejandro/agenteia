@@ -101,6 +101,11 @@ from app.historical.store import (
     list_cursors as list_historical_cursors,
     mark_historical_deleted,
 )
+from app.system.system_knowledge_ingest import (
+    create_run as create_system_knowledge_run,
+    get_run_status as get_system_knowledge_run_status,
+    run_system_knowledge_ingestion,
+)
 
 # ============================================================
 # CONFIGURACIÓN DE LA APLICACIÓN
@@ -275,6 +280,7 @@ orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
 response_queue = AgentResponseQueue()
 historical_queue = HistoricalQueue()
+_system_knowledge_tasks: dict[str, asyncio.Task[Any]] = {}
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
@@ -1484,6 +1490,8 @@ async def _process_auto_replies(
             "country_code": candidate.get("country_code") or "PT",
             "locale": candidate.get("locale") or "pt-PT",
             "time_zone": candidate.get("time_zone") or "Europe/Lisbon",
+            "solidset_instance_id": candidate.get("solidset_instance_id"),
+            "solidset_instance_code": candidate.get("solidset_instance_code"),
         }
         if not incoming_text or (not channel_id and not reply_resource):
             continue
@@ -3649,6 +3657,8 @@ async def handle_multi_agent_dialogue(
                 "agent_reinforcement": reinforcement,
                 "workroom_id": str(request.IDWorkRoom),
                 "source": "solidset_multi_agent",
+                "solidset_instance_id": str(solidset_instance["ID"]) if solidset_instance else "",
+                "solidset_instance_code": str(solidset_instance["Code"]) if solidset_instance else "",
             },
             auto_reply_mode=True,
         )
@@ -4869,6 +4879,8 @@ async def suggest_chat_question_response(
                 _get_payload_value(message.Info, "time_zone", "timezone")
                 or "Europe/Lisbon"
             ),
+            "solidset_instance_id": str(solidset_instance["ID"]),
+            "solidset_instance_code": str(solidset_instance["Code"]),
         }
         suggestion_tool_allowlist = _suggestion_tool_allowlist(
             effective_request_text,
@@ -5046,6 +5058,14 @@ class HistoricalIngestionStartRequest(BaseModel):
     dryRun: bool = True
 
 
+class SystemKnowledgeIngestionStartRequest(BaseModel):
+    instanceCode: str = Field(..., min_length=1, max_length=100)
+    tables: Optional[list[str]] = Field(None, max_length=50)
+
+    class Config:
+        extra = "forbid"
+
+
 def _require_historical_admin(
     x_agent_admin_key: str = Header(
         ...,
@@ -5058,6 +5078,76 @@ def _require_historical_admin(
         raise HTTPException(status_code=503, detail="Configure HISTORICAL_INGESTION_ADMIN_KEY.")
     if x_agent_admin_key != configured:
         raise HTTPException(status_code=401, detail="Credencial administrativa inválida.")
+
+
+async def _execute_system_knowledge_run(
+    run_id: str, instance: dict[str, Any], tables: list[str] | None,
+) -> None:
+    try:
+        await asyncio.to_thread(run_system_knowledge_ingestion, run_id, instance, tables)
+    except Exception as exc:
+        print(f"❌ Ingesta de conocimiento SQL run={run_id}: {exc}", flush=True)
+    finally:
+        _system_knowledge_tasks.pop(run_id, None)
+
+
+@app.post(
+    "/api/v1/agent/system-knowledge-ingestion/start",
+    status_code=202,
+    tags=["Historical Ingestion"],
+    dependencies=[Depends(_require_historical_admin)],
+)
+async def start_system_knowledge_ingestion(
+    configuration: SystemKnowledgeIngestionStartRequest,
+) -> dict[str, Any]:
+    """Inicia la materialización semántica de entidades SQL Server."""
+    instance = get_solidset_instance(code=configuration.instanceCode, source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instância SolidSET não encontrada.")
+    if not instance.get("DataAPI"):
+        raise HTTPException(status_code=409, detail="A instância não possui Data API ativa.")
+    try:
+        run_id = await asyncio.to_thread(create_system_knowledge_run, instance)
+    except (psycopg.Error, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Não foi possível criar a execução.") from exc
+    task = _system_knowledge_tasks.get(run_id)
+    if task is None or task.done():
+        _system_knowledge_tasks[run_id] = asyncio.create_task(
+            _execute_system_knowledge_run(run_id, instance, configuration.tables)
+        )
+    return {
+        "status": "accepted", "runId": run_id,
+        "statusUrl": f"/api/v1/agent/system-knowledge-ingestion/status?runId={run_id}",
+    }
+
+
+@app.get(
+    "/api/v1/agent/system-knowledge-ingestion/status",
+    tags=["Historical Ingestion"],
+    dependencies=[Depends(_require_historical_admin)],
+)
+def system_knowledge_ingestion_status(
+    runId: Optional[uuid.UUID] = Query(None),
+    instanceCode: Optional[str] = Query(None, min_length=1, max_length=100),
+) -> dict[str, Any]:
+    """Devuelve progreso persistente y confirma si la carga terminó."""
+    if not runId and not instanceCode:
+        raise HTTPException(status_code=422, detail="Informe runId ou instanceCode.")
+    instance_id = None
+    if instanceCode:
+        instance = get_solidset_instance(code=instanceCode, source_ip=None)
+        if not instance:
+            raise HTTPException(status_code=404, detail="Instância SolidSET não encontrada.")
+        instance_id = str(instance["ID"])
+    try:
+        result = get_system_knowledge_run_status(
+            run_id=str(runId) if runId else None, instance_id=instance_id,
+        )
+    except (psycopg.Error, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Estado da ingestão indisponível.") from exc
+    if not result:
+        raise HTTPException(status_code=404, detail="Execução de ingestão não encontrada.")
+    return result
 
 
 @app.post(

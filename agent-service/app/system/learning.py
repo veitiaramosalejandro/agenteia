@@ -1240,6 +1240,50 @@ class SistemaAprendizaje:
                 break
         return "\n---\n".join(useful)
 
+    def consultar_conocimiento_sistema(
+        self,
+        query: str,
+        *,
+        solidset_instance_id: str,
+        agent_resource_id: Optional[str] = None,
+        limit: int = 5,
+        min_score: float = 0.0,
+    ) -> str:
+        """Recupera la fotografía SQL materializada, aislada por instancia y recurso."""
+        if not solidset_instance_id:
+            return ""
+        query_vector = self._embed_query_safe(query, context="consultar_conocimiento_sistema")
+        if query_vector is None:
+            return ""
+        results = self._search_aprendizaje(
+            query_vector,
+            query_filter={
+                "source": "solidset_system_snapshot",
+                "solidset_instance_id": str(solidset_instance_id),
+            },
+            limit=max(limit * 8, 20),
+        )
+        useful: list[str] = []
+        seen: set[str] = set()
+        expected_resource = str(agent_resource_id or "").lower()
+        for hit in results:
+            if float(hit.get("score") or 0.0) < max(0.0, min(float(min_score), 1.0)):
+                continue
+            payload = hit.get("payload") or {}
+            related = [str(value).lower() for value in payload.get("related_resource_ids") or []]
+            # Datos relacionados con recursos concretos solo son visibles para
+            # el propietario del agente. Los catálogos sin recurso son comunes.
+            if related and expected_resource and expected_resource not in related:
+                continue
+            content = str(payload.get("page_content") or "").strip()
+            key = " ".join(content.casefold().split())
+            if content and key not in seen:
+                useful.append(content[:1600])
+                seen.add(key)
+            if len(useful) >= limit:
+                break
+        return "\n---\n".join(useful)
+
     # ============================================================
     # 4. APRENDER DE LAS ACTIVIDADES (RAG)
     # ============================================================

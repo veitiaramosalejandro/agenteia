@@ -111,6 +111,9 @@ class Settings(BaseSettings):
         10, int(os.getenv("HISTORICAL_INGESTION_POLL_SECONDS", "60"))
     )
     HISTORICAL_INGESTION_ADMIN_KEY: str = os.getenv("HISTORICAL_INGESTION_ADMIN_KEY", "")
+    SYSTEM_KNOWLEDGE_BATCH_SIZE: int = max(
+        50, min(1000, int(os.getenv("SYSTEM_KNOWLEDGE_BATCH_SIZE", "500")))
+    )
     AGENT_TEMPORAL_STATE_TTL_SECONDS: int = max(
         300, int(os.getenv("AGENT_TEMPORAL_STATE_TTL_SECONDS", "3600"))
     )

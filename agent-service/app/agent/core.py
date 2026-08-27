@@ -2071,6 +2071,21 @@ class MachiningAgent:
                 )
             except Exception as exc:
                 print(f"⚠️ No se pudo consultar conocimiento semántico del agente: {exc}")
+        system_snapshot_context = ""
+        solidset_instance_id = str(
+            metadata_identity.get("solidset_instance_id") or ""
+        ).strip()
+        if solidset_instance_id and training_enabled and learn_from_system:
+            try:
+                system_snapshot_context = self.sistema_aprendizaje.consultar_conocimiento_sistema(
+                    user_text,
+                    solidset_instance_id=solidset_instance_id,
+                    agent_resource_id=agent_resource_id or None,
+                    limit=5,
+                    min_score=settings.BUSINESS_RAG_MIN_SCORE,
+                )
+            except Exception as exc:
+                print(f"⚠️ No se pudo consultar la fotografía SQL del sistema: {exc}")
         if response_suggestion_mode:
             general_conversation_mode = False
         valid_user_guid = self._is_valid_guid(user_id)
@@ -2086,7 +2101,7 @@ class MachiningAgent:
                 tool_allowlist = set()
         elif general_conversation_mode:
             tool_allowlist = set()
-        elif agent_rag_context:
+        elif agent_rag_context or system_snapshot_context:
             # A relevant durable fact owned by this agent takes precedence over
             # sending an internal/personal question to public web search.
             external_query_mode = False
@@ -2546,6 +2561,17 @@ class MachiningAgent:
                 f"{agent_rag_context}\n"
                 "Este contenido está aislado para el agente y canal actuales. Úsalo para responder "
                 "la pregunta cuando sea pertinente; no lo sustituyas por búsquedas públicas."
+            )
+        if system_snapshot_context:
+            system_prompt += (
+                "\n\n=== INFORMACIÓN HISTÓRICA MATERIALIZADA DE SQL SERVER ===\n"
+                f"{system_snapshot_context}\n"
+                "Son registros reales sincronizados desde la instancia SolidSET, no respuestas "
+                "anteriores del modelo. Si contienen el dato preguntado, responde de forma directa, "
+                "menciona nombres, estados, fechas o cantidades disponibles y no digas que careces "
+                "de información. No expongas IDs técnicos salvo que el usuario los solicite. Para "
+                "datos que puedan haber cambiado después de la carga, indica que corresponden a la "
+                "última información sincronizada. No completes campos ausentes mediante inferencias."
             )
         if agent_reinforcement:
             system_prompt += (
