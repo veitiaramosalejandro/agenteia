@@ -359,7 +359,8 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_solidset_instance(
-    *, code: str | None = None, source_ip: str | None = None
+    *, code: str | None = None, source_ip: str | None = None,
+    active_only: bool = True,
 ) -> dict[str, Any] | None:
     """Resuelve una instancia activa por código explícito o IP directa."""
     ensure_solidset_instance_location_schema()
@@ -370,7 +371,7 @@ def get_solidset_instance(
             cursor.execute(
                 '''
                 SELECT * FROM public."SysSolidSETInstance"
-                WHERE active = true
+                WHERE (%s = false OR active = true)
                   AND ((NULLIF(%s::text, '') IS NOT NULL
                         AND LOWER("Code") = LOWER(%s::text))
                     OR (NULLIF(%s::text, '') IS NOT NULL
@@ -380,7 +381,7 @@ def get_solidset_instance(
                               THEN 0 ELSE 1 END
                 LIMIT 1
                 ''',
-                (code, code, source_ip, source_ip, code, code),
+                (active_only, code, code, source_ip, source_ip, code, code),
             )
             row = cursor.fetchone()
             result = dict(row) if row else None
@@ -391,13 +392,12 @@ def get_solidset_instance(
     return result
 
 
-def list_active_solidset_instances() -> list[dict[str, Any]]:
+def list_active_solidset_instances(*, active_only: bool = True) -> list[dict[str, Any]]:
     ensure_solidset_instance_location_schema()
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                'SELECT * FROM public."SysSolidSETInstance" WHERE active=true ORDER BY "Code"'
-            )
+            cursor.execute('''SELECT * FROM public."SysSolidSETInstance"
+              WHERE (%s = false OR active=true) ORDER BY "Code"''', (active_only,))
             rows = [dict(row) for row in cursor.fetchall()]
             for row in rows:
                 cursor.execute('SELECT * FROM public."SysSolidSETDataAPI" WHERE "IDSolidSETInstance"=%s', (row["ID"],))

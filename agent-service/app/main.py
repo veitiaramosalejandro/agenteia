@@ -2567,6 +2567,11 @@ class SolidSETInstanceConfigurationResponse(BaseModel):
     configuration: SolidSETInstanceStored
 
 
+class SolidSETInstanceListResponse(BaseModel):
+    total: int
+    items: list[SolidSETInstanceStored]
+
+
 class SolidSETDataAPIConnectionTestResponse(BaseModel):
     status: str
     instanceCode: str
@@ -3849,6 +3854,70 @@ def register_solidset_instance(
         status=operation,
         configuration=SolidSETInstanceStored(**saved),
     )
+
+
+def _public_solidset_instance(instance: dict[str, Any]) -> dict[str, Any]:
+    """Returns instance configuration without encrypted or clear-text credentials."""
+    public = dict(instance)
+    data_api = public.get("DataAPI")
+    if isinstance(data_api, dict):
+        public["DataAPI"] = {
+            key: data_api.get(key) for key in (
+                "BaseUrl", "TimeoutSeconds", "MaxRows", "VerifyTLS", "active",
+            )
+        }
+        public["DataAPI"]["APIKeyConfigured"] = bool(
+            data_api.get("EncryptedAPIKey") or data_api.get("APIKeyConfigured")
+        )
+    else:
+        public["DataAPI"] = None
+    public.pop("EncryptedAPIKey", None)
+    public.pop("APIKey", None)
+    return public
+
+
+@app.get(
+    "/api/v1/agent/solidset/instances",
+    response_model=SolidSETInstanceListResponse,
+    tags=["SolidSET instances"],
+    summary="List SolidSET instances",
+)
+def read_solidset_instances(
+    activeOnly: bool = Query(False, description="Return only active instances."),
+) -> SolidSETInstanceListResponse:
+    """Lists configured instances without exposing Data API credentials."""
+    try:
+        rows = list_active_solidset_instances(active_only=activeOnly)
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=503, detail="Não foi possível consultar as instâncias SolidSET."
+        ) from exc
+    items = [SolidSETInstanceStored(**_public_solidset_instance(row)) for row in rows]
+    return SolidSETInstanceListResponse(total=len(items), items=items)
+
+
+@app.get(
+    "/api/v1/agent/solidset/instances/{code}",
+    response_model=SolidSETInstanceStored,
+    tags=["SolidSET instances"],
+    summary="Get one SolidSET instance",
+)
+def read_solidset_instance(code: str) -> SolidSETInstanceStored:
+    """Returns one configured instance by code, including inactive instances."""
+    normalized_code = code.strip()
+    if not normalized_code:
+        raise HTTPException(status_code=422, detail="Code é obrigatório.")
+    try:
+        instance = get_solidset_instance(
+            code=normalized_code, source_ip=None, active_only=False,
+        )
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=503, detail="Não foi possível consultar a instância SolidSET."
+        ) from exc
+    if not instance:
+        raise HTTPException(status_code=404, detail="A instância SolidSET não existe.")
+    return SolidSETInstanceStored(**_public_solidset_instance(instance))
 
 
 @app.post(
