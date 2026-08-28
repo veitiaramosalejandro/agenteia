@@ -1132,6 +1132,9 @@ class MachiningAgent:
             "participante", "participantes", "participant", "participants", "miembro", "miembros",
             "membro", "membros", "actividad", "actividades", "activity", "activities",
             "atividade", "atividades", "tarea", "tareas", "task", "tasks", "tarefa", "tarefas",
+            "empresa", "empresas", "company", "companies", "companhia", "companhias",
+            "organización", "organizacion", "organização", "organizacao", "organization",
+            "organisation",
         )
         return any(term in text for term in terms)
 
@@ -1151,6 +1154,7 @@ class MachiningAgent:
             "lista", "listar", "list", "muestra", "show", "mostra",
             "asignado", "asignada", "asignados", "asignadas", "assigned",
             "atribuído", "atribuida", "atribuídos", "atribuidas",
+            "pertenezco", "pertenece", "pertenço", "pertence", "belong",
         )
         if any(term in text for term in live_terms):
             return True
@@ -2938,6 +2942,10 @@ class MachiningAgent:
                     print(f"⚠️ Falló la búsqueda web previa: {exc}")
         
         dynamic_sql_attempts = 0
+        successful_sql_query = False
+        schema_inspected = bool(business_schema_context)
+        inspected_table_names: set[str] = set()
+        schema_only_retries = 0
         while iteration < self.max_iterations:
             try:
                 response = llm_for_request.invoke(messages)
@@ -2979,6 +2987,57 @@ class MachiningAgent:
                         user_id=user_id,
                         canal_id=canal_id,
                     )
+                    if (
+                        business_knowledge_query
+                        and tool_name == "get_db_schema"
+                        and schema_inspected
+                    ):
+                        argument_error = (
+                            "El fragmento de esquema ya fue inspeccionado. No vuelvas a consultar el catálogo; "
+                            "ejecuta query_sql_server con un SELECT construido exclusivamente con ese fragmento."
+                        )
+                    elif (
+                        business_knowledge_query
+                        and tool_name == "get_db_schema"
+                        and not str(tool_args.get("table_name") or "").strip()
+                    ):
+                        # Una llamada vacía no debe volcar el catálogo completo.
+                        # Reutiliza la intención del usuario como búsqueda de
+                        # candidatos reales dentro del esquema de la instancia.
+                        tool_args["table_name"] = self._normalize_context_query(user_text)
+                    if (
+                        business_knowledge_query
+                        and tool_name == "query_sql_server"
+                        and not schema_inspected
+                        and not (agent_rag_context or system_snapshot_context or vector_answers_business_query)
+                    ):
+                        argument_error = (
+                            "No se ejecutó SQL porque todavía no se verificó el esquema real. "
+                            "Usa primero get_db_schema indicando en table_name términos de tabla "
+                            "relacionados con la pregunta; después construye el SELECT solo con ese resultado."
+                        )
+                    elif (
+                        business_knowledge_query
+                        and tool_name == "query_sql_server"
+                        and schema_inspected
+                        and inspected_table_names
+                    ):
+                        sql_text = str(tool_args.get("query") or "")
+                        referenced_tables = {
+                            match.group(1).strip("[]").split(".")[-1].strip("[]").casefold()
+                            for match in re.finditer(
+                                r"\b(?:FROM|JOIN)\s+([\[\]A-Za-z0-9_.]+)",
+                                sql_text,
+                                flags=re.IGNORECASE,
+                            )
+                        }
+                        unknown_tables = sorted(referenced_tables - inspected_table_names)
+                        if unknown_tables:
+                            argument_error = (
+                                "No se ejecutó SQL: la consulta usa tablas no verificadas en el fragmento "
+                                f"de esquema: {unknown_tables}. Usa solo estas tablas: "
+                                f"{sorted(inspected_table_names)}."
+                            )
                     if business_knowledge_query and tool_name == "query_sql_server":
                         dynamic_sql_attempts += 1
                         if dynamic_sql_attempts > 2:
@@ -3025,6 +3084,33 @@ class MachiningAgent:
                             )
                             last_tool_result = tool_result
                             herramientas_usadas.append(tool_name)
+                            if (
+                                tool_name == "query_sql_server"
+                                and not argument_error
+                                and not str(tool_result).lower().startswith(("error", "⚠️"))
+                            ):
+                                successful_sql_query = True
+                            if (
+                                tool_name == "get_db_schema"
+                                and not argument_error
+                                and '"tables": []' not in str(tool_result)
+                                and not str(tool_result).startswith(("Error", "No se encontró"))
+                            ):
+                                schema_inspected = True
+                                try:
+                                    schema_payload = json.loads(str(tool_result))
+                                    inspected_table_names.update(
+                                        str(table.get("tableName") or "").casefold()
+                                        for table in schema_payload.get("tables") or []
+                                        if isinstance(table, dict) and table.get("tableName")
+                                    )
+                                except (json.JSONDecodeError, TypeError, ValueError):
+                                    pass
+                                messages.append(SystemMessage(content=(
+                                    "Ya tienes un fragmento de esquema verificado. No vuelvas a llamar get_db_schema. "
+                                    "Ahora ejecuta query_sql_server con un único SELECT parametrizado que responda "
+                                    "la pregunta. El esquema por sí solo nunca es una respuesta."
+                                )))
                             # Una búsqueda es suficiente. La siguiente llamada debe sintetizar
                             # el resultado sin poder solicitar la misma herramienta otra vez.
                             if tool_name == "google_web_search" and not argument_error:
@@ -3057,6 +3143,25 @@ class MachiningAgent:
             else:
                 # Respuesta final del modelo
                 response_text = response.content if hasattr(response, 'content') else str(response)
+                if (
+                    business_knowledge_query
+                    and not successful_sql_query
+                    and schema_only_retries < 1
+                    and iteration + 1 < self.max_iterations
+                ):
+                    schema_only_retries += 1
+                    iteration += 1
+                    messages.extend([
+                        response,
+                        SystemMessage(content=(
+                            "El esquema describe tablas y columnas, pero NO contiene la respuesta de negocio. "
+                            "No resumas ni expliques el catálogo. Si aún no inspeccionaste un fragmento de esquema, "
+                            "usa primero get_db_schema con términos relacionados. Después usa query_sql_server con un único SELECT "
+                            "parametrizado construido solo con las tablas, columnas y relaciones verificadas. "
+                            "Si el esquema aún no permite una consulta segura, indica que no puedes verificar el dato."
+                        )),
+                    ])
+                    continue
                 if self._has_incomplete_response_markup(response_text):
                     print("⚠️ Respuesta incompleta detectada; solicitando reescritura antes del envío")
                     messages.extend([
@@ -3111,6 +3216,18 @@ class MachiningAgent:
             response_text = self._synthesize_tool_response(messages, user_text) or (
                 "No pude presentar de forma segura los datos obtenidos. "
                 "Inténtalo nuevamente en unos instantes."
+            )
+
+        if (
+            business_knowledge_query
+            and not successful_sql_query
+            and not (agent_rag_context or system_snapshot_context or vector_answers_business_query)
+        ):
+            response_text = self._localized(
+                user_text,
+                es="No pude verificar ese dato en la base de datos con el esquema disponible. Prefiero no inventar una respuesta.",
+                pt="Não consegui verificar esse dado na base de dados com o esquema disponível. Prefiro não inventar uma resposta.",
+                en="I could not verify that information in the database with the available schema. I prefer not to invent an answer.",
             )
 
         # A negative/deflecting answer contradicts an agent-scoped fact that

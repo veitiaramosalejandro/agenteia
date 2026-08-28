@@ -158,6 +158,12 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
                 self.assertTrue(self.agent._is_business_knowledge_query(text))
                 self.assertTrue(self.agent._is_internal_domain_query(text))
 
+    def test_company_membership_requires_verified_business_data(self):
+        text = "A que empresa pertenço no sistema?"
+        self.assertTrue(self.agent._is_business_knowledge_query(text))
+        self.assertTrue(self.agent._requires_live_business_data(text))
+        self.assertEqual([], self.agent._business_schema_table_hints(text))
+
     def test_live_meeting_participants_require_sql_even_with_vector_context(self):
         meeting_id = "7d7a581d-d7c1-4e18-a11b-6d322e4755c6"
         self.assertTrue(
@@ -255,6 +261,31 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
 
         self.assertEqual("SysMeeting", result["tables"][0]["tableName"])
         read_catalog.assert_not_called()
+
+    @patch("app.agent.tools.read_schema_catalog")
+    @patch("app.agent.tools.get_solidset_schema_snapshot")
+    @patch("app.agent.tools.current_instance")
+    def test_unknown_conceptual_table_returns_related_real_schema(
+        self, current, snapshot, read_catalog
+    ):
+        current.return_value = {"ID": "instance-1", "DataAPI": {"active": True}}
+        snapshot.return_value = {"Catalog": {
+            "databaseName": "ISIFrameIsicom",
+            "tables": [
+                {"schemaName": "dbo", "tableName": "SysCompany2Login", "columns": [
+                    {"name": "IDCompany"}, {"name": "IDLogin"},
+                ], "foreignKeys": []},
+                {"schemaName": "dbo", "tableName": "ContactType", "columns": [
+                    {"name": "ID"}, {"name": "Name"},
+                ], "foreignKeys": []},
+            ],
+        }}
+        read_catalog.return_value = {"databaseName": "ISIFrameIsicom", "tables": []}
+
+        result = json.loads(get_db_schema.invoke({"table_name": "dbo.Company"}))
+
+        self.assertEqual("related_schema_candidates", result["matchMode"])
+        self.assertEqual(["SysCompany2Login"], [item["tableName"] for item in result["tables"]])
 
     def test_channel_summary_followup_uses_direct_summary_route(self):
         self.assertTrue(

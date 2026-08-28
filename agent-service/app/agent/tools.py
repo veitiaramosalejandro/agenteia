@@ -967,9 +967,110 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
                 print(f"⚠️ No se pudo persistir el snapshot de esquema: {snapshot_error}")
         tables = catalog.get("tables") or []
         if requested and not tables:
-            return f"No se encontró la tabla '{table_name}'."
+            # El modelo puede proponer un nombre conceptual inexistente
+            # (p. ej. Company). Busca candidatos reales en el catálogo completo
+            # por nombre de tabla y columnas, sin inventar equivalencias.
+            full_catalog = cached_catalog if isinstance(cached_catalog, dict) else None
+            if full_catalog is None:
+                full_catalog = read_schema_catalog(instance["DataAPI"], None)
+            search_tokens = {
+                token.casefold()
+                for value in requested
+                for token in re.findall(r"[A-Za-zÀ-ÿ0-9_]+", value)
+                if token.casefold() not in {
+                    "dbo", "table", "tabla", "que", "qual", "qué", "a", "la", "el",
+                    "as", "de", "do", "da", "del", "en", "em", "no", "na", "the",
+                    "which", "what", "sistema", "system", "pertenço", "pertence",
+                    "pertenezco", "pertenece", "belong",
+                } and len(token) >= 3
+            }
+            # Sinónimos de dominio para cruzar preguntas multilingües con
+            # identificadores técnicos del esquema, que normalmente están en inglés.
+            synonym_groups = {
+                "company": {"empresa", "empresas", "companhia", "companhias", "company", "companies"},
+                "organization": {"organización", "organizacion", "organização", "organizacao", "organization"},
+                "login": {"usuario", "usuário", "utilizador", "user", "login"},
+                "resource": {"recurso", "resource"},
+            }
+            raw_words = {
+                token.casefold()
+                for value in requested
+                for token in re.findall(r"[A-Za-zÀ-ÿ0-9_]+", value)
+            }
+            for canonical, synonyms in synonym_groups.items():
+                if raw_words.intersection(synonyms):
+                    search_tokens.add(canonical)
+            scored: list[tuple[int, dict[str, Any]]] = []
+            for table in full_catalog.get("tables") or []:
+                table_label = str(table.get("tableName") or "").casefold()
+                column_labels = " ".join(
+                    str(column.get("name") or column.get("columnName") or "").casefold()
+                    for column in table.get("columns") or []
+                    if isinstance(column, dict)
+                )
+                score = sum(
+                    3 if token in table_label else 1 if token in column_labels else 0
+                    for token in search_tokens
+                )
+                if score:
+                    scored.append((score, table))
+            scored.sort(key=lambda item: (-item[0], str(item[1].get("tableName") or "")))
+            tables = [dict(table) for _, table in scored[:6]]
+            if not tables:
+                return f"No se encontró ninguna tabla relacionada con '{table_name}'."
+            # Incorpora destinos FK de las candidatas para que el planificador
+            # pueda seguir relaciones, aunque su nombre no coincida con la consulta.
+            referenced_names = {
+                str(fk.get("referencedTable") or "").casefold()
+                for table in tables
+                for fk in table.get("foreignKeys") or []
+                if isinstance(fk, dict) and fk.get("referencedTable")
+            }
+            selected_names = {str(table.get("tableName") or "").casefold() for table in tables}
+            for table in full_catalog.get("tables") or []:
+                if str(table.get("tableName") or "").casefold() in referenced_names - selected_names:
+                    tables.append(dict(table))
+                    selected_names.add(str(table.get("tableName") or "").casefold())
+            # Reduce tablas anchas a claves, columnas relacionadas con la
+            # intención y campos descriptivos; evita ahogar al modelo en JSON.
+            descriptive = {
+                "id", "name", "shortname", "displayname", "fullname", "username",
+                "accountname", "description", "code", "active", "issystemcompany",
+            }
+            for table in tables:
+                foreign_key_columns = {
+                    str(fk.get("column") or "").casefold()
+                    for fk in table.get("foreignKeys") or [] if isinstance(fk, dict)
+                }
+                compact_columns = []
+                for column in table.get("columns") or []:
+                    if not isinstance(column, dict):
+                        continue
+                    name = str(column.get("name") or column.get("columnName") or "")
+                    lowered = name.casefold()
+                    if (
+                        lowered in descriptive
+                        or lowered in foreign_key_columns
+                        or lowered.startswith("id")
+                        or any(token in lowered for token in search_tokens)
+                    ):
+                        compact_columns.append(column)
+                    if len(compact_columns) >= 30:
+                        break
+                table["columns"] = compact_columns
+            catalog = {
+                "databaseName": full_catalog.get("databaseName"),
+                "tables": tables,
+                "matchMode": "related_schema_candidates",
+                "requestedName": table_name,
+            }
         return json.dumps(
-            {"databaseName": catalog.get("databaseName"), "tables": tables[:100]},
+            {
+                "databaseName": catalog.get("databaseName"),
+                "tables": tables[:100],
+                **({"matchMode": catalog.get("matchMode"), "requestedName": catalog.get("requestedName")}
+                   if catalog.get("matchMode") else {}),
+            },
             ensure_ascii=False,
             default=str,
         )
