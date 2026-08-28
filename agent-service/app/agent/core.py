@@ -7,6 +7,7 @@ from urllib import error as urlerror
 from urllib.request import urlopen
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
@@ -1088,6 +1089,53 @@ class MachiningAgent:
         return {"es": es, "pt": pt, "en": en}.get(
             self._detect_user_language(user_text), en
         )
+
+    @staticmethod
+    def _is_current_datetime_query(user_text: str) -> bool:
+        text = " ".join((user_text or "").lower().strip(" ¿?¡!.,").split())
+        patterns = (
+            r"\b(?:que|qué|qual|what)\s+(?:dia|día|fecha|date)\s+(?:es|é|is)\s+(?:hoy|hoje|today)\b",
+            r"\b(?:fecha|data|date)\s+(?:actual|atual|current|de hoy|de hoje)\b",
+            r"\b(?:hoy|hoje|today)\s+(?:que|qué|qual|what)\s+(?:dia|día|date)\b",
+            r"\b(?:que|qué|qual|what)\s+(?:hora|horas|time)\s+(?:es|é|son|são|is)\b",
+            r"\b(?:hora|horas|time)\s+(?:actual|atual|current)\b",
+        )
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    def _build_current_datetime_response(
+        self, user_text: str, message_metadata: Optional[dict[str, Any]] = None
+    ) -> str:
+        metadata = message_metadata or {}
+        requested_zone = str(metadata.get("time_zone") or "").strip()
+        try:
+            now = datetime.now(ZoneInfo(requested_zone)) if requested_zone else datetime.now().astimezone()
+        except (ZoneInfoNotFoundError, ValueError):
+            now = datetime.now().astimezone()
+
+        language = str(metadata.get("resolved_language") or "").strip().lower()
+        if language not in {"es", "pt", "en"}:
+            language = self._detect_user_language(user_text)
+        asks_time = bool(re.search(
+            r"\b(?:hora|horas|time)\b", (user_text or "").lower()
+        ))
+        if asks_time:
+            return {
+                "es": f"Ahora son las {now.strftime('%H:%M')} del {now.strftime('%d/%m/%Y')}.",
+                "pt": f"Agora são {now.strftime('%H:%M')} de {now.strftime('%d/%m/%Y')}.",
+                "en": f"It is {now.strftime('%H:%M')} on {now.strftime('%Y-%m-%d')}.",
+            }.get(language, f"It is {now.strftime('%H:%M')} on {now.strftime('%Y-%m-%d')}.")
+
+        weekdays = {
+            "es": ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"),
+            "pt": ("segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"),
+            "en": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+        }
+        day_name = weekdays.get(language, weekdays["en"])[now.weekday()]
+        return {
+            "es": f"Hoy es {day_name}, {now.strftime('%d/%m/%Y')}.",
+            "pt": f"Hoje é {day_name}, {now.strftime('%d/%m/%Y')}.",
+            "en": f"Today is {day_name}, {now.strftime('%Y-%m-%d')}.",
+        }.get(language, f"Today is {day_name}, {now.strftime('%Y-%m-%d')}.")
 
     def _is_external_information_query(self, user_text: str) -> bool:
         text = self._normalize_context_query(user_text).lower()
@@ -2237,6 +2285,8 @@ class MachiningAgent:
 
         authenticated_identity = None
         metadata_identity = message_metadata or {}
+        if self._is_current_datetime_query(user_text):
+            return self._build_current_datetime_response(user_text, metadata_identity)
         agent_resource_id = str(metadata_identity.get("agent_resource_id") or "").strip()
         agent_name = str(metadata_identity.get("agent_name") or agent_resource_id).strip()
         try:
@@ -2833,6 +2883,25 @@ class MachiningAgent:
                 + "\n\n"
                 + self.identity_service.build_prompt_context(identity_snapshot)
             )
+
+        requested_time_zone = str((message_metadata or {}).get("time_zone") or "").strip()
+        try:
+            verified_now = (
+                datetime.now(ZoneInfo(requested_time_zone))
+                if requested_time_zone
+                else datetime.now().astimezone()
+            )
+        except (ZoneInfoNotFoundError, ValueError):
+            verified_now = datetime.now().astimezone()
+        system_prompt += (
+            "\n\n=== FECHA Y HORA ACTUALES VERIFICADAS ===\n"
+            f"Fecha local: {verified_now.date().isoformat()}\n"
+            f"Hora local: {verified_now.strftime('%H:%M:%S')}\n"
+            f"Zona horaria del proceso: {verified_now.tzname() or 'local'} "
+            f"(UTC{verified_now.strftime('%z')[:3]}:{verified_now.strftime('%z')[3:]})\n"
+            "Este bloque es la única fuente autorizada para responder qué fecha u hora es ahora. "
+            "No uses fechas encontradas en historial, RAG, documentos ni mensajes como fecha actual."
+        )
 
         if auto_reply_mode:
             system_prompt += (

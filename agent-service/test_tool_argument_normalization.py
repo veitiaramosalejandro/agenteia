@@ -1,6 +1,8 @@
 import json
 import unittest
+from datetime import datetime
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from app.agent.core import MachiningAgent
 from app.agent.tools import get_db_schema
@@ -39,6 +41,20 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
             "Agente podria decirme cual es pronóstico del tiempo en Leiria?"
         )
         self.assertEqual(query, "cual es pronóstico del tiempo en Leiria?")
+
+    def test_current_date_is_resolved_without_rag_web_or_llm(self):
+        self.assertTrue(self.agent._is_current_datetime_query("Que dia é hoje?"))
+        response = self.agent._build_current_datetime_response(
+            "Que dia é hoje?",
+            {"time_zone": "Europe/Lisbon", "resolved_language": "pt"},
+        )
+        self.assertIn(datetime.now(ZoneInfo("Europe/Lisbon")).strftime("%d/%m/%Y"), response)
+        self.assertTrue(response.startswith("Hoje é "))
+
+    def test_historical_date_question_is_not_treated_as_current_date(self):
+        self.assertFalse(self.agent._is_current_datetime_query(
+            "Que dia foi criada esta tarefa?"
+        ))
 
     def test_extracts_resource_filter_for_direct_sql_count(self):
         term = self.agent._extract_resource_count_term(
