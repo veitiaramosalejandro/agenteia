@@ -85,6 +85,12 @@ def ensure_system_knowledge_schema() -> None:
         );
         CREATE INDEX IF NOT EXISTS "IX_SystemIngestionRun_Instance"
           ON public."SysAgentIASystemIngestionRun" ("IDSolidSETInstance", "StartedAt" DESC);
+        ALTER TABLE public."SysAgentIASystemIngestionRun"
+          ADD COLUMN IF NOT EXISTS "RequestedTables" jsonb,
+          ADD COLUMN IF NOT EXISTS "AttemptCount" integer NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS "NextRetryAt" timestamptz,
+          ADD COLUMN IF NOT EXISTS "HeartbeatAt" timestamptz,
+          ADD COLUMN IF NOT EXISTS "WorkerID" varchar(255);
         CREATE TABLE IF NOT EXISTS public."SysAgentIASystemDocument" (
           "DocumentID" uuid PRIMARY KEY, "IDSolidSETInstance" uuid NOT NULL,
           "SourceTable" varchar(255) NOT NULL, "SourceRecordID" varchar(500) NOT NULL,
@@ -103,6 +109,7 @@ def _run_update(run_id: str, **values: Any) -> None:
     allowed = {
         "Status", "CurrentTable", "TablesTotal", "TablesCompleted",
         "RowsRead", "RowsIndexed", "RowsSkipped", "Error", "CompletedAt",
+        "AttemptCount", "NextRetryAt", "HeartbeatAt", "WorkerID",
     }
     assignments, params = [], []
     for key, value in values.items():
@@ -119,7 +126,9 @@ def _run_update(run_id: str, **values: Any) -> None:
         )
 
 
-def create_run(instance: dict[str, Any]) -> str:
+def create_run(
+    instance: dict[str, Any], requested_tables: list[str] | None = None,
+) -> str:
     ensure_system_knowledge_schema()
     instance_id = uuid.UUID(str(instance["ID"]))
     with _pg_connection() as conn, conn.cursor() as cur:
@@ -131,9 +140,59 @@ def create_run(instance: dict[str, Any]) -> str:
             return str(active["ID"])
         run_id = uuid.uuid4()
         cur.execute('''INSERT INTO public."SysAgentIASystemIngestionRun"
-          ("ID","IDSolidSETInstance","InstanceCode","Status") VALUES (%s,%s,%s,'queued')''',
-          (run_id, instance_id, str(instance.get("Code") or "")))
+          ("ID","IDSolidSETInstance","InstanceCode","Status","RequestedTables")
+          VALUES (%s,%s,%s,'queued',%s::jsonb)''',
+          (run_id, instance_id, str(instance.get("Code") or ""),
+           json.dumps(requested_tables) if requested_tables else None))
         return str(run_id)
+
+
+def claim_next_run(worker_id: str, stale_seconds: int) -> dict[str, Any] | None:
+    """Adquiere una ejecución pendiente o abandonada mediante un lease persistente."""
+    ensure_system_knowledge_schema()
+    with _pg_connection() as conn, conn.cursor() as cur:
+        cur.execute('''
+          SELECT * FROM public."SysAgentIASystemIngestionRun"
+          WHERE "Status"='queued'
+             OR ("Status"='retrying' AND COALESCE("NextRetryAt",CURRENT_TIMESTAMP) <= CURRENT_TIMESTAMP)
+             OR ("Status"='running' AND (
+                   COALESCE("HeartbeatAt","UpdatedAt")
+                     < CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
+                   OR COALESCE("WorkerID",'') LIKE %s
+                 ))
+          ORDER BY CASE WHEN "Status"='running' THEN 0 ELSE 1 END, "StartedAt"
+          FOR UPDATE SKIP LOCKED LIMIT 1
+        ''', (max(60, int(stale_seconds)), f"{worker_id.split(':', 1)[0]}:%"))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cur.execute('''UPDATE public."SysAgentIASystemIngestionRun"
+          SET "Status"='running',"WorkerID"=%s,"HeartbeatAt"=CURRENT_TIMESTAMP,
+              "UpdatedAt"=CURRENT_TIMESTAMP,"Error"=NULL,"CompletedAt"=NULL,
+              "AttemptCount"="AttemptCount"+1
+          WHERE "ID"=%s RETURNING *''', (worker_id, row["ID"]))
+        claimed = dict(cur.fetchone())
+        for key, value in list(claimed.items()):
+            if isinstance(value, (uuid.UUID, datetime)):
+                claimed[key] = str(value)
+        return claimed
+
+
+def heartbeat_run(run_id: str, worker_id: str) -> None:
+    with _pg_connection() as conn, conn.cursor() as cur:
+        cur.execute('''UPDATE public."SysAgentIASystemIngestionRun"
+          SET "HeartbeatAt"=CURRENT_TIMESTAMP,"UpdatedAt"=CURRENT_TIMESTAMP
+          WHERE "ID"=%s AND "Status"='running' AND "WorkerID"=%s''',
+          (uuid.UUID(run_id), worker_id))
+
+
+def retry_run(run_id: str, error: str, delay_seconds: int) -> None:
+    with _pg_connection() as conn, conn.cursor() as cur:
+        cur.execute('''UPDATE public."SysAgentIASystemIngestionRun"
+          SET "Status"='retrying',"Error"=%s,"WorkerID"=NULL,"HeartbeatAt"=NULL,
+              "CompletedAt"=NULL,"NextRetryAt"=CURRENT_TIMESTAMP + (%s * INTERVAL '1 second'),
+              "UpdatedAt"=CURRENT_TIMESTAMP WHERE "ID"=%s''',
+          (str(error)[:4000], max(10, int(delay_seconds)), uuid.UUID(run_id)))
 
 
 def get_run_status(run_id: str | None = None, instance_id: str | None = None) -> dict[str, Any] | None:
@@ -159,6 +218,18 @@ def get_run_status(run_id: str | None = None, instance_id: str | None = None) ->
         completed = int(result.get("TablesCompleted") or 0)
         result["ProgressPercentage"] = round((completed / total) * 100, 2) if total else 0.0
         result["Complete"] = result.get("Status") == "completed"
+        heartbeat = result.get("HeartbeatAt") or result.get("UpdatedAt")
+        heartbeat_dt = datetime.fromisoformat(heartbeat) if isinstance(heartbeat, str) else heartbeat
+        seconds = max(0, int((datetime.now(timezone.utc) - heartbeat_dt).total_seconds())) if heartbeat_dt else None
+        result["SecondsWithoutHeartbeat"] = seconds
+        result["Alive"] = bool(
+            result.get("Status") == "running" and seconds is not None
+            and seconds <= settings.SYSTEM_KNOWLEDGE_STALE_SECONDS
+        )
+        result["ExecutionState"] = (
+            "stale" if result.get("Status") == "running" and not result["Alive"]
+            else result.get("Status")
+        )
         return result
 
 
@@ -318,7 +389,7 @@ def run_system_knowledge_ingestion(
     """Ejecuta una fotografía semántica incremental de datos de negocio."""
     read = indexed = skipped = completed = 0
     try:
-        _run_update(run_id, Status="running")
+        _run_update(run_id, Status="running", HeartbeatAt=datetime.now(timezone.utc))
         with connect_solidset_sql(instance, as_dict=True) as connection:
             requested = requested_tables or list(DEFAULT_BUSINESS_TABLES)
             catalog, primary_keys = _catalog(connection, requested)
@@ -417,7 +488,8 @@ def run_system_knowledge_ingestion(
         _run_update(
             run_id, Status="completed", CurrentTable=None, TablesCompleted=completed,
             RowsRead=read, RowsIndexed=indexed, RowsSkipped=skipped,
-            CompletedAt=datetime.now(timezone.utc),
+            CompletedAt=datetime.now(timezone.utc), WorkerID=None,
+            HeartbeatAt=datetime.now(timezone.utc), NextRetryAt=None,
         )
         return get_run_status(run_id=run_id) or {}
     except Exception as exc:

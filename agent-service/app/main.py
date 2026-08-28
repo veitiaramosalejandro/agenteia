@@ -106,7 +106,6 @@ from app.historical.store import (
 from app.system.system_knowledge_ingest import (
     create_run as create_system_knowledge_run,
     get_run_status as get_system_knowledge_run_status,
-    run_system_knowledge_ingestion,
 )
 
 # ============================================================
@@ -282,7 +281,6 @@ orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
 response_queue = AgentResponseQueue()
 historical_queue = HistoricalQueue()
-_system_knowledge_tasks: dict[str, asyncio.Task[Any]] = {}
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
@@ -5590,17 +5588,6 @@ def _require_historical_admin(
         raise HTTPException(status_code=401, detail="Credencial administrativa inválida.")
 
 
-async def _execute_system_knowledge_run(
-    run_id: str, instance: dict[str, Any], tables: list[str] | None,
-) -> None:
-    try:
-        await asyncio.to_thread(run_system_knowledge_ingestion, run_id, instance, tables)
-    except Exception as exc:
-        print(f"❌ Ingesta de conocimiento SQL run={run_id}: {exc}", flush=True)
-    finally:
-        _system_knowledge_tasks.pop(run_id, None)
-
-
 @app.post(
     "/api/v1/agent/system-knowledge-ingestion/start",
     status_code=202,
@@ -5617,16 +5604,13 @@ async def start_system_knowledge_ingestion(
     if not instance.get("DataAPI"):
         raise HTTPException(status_code=409, detail="A instância não possui Data API ativa.")
     try:
-        run_id = await asyncio.to_thread(create_system_knowledge_run, instance)
+        run_id = await asyncio.to_thread(
+            create_system_knowledge_run, instance, configuration.tables
+        )
     except (psycopg.Error, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail="Não foi possível criar a execução.") from exc
-    task = _system_knowledge_tasks.get(run_id)
-    if task is None or task.done():
-        _system_knowledge_tasks[run_id] = asyncio.create_task(
-            _execute_system_knowledge_run(run_id, instance, configuration.tables)
-        )
     return {
-        "status": "accepted", "runId": run_id,
+        "status": "queued", "runId": run_id,
         "statusUrl": f"/api/v1/agent/system-knowledge-ingestion/status?runId={run_id}",
     }
 
