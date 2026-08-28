@@ -201,6 +201,39 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual('["id-1"]', args["parameters_json"])
 
+    def test_sql_schema_placeholder_is_replaced_by_empty_parameter_array(self):
+        args, error = self.agent._normalize_tool_args(
+            "query_sql_server",
+            {"query": "SELECT TOP 1 * FROM dbo.SysTask", "parameters_json": {"type": "string"}},
+            user_text="Lista tareas",
+            user_id=None,
+            canal_id=None,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual("[]", args["parameters_json"])
+
+    @patch("app.agent.core.query_sql_server")
+    def test_my_tasks_use_authenticated_resource_without_llm_sql(self, query_tool):
+        query_tool.invoke.return_value = (
+            '[{"ShortName":"Preparar informe","Status":2,'
+            '"WorkStatus":1,"ProgressPercentage":60}]'
+        )
+        resource_id = "ce0e837a-fe28-47ae-9ba0-8841fe042ca8"
+
+        response = self.agent._resolve_resource_tasks_for_requester(
+            "Forneça-me um resumo das minhas tarefas e do estado de execução de cada uma delas.",
+            requester_resource_id=resource_id,
+            requester_name="Alejandro Veitia",
+        )
+
+        invocation = query_tool.invoke.call_args.args[0]
+        self.assertIn("t.IDResource = %s OR t.IDResourceAssign = %s", invocation["query"])
+        self.assertNotIn("UserEmail", invocation["query"])
+        self.assertEqual([resource_id, resource_id], json.loads(invocation["parameters_json"]))
+        self.assertIn("Preparar informe", response)
+        self.assertIn("progresso 60%", response)
+
     @patch("app.agent.tools.read_schema_catalog")
     @patch("app.agent.tools.get_solidset_schema_snapshot")
     @patch("app.agent.tools.current_instance")

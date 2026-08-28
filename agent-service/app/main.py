@@ -791,15 +791,27 @@ def _local_temporal_response(
 ) -> Optional[str]:
     """Answers local date/time questions without allowing the LLM to invent a place."""
     text = " ".join((raw_text or "").strip().lower().split())
-    asks_date = any(phrase in text for phrase in (
-        "que dia é hoje", "que dia e hoje", "qual é a data", "qual e a data",
-        "data de hoje", "qué día es hoy", "que día es hoy", "fecha de hoy",
-        "what day is today", "what is today's date", "today's date",
+    # Tolera acentos omitidos, pluralizaciones y pequeñas variaciones habituales.
+    # Estas preguntas nunca deben caer al LLM o a una búsqueda web: la fuente
+    # autoritativa es el reloj de la instancia y su zona horaria configurada.
+    asks_date = bool(re.search(
+        r"\b(?:"
+        r"qu[eé]\s+d[ií]as?\s+(?:es|e|[eé])\s+ho(?:y|je)|"
+        r"(?:cu[aá]l\s+(?:es|e|[eé])\s+la\s+fecha|qual\s+(?:e|[eé])\s+a\s+data)|"
+        r"(?:fecha\s+de\s+hoy|data\s+de\s+hoje)|"
+        r"what\s+(?:day\s+is\s+today|is\s+today'?s\s+date)|today'?s\s+date"
+        r")\b",
+        text,
+        flags=re.IGNORECASE,
     ))
-    asks_time = any(phrase in text for phrase in (
-        "que horas são", "que horas sao", "hora atual", "hora local",
-        "qué hora es", "que hora es", "hora actual", "what time is it",
-        "current time", "local time",
+    asks_time = bool(re.search(
+        r"\b(?:"
+        r"qu[eé]\s+horas?\s+(?:es|son|s[aã]o)|"
+        r"hora\s+(?:actual|atual|local)|"
+        r"what\s+time\s+is\s+it|current\s+time|local\s+time"
+        r")\b",
+        text,
+        flags=re.IGNORECASE,
     ))
     if not asks_date and not asks_time:
         return None
@@ -1403,6 +1415,49 @@ def _learn_agent_interaction(
     ))
 
 
+def _is_relative_temporal_assertion(raw_text: str) -> bool:
+    """Evita convertir hechos relativos y caducos en conocimiento permanente."""
+    text = " ".join(str(raw_text or "").strip().lower().split())
+    return bool(re.search(
+        r"\b(?:hoy|hoje|today|ayer|ontem|yesterday|mañana|amanhã|tomorrow)\b",
+        text,
+        flags=re.IGNORECASE,
+    ))
+
+
+def _learn_direct_agent_assertion(candidate: dict[str, Any]) -> bool:
+    """Persiste una afirmación del recurso en el ámbito del agente seleccionado."""
+    assertion = _sanitize_auto_reply_input(str(candidate.get("message") or ""))
+    agent_resource_id = str(candidate.get("agent_resource_id") or "").strip()
+    channel_id = str(candidate.get("channel_id") or "").strip()
+    if not assertion or not agent_resource_id or _is_relative_temporal_assertion(assertion):
+        return False
+    try:
+        saved = save_agent_knowledge({
+            "IDResource": agent_resource_id,
+            "IDWorkRoom": channel_id or None,
+            "Title": "Hecho enseñado directamente al agente",
+            "KnowledgeText": assertion,
+            "Source": USER_ASSERTION_SOURCE,
+            "active": True,
+        })
+        # Se indexa antes de finalizar el trabajo para que el mensaje siguiente
+        # pueda recuperar el hecho aunque llegue inmediatamente.
+        if not saved.get("WasExisting"):
+            indexed = agent.sistema_aprendizaje.aprender_conocimiento_agente(saved)
+            if not indexed:
+                raise RuntimeError("No se pudo indexar el conocimiento en Qdrant")
+        print(
+            f"🧠 Afirmación aprendida por agente resource={agent_resource_id} "
+            f"workroom={channel_id or '-'} knowledge_id={saved.get('ID')}",
+            flush=True,
+        )
+        return True
+    except Exception as exc:
+        print(f"⚠️ No se pudo aprender la afirmación dirigida al agente: {exc}", flush=True)
+        return False
+
+
 def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
     return _auto_reply_rejection_reason(candidate) is None
 
@@ -1467,6 +1522,18 @@ async def _process_auto_replies(
 
         rejection_reason = _auto_reply_rejection_reason(candidate)
         if rejection_reason is not None:
+            if rejection_reason == "contenido_solo_aprendizaje":
+                learned = await asyncio.to_thread(
+                    _learn_direct_agent_assertion, candidate
+                )
+                if not learned and _is_relative_temporal_assertion(
+                    str(candidate.get("message") or "")
+                ):
+                    print(
+                        "🕒 Afirmación temporal relativa no persistida; "
+                        "se resolverá con el reloj de la instancia",
+                        flush=True,
+                    )
             print(
                 "ℹ️ Candidato de auto-respuesta descartado por filtros "
                 f"reason={rejection_reason} "
@@ -5874,6 +5941,7 @@ def capture_solidset_agent_reaction(
     request: Request,
 ) -> SolidSETReactionCaptureResponse:
     """Captura una reacción ya registrada en SolidSET y la aprende para su agente."""
+    print(message.model_dump_json(indent=2))
     try:
         print(req)
         instance = _resolve_request_solidset_instance(request)

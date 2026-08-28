@@ -1278,10 +1278,38 @@ class MachiningAgent:
         return term[:160] or None
 
     def _resolve_resource_tasks_from_db(self, user_text: str) -> Optional[str]:
-        """Consulta SysTask para un recurso identificado por su nombre/login."""
-        resource_term = self._extract_task_resource_term(user_text)
-        if not resource_term:
-            return None
+        """Compatibilidad para consultas explícitas por nombre de recurso."""
+        return self._resolve_resource_tasks_for_requester(user_text)
+
+    def _resolve_resource_tasks_for_requester(
+        self,
+        user_text: str,
+        requester_resource_id: Optional[str] = None,
+        requester_name: Optional[str] = None,
+    ) -> Optional[str]:
+        """Consulta tareas por nombre o por la identidad autenticada de «mis tareas»."""
+        normalized = self._normalize_context_query(user_text)
+        has_task_intent = bool(re.search(
+            r"\b(?:tareas?|tasks?|tarefas?)\b", normalized, re.IGNORECASE
+        ))
+        self_intent = has_task_intent and bool(re.search(
+            r"\b(?:mis|m[ií]as|minhas?|meus?|my)\b", normalized, re.IGNORECASE
+        ))
+        requester_id = str(requester_resource_id or "").strip()
+        if self_intent and self._is_valid_guid(requester_id):
+            resource_term = str(requester_name or "").strip() or "mi recurso"
+            where_clause = "WHERE (t.IDResource = %s OR t.IDResourceAssign = %s)"
+            parameters = [requester_id, requester_id]
+        else:
+            resource_term = self._extract_task_resource_term(user_text) or ""
+            if not resource_term:
+                return None
+            where_clause = (
+                "WHERE UPPER(CONCAT(COALESCE(l.FullName, ''), ' ', "
+                "COALESCE(l.Username, ''), ' ', COALESCE(r.DisplayName, ''))) "
+                "LIKE UPPER(%s)"
+            )
+            parameters = [f"%{resource_term}%"]
         sql = (
             "SELECT TOP 50 t.ModifiedTime, t.CreatedTime, t.IDResource, "
             "t.IDResourceAssign, t.Code, t.Status, t.Archived, t.ShortName, "
@@ -1294,14 +1322,12 @@ class MachiningAgent:
             "ON r.ResourceId = t.IDResource "
             "LEFT JOIN dbo.SysLogin l WITH (NOLOCK) "
             "ON l.ActiveIDLogin2Resource = r.ActiveIDLogin2Resource "
-            "WHERE UPPER(CONCAT(COALESCE(l.FullName, ''), ' ', "
-            "COALESCE(l.Username, ''), ' ', COALESCE(r.DisplayName, ''))) "
-            "LIKE UPPER(%s) "
+            f"{where_clause} AND ISNULL(t.Archived, 0) = 0 "
             "ORDER BY t.CreatedTime DESC"
         )
         result = str(query_sql_server.invoke({
             "query": sql,
-            "parameters_json": json.dumps([f"%{resource_term}%"]),
+            "parameters_json": json.dumps(parameters),
         }))
         if result.startswith("La consulta se ejecutó correctamente"):
             return self._localized(
@@ -1316,18 +1342,28 @@ class MachiningAgent:
             return None
         if not isinstance(rows, list):
             return None
+        normalized_language_text = self._normalize_context_query(user_text).lower()
+        if re.search(r"\b(?:tarefas?|minhas?|forne[cç]a|execu[cç][aã]o)\b", normalized_language_text):
+            status_label, progress_label, end_label = "estado", "progresso", "fim"
+            untitled = "Tarefa sem nome"
+        elif re.search(r"\b(?:tasks?|my|execution|status)\b", normalized_language_text):
+            status_label, progress_label, end_label = "status", "progress", "end"
+            untitled = "Untitled task"
+        else:
+            status_label, progress_label, end_label = "estado", "progreso", "fin"
+            untitled = "Tarea sin nombre"
         lines: list[str] = []
         for row in rows[:15]:
             if not isinstance(row, dict):
                 continue
-            title = str(row.get("ShortName") or row.get("Code") or "Tarea sin nombre").strip()
+            title = str(row.get("ShortName") or row.get("Code") or untitled).strip()
             status = row.get("WorkStatus") if row.get("WorkStatus") is not None else row.get("Status")
             progress = row.get("ProgressPercentage")
-            details = [f"estado {status}" if status is not None else ""]
+            details = [f"{status_label} {status}" if status is not None else ""]
             if progress is not None:
-                details.append(f"progreso {progress}%")
+                details.append(f"{progress_label} {progress}%")
             if row.get("EndDate") is not None:
-                details.append(f"fin {row['EndDate']}")
+                details.append(f"{end_label} {row['EndDate']}")
             lines.append(f"- **{title}** — {', '.join(value for value in details if value)}")
         if not lines:
             return None
@@ -1665,6 +1701,14 @@ class MachiningAgent:
             parameters = args.get("parameters_json", "[]")
             if isinstance(parameters, (list, tuple)):
                 args["parameters_json"] = json.dumps(list(parameters), default=str)
+            elif isinstance(parameters, dict):
+                if set(parameters).issubset({"type", "description", "default", "items"}):
+                    args["parameters_json"] = "[]"
+                else:
+                    return args, (
+                        "No se ejecutó SQL: parameters_json debe ser un array JSON, "
+                        "no un objeto. Corrige los parámetros sin inventar valores."
+                    )
             elif not str(parameters or "").strip():
                 args["parameters_json"] = "[]"
 
@@ -2338,7 +2382,19 @@ class MachiningAgent:
         # --- 3.7 TAREAS ASIGNADAS A UN RECURSO DESDE SYSTASK ---
         resource_tasks_response = None
         if not response_suggestion_mode and not vector_answers_business_query:
-            resource_tasks_response = self._resolve_resource_tasks_from_db(user_text)
+            identity_name = ""
+            if authenticated_identity:
+                identity_name = str(
+                    authenticated_identity.get("full_name")
+                    or authenticated_identity.get("display_name")
+                    or authenticated_identity.get("username")
+                    or ""
+                ).strip()
+            resource_tasks_response = self._resolve_resource_tasks_for_requester(
+                user_text,
+                requester_resource_id=resource_id,
+                requester_name=identity_name,
+            )
         if resource_tasks_response is not None:
             if history:
                 try:

@@ -19,6 +19,8 @@ from app.main import (
     _is_business_recommendation_request,
     _is_concrete_suggestion_answer_request,
     _extract_learnable_suggestion_fact,
+    _is_relative_temporal_assertion,
+    _learn_direct_agent_assertion,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.core import MachiningAgent
@@ -30,6 +32,29 @@ from app.knowledge_provenance import (
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
+    def test_relative_date_assertion_is_not_durable_knowledge(self):
+        self.assertTrue(_is_relative_temporal_assertion("Hoy es 28 de agosto."))
+        self.assertTrue(_is_relative_temporal_assertion("Hoje é 28 de agosto."))
+        self.assertFalse(_is_relative_temporal_assertion("La máquina usa aceite ISO 46."))
+
+    @patch("app.main.agent.sistema_aprendizaje.aprender_conocimiento_agente", return_value=True)
+    @patch("app.main.save_agent_knowledge")
+    def test_direct_assertion_is_persisted_for_selected_agent(self, save, index):
+        save.return_value = {"ID": "knowledge-1", "WasExisting": False}
+
+        learned = _learn_direct_agent_assertion({
+            "message": "La máquina usa aceite ISO 46.",
+            "agent_resource_id": "agent-1",
+            "channel_id": "room-1",
+        })
+
+        self.assertTrue(learned)
+        payload = save.call_args.args[0]
+        self.assertEqual(payload["IDResource"], "agent-1")
+        self.assertEqual(payload["IDWorkRoom"], "room-1")
+        self.assertEqual(payload["Source"], USER_ASSERTION_SOURCE)
+        index.assert_called_once_with(save.return_value)
+
     def test_swagger_contains_fictitious_quoted_message_example(self):
         operation = app.openapi()["paths"][
             "/api/v1/agent/notification/chat-question/suggest-response"
@@ -497,6 +522,29 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertIn("Portugal", response)
         self.assertIn("Europe/Lisbon", response)
         self.assertNotIn("Brasília", response)
+
+    def test_spanish_date_typo_does_not_fall_through_to_llm(self):
+        response = _local_temporal_response(
+            "Que dias es hoy?",
+            time_zone="Europe/Lisbon",
+            locale="pt-PT",
+            country_code="PT",
+        )
+
+        self.assertIsNotNone(response)
+        self.assertTrue(response.startswith("Hoy es"))
+        self.assertIn("Europe/Lisbon", response)
+
+    def test_spanish_accented_plural_date_is_recognized(self):
+        response = _local_temporal_response(
+            "¿Qué días es hoy?",
+            time_zone="Europe/Lisbon",
+            locale="es-ES",
+            country_code="ES",
+        )
+
+        self.assertIsNotNone(response)
+        self.assertTrue(response.startswith("Hoy es"))
 
     def test_english_time_keeps_english_with_portugal_locale(self):
         response = _local_temporal_response(
