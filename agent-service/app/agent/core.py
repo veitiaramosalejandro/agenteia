@@ -1117,6 +1117,8 @@ class MachiningAgent:
 
     def _is_internal_domain_query(self, user_text: str) -> bool:
         """Reconoce el dominio de trabajo; lo informativo restante puede resolverse en web."""
+        if self._is_resource_consumption_query(user_text):
+            return False
         text = self._normalize_context_query(user_text).lower()
         internal_terms = (
             "solidset", "communicator", "cnc", "máquina", "maquina", "mecanizado",
@@ -1136,6 +1138,8 @@ class MachiningAgent:
 
     def _is_business_knowledge_query(self, user_text: str) -> bool:
         """Business entities that must follow Vector DB -> SolidSET Data API."""
+        if self._is_resource_consumption_query(user_text):
+            return False
         text = self._normalize_context_query(user_text).lower()
         terms = (
             "recurso", "recursos", "resource", "resources", "utilizador", "utilizadores",
@@ -1149,6 +1153,75 @@ class MachiningAgent:
             "organisation",
         )
         return any(term in text for term in terms)
+
+    def _is_resource_consumption_query(self, user_text: str) -> bool:
+        """Distingue consumo técnico de recursos de entidades Resource de SolidSET."""
+        text = self._normalize_context_query(user_text).lower()
+        has_consumption = bool(re.search(
+            r"\b(?:consum(?:e|es|en|ir|o|os|a)|consome|consomem|consumir|consumo|"
+            r"uses?|usage|utiliza|utilizam|gasta|gastam|requer|requiere|requires?)\b",
+            text,
+        ))
+        has_resource = bool(re.search(
+            r"\b(?:recurso|recursos|resource|resources|cpu|ram|memoria|memória|"
+            r"procesador|processador|bateria|batería|rede|network|almacenamiento|armazenamento)\b",
+            text,
+        ))
+        if not (has_consumption and has_resource):
+            return False
+
+        # Una entidad operativa explícita mantiene la consulta dentro del dominio.
+        internal_anchors = (
+            "solidset", "communicator", "tarea", "tareas", "tarefa", "tarefas",
+            "task", "tasks", "actividad", "actividades", "atividade", "atividades",
+            "meeting", "reunión", "reuniao", "canal", "channel", "workroom",
+            "usuario", "usuário", "utilizador", "empresa", "company",
+        )
+        return not any(anchor in text for anchor in internal_anchors)
+
+    @staticmethod
+    def _query_distinctive_acronyms(user_text: str) -> set[str]:
+        """Extrae anclas técnicas que una evidencia relevante debe conservar."""
+        ignored = {
+            "SQL", "SSET", "SOLIDSET", "IA", "AI", "API", "BD", "DB",
+            "QUE", "COMO", "QUAL", "WHAT", "HOW", "THE", "UMA", "UN",
+        }
+        return {
+            token.upper()
+            for token in re.findall(r"(?<![\w-])[A-Z][A-Z0-9.+#-]{1,11}(?![\w-])", user_text or "")
+            if token.upper() not in ignored
+        }
+
+    def _rag_context_matches_query(self, user_text: str, context: str) -> bool:
+        """Evita que similitud vectorial dé por relevante un tema distinto."""
+        if not str(context or "").strip():
+            return False
+        acronyms = self._query_distinctive_acronyms(user_text)
+        context_upper = str(context).upper()
+        return not acronyms or all(
+            re.search(rf"(?<![\w-]){re.escape(acronym)}(?![\w-])", context_upper)
+            for acronym in acronyms
+        )
+
+    @staticmethod
+    def _response_drifted_from_query(user_text: str, response_text: str) -> bool:
+        """Detecta respuestas de otro turno y SQL inventado no solicitado."""
+        query = (user_text or "").lower()
+        answer = (response_text or "").lower()
+        asks_sql = bool(re.search(r"\b(?:sql|consulta|query|schema|esquema|tabla|tabela)\b", query))
+        contains_sql = bool(
+            re.search(r"```\s*sql\b", answer)
+            or re.search(r"\bselect\s+[\w\[*]", answer) and re.search(r"\bfrom\s+[\w\[]", answer)
+        )
+        asks_tasks = bool(re.search(
+            r"\b(?:tarea|tareas|tarefa|tarefas|task|tasks|turno|actividad|atividade)\b",
+            query,
+        ))
+        task_drift = not asks_tasks and bool(re.search(
+            r"\b(?:tarea actual|tarefa atual|turno atual|turno actual|current task|tarefas ativas)\b",
+            answer,
+        ))
+        return (contains_sql and not asks_sql) or task_drift
 
     def _requires_live_business_data(
         self, user_text: str, meeting_id: Optional[str] = None
@@ -2236,6 +2309,9 @@ class MachiningAgent:
                 )
             except Exception as exc:
                 print(f"⚠️ No se pudo consultar conocimiento semántico del agente: {exc}")
+        if agent_rag_context and not self._rag_context_matches_query(user_text, agent_rag_context):
+            print("⚠️ Conocimiento del agente rechazado: no conserva las anclas del turno actual")
+            agent_rag_context = ""
         system_snapshot_context = ""
         solidset_instance_id = str(
             metadata_identity.get("solidset_instance_id") or ""
@@ -2256,6 +2332,9 @@ class MachiningAgent:
                 )
             except Exception as exc:
                 print(f"⚠️ No se pudo consultar la fotografía SQL del sistema: {exc}")
+        if system_snapshot_context and not self._rag_context_matches_query(user_text, system_snapshot_context):
+            print("⚠️ Fotografía SQL rechazada: no conserva las anclas del turno actual")
+            system_snapshot_context = ""
         if response_suggestion_mode:
             general_conversation_mode = False
         valid_user_guid = self._is_valid_guid(user_id)
@@ -2399,6 +2478,11 @@ class MachiningAgent:
                 canal_id=canal_id,
                 min_score=settings.BUSINESS_RAG_MIN_SCORE,
             )
+            if business_rag_context and not self._rag_context_matches_query(
+                business_query_text, business_rag_context
+            ):
+                print("⚠️ Referencia vectorial rechazada: corresponde a otro tema")
+                business_rag_context = ""
             if business_rag_context and not live_business_query:
                 tool_allowlist = set()
                 print(
@@ -2652,6 +2736,9 @@ class MachiningAgent:
                 agent_resource_id=agent_resource_id or None,
                 canal_id=canal_id,
             )
+            if rag_context and not self._rag_context_matches_query(context_query, rag_context):
+                print("⚠️ Documentación RAG rechazada: corresponde a otro tema")
+                rag_context = ""
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
         chat_context_bd = ""
@@ -3482,6 +3569,33 @@ class MachiningAgent:
         # por el modelo como al respaldo web automático.
         if {"google_web_search", "web_memory"}.intersection(herramientas_usadas):
             response_text = self._clean_web_answer(response_text)
+
+        # Última barrera semántica: un modelo pequeño no puede publicar SQL no
+        # solicitado ni continuar respondiendo el tema de un turno anterior.
+        if self._response_drifted_from_query(user_text, response_text):
+            print("⚠️ Respuesta descartada por cambio de tema; regenerando sin historial ni RAG")
+            retry_messages = [
+                SystemMessage(content=(
+                    "Responde únicamente a la pregunta actual, en el idioma del usuario. "
+                    "No uses temas de conversaciones anteriores. No propongas SQL, tablas, "
+                    "esquemas ni pasos para buscar datos salvo que la pregunta los solicite. "
+                    "Si no sabes la respuesta, dilo brevemente y no inventes información."
+                )),
+                HumanMessage(content=user_text),
+            ]
+            retried = request_llm.invoke(retry_messages)
+            retry_text = str(
+                retried.content if hasattr(retried, "content") else retried
+            ).strip()
+            if retry_text and not self._response_drifted_from_query(user_text, retry_text):
+                response_text = retry_text
+            else:
+                response_text = self._localized(
+                    user_text,
+                    es="No pude responder esa pregunta con información suficientemente fiable.",
+                    pt="Não consegui responder a essa pergunta com informação suficientemente confiável.",
+                    en="I could not answer that question with sufficiently reliable information.",
+                )
 
         # --- 9. PERSISTIR CONVERSACIÓN ---
         if history:

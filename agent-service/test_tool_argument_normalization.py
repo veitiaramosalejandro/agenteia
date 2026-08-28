@@ -60,6 +60,36 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         term = self.agent._extract_resource_count_term("¿Cuántos recursos hay?")
         self.assertEqual(term, "")
 
+    def test_pwa_resource_consumption_is_not_routed_to_internal_sql(self):
+        question = "Que recursos consome um PWA?"
+        self.assertTrue(self.agent._is_resource_consumption_query(question))
+        self.assertFalse(self.agent._is_business_knowledge_query(question))
+        self.assertFalse(self.agent._is_internal_domain_query(question))
+
+    def test_internal_task_resources_remain_in_business_domain(self):
+        question = "Que recursos consume esta tarea de SolidSET?"
+        self.assertFalse(self.agent._is_resource_consumption_query(question))
+        self.assertTrue(self.agent._is_business_knowledge_query(question))
+        self.assertTrue(self.agent._is_internal_domain_query(question))
+
+    def test_rag_must_preserve_distinctive_query_acronym(self):
+        question = "Que recursos consome um PWA?"
+        self.assertFalse(self.agent._rag_context_matches_query(
+            question, "Informações sobre a tarefa atual e o turno do utilizador."
+        ))
+        self.assertTrue(self.agent._rag_context_matches_query(
+            question, "Uma PWA utiliza CPU, memória, armazenamento e rede."
+        ))
+
+    def test_unrequested_sql_and_previous_task_topic_are_rejected(self):
+        question = "Que recursos consome um PWA?"
+        self.assertTrue(self.agent._response_drifted_from_query(
+            question, "Para saber a tarefa atual execute SELECT turno_atual FROM tarefas."
+        ))
+        self.assertFalse(self.agent._response_drifted_from_query(
+            question, "Uma PWA pode consumir CPU, memória, rede e armazenamento."
+        ))
+
     def test_meeting_resource_count_uses_contextual_sql_route(self):
         term = self.agent._extract_resource_count_term(
             "¿Cuántos recursos tiene este meeting activo?"
