@@ -2,6 +2,7 @@ import unittest
 
 from app.agent.schema_query_planner import (
     plan_identity_record_query,
+    plan_related_record_query,
     plan_identity_relationship_query,
     plan_identity_relationship_queries,
     render_record_rows,
@@ -55,6 +56,8 @@ TASK_CATALOG = {
         "columns": [
             {"name": "IDTask"}, {"name": "IDResource"},
             {"name": "IDResourceAssign"}, {"name": "ShortName"},
+            {"name": "Code"}, {"name": "Description"},
+            {"name": "TechnicalSpecification"},
             {"name": "WorkStatus"}, {"name": "ProgressPercentage"},
             {"name": "ModifiedTime"}, {"name": "Archived"},
         ],
@@ -154,6 +157,21 @@ class SchemaQueryPlannerTests(unittest.TestCase):
         }], plan, "pt")
         self.assertIn("**Implementação de formação melhorada.**", response)
         self.assertNotIn("currículo", response)
+
+    def test_related_task_is_resolved_by_payload_code_and_catalog(self):
+        plan = plan_related_record_query({
+            "recordTypeName": "Task",
+            "gidRecord": "60debe73-2ba2-f111-87af-ac162d7b04d3",
+            "recordCode": "T-26-11369",
+        }, TASK_CATALOG)
+        self.assertIsNotNone(plan)
+        self.assertIn("FROM [operations].[SysTask]", plan.query)
+        self.assertIn("src.[Code] = %s", plan.query)
+        self.assertIn("src.[IDTask] = %s", plan.query)
+        self.assertEqual(
+            ["T-26-11369", "60debe73-2ba2-f111-87af-ac162d7b04d3"],
+            plan.parameters,
+        )
 
 
 if __name__ == "__main__":

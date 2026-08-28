@@ -2750,6 +2750,18 @@ class MachiningAgent:
                 "Responde únicamente desde esta identidad. No mezcles tu memoria con otros agentes "
                 "y no atribuyas como propio conocimiento perteneciente a otra identidad."
             )
+        related_records_context = str(
+            metadata_identity.get("related_records_context") or ""
+        ).strip()
+        if related_records_context:
+            system_prompt += (
+                "\n\n=== REGISTROS RELACIONADOS AL TURNO ACTUAL ===\n"
+                f"{related_records_context}\n"
+                "Estos registros proceden del payload actual y son la evidencia primaria para "
+                "referencias como 'esta tarea', 'esta actividad' o 'este registro'. Prevalecen "
+                "sobre el historial, RAG y conocimiento privado no relacionado. No cambies el "
+                "tema ni reutilices respuestas de turnos anteriores."
+            )
         if agent_private_knowledge:
             system_prompt += (
                 "\n\n=== CONOCIMIENTO PRIVADO DEL AGENTE ===\n"

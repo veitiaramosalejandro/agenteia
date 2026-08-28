@@ -6,6 +6,8 @@ from app.main import (
     _attach_solidset_instance,
     _chat_question_suggestion_context,
     _format_suggestion_scope_context,
+    _format_related_records_context,
+    _related_record_direct_answer,
     _chat_question_session_id,
     _suggestion_count,
     _safe_chat_question_fallback,
@@ -153,6 +155,37 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "Que tareas tiene asignado el recurso Alejandro Veitia",
             _suggestion_request_text(context["quoted_message"]),
         )
+
+    def test_related_task_is_preserved_as_authoritative_turn_context(self):
+        context = _chat_question_suggestion_context({
+            "Sender": {"resource": "11111111-1111-4111-8111-111111111111"},
+            "Chat": {
+                "idChat2": 81046402,
+                "idWorkRoom": "33333333-3333-4333-8333-333333333333",
+                "chatQuestion": {"idChat2": 0, "rawMessage": "Que debo hacer para hacer esta tarea?"},
+            },
+            "Info": {"advice_mode": "1"},
+            "RelatedRecordsData": [{
+                "gidRecord": "60debe73-2ba2-f111-87af-ac162d7b04d3",
+                "recordCode": "T-26-11369",
+                "recordShortName": "Implementação de formação melhorada.",
+                "recordTypeName": "Task",
+            }],
+        })
+        self.assertEqual("T-26-11369", context["related_records"][0]["recordCode"])
+        rendered = _format_related_records_context(context["related_records"])
+        self.assertIn("T-26-11369", rendered)
+        self.assertIn("Implementação de formação melhorada.", rendered)
+
+    def test_related_record_answer_cannot_reuse_previous_company_topic(self):
+        answer = _related_record_direct_answer(
+            "Task: T-26-11369 — Implementação de formação melhorada.\n"
+            "Description: Modificação para aceitação de reações com emojis.",
+            "es",
+        )
+        self.assertIn("T-26-11369", answer)
+        self.assertIn("reacciones", answer.replace("reações", "reacciones"))
+        self.assertNotIn("ROBOTEA", answer)
 
     def test_task_advice_preloads_verified_operational_context(self):
         with patch.object(

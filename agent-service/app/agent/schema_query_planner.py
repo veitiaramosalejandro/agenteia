@@ -41,6 +41,77 @@ class SchemaRecordPlan:
     selected_columns: tuple[str, ...]
 
 
+def plan_related_record_query(
+    record: dict[str, Any], catalog: dict[str, Any]
+) -> Optional[SchemaRecordPlan]:
+    """Resuelve un RelatedRecordsData contra el catálogo sin asumir una tabla fija."""
+    record_type = str(record.get("recordTypeName") or "").strip()
+    gid = str(record.get("gidRecord") or "").strip()
+    code = str(record.get("recordCode") or "").strip()
+    type_words = _words(record_type)
+    if not type_words or not (gid or code):
+        return None
+
+    candidates: list[tuple[int, dict[str, Any], dict[str, str]]] = []
+    for table in catalog.get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        table_name = str(table.get("tableName") or "")
+        columns = {
+            _column_name(column).casefold(): _column_name(column)
+            for column in table.get("columns") or [] if isinstance(column, dict)
+        }
+        table_words = _words(table_name.replace("Sys", " "))
+        semantic_match = any(
+            word in table_name.casefold() or word in table_words for word in type_words
+        )
+        id_names = [f"id{word}".casefold() for word in type_words] + ["id"]
+        has_anchor = (code and "code" in columns) or (
+            gid and any(name in columns for name in id_names)
+        )
+        if semantic_match and has_anchor:
+            score = 5 + sum(1 for name in ("shortname", "description", "technicalspecification") if name in columns)
+            candidates.append((score, table, columns))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], str(item[1].get("tableName") or "")))
+    _, table, columns = candidates[0]
+    table_name = str(table.get("tableName") or "")
+    schema_name = str(table.get("schemaName") or "dbo")
+    if not _valid_identifier(table_name) or not _valid_identifier(schema_name):
+        return None
+
+    preferred = (
+        "Code", "ShortName", "Description", "TechnicalSpecification", "Status",
+        "WorkStatus", "ProgressPercentage", "StartDate", "EndDate", "DueDate",
+        "Priority", "Complexity", "ModifiedTime",
+    )
+    selected = tuple(columns[name.casefold()] for name in preferred if name.casefold() in columns)
+    predicates: list[str] = []
+    parameters: list[str] = []
+    if code and "code" in columns:
+        predicates.append(f"src.[{columns['code']}] = %s")
+        parameters.append(code)
+    for name in [f"id{word}".casefold() for word in type_words] + ["id"]:
+        if gid and name in columns:
+            predicates.append(f"src.[{columns[name]}] = %s")
+            parameters.append(gid)
+            break
+    if not selected or not predicates:
+        return None
+    query = (
+        "SELECT TOP 1 "
+        + ", ".join(f"src.[{name}] AS [{name}]" for name in selected)
+        + f" FROM [{schema_name}].[{table_name}] AS src WHERE ("
+        + " OR ".join(predicates)
+        + ")"
+    )
+    return SchemaRecordPlan(
+        query=query, parameters=parameters, concept=f"related:{record_type}",
+        table=table_name, selected_columns=selected,
+    )
+
+
 def _words(text: str) -> set[str]:
     return {word.casefold() for word in re.findall(r"[A-Za-zÀ-ÿ0-9_]+", text or "")}
 

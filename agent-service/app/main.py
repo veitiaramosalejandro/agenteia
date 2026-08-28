@@ -37,7 +37,8 @@ from app.config import settings
 from app.agent.core import MachiningAgent
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.speech import text_to_speech
-from app.agent.tools import solidset_send_chat_message
+from app.agent.tools import query_sql_server, solidset_send_chat_message
+from app.agent.schema_query_planner import plan_related_record_query
 from app.connectors.db_client import (
     configure_agent_workroom,
     agent_learning_enabled,
@@ -4324,7 +4325,7 @@ async def receive_framework_notification(
     )
 
 
-def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]:
+def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, Any]:
     """Extracts the requester and quoted-message identities without mixing them."""
     chat = _get_payload_value(payload, "Chat", "chat")
     chat = chat if isinstance(chat, dict) else {}
@@ -4338,6 +4339,20 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
     workroom_data = workroom_data if isinstance(workroom_data, dict) else {}
     quoted = _get_payload_value(chat, "chatQuestion", "ChatQuestion")
     quoted = quoted if isinstance(quoted, dict) else {}
+    related_raw = _get_payload_value(payload, "RelatedRecordsData", "relatedRecordsData")
+    related_records: list[dict[str, str]] = []
+    for item in related_raw if isinstance(related_raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        normalized = {
+            "idRecordModule": str(_get_payload_value(item, "idRecordModule", "IDRecordModule") or "").strip(),
+            "gidRecord": str(_get_payload_value(item, "gidRecord", "GIDRecord") or "").strip(),
+            "recordCode": str(_get_payload_value(item, "recordCode", "RecordCode") or "").strip(),
+            "recordShortName": str(_get_payload_value(item, "recordShortName", "RecordShortName") or "").strip(),
+            "recordTypeName": str(_get_payload_value(item, "recordTypeName", "RecordTypeName") or "").strip(),
+        }
+        if any(normalized.values()):
+            related_records.append(normalized)
 
     current_chat_id = str(
         _get_payload_value(chat, "idChat2", "IDChat2", "idChat")
@@ -4398,7 +4413,81 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, str]
         "advice_mode": str(
             _get_payload_value(info, "advice_mode", "adviceMode") or ""
         ).strip().lower(),
+        "related_records": related_records,
     }
+
+
+def _format_related_records_context(records: list[dict[str, Any]]) -> str:
+    """Serializa referencias autoritativas sin exponer identificadores internos al usuario."""
+    lines: list[str] = []
+    for record in records[:10]:
+        record_type = str(record.get("recordTypeName") or "Registro").strip()
+        code = str(record.get("recordCode") or "").strip()
+        name = str(record.get("recordShortName") or "").strip()
+        label = " — ".join(value for value in (code, name) if value)
+        lines.append(f"{record_type}: {label or 'referencia asociada al turno'}")
+    return "\n".join(lines)
+
+
+def _verified_related_records_context(
+    solidset_instance: dict[str, Any], records: list[dict[str, Any]]
+) -> str:
+    """Amplía RelatedRecordsData con campos descriptivos verificados mediante el catálogo SQL."""
+    if not records:
+        return ""
+    snapshot = get_solidset_schema_snapshot(solidset_instance.get("ID")) or {}
+    catalog = snapshot.get("Catalog")
+    if isinstance(catalog, str):
+        catalog = json.loads(catalog)
+    if not isinstance(catalog, dict):
+        return _format_related_records_context(records)
+    blocks: list[str] = []
+    with solidset_sql_instance_context(solidset_instance):
+        for record in records[:10]:
+            base = _format_related_records_context([record])
+            plan = plan_related_record_query(record, catalog)
+            if plan is None:
+                blocks.append(base)
+                continue
+            try:
+                raw = str(query_sql_server.invoke({
+                    "query": plan.query,
+                    "parameters_json": json.dumps(plan.parameters),
+                }))
+                rows = json.loads(raw)
+            except (json.JSONDecodeError, TypeError, ValueError, RuntimeError) as exc:
+                print(f"⚠️ No se pudo ampliar RelatedRecordsData: {exc}")
+                blocks.append(base)
+                continue
+            row = rows[0] if isinstance(rows, list) and rows else {}
+            details = [
+                f"{key}: {value}" for key, value in row.items()
+                if value not in (None, "")
+            ]
+            blocks.append(base + ("\n" + "\n".join(details) if details else ""))
+    return "\n\n".join(blocks)
+
+
+def _related_record_direct_answer(context: str, language: str) -> str:
+    """Redacta una respuesta factual mínima con la evidencia del registro relacionado."""
+    lines = [line.strip() for line in str(context or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    label = lines[0].split(":", 1)[-1].strip()
+    fields: dict[str, str] = {}
+    for line in lines[1:]:
+        key, separator, value = line.partition(":")
+        if separator and value.strip():
+            fields[key.strip().casefold()] = value.strip()
+    instruction = fields.get("technicalspecification") or fields.get("description")
+    if language == "pt":
+        answer = f"O registo relacionado é **{label}**."
+        return answer + (f" O trabalho indicado é: {instruction}" if instruction else " Não existem instruções detalhadas disponíveis no registo.")
+    if language == "en":
+        answer = f"The related record is **{label}**."
+        return answer + (f" The recorded work is: {instruction}" if instruction else " No detailed instructions are available in the record.")
+    answer = f"El registro relacionado es **{label}**."
+    return answer + (f" El trabajo indicado es: {instruction}" if instruction else " El registro no contiene instrucciones detalladas.")
 
 
 def _format_suggestion_scope_context(
@@ -4925,6 +5014,11 @@ async def suggest_chat_question_response(
             context["workroom_id"],
         )
         scope_context = ""
+        related_records_context = await asyncio.to_thread(
+            _verified_related_records_context,
+            solidset_instance,
+            context["related_records"],
+        )
         # The channel/meeting is read only for the initial empty payload. Later
         # turns reuse the same Redis-backed agent memory and refine the selected
         # suggestion without querying the conversation again.
@@ -4975,6 +5069,13 @@ async def suggest_chat_question_response(
                 "do rascunho, sem misturar idiomas. Usa o contexto que já está na memória desta "
                 "conversa; não voltes a procurar o canal, não inventes factos e não pesquises na web.\n\n"
                 f"RASCUNHO SELECIONADO:\n{context['quoted_message']}"
+            )
+        if related_records_context:
+            suggestion_source = (
+                f"{suggestion_source}\n\nREGISTROS RELACIONADOS AO TURNO (EVIDÊNCIA AUTORITATIVA):\n"
+                f"{related_records_context}\n\nInterpreta referências como 'esta tarefa', 'esta atividade' "
+                "ou 'este registo' usando prioritariamente estes dados. Não reutilizes assuntos "
+                "de turnos anteriores que não estejam relacionados com estes registos."
             )
         verified_business_context = ""
         business_recommendation = _is_business_recommendation_request(
@@ -5030,6 +5131,7 @@ async def suggest_chat_question_response(
             "quoted_chat_id": context["quoted_chat_id"],
             "quoted_message": context["quoted_message"],
             "scope_context": scope_context,
+            "related_records_context": related_records_context,
             "verified_business_context": verified_business_context,
             "quoted_sender_resource": context["quoted_resource"],
             "quoted_sender_login": context["quoted_login"],
@@ -5069,7 +5171,15 @@ async def suggest_chat_question_response(
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
-        if verified_business_context and not business_recommendation:
+        if related_records_context and concrete_answer_mode:
+            # El vínculo del payload pertenece exactamente al turno actual y
+            # prevalece sobre memoria/RAG de conversaciones anteriores.
+            related_answer = _related_record_direct_answer(
+                related_records_context, metadata["response_language"]
+            )
+            raw_suggestions = json.dumps([related_answer], ensure_ascii=False)
+            suggestions = [related_answer] if related_answer else []
+        elif verified_business_context and not business_recommendation:
             # Deterministic operational resolvers already produced the grounded
             # answer. Do not let a second model pass omit rows or alter facts.
             raw_suggestions = json.dumps(
