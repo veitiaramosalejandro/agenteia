@@ -177,6 +177,16 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
             )
         )
 
+    def test_current_task_questions_require_live_sql_in_both_languages(self):
+        questions = (
+            "¿Cuál es mi tarea actual en la que estoy trabajando?",
+            "Qual é a tarefa atual em que estou a trabalhar?",
+        )
+        for text in questions:
+            with self.subTest(text=text):
+                self.assertTrue(self.agent._is_business_knowledge_query(text))
+                self.assertTrue(self.agent._requires_live_business_data(text))
+
     def test_descriptive_business_question_can_use_vector_knowledge(self):
         self.assertFalse(
             self.agent._requires_live_business_data(

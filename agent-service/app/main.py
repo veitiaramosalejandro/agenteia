@@ -762,6 +762,9 @@ def _is_safe_auto_reply_output(response_text: str) -> bool:
         "https://localhost",
         "traceback (most recent call last)",
         "pydantic.dev",
+        "resultado de la busqueda para responder el turno actual",
+        "resultado de la búsqueda para responder el turno actual",
+        "resultado da busca para responder o turno atual",
     )
     return not any(marker in text for marker in forbidden)
 

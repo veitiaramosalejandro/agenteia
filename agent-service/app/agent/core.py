@@ -12,10 +12,13 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 
 from app.agent.prompts import SYSTEM_PROMPT
+from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.identity import AgentIdentityService
 from app.agent.language import LanguageResolver
 from app.agent.schema_query_planner import (
     plan_identity_relationship_queries,
+    plan_identity_record_query,
+    render_record_rows,
     render_relationship_rows,
 )
 from app.agent.tools import (
@@ -1164,6 +1167,8 @@ class MachiningAgent:
             "asignado", "asignada", "asignados", "asignadas", "assigned",
             "atribuído", "atribuida", "atribuídos", "atribuidas",
             "pertenezco", "pertenece", "pertenço", "pertence", "belong",
+            "trabajando", "trabajar", "trabalhando", "trabalhar", "working",
+            "tarea actual", "tarefa atual", "current task", "en curso", "em curso",
         )
         if any(term in text for term in live_terms):
             return True
@@ -1243,6 +1248,45 @@ class MachiningAgent:
             return None
         except Exception as exc:
             print(f"⚠️ No se pudo resolver la relación mediante el grafo FK: {exc}", flush=True)
+            return None
+
+    def _resolve_schema_record_from_db(
+        self, user_text: str, *, resource_id: Optional[str]
+    ) -> Optional[str]:
+        """Resuelve registros operativos mediante un plan derivado del catálogo."""
+        instance = current_instance()
+        if not instance or not instance.get("ID"):
+            return None
+        try:
+            snapshot = get_solidset_schema_snapshot(instance["ID"])
+            catalog = (snapshot or {}).get("Catalog")
+            if isinstance(catalog, str):
+                catalog = json.loads(catalog)
+            if not isinstance(catalog, dict):
+                return None
+            plan = plan_identity_record_query(
+                user_text, catalog, resource_id=resource_id
+            )
+            if plan is None:
+                return None
+            print(
+                f"🧭 Plan SQL de registros concept={plan.concept} table={plan.table} "
+                f"columns={list(plan.selected_columns)}",
+                flush=True,
+            )
+            raw_result = str(query_sql_server.invoke({
+                "query": plan.query,
+                "parameters_json": json.dumps(plan.parameters),
+            }))
+            if raw_result.startswith("La consulta se ejecutó correctamente"):
+                rows = []
+            else:
+                rows = json.loads(raw_result)
+            if not isinstance(rows, list):
+                return None
+            return render_record_rows(rows, plan, self._detect_user_language(user_text))
+        except Exception as exc:
+            print(f"⚠️ No se pudo resolver el registro mediante el esquema: {exc}", flush=True)
             return None
 
     @staticmethod
@@ -2362,7 +2406,22 @@ class MachiningAgent:
             business_rag_context and not live_business_query
         )
 
-        # --- 3.0.1 PLANIFICADOR GENÉRICO SOBRE EL GRAFO DE CLAVES FORÁNEAS ---
+        # --- 3.0.1 REGISTROS OPERATIVOS PLANIFICADOS DESDE EL ESQUEMA ---
+        record_response = None
+        if business_knowledge_query and not response_suggestion_mode:
+            record_response = self._resolve_schema_record_from_db(
+                user_text, resource_id=resource_id or None
+            )
+        if record_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(record_response)
+                except Exception as exc:
+                    print(f"⚠️ Error guardando respuesta del planificador SQL: {exc}")
+            return record_response
+
+        # --- 3.0.2 PLANIFICADOR GENÉRICO SOBRE EL GRAFO DE CLAVES FORÁNEAS ---
         relationship_response = None
         if business_knowledge_query and not response_suggestion_mode:
             relationship_response = self._resolve_schema_relationship_from_db(
@@ -2666,6 +2725,8 @@ class MachiningAgent:
         else:
             system_prompt = (
                 SYSTEM_PROMPT
+                + "\n\n"
+                + SYSTEM_PROMPT_MAESTRO
                 + "\n\n"
                 + self.identity_service.build_prompt_context(identity_snapshot)
             )

@@ -32,6 +32,15 @@ class SchemaQueryPlan:
     path: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SchemaRecordPlan:
+    query: str
+    parameters: list[str]
+    concept: str
+    table: str
+    selected_columns: tuple[str, ...]
+
+
 def _words(text: str) -> set[str]:
     return {word.casefold() for word in re.findall(r"[A-Za-zÀ-ÿ0-9_]+", text or "")}
 
@@ -177,3 +186,106 @@ def render_relationship_rows(
         "pt": f"A empresa à qual você pertence no sistema é **{rendered}**.",
         "en": f"In the system, you belong to: **{rendered}**.",
     }.get(language, f"En el sistema perteneces a: **{rendered}**.")
+
+
+def plan_identity_record_query(
+    user_text: str,
+    catalog: dict[str, Any],
+    *,
+    resource_id: Optional[str] = None,
+) -> Optional[SchemaRecordPlan]:
+    """Planifica registros actuales por semántica de columnas, sin nombres SQL fijos."""
+    words = _words(user_text)
+    task_terms = {"tarea", "tareas", "tarefa", "tarefas", "task", "tasks"}
+    if not words.intersection(task_terms) or not resource_id:
+        return None
+    current_intent = bool(words.intersection({
+        "actual", "atual", "current", "trabajando", "trabalhando", "trabalhar", "working",
+    }))
+    candidates: list[tuple[int, dict[str, Any], dict[str, str]]] = []
+    for table in catalog.get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        table_name = str(table.get("tableName") or "")
+        columns = {
+            _column_name(column).casefold(): _column_name(column)
+            for column in table.get("columns") or [] if isinstance(column, dict)
+        }
+        identity_columns = [
+            columns[name] for name in ("idresourceassign", "idresource", "resourceid")
+            if name in columns
+        ]
+        if not identity_columns:
+            continue
+        score = 4 if "task" in table_name.casefold() else 0
+        score += sum(1 for name in ("shortname", "workstatus", "progresspercentage") if name in columns)
+        if score:
+            candidates.append((score, table, columns))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], str(item[1].get("tableName") or "")))
+    _, table, columns = candidates[0]
+    table_name = str(table.get("tableName") or "")
+    schema_name = str(table.get("schemaName") or "dbo")
+    if not _valid_identifier(table_name) or not _valid_identifier(schema_name):
+        return None
+    identity_columns = [
+        columns[name] for name in ("idresourceassign", "idresource", "resourceid")
+        if name in columns and _valid_identifier(columns[name])
+    ]
+    preferred = (
+        "ShortName", "Code", "WorkStatus", "RunningStatus", "Status",
+        "ProgressPercentage", "StartDate", "EndDate", "ModifiedTime", "IDTask",
+    )
+    selected = tuple(
+        columns[name.casefold()] for name in preferred if name.casefold() in columns
+    )
+    if not selected:
+        return None
+    where = ["(" + " OR ".join(f"src.[{name}] = %s" for name in identity_columns) + ")"]
+    parameters = [str(resource_id)] * len(identity_columns)
+    archived = columns.get("archived")
+    if archived:
+        where.append(f"ISNULL(src.[{archived}], 0) = 0")
+    if current_intent:
+        work_status = columns.get("workstatus")
+        progress = columns.get("progresspercentage")
+        if work_status:
+            where.append(f"ISNULL(src.[{work_status}], 0) <> 0")
+        if progress:
+            where.append(f"ISNULL(src.[{progress}], 0) < 100")
+    order_columns = [
+        columns[name] for name in ("workstatus", "modifiedtime", "startdate") if name in columns
+    ]
+    order_sql = ", ".join(f"src.[{name}] DESC" for name in order_columns)
+    query = (
+        "SELECT TOP 10 "
+        + ", ".join(f"src.[{name}] AS [{name}]" for name in selected)
+        + f" FROM [{schema_name}].[{table_name}] AS src WHERE "
+        + " AND ".join(where)
+        + (f" ORDER BY {order_sql}" if order_sql else "")
+    )
+    return SchemaRecordPlan(
+        query=query, parameters=parameters, concept="task", table=table_name,
+        selected_columns=selected,
+    )
+
+
+def render_record_rows(rows: list[dict[str, Any]], plan: SchemaRecordPlan, language: str) -> str:
+    if not rows:
+        return {
+            "pt": "Não encontrei nenhuma tarefa atual em execução para o seu recurso.",
+            "en": "I found no current task in progress for your resource.",
+        }.get(language, "No encontré ninguna tarea actual en ejecución para tu recurso.")
+    row = rows[0]
+    title = str(row.get("ShortName") or row.get("Code") or row.get("IDTask") or "").strip()
+    progress = row.get("ProgressPercentage")
+    suffix = f" (progresso: {progress}%)" if progress is not None and language == "pt" else ""
+    if progress is not None and language == "en":
+        suffix = f" (progress: {progress}%)"
+    elif progress is not None and language not in {"pt", "en"}:
+        suffix = f" (progreso: {progress}%)"
+    return {
+        "pt": f"A tarefa atual em que você está a trabalhar é **{title}**{suffix}.",
+        "en": f"The current task you are working on is **{title}**{suffix}.",
+    }.get(language, f"La tarea actual en la que estás trabajando es **{title}**{suffix}.")

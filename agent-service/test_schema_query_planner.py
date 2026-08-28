@@ -1,8 +1,10 @@
 import unittest
 
 from app.agent.schema_query_planner import (
+    plan_identity_record_query,
     plan_identity_relationship_query,
     plan_identity_relationship_queries,
+    render_record_rows,
     render_relationship_rows,
 )
 
@@ -44,6 +46,20 @@ CATALOG = {
             "columns": [{"name": "IDLogin"}, {"name": "FullName"}], "foreignKeys": [],
         },
     ]
+}
+
+TASK_CATALOG = {
+    "tables": [{
+        "schemaName": "operations",
+        "tableName": "SysTask",
+        "columns": [
+            {"name": "IDTask"}, {"name": "IDResource"},
+            {"name": "IDResourceAssign"}, {"name": "ShortName"},
+            {"name": "WorkStatus"}, {"name": "ProgressPercentage"},
+            {"name": "ModifiedTime"}, {"name": "Archived"},
+        ],
+        "foreignKeys": [],
+    }]
 }
 
 
@@ -99,6 +115,45 @@ class SchemaQueryPlannerTests(unittest.TestCase):
         self.assertEqual(
             "A empresa à qual você pertence no sistema é **ROBOTEA**.", response
         )
+
+    def test_current_task_in_spanish_is_planned_from_catalog(self):
+        resource_id = "ce0e837a-fe28-47ae-9ba0-8841fe042ca8"
+        plan = plan_identity_record_query(
+            "¿Cuál es mi tarea actual en la que estoy trabajando?",
+            TASK_CATALOG,
+            resource_id=resource_id,
+        )
+        self.assertIsNotNone(plan)
+        self.assertIn("FROM [operations].[SysTask]", plan.query)
+        self.assertIn("src.[IDResource] = %s", plan.query)
+        self.assertIn("src.[IDResourceAssign] = %s", plan.query)
+        self.assertIn("ISNULL(src.[WorkStatus], 0) <> 0", plan.query)
+        self.assertEqual([resource_id, resource_id], plan.parameters)
+        self.assertNotIn(resource_id, plan.query)
+
+    def test_current_task_in_portuguese_uses_same_safe_plan(self):
+        plan = plan_identity_record_query(
+            "Qual é a tarefa atual em que estou a trabalhar?",
+            TASK_CATALOG,
+            resource_id="resource-1",
+        )
+        self.assertIsNotNone(plan)
+        self.assertEqual("SysTask", plan.table)
+        self.assertIn("ProgressPercentage", plan.selected_columns)
+
+    def test_current_task_renderer_uses_only_sql_row(self):
+        plan = plan_identity_record_query(
+            "Qual é a tarefa atual em que estou a trabalhar?",
+            TASK_CATALOG,
+            resource_id="resource-1",
+        )
+        response = render_record_rows([{
+            "ShortName": "Implementação de formação melhorada.",
+            "ProgressPercentage": 0,
+            "WorkStatus": 1,
+        }], plan, "pt")
+        self.assertIn("**Implementação de formação melhorada.**", response)
+        self.assertNotIn("currículo", response)
 
 
 if __name__ == "__main__":
