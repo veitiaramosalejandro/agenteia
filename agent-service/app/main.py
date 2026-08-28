@@ -1453,6 +1453,7 @@ async def _process_auto_replies(
         max(1, settings.SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE, len(candidates)),
     )
     sent = 0
+    queued_for_delivery = 0
     preview_payloads: list[dict[str, Any]] = []
     local_seen = set()
 
@@ -1759,6 +1760,21 @@ async def _process_auto_replies(
                         f"aprendizaje: {exc}",
                         flush=True,
                     )
+            elif send_result_text.startswith("🕒"):
+                # La respuesta ya está generada y persistida en la cola de
+                # entrega. Se considera trabajo aceptado para que el worker de
+                # respuestas no vuelva a ejecutar el LLM ni cree duplicados.
+                queued_for_delivery += 1
+                _update_response_status(
+                    response_request_id,
+                    "queued",
+                    agent_resource_id=status_agent_id,
+                    agent_name=agent_name,
+                    error=send_result_text,
+                    response_count=sent,
+                )
+                _remember_auto_reply_fingerprint(fingerprint)
+                print(f"📮 Auto-reply pendiente de entrega channel={channel_id}", flush=True)
             else:
                 _update_response_status(
                     response_request_id,
@@ -1783,11 +1799,11 @@ async def _process_auto_replies(
     if response_request_id and not preview_only:
         _update_response_status(
             response_request_id,
-            "completed" if sent > 0 or not candidates else "failed",
-            error=None if sent > 0 or not candidates else "Ningún agente pudo enviar la respuesta.",
+            "completed" if sent > 0 or not candidates else ("queued" if queued_for_delivery else "failed"),
+            error=None if sent > 0 or not candidates or queued_for_delivery else "Ningún agente pudo enviar la respuesta.",
             response_count=sent,
         )
-    return preview_payloads if preview_only else sent
+    return preview_payloads if preview_only else sent + queued_for_delivery
 
 
 def _extract_host_port_from_url(raw_url: str, default_port: int) -> tuple[Optional[str], int]:

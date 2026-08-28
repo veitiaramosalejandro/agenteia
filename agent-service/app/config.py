@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS: int = max(
         10, int(os.getenv("AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS", "15"))
     )
+    SOLIDSET_RETRY_QUEUE_ENABLED: bool = _env_bool("SOLIDSET_RETRY_QUEUE_ENABLED", "true")
+    SOLIDSET_RETRY_QUEUE_KEY: str = os.getenv(
+        "SOLIDSET_RETRY_QUEUE_KEY", "machining:solidset-deliveries:v1"
+    )
+    SOLIDSET_RETRY_INTERVAL_SECONDS: int = max(
+        10, int(os.getenv("SOLIDSET_RETRY_INTERVAL_SECONDS", "300"))
+    )
+    SOLIDSET_RETRY_BATCH_SIZE: int = max(
+        1, min(100, int(os.getenv("SOLIDSET_RETRY_BATCH_SIZE", "50")))
+    )
     HISTORICAL_INGESTION_ENABLED: bool = _env_bool("HISTORICAL_INGESTION_ENABLED", "false")
     HISTORICAL_INGESTION_DRY_RUN: bool = _env_bool("HISTORICAL_INGESTION_DRY_RUN", "true")
     HISTORICAL_INGESTION_BATCH_SIZE: int = max(

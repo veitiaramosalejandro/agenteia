@@ -15,6 +15,7 @@ import pandas as pd
 from langchain_core.tools import tool
 from langchain_ollama import OllamaEmbeddings
 import pymssql
+import redis
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams
 
@@ -1063,6 +1064,7 @@ def solidset_send_chat_message(
     solidset_base_url: Optional[str] = None,
     preview_only: bool = False,
     question_chat_id: Optional[int] = None,
+    enqueue_on_connection_error: bool = True,
 ) -> str:
     """
     ENVÍA UN MENSAJE REAL AL CHAT/CANAL DE SOLIDSET COMO USUARIO AUTENTICADO.
@@ -1268,7 +1270,34 @@ def solidset_send_chat_message(
         request_args["solidset_base_url"] = str(solidset_base_url or "").strip()
     response, base, error = request_sender(**request_args)
     if response is None:
-        return f"Error enviando mensaje a SOLIDSET: {error or 'sin detalle'}"
+        detail = str(error or "sin detalle")
+        if enqueue_on_connection_error and settings.SOLIDSET_RETRY_QUEUE_ENABLED:
+            try:
+                from app.solidset_retry_queue import SolidSETRetryQueue
+
+                retry_arguments = {
+                    "canal_id": canal_id, "mensaje": mensaje, "importance": importance,
+                    "kind": kind, "visibility_level": visibility_level, "confirm": confirm,
+                    "recurso_id": recurso_id, "recurso_login_id": recurso_login_id,
+                    "meeting_id": meeting_id, "meeting_code": meeting_code,
+                    "meeting_mirror_general": meeting_mirror_general,
+                    "generated_by_ia": generated_by_ia,
+                    "agent_resource_id": agent_resource_id,
+                    "agent_identity_id": agent_identity_id,
+                    "agent_chat_resource_name": agent_chat_resource_name,
+                    "agent_chat_login_id": agent_chat_login_id,
+                    "human_chat_resource_name": human_chat_resource_name,
+                    "solidset_base_url": solidset_base_url, "preview_only": False,
+                    "question_chat_id": question_chat_id,
+                }
+                item_id = SolidSETRetryQueue().enqueue(retry_arguments, error=detail)
+                return f"🕒 Mensaje en cola para reintento en SolidSET (id={item_id}): {detail}"
+            except redis.RedisError as queue_error:
+                return (
+                    "Error enviando mensaje a SOLIDSET y guardándolo en la cola: "
+                    f"conexión={detail}; cola={queue_error}"
+                )
+        return f"Error de conexión enviando mensaje a SOLIDSET: {detail}"
     if response.status_code >= 400:
         return f"Error enviando mensaje a SOLIDSET: HTTP {response.status_code} -> {response.text[:220]}"
     try:

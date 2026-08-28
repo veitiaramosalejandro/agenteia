@@ -127,6 +127,28 @@ services:
     networks:
       - machining-network
 
+  solidset-retry-worker:
+    image: agent-beta:0.0.1
+    container_name: machining_solidset_retry_worker
+    hostname: solidset-retry-worker
+    restart: always
+    command: ["python", "-m", "app.solidset_retry_worker"]
+    env_file:
+      - ${AGENT_ENV_FILE:-.env}
+    environment:
+      ENVIRONMENT: production
+      RUNNING_IN_DOCKER: "1"
+      REDIS_URL: redis://redis-cache:6379
+      POSTGRES_HOST: timescaledb
+      SOLIDSET_LOGIN_USERNAME: ""
+      SOLIDSET_LOGIN_PASSWORD: ""
+      SOLIDSET_LOGIN_HASHPASS: ""
+      SOLIDSET_LOGIN_RESOURCE_ID: ""
+      SOLIDSET_RESOURCE_ID: ""
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["./data:/app/data"]
+    networks: [machining-network]
+
   historical-worker:
     image: agent-beta:0.0.1
     restart: always
