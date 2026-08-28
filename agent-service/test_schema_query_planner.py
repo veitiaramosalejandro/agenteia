@@ -173,6 +173,14 @@ class SchemaQueryPlannerTests(unittest.TestCase):
             plan.parameters,
         )
 
+    def test_invalid_related_gid_is_ignored_when_code_is_valid(self):
+        plan = plan_related_record_query({
+            "recordTypeName": "Task", "gidRecord": "0", "recordCode": "T-26-11246",
+        }, TASK_CATALOG)
+        self.assertIsNotNone(plan)
+        self.assertEqual(["T-26-11246"], plan.parameters)
+        self.assertNotIn("IDTask", plan.query)
+
 
 if __name__ == "__main__":
     unittest.main()

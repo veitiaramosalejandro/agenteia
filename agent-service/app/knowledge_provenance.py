@@ -31,6 +31,13 @@ def looks_like_generated_suggestion(text: str) -> bool:
 
 def usable_agent_knowledge(text: str, source: str) -> bool:
     """Accept manual/current assertions and conservatively filter legacy rows."""
+    normalized = " ".join(str(text or "").strip().casefold().split())
+    if re.match(
+        r"^(?:investiga|investigar|investigue|pesquisa|pesquisar|pesquise|research|"
+        r"busca|buscar|averigua|analiza|analise|explica|dime|responde|haz|faça)\b",
+        normalized,
+    ):
+        return False
     if str(source or "").strip() != LEGACY_SUGGESTION_SOURCE:
-        return bool(str(text or "").strip())
+        return bool(normalized)
     return not looks_like_generated_suggestion(text)

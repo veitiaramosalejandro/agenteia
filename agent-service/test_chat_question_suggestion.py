@@ -20,6 +20,10 @@ from app.main import (
     _suggestion_language_is_consistent,
     _is_business_recommendation_request,
     _is_concrete_suggestion_answer_request,
+    _is_research_suggestion_request,
+    _is_related_record_guidance_request,
+    _suggestion_request_language,
+    _suggestion_matches_related_records,
     _extract_learnable_suggestion_fact,
     _is_relative_temporal_assertion,
     _learn_direct_agent_assertion,
@@ -185,11 +189,86 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
         self.assertIn("T-26-11369", answer)
         self.assertIn("reacciones", answer.replace("reações", "reacciones"))
-        self.assertIn("Sugerencia de ejecución", answer)
-        self.assertIn("emojis Unicode", answer)
-        self.assertIn("Añade pruebas", answer)
+        self.assertIn("Descripción verificada", answer)
+        self.assertNotIn("Sugerencia de ejecución", answer)
         self.assertNotIn("**", answer)
         self.assertNotIn("ROBOTEA", answer)
+
+    def test_stale_task_wrapper_is_removed_before_reasoning(self):
+        wrapped = (
+            "Tarefa: T-26-11369 Implementação de formação melhorada.\n"
+            "Texto antigo sobre N8N.\n\nPedido do utilizador:\n"
+            "Investiga como poder resolver esta tarea"
+        )
+        self.assertEqual(
+            "Investiga como poder resolver esta tarea",
+            _suggestion_request_text(wrapped),
+        )
+        self.assertTrue(_is_research_suggestion_request(_suggestion_request_text(wrapped)))
+
+    def test_related_record_sessions_are_isolated_by_record(self):
+        base = {
+            "requester_resource": "resource-1",
+            "workroom_id": "room-1",
+        }
+        first = _chat_question_session_id({
+            **base, "related_records": [{"recordCode": "T-26-11369"}],
+        })
+        second = _chat_question_session_id({
+            **base, "related_records": [{"recordCode": "T-26-11245"}],
+        })
+        self.assertNotEqual(first, second)
+
+    def test_related_record_gate_rejects_another_task(self):
+        records = [{
+            "recordCode": "T-26-11245",
+            "recordShortName": "Automação N8N integrar Sistema SolidSET",
+            "recordTypeName": "Task",
+        }]
+        self.assertFalse(_suggestion_matches_related_records(
+            "Para a tarefa T-26-11369 devemos melhorar a formação.", records
+        ))
+        self.assertTrue(_suggestion_matches_related_records(
+            "Para T-26-11245, analisa a integração N8N com SolidSET.", records
+        ))
+
+    def test_related_record_fallback_does_not_invent_an_architecture(self):
+        answer = _related_record_direct_answer(
+            "Task: T-26-11245 — Automação N8N - integrar com o Sistema SolidSET\n"
+            "Description: Automatizar uma BD SolidSET ou integrar com ERPs usando N8N.",
+            "es",
+        )
+        self.assertIn("Descripción verificada", answer)
+        self.assertNotIn("Criterio recomendado", answer)
+        self.assertNotIn("Data API de SolidSET", answer)
+        self.assertNotIn("T-26-11369", answer)
+
+    def test_task_guidance_is_reasoning_mode_not_concrete_template(self):
+        for request in (
+            "Que puedo hacer en esta tarea?",
+            "Que debo hacer para esta tarea?",
+            "Investiga como poder resolver esta tarea",
+        ):
+            with self.subTest(request=request):
+                self.assertTrue(_is_related_record_guidance_request(request))
+                self.assertTrue(_is_business_recommendation_request(request))
+
+    def test_user_request_language_overrides_portuguese_record_context(self):
+        self.assertEqual(
+            "es", _suggestion_request_language(
+                "Investiga como poder resolver esta tarea", "pt"
+            )
+        )
+
+    def test_research_command_is_not_learned_as_a_fact(self):
+        self.assertEqual(
+            "", _extract_learnable_suggestion_fact(
+                "Investiga como poder resolver esta tarea"
+            )
+        )
+        self.assertFalse(usable_agent_knowledge(
+            "Investiga como poder resolver esta tarea", USER_ASSERTION_SOURCE
+        ))
 
     def test_task_advice_preloads_verified_operational_context(self):
         with patch.object(
@@ -273,6 +352,37 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertEqual(
             ["Podemos aprofundar o impacto desta decisão no próximo prazo?"],
             result,
+        )
+
+    def test_related_guidance_accepts_one_reasoned_plan_with_internal_steps(self):
+        result = _parse_chat_question_suggestions(
+            '["Para T-26-11246, primero analiza el flujo actual.\\n'
+            '1. Define quién crea el meeting.\\n2. Valida los participantes."]',
+            limit=1,
+            allow_internal_list=True,
+        )
+        self.assertEqual(1, len(result))
+        self.assertIn("Valida los participantes", result[0])
+
+    def test_related_guidance_recovers_single_array_with_unescaped_quotes(self):
+        result = _parse_chat_question_suggestions(
+            '["Analiza quién puede crear el "meeting" y qué recursos participan."]',
+            limit=1,
+            allow_internal_list=True,
+        )
+        self.assertEqual(
+            ['Analiza quién puede crear el "meeting" y qué recursos participan.'],
+            result,
+        )
+
+    def test_related_guidance_unwraps_small_model_string_object(self):
+        result = _parse_chat_question_suggestions(
+            '''["{'String': 'Define responsables, permisos y recursos del meeting.'}"]''',
+            limit=1,
+            allow_internal_list=True,
+        )
+        self.assertEqual(
+            ["Define responsables, permisos y recursos del meeting."], result
         )
 
     def test_safe_fallback_preserves_language_and_requested_count(self):

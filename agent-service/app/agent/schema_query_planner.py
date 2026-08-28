@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -47,6 +48,10 @@ def plan_related_record_query(
     """Resuelve un RelatedRecordsData contra el catálogo sin asumir una tabla fija."""
     record_type = str(record.get("recordTypeName") or "").strip()
     gid = str(record.get("gidRecord") or "").strip()
+    try:
+        gid = str(uuid.UUID(gid)) if gid else ""
+    except (ValueError, AttributeError):
+        gid = ""
     code = str(record.get("recordCode") or "").strip()
     type_words = _words(record_type)
     if not type_words or not (gid or code):

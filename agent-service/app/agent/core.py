@@ -2220,7 +2220,13 @@ class MachiningAgent:
         agent_rag_context = str(
             metadata_identity.get("agent_relevant_knowledge") or ""
         ).strip()
-        if not agent_rag_context and agent_resource_id and training_enabled and learn_from_system:
+        if (
+            not agent_rag_context
+            and agent_resource_id
+            and training_enabled
+            and learn_from_system
+            and not metadata_identity.get("related_records_context")
+        ):
             try:
                 agent_rag_context = self.sistema_aprendizaje.consultar_conocimiento_agente(
                     user_text,
@@ -2234,7 +2240,12 @@ class MachiningAgent:
         solidset_instance_id = str(
             metadata_identity.get("solidset_instance_id") or ""
         ).strip()
-        if solidset_instance_id and training_enabled and learn_from_system:
+        if (
+            solidset_instance_id
+            and training_enabled
+            and learn_from_system
+            and not metadata_identity.get("related_records_context")
+        ):
             try:
                 system_snapshot_context = self.sistema_aprendizaje.consultar_conocimiento_sistema(
                     user_text,
@@ -2376,7 +2387,12 @@ class MachiningAgent:
             business_query_text, meeting_id
         )
         business_rag_context = ""
-        if business_knowledge_query and training_enabled and learn_from_system:
+        if (
+            business_knowledge_query
+            and training_enabled
+            and learn_from_system
+            and not metadata_identity.get("related_records_context")
+        ):
             business_rag_context = self.sistema_aprendizaje.consultar_documentacion(
                 self._normalize_context_query(user_text),
                 agent_resource_id=agent_resource_id or None,
@@ -2881,7 +2897,25 @@ class MachiningAgent:
                 suggestion_count = max(
                     1, min(6, int(message_metadata.get("response_suggestion_count") or 3))
                 )
-                if message_metadata.get("concrete_answer_mode"):
+                if message_metadata.get("related_guidance_mode"):
+                    response_language = str(
+                        message_metadata.get("response_language") or "pt"
+                    )
+                    guidance_language = {
+                        "es": "español", "pt": "português europeu", "en": "inglés",
+                    }.get(response_language, self._language_name(response_language))
+                    system_prompt += (
+                        "\n\n=== MODO ANÁLISIS DE REGISTRO RELACIONADO ===\n"
+                        "Antes de sugerir, razona internamente sobre: objetivo explícito, contexto útil, "
+                        "restricciones, datos ausentes, riesgos y criterio de validación. La respuesta debe "
+                        "estar vinculada al registro actual y explicar brevemente por qué la propuesta encaja. "
+                        "No copies la descripción como respuesta y no uses pasos universales aplicables a cualquier tarea. "
+                        "No menciones otra tarea ni conocimiento previo no respaldado por el registro actual. "
+                        "Si faltan objetivo o especificación suficientes, no inventes una solución: señala la carencia "
+                        "y formula la pregunta concreta necesaria. Si hay investigación externa, úsala como apoyo no autoritativo. "
+                        f"Devuelve únicamente un array JSON con un string en {guidance_language}, sin Markdown."
+                    )
+                elif message_metadata.get("concrete_answer_mode"):
                     response_language = str(
                         message_metadata.get("response_language") or "pt"
                     )
@@ -3378,6 +3412,7 @@ class MachiningAgent:
         if (
             business_knowledge_query
             and not successful_sql_query
+            and not related_records_context
             and not (agent_rag_context or system_snapshot_context or vector_answers_business_query)
         ):
             response_text = self._localized(
