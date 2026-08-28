@@ -14,6 +14,10 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AI
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.identity import AgentIdentityService
 from app.agent.language import LanguageResolver
+from app.agent.schema_query_planner import (
+    plan_identity_relationship_queries,
+    render_relationship_rows,
+)
 from app.agent.tools import (
     fetch_external_api,
     google_web_search,
@@ -44,7 +48,12 @@ from app.agent.tools import (
 )
 from app.config import settings
 from app.llm import create_chat_model, provider_config_from_record, provider_config_from_settings
-from app.connectors.db_client import get_agent_model_configuration, get_llm_provider_configuration
+from app.connectors.db_client import (
+    get_agent_model_configuration,
+    get_llm_provider_configuration,
+    get_solidset_schema_snapshot,
+)
+from app.connectors.solidset_sql import current_instance
 from app.system.learning import SistemaAprendizaje
 
 
@@ -1185,6 +1194,57 @@ class MachiningAgent:
                         hints.append(table)
         return hints
 
+    def _resolve_schema_relationship_from_db(
+        self,
+        user_text: str,
+        *,
+        login_id: Optional[str],
+        resource_id: Optional[str],
+    ) -> Optional[str]:
+        """Planifica y ejecuta una relación usando únicamente el grafo FK capturado."""
+        instance = current_instance()
+        if not instance or not instance.get("ID"):
+            return None
+        try:
+            snapshot = get_solidset_schema_snapshot(instance["ID"])
+            catalog = (snapshot or {}).get("Catalog")
+            if isinstance(catalog, str):
+                catalog = json.loads(catalog)
+            if not isinstance(catalog, dict):
+                return None
+            plans = plan_identity_relationship_queries(
+                user_text,
+                catalog,
+                login_id=login_id,
+                resource_id=resource_id,
+            )
+            if not plans:
+                return None
+            for plan in plans:
+                print(
+                    "🧭 Plan SQL por grafo FK "
+                    f"concept={plan.concept} path={' -> '.join(plan.path)} "
+                    f"columns={list(plan.selected_columns)}",
+                    flush=True,
+                )
+                raw_result = str(query_sql_server.invoke({
+                    "query": plan.query,
+                    "parameters_json": json.dumps(plan.parameters),
+                }))
+                try:
+                    rows = json.loads(raw_result)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    print(f"ℹ️ Ruta FK sin filas utilizables: {raw_result[:220]}", flush=True)
+                    continue
+                if not isinstance(rows, list) or not rows:
+                    continue
+                language = self._detect_user_language(user_text)
+                return render_relationship_rows(rows, plan, language)
+            return None
+        except Exception as exc:
+            print(f"⚠️ No se pudo resolver la relación mediante el grafo FK: {exc}", flush=True)
+            return None
+
     @staticmethod
     def _contextual_web_query(user_text: str, previous_user_text: Any) -> str:
         """Conserva el tema cuando el turno actual solo confirma o aporta una fuente."""
@@ -2087,6 +2147,13 @@ class MachiningAgent:
                 login_id=login_id or None,
                 workroom_id=workroom_id or None,
             )
+            if authenticated_identity:
+                resource_id = str(
+                    authenticated_identity.get("resource_id") or resource_id
+                ).strip()
+                login_id = str(
+                    authenticated_identity.get("login_id") or login_id
+                ).strip()
 
         identity_snapshot = self.identity_service.observe_user_message(
             session_id=session_id,
@@ -2294,6 +2361,23 @@ class MachiningAgent:
         vector_answers_business_query = bool(
             business_rag_context and not live_business_query
         )
+
+        # --- 3.0.1 PLANIFICADOR GENÉRICO SOBRE EL GRAFO DE CLAVES FORÁNEAS ---
+        relationship_response = None
+        if business_knowledge_query and not response_suggestion_mode:
+            relationship_response = self._resolve_schema_relationship_from_db(
+                user_text,
+                login_id=login_id or None,
+                resource_id=resource_id or None,
+            )
+        if relationship_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(relationship_response)
+                except Exception as exc:
+                    print(f"⚠️ Error guardando respuesta del planificador FK: {exc}")
+            return relationship_response
 
         # --- 3.1 ANÁLISIS DE INTERVENCIONES DE UNA PERSONA DESDE SQL SERVER ---
         participant_analysis_response = None
