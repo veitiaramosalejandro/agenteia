@@ -4469,25 +4469,61 @@ def _verified_related_records_context(
 
 
 def _related_record_direct_answer(context: str, language: str) -> str:
-    """Redacta una respuesta factual mínima con la evidencia del registro relacionado."""
+    """Convierte la evidencia del registro en una sugerencia de ejecución prudente."""
     lines = [line.strip() for line in str(context or "").splitlines() if line.strip()]
     if not lines:
         return ""
     label = lines[0].split(":", 1)[-1].strip()
+    label_sentence = label.rstrip(".")
     fields: dict[str, str] = {}
     for line in lines[1:]:
         key, separator, value = line.partition(":")
         if separator and value.strip():
             fields[key.strip().casefold()] = value.strip()
     instruction = fields.get("technicalspecification") or fields.get("description")
+    emoji_change = bool(instruction and re.search(r"emoji|rea[cç][aã]o|reacci[oó]n", instruction, re.I))
     if language == "pt":
-        answer = f"O registo relacionado é **{label}**."
-        return answer + (f" O trabalho indicado é: {instruction}" if instruction else " Não existem instruções detalhadas disponíveis no registo.")
+        objective = f"Objetivo registado: {instruction}" if instruction else "O registo não contém uma especificação detalhada."
+        if emoji_change:
+            steps = (
+                "Sugestão de execução:\n1. Localiza a validação e o processamento atuais das reações.\n"
+                "2. Ajusta-os para aceitar emojis Unicode válidos sem alterar o comportamento das reações existentes.\n"
+                "3. Adiciona testes para emojis simples, sequências compostas, tons de pele, remoção e valores inválidos.\n"
+                "4. Valida o fluxo completo no chat e regista o resultado antes de concluir a tarefa."
+            )
+        else:
+            steps = (
+                "Sugestão de execução:\n1. Confirma o resultado esperado e os critérios de aceitação.\n"
+                "2. Identifica os componentes afetados e implementa a alteração de forma isolada.\n"
+                "3. Adiciona testes para o caso principal, limites e regressões.\n"
+                "4. Valida o resultado e atualiza o progresso da tarefa."
+            )
+        return f"Tarefa relacionada: {label_sentence}.\n{objective}\n{steps}"
     if language == "en":
-        answer = f"The related record is **{label}**."
-        return answer + (f" The recorded work is: {instruction}" if instruction else " No detailed instructions are available in the record.")
-    answer = f"El registro relacionado es **{label}**."
-    return answer + (f" El trabajo indicado es: {instruction}" if instruction else " El registro no contiene instrucciones detalladas.")
+        objective = f"Recorded objective: {instruction}" if instruction else "The record has no detailed specification."
+        steps = (
+            "Suggested execution:\n1. Confirm the expected result and acceptance criteria.\n"
+            "2. Identify the affected components and implement the change in isolation.\n"
+            "3. Add tests for the main case, boundaries, and regressions.\n"
+            "4. Validate the result and update the task progress."
+        )
+        return f"Related task: {label_sentence}.\n{objective}\n{steps}"
+    objective = f"Objetivo registrado: {instruction}" if instruction else "El registro no contiene una especificación detallada."
+    if emoji_change:
+        steps = (
+            "Sugerencia de ejecución:\n1. Localiza la validación y el procesamiento actuales de las reacciones.\n"
+            "2. Ajústalos para aceptar emojis Unicode válidos sin cambiar el comportamiento de las reacciones existentes.\n"
+            "3. Añade pruebas para emojis simples, secuencias compuestas, tonos de piel, eliminación y valores inválidos.\n"
+            "4. Valida el flujo completo en el chat y registra el resultado antes de finalizar la tarea."
+        )
+    else:
+        steps = (
+            "Sugerencia de ejecución:\n1. Confirma el resultado esperado y los criterios de aceptación.\n"
+            "2. Identifica los componentes afectados e implementa el cambio de forma aislada.\n"
+            "3. Añade pruebas para el caso principal, límites y regresiones.\n"
+            "4. Valida el resultado y actualiza el progreso de la tarea."
+        )
+    return f"Tarea relacionada: {label_sentence}.\n{objective}\n{steps}"
 
 
 def _format_suggestion_scope_context(

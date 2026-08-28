@@ -185,6 +185,10 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
         self.assertIn("T-26-11369", answer)
         self.assertIn("reacciones", answer.replace("reações", "reacciones"))
+        self.assertIn("Sugerencia de ejecución", answer)
+        self.assertIn("emojis Unicode", answer)
+        self.assertIn("Añade pruebas", answer)
+        self.assertNotIn("**", answer)
         self.assertNotIn("ROBOTEA", answer)
 
     def test_task_advice_preloads_verified_operational_context(self):
