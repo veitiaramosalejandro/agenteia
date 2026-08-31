@@ -4,7 +4,10 @@ from app.system.system_knowledge_ingest import (
     _related_resources,
     _safe_columns,
     _semantic_text,
+    _keyset_where,
+    _checkpoint_from_row,
     DEFAULT_BUSINESS_TABLES,
+    RELATION_TABLES,
 )
 from app.system.learning import SistemaAprendizaje
 
@@ -16,6 +19,31 @@ class TestSystemKnowledgeIngest(unittest.TestCase):
         self.assertIn("Activity", DEFAULT_BUSINESS_TABLES)
         self.assertNotIn("SysChat", DEFAULT_BUSINESS_TABLES)
         self.assertNotIn("SysFilesSystem", DEFAULT_BUSINESS_TABLES)
+
+    def test_relation_tables_are_aggregated_not_individually_vectorized(self):
+        self.assertIn("SysTaskResourceRole", RELATION_TABLES)
+        self.assertIn("SysActivityResourceRoleActivity", RELATION_TABLES)
+        self.assertIn("SysWorkRoomResource", RELATION_TABLES)
+        self.assertTrue(set(DEFAULT_BUSINESS_TABLES).isdisjoint(RELATION_TABLES))
+
+    def test_keyset_pagination_uses_primary_key_without_offset(self):
+        where, parameters = _keyset_where(
+            ["CreatedTime", "IDTask"],
+            {"CreatedTime": "2026-08-31T10:00:00", "IDTask": "task-9"},
+        )
+        self.assertNotIn("OFFSET", where.upper())
+        self.assertIn("[CreatedTime]>%s", where)
+        self.assertIn("[CreatedTime]=%s AND [IDTask]>%s", where)
+        self.assertEqual(
+            ("2026-08-31T10:00:00", "2026-08-31T10:00:00", "task-9"),
+            parameters,
+        )
+
+    def test_checkpoint_contains_only_ordering_key(self):
+        checkpoint = _checkpoint_from_row(
+            {"IDTask": "task-1", "Name": "ignored"}, ["IDTask"]
+        )
+        self.assertEqual({"IDTask": "task-1"}, checkpoint)
 
     def test_sensitive_and_binary_columns_are_excluded(self):
         columns = [
@@ -36,6 +64,13 @@ class TestSystemKnowledgeIngest(unittest.TestCase):
         self.assertIn("recursos del sistema", text)
         self.assertIn("nombre visible: Alejandro Veitia", text)
         self.assertIn("es propietario de empresa: True", text)
+
+    def test_relation_summary_is_part_of_parent_semantic_document(self):
+        text = _semantic_text(
+            "SysTask", {"IDTask": "task-1", "ShortName": "Prueba"},
+            "Relaciones SysTaskResourceRole (2): recursos asignados.",
+        )
+        self.assertIn("Relaciones SysTaskResourceRole (2)", text)
 
     def test_related_resource_ids_are_extracted_for_authorization(self):
         resource = "272700d8-d1ba-46a6-a121-b76fce8ecb9f"

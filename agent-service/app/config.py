@@ -124,6 +124,9 @@ class Settings(BaseSettings):
     SYSTEM_KNOWLEDGE_BATCH_SIZE: int = max(
         50, min(1000, int(os.getenv("SYSTEM_KNOWLEDGE_BATCH_SIZE", "500")))
     )
+    SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL: str = os.getenv(
+        "SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL", EMBEDDING_BASE_URL
+    )
     SYSTEM_KNOWLEDGE_POLL_SECONDS: int = max(
         2, int(os.getenv("SYSTEM_KNOWLEDGE_POLL_SECONDS", "10"))
     )

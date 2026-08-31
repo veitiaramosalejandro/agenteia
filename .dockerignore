@@ -6,3 +6,4 @@ postgres_data/
 qdrant_data/
 n8n_data/
 ollama_embedding_storage/
+ollama_system_embedding_storage/

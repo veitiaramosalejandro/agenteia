@@ -5,7 +5,7 @@ services:
     hostname: nginx
     restart: unless-stopped
     ports:
-      - 81:80
+      - 80:80
     volumes:
       # Desarrollo siempre usa HTTP; no depende de la configuración TLS activa
       # ni monta certificados de producción.
@@ -178,6 +178,30 @@ services:
       service: historical-worker
     command: ["python", "-m", "app.historical.producer"]
 
+  system-knowledge-worker:
+    image: agent-service:0.0.1
+    container_name: system-knowledge-worker
+    hostname: system-knowledge-worker
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "app.system.system_knowledge_worker"]
+    env_file: [.env]
+    environment:
+      RUNNING_IN_DOCKER: "1"
+      SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL: http://ollama-system-embeddings:11434
+      VECTOR_DB_URL: http://vector-db:6333
+      POSTGRES_HOST: timescaledb
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["./agent-service:/app", "./data:/app/data"]
+    depends_on:
+      ollama-system-embeddings: {condition: service_healthy}
+      ollama-system-embeddings-init: {condition: service_completed_successfully}
+      timescaledb: {condition: service_healthy}
+      vector-db: {condition: service_healthy}
+    networks: [machining-network]
+
   # Runtime interactivo exclusivo. Mantiene el LLM cargado en GPU y no acepta
   # trabajo de embeddings, evitando expulsiones del modelo y esperas de cola.
   ollama-chat:
@@ -219,8 +243,7 @@ services:
         aliases:
           - ollama-llm
 
-  # Runtime de embeddings aislado en CPU. La ingestión puede avanzar sin
-  # ocupar el slot ni la VRAM reservados para las respuestas interactivas.
+  # Embeddings de RAG conversacional e histórico, aislados de la ingesta masiva.
   ollama-embeddings:
     image: ollama/ollama:latest
     container_name: machining_ollama_embeddings
@@ -246,6 +269,49 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - machining-network
+
+  # Runtime GPU exclusivo para la ingesta completa de conocimiento del sistema.
+  # Evita que millones de filas bloqueen embeddings conversacionales/históricos.
+  ollama-system-embeddings:
+    image: ollama/ollama:latest
+    container_name: machining_ollama_system_embeddings
+    hostname: ollama-system-embeddings
+    restart: always
+    user: root
+    ports:
+      - 11436:11434
+    volumes:
+      - ./ollama_system_embedding_storage:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_SYSTEM_EMBEDDING_NUM_PARALLEL:-2}
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_MAX_QUEUE=${OLLAMA_SYSTEM_EMBEDDING_MAX_QUEUE:-128}
+      - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_SYSTEM_EMBEDDING_KEEP_ALIVE:-24h}
+    mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-2g}
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks:
       - machining-network
 
@@ -271,6 +337,19 @@ services:
     command: ["pull", "${EMBEDDING_MODEL_NAME:-nomic-embed-text}"]
     depends_on:
       ollama-embeddings:
+        condition: service_healthy
+    networks:
+      - machining-network
+
+  ollama-system-embeddings-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama-system-embeddings:11434
+    entrypoint: ["ollama"]
+    command: ["pull", "${EMBEDDING_MODEL_NAME:-nomic-embed-text}"]
+    depends_on:
+      ollama-system-embeddings:
         condition: service_healthy
     networks:
       - machining-network
@@ -325,8 +404,8 @@ services:
     hostname: redis-cache
     restart: always
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
-    #ports:
-    #  - 6379:6379
+    ports:
+      - 6379:6379
     volumes:
       - redis_data:/data
     healthcheck:

@@ -10,3 +10,21 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+  ollama-embeddings:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  ollama-system-embeddings:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
