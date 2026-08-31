@@ -26,6 +26,7 @@ from app.main import (
     _suggestion_matches_related_records,
     _related_guidance_is_useful,
     _related_guidance_fallback,
+    _reason_about_related_record,
     _sanitize_related_record_value,
     _extract_learnable_suggestion_fact,
     _is_relative_temporal_assertion,
@@ -297,6 +298,42 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "a plataforma utilizada, por exemplo SolidSET?",
             "Dê-me sugestões de estudo", context + " Sistema: SolidSET.",
         ))
+        self.assertFalse(_related_guidance_is_useful(
+            "Para analisar esta tarefa, é necessário ter informações adicionais sobre as "
+            "colunas disponíveis na Grid. Preciso saber quais são as responsabilidades atuais.",
+            "Porquê é que não pode realizar uma análise desta tarefa para mim?", context,
+        ))
+
+    def test_related_record_reasoner_uses_only_the_requested_language(self):
+        captured = []
+
+        class FakeProvider:
+            provider = "test"
+            model = "test-model"
+
+        class FakeLLM:
+            def invoke(self, messages):
+                captured.append(messages)
+                return type("Result", (), {"content": '["ok"]'})()
+
+        expectations = {
+            "pt": ("És um analista", "PEDIDO ATUAL", "PETICIÓN ACTUAL"),
+            "es": ("Eres un analista", "PETICIÓN ACTUAL", "CURRENT REQUEST"),
+            "en": ("You are an isolated", "CURRENT REQUEST", "PEDIDO ATUAL"),
+        }
+        with patch(
+            "app.main.agent.get_llm_for_metadata",
+            return_value=(FakeLLM(), None, FakeProvider()),
+        ):
+            for language, (system_marker, prompt_marker, forbidden_marker) in expectations.items():
+                _reason_about_related_record(
+                    request_text="request", record_context="record",
+                    research_context="", language=language, metadata={},
+                )
+                messages = captured[-1]
+                self.assertIn(system_marker, messages[0].content)
+                self.assertIn(prompt_marker, messages[1].content)
+                self.assertNotIn(forbidden_marker, messages[1].content)
 
     def test_related_guidance_fallback_is_analysis_not_description_copy(self):
         result = _related_guidance_fallback(
