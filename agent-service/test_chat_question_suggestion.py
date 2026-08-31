@@ -24,6 +24,9 @@ from app.main import (
     _is_related_record_guidance_request,
     _suggestion_request_language,
     _suggestion_matches_related_records,
+    _related_guidance_is_useful,
+    _related_guidance_fallback,
+    _sanitize_related_record_value,
     _extract_learnable_suggestion_fact,
     _is_relative_temporal_assertion,
     _learn_direct_agent_assertion,
@@ -248,10 +251,73 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "Que puedo hacer en esta tarea?",
             "Que debo hacer para esta tarea?",
             "Investiga como poder resolver esta tarea",
+            "Fale-me da tarefa e dê-me algumas sugestões de estudo?",
+            "Porquê é que não pode realizar uma análise desta tarefa para mim?",
         ):
             with self.subTest(request=request):
                 self.assertTrue(_is_related_record_guidance_request(request))
                 self.assertTrue(_is_business_recommendation_request(request))
+
+    def test_screenshot_requests_are_not_misclassified_as_factual_answers(self):
+        for request in (
+            "Fale-me da tarefa e dê-me algumas sugestões de estudo?",
+            "Porquê é que não pode realizar uma análise desta tarefa para mim?",
+        ):
+            with self.subTest(request=request):
+                self.assertTrue(_is_related_record_guidance_request(request))
+                self.assertFalse(_is_concrete_suggestion_answer_request(request))
+
+    def test_internal_file_reference_is_removed_from_verified_context(self):
+        value = _sanitize_related_record_value(
+            "Temos de completar o histórico solidset://file/"
+            "5f90f567-699f-4cf2-ad8e-dc4758f99759"
+        )
+        self.assertEqual("Temos de completar o histórico", value)
+
+    def test_related_guidance_rejects_direct_summary_and_internal_reference(self):
+        context = (
+            "Task: T-26-2448 — colocar meeting na Grid\n"
+            "Description: Mostrar o meeting associado no histórico da tarefa."
+        )
+        self.assertFalse(_related_guidance_is_useful(
+            "Tarefa relacionada: T-26-2448. Descrição verificada: Mostrar o meeting.",
+            "Dê-me sugestões de estudo", context,
+        ))
+        self.assertFalse(_related_guidance_is_useful(
+            "Analisa o anexo solidset://file/5f90f567-699f-4cf2-ad8e-dc4758f99759.",
+            "Analisa esta tarefa", context,
+        ))
+        self.assertTrue(_related_guidance_is_useful(
+            "Sugiro primeiro confirmar a origem do meeting e depois validar o que a Grid "
+            "deve mostrar quando não existe associação.",
+            "Dê-me sugestões de estudo", context,
+        ))
+        self.assertFalse(_related_guidance_is_useful(
+            "Recomendo a criação de um guia ou manual interno detalhado. Primeiro, qual é "
+            "a plataforma utilizada, por exemplo SolidSET?",
+            "Dê-me sugestões de estudo", context + " Sistema: SolidSET.",
+        ))
+
+    def test_related_guidance_fallback_is_analysis_not_description_copy(self):
+        result = _related_guidance_fallback(
+            "Task: T-26-2448 — colocar meeting na Grid\n"
+            "Description: Mostrar o meeting associado no histórico da tarefa.",
+            "pt",
+        )
+        self.assertIn("Análise de T-26-2448", result)
+        self.assertIn("origem do dado", result)
+        self.assertNotIn("Descrição verificada", result)
+
+    def test_chat_meeting_grid_fallback_is_specific_to_verified_task(self):
+        result = _related_guidance_fallback(
+            "Task: T-26-2448 — Tarefas - form de registo - Tab Chats - colocar na Grid coluna com meeting\n"
+            "Description: Fazer constar esta informação no histórico da tarefa.",
+            "pt",
+        )
+        self.assertIn("relação liga cada chat da tarefa ao meeting", result)
+        self.assertIn("quando o chat não tiver meeting", result)
+        self.assertIn("ordenação e filtragem da Grid", result)
+        self.assertNotIn("guia", result.casefold())
 
     def test_user_request_language_overrides_portuguese_record_context(self):
         self.assertEqual(

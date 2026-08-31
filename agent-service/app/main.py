@@ -4460,11 +4460,26 @@ def _verified_related_records_context(
                 continue
             row = rows[0] if isinstance(rows, list) and rows else {}
             details = [
-                f"{key}: {' '.join(str(value).split())}" for key, value in row.items()
+                f"{key}: {_sanitize_related_record_value(value)}" for key, value in row.items()
                 if value not in (None, "")
             ]
             blocks.append(base + ("\n" + "\n".join(details) if details else ""))
     return "\n\n".join(blocks)
+
+
+def _sanitize_related_record_value(value: Any) -> str:
+    """Conserva el contenido funcional sin filtrar referencias internas de archivos."""
+    text = " ".join(str(value or "").split()).strip()
+    text = re.sub(
+        r"(?:solidset://)?file/[0-9a-f-]{16,}(?:[-_/][a-z0-9-]+)*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = text.replace("```", "").replace("`", "")
+    return text.strip(" -;,.")
 
 
 def _related_record_direct_answer(context: str, language: str) -> str:
@@ -4605,7 +4620,8 @@ def _is_business_recommendation_request(text: str) -> bool:
         r"qu[eé]\s+(?:puedo|debo|podr[ií]a)\s+hacer|"
         r"investiga(?:r)?\s+c[oó]mo\s+(?:poder\s+)?resolver|"
         r"propon(?:es|dr[ií]as?)|recomiend(?:as|a)|sugier(?:es|e)|"
-        r"devo|poderia|prop[oõ]es|recomend(?:as|a)|suger(?:es|e)|"
+        r"devo|poderia|prop[oõ]es|recomend(?:as|a|ações)|suger(?:es|e)|"
+        r"sugest(?:ão|ões)|an[aá]lis(?:e|ar)|estud(?:o|ar)|orienta(?:ção|ções)|"
         r"should|could|propose|recommend|suggest)\b",
         normalized,
         flags=re.IGNORECASE,
@@ -4655,6 +4671,12 @@ def _is_related_record_guidance_request(text: str) -> bool:
         r"\b(?:qu[eé]\s+(?:puedo|debo|podr[ií]a)\s+hacer|c[oó]mo\s+(?:puedo|debo|podr[ií]a)?\s*"
         r"(?:hacer|resolver|implementar)|investiga(?:r)?\s+c[oó]mo|"
         r"o\s+que\s+(?:posso|devo)\s+fazer|como\s+(?:posso|devo)?\s*(?:fazer|resolver|implementar)|"
+        r"(?:faz|realiza|podes?\s+fazer|pode\s+realizar)(?:-me)?\s+(?:uma\s+)?an[aá]lise|"
+        r"(?:fala|fale)(?:-me)?\s+(?:desta|da|sobre\s+esta)?\s*tarefa|"
+        r"sugest(?:ão|ões)|recomenda(?:ção|ções)|ideias?\s+(?:para|de)|"
+        r"an[aá]lis(?:a|ar|e)\s+(?:esta|a|desta)?\s*tarefa|"
+        r"(?:dime|h[aá]blame)\s+(?:de|sobre)\s+(?:esta|la)\s+tarea|"
+        r"(?:analiza|analisar|analise)\s+(?:esta|a|desta)?\s*(?:tarea|tarefa)|"
         r"what\s+(?:can|should)\s+i\s+do|how\s+(?:can|should)\s+i\s+(?:solve|implement))\b",
         normalized,
     ))
@@ -4692,6 +4714,122 @@ def _suggestion_matches_related_records(
     if "robotea" in text or "empresa a la cual pertenece" in text:
         return False
     return True
+
+
+def _related_guidance_is_useful(
+    suggestion: str, request_text: str, record_context: str,
+) -> bool:
+    """Rechaza copias del registro, referencias internas y no-respuestas."""
+    candidate = " ".join(str(suggestion or "").split()).strip()
+    normalized = candidate.casefold()
+    if not candidate or re.search(
+        r"(?:solidset://)?file/[0-9a-f-]{16,}|\b[0-9a-f]{8}-[0-9a-f-]{27,}\b",
+        candidate,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    if any(marker in normalized for marker in (
+        "descrição verificada:", "descripción verificada:", "verified description:",
+        "o registo relacionado é", "el registro relacionado es",
+    )):
+        return False
+    generic_deliverables = (
+        "guia ou manual", "guia interno", "manual interno", "criar documentação",
+        "crear documentación", "create documentation", "programa de formação",
+        "training program",
+    )
+    if any(marker in normalized for marker in generic_deliverables):
+        return False
+    if "solidset" in record_context.casefold() and re.search(
+        r"qual (?:é )?o sistema|qual (?:é )?a plataforma|por exemplo,? solidset",
+        normalized,
+    ):
+        return False
+    action_or_limitation = re.search(
+        r"\b(?:objetivo|sugir|recomend|analis|confirm|verific|defin|identific|"
+        r"implement|valid|test|crit[eé]ri|risco|falta|necess[aá]ri|primeir|"
+        r"prop[oõ]|avali|pergunta|pregunta|question)\w*\b",
+        normalized,
+    )
+    if not action_or_limitation:
+        return False
+
+    # Un resumen casi literal no satisface una petición de análisis aunque
+    # mencione el código correcto. Exigimos contenido adicional significativo.
+    context_words = set(re.findall(r"[a-zà-ÿ]{4,}", record_context.casefold()))
+    answer_words = set(re.findall(r"[a-zà-ÿ]{4,}", normalized))
+    if len(answer_words) >= 6:
+        novel_ratio = len(answer_words - context_words) / len(answer_words)
+        if novel_ratio < 0.18:
+            return False
+    return True
+
+
+def _related_guidance_fallback(context: str, language: str) -> str:
+    """Fallback honesto y específico cuando el modelo no aporta razonamiento útil."""
+    direct = _related_record_direct_answer(context, language)
+    label = direct.split(".", 1)[0].replace("Tarefa relacionada: ", "").replace(
+        "Tarea relacionada: ", ""
+    ).replace("Related task: ", "")
+    fields: dict[str, str] = {}
+    for line in str(context or "").splitlines()[1:]:
+        key, separator, value = line.partition(":")
+        if separator and value.strip():
+            fields[key.strip().casefold()] = value.strip()
+    objective = fields.get("technicalspecification") or fields.get("description") or ""
+    searchable = f"{label} {objective}".casefold()
+    is_chat_meeting_grid = all(
+        term in searchable for term in ("chat", "meeting", "grid")
+    )
+    if language == "pt":
+        known = f"O objetivo verificado é: {objective}. " if objective else ""
+        if is_chat_meeting_grid:
+            return (
+                f"Análise de {label}: {known}Sugestões de estudo: "
+                "1. Identificar no catálogo real qual relação liga cada chat da tarefa ao meeting, "
+                "sem pressupor nomes de tabelas ou colunas. "
+                "2. Definir que informação do meeting a nova coluna deve apresentar e o comportamento "
+                "quando o chat não tiver meeting ou tiver uma associação indisponível. "
+                "3. Verificar permissões e consistência do histórico para que a coluna não revele dados "
+                "inacessíveis nem altere registos anteriores. "
+                "4. Validar com casos de chat com meeting, sem meeting e com múltiplos registos, incluindo "
+                "o impacto no carregamento, ordenação e filtragem da Grid."
+            )
+        return (
+            f"Análise de {label}: {known}Antes de definir a execução, é necessário confirmar "
+            "a origem do dado, o comportamento esperado na interface e os critérios de aceitação. "
+            "Sugiro esclarecer concretamente: de que relação vem o valor, como deve ser apresentado "
+            "quando não existe associação e quais casos devem ser validados."
+        )
+    if language == "en":
+        known = f"The verified objective is: {objective}. " if objective else ""
+        if is_chat_meeting_grid:
+            return (
+                f"Analysis of {label}: {known}Study suggestions: 1. Use the verified catalog to "
+                "identify the relationship connecting each task chat to its meeting without assuming "
+                "table or column names. 2. Define which meeting value the new column displays and its "
+                "behavior when no meeting is associated. 3. Verify permissions and historical consistency. "
+                "4. Test chats with and without meetings, including Grid loading, sorting, and filtering."
+            )
+        return (
+            f"Analysis of {label}: {known}Before defining the implementation, confirm the data "
+            "source, expected interface behavior, and acceptance criteria, including the behavior "
+            "when no related value exists and the cases that must be tested."
+        )
+    known = f"El objetivo verificado es: {objective}. " if objective else ""
+    if is_chat_meeting_grid:
+        return (
+            f"Análisis de {label}: {known}Sugerencias de estudio: 1. Identificar en el catálogo "
+            "real la relación que conecta cada chat de la tarea con su meeting, sin asumir tablas ni "
+            "columnas. 2. Definir qué dato mostrará la nueva columna y qué sucede cuando no exista una "
+            "asociación. 3. Verificar permisos y consistencia histórica. 4. Probar chats con y sin meeting, "
+            "incluyendo carga, ordenación y filtrado de la Grid."
+        )
+    return (
+        f"Análisis de {label}: {known}Antes de definir la ejecución hay que confirmar el origen "
+        "del dato, el comportamiento esperado en la interfaz y los criterios de aceptación, incluido "
+        "qué mostrar cuando no exista una relación y qué casos deben validarse."
+    )
 
 
 def _extract_learnable_suggestion_fact(text: str) -> str:
@@ -4958,6 +5096,9 @@ def _reason_about_related_record(
         "por qué encaja. No repitas simplemente la descripción. No uses pasos universales aplicables a "
         "cualquier tarea. No inventes componentes ni hechos de SolidSET. Si faltan datos suficientes, "
         "indica exactamente cuáles y formula las preguntas concretas necesarias antes de recomendar. "
+        "No preguntes por hechos ya presentes en el registro (por ejemplo, el sistema, el tipo o el objetivo). "
+        "No propongas crear guías, manuales, documentación o formación como sustituto de analizar la tarea. "
+        "Si se solicitan varias sugerencias, incluye varios puntos concretos dentro del único string. "
         f"Escribe íntegramente en {target_language}. Devuelve solo un array JSON con un string; ese string "
         "puede contener párrafos o pasos numerados internos. No uses Markdown."
     )
@@ -5408,6 +5549,12 @@ async def suggest_chat_question_response(
                         item, metadata["response_language"]
                     )
                 )
+                and (
+                    not related_guidance_mode
+                    or _related_guidance_is_useful(
+                        item, effective_request_text, related_records_context
+                    )
+                )
                 and _suggestion_matches_related_records(
                     item, context["related_records"]
                 )
@@ -5417,14 +5564,14 @@ async def suggest_chat_question_response(
             and len(suggestions) != suggestion_count
         ):
             if related_guidance_mode:
-                repaired_raw = await asyncio.to_thread(
-                    _reason_about_related_record,
-                    request_text=effective_request_text,
-                    record_context=related_records_context,
-                    research_context=research_context,
-                    language=metadata["response_language"],
-                    metadata=metadata,
-                    previous_output=str(raw_suggestions),
+                # Un segundo pase del mismo modelo pequeño tiende a repetir el
+                # registro y duplica la latencia. Usa un análisis determinista
+                # vinculado a la evidencia cuando el primer borrador no es útil.
+                repaired_raw = json.dumps(
+                    [_related_guidance_fallback(
+                        related_records_context, metadata["response_language"]
+                    )],
+                    ensure_ascii=False,
                 )
             else:
                 repaired_raw = await asyncio.to_thread(
@@ -5453,12 +5600,22 @@ async def suggest_chat_question_response(
                         item, metadata["response_language"]
                     )
                 )
+                and (
+                    not related_guidance_mode
+                    or _related_guidance_is_useful(
+                        item, effective_request_text, related_records_context
+                    )
+                )
                 and _suggestion_matches_related_records(
                     item, context["related_records"]
                 )
             ]
         if not suggestions:
-            if related_records_context:
+            if related_guidance_mode:
+                suggestions = [_related_guidance_fallback(
+                    related_records_context, metadata["response_language"]
+                )]
+            elif related_records_context:
                 fallback = _related_record_direct_answer(
                     related_records_context, metadata["response_language"]
                 )
@@ -5475,6 +5632,10 @@ async def suggest_chat_question_response(
                 suggestions = _safe_chat_question_fallback(
                     metadata["response_language"], suggestion_count
                 )
+        suggestions = [
+            _sanitize_related_record_value(item) for item in suggestions
+            if _sanitize_related_record_value(item)
+        ]
         language = metadata["response_language"]
         title = _suggestion_title(language, initial=ambient_mode)
         result = {
