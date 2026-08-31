@@ -11,20 +11,5 @@ services:
               count: 1
               capabilities: [gpu]
 
-  ollama-embeddings:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  ollama-system-embeddings:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+# En hosts con una sola GPU, el overlay la reserva únicamente para chat.
+# Los embeddings permanecen en CPU para proteger la latencia interactiva.

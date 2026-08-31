@@ -3,10 +3,12 @@ import json
 import re
 import uuid
 import threading
+from dataclasses import replace
 from urllib import error as urlerror
 from urllib.request import urlopen
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from time import perf_counter
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_community.chat_message_histories import RedisChatMessageHistory
@@ -14,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AI
 
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
+from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
 from app.agent.language import LanguageResolver
 from app.agent.schema_query_planner import (
@@ -117,8 +120,8 @@ class MachiningAgent:
         self.language_resolver = LanguageResolver()
         
         # Configuración de memoria
-        self.max_history_messages = 12  # Máximo de mensajes a mantener sin resumir
-        self.max_iterations = 5  # Máximo de iteraciones en el bucle de herramientas
+        self.max_history_messages = settings.LLM_MAX_HISTORY_MESSAGES
+        self.max_iterations = settings.LLM_MAX_TOOL_ITERATIONS
         
         # Cache de contextos de usuario (para evitar consultas repetidas)
         self.user_context_cache = {}
@@ -134,16 +137,22 @@ class MachiningAgent:
         """Obtiene modelo/configuración por agente, con fallback seguro al entorno."""
         resource_id = str((metadata or {}).get("agent_resource_id") or "").strip() or None
         capability = str((metadata or {}).get("model_capability") or "general").strip()
+        metadata = metadata or {}
         try:
             record = get_llm_provider_configuration(resource_id, capability)
         except Exception as exc:
             print(f"⚠️ No se pudo resolver proveedor LLM en PostgreSQL: {exc}")
-            return self.llm, self.llm_with_tools, self.llm_provider_config
-        if not record:
-            return self.llm, self.llm_with_tools, self.llm_provider_config
-        config = provider_config_from_record(record)
+            record = None
+        config = (
+            provider_config_from_record(record)
+            if record else self.llm_provider_config
+        )
+        requested_cap = int(metadata.get("max_output_tokens") or 0)
+        if requested_cap > 0 and requested_cap < config.max_output_tokens:
+            config = replace(config, max_output_tokens=max(128, requested_cap))
         key = (
-            str(record.get("ID")), record.get("UpdatedAt"), capability, config.provider, config.model,
+            str((record or {}).get("ID") or "environment"),
+            (record or {}).get("UpdatedAt"), capability, config.provider, config.model,
             config.base_url, config.temperature, config.max_output_tokens,
         )
         with self._llm_cache_lock:
@@ -2876,13 +2885,15 @@ class MachiningAgent:
                 + self.identity_service.build_prompt_context(identity_snapshot)
             )
         else:
-            system_prompt = (
-                SYSTEM_PROMPT
-                + "\n\n"
-                + SYSTEM_PROMPT_MAESTRO
-                + "\n\n"
-                + self.identity_service.build_prompt_context(identity_snapshot)
+            response_language = str(
+                metadata_identity.get("resolved_language") or "es"
+            ).strip().lower()
+            base_prompt = (
+                runtime_prompt(response_language)
+                if settings.LLM_COMPACT_RUNTIME_PROMPT
+                else SYSTEM_PROMPT + "\n\n" + SYSTEM_PROMPT_MAESTRO
             )
+            system_prompt = base_prompt + "\n\n" + self.identity_service.build_prompt_context(identity_snapshot)
 
         requested_time_zone = str((message_metadata or {}).get("time_zone") or "").strip()
         try:
@@ -3210,18 +3221,11 @@ class MachiningAgent:
         # --- 6. CARGAR HISTORIAL CON RESUMEN ---
         if history:
             all_history = list(history.messages)
-            
-            # Si hay muchos mensajes, resumir
-            if self._should_summarize(all_history):
-                summary = self._summarize_conversation(all_history, session_id)
-                if summary:
-                    messages.append(SystemMessage(content=summary))
-                    # Cargar solo últimos 5 mensajes después del resumen
-                    messages.extend(all_history[-5:])
-                else:
-                    messages.extend(all_history[-self.max_history_messages:])
-            else:
-                messages.extend(all_history[-self.max_history_messages:])
+            # Resumir aquí añadía otra inferencia completa antes de responder y,
+            # al crecer Redis, podía repetirse en cada turno. El camino crítico
+            # conserva solo la ventana reciente; la memoria persistente ya se
+            # recupera por las rutas RAG/identidad.
+            messages.extend(all_history[-self.max_history_messages:])
         
         # El historial aporta contexto, pero nunca debe reemplazar el tema actual.
         messages.append(SystemMessage(content=(
@@ -3238,8 +3242,14 @@ class MachiningAgent:
         response_text = ""
         herramientas_usadas = []
         last_tool_result = None
+        request_metadata = dict(message_metadata or {})
+        request_metadata["max_output_tokens"] = (
+            settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS
+            if request_metadata.get("response_suggestion_mode")
+            else settings.LLM_DIALOGUE_MAX_OUTPUT_TOKENS
+        )
         request_llm, request_llm_with_tools, request_provider_config = (
-            self.get_llm_for_metadata(message_metadata)
+            self.get_llm_for_metadata(request_metadata)
         )
         llm_for_request = request_llm_with_tools
         print(
@@ -3295,7 +3305,20 @@ class MachiningAgent:
         schema_only_retries = 0
         while iteration < self.max_iterations:
             try:
+                llm_started_at = perf_counter()
                 response = llm_for_request.invoke(messages)
+                llm_elapsed = perf_counter() - llm_started_at
+                prompt_chars = sum(
+                    len(str(getattr(message, "content", "") or ""))
+                    for message in messages
+                )
+                marker = "🐢" if llm_elapsed >= settings.LLM_SLOW_CALL_SECONDS else "⏱️"
+                print(
+                    f"{marker} LLM call iteration={iteration + 1} "
+                    f"elapsed={llm_elapsed:.2f}s prompt_chars={prompt_chars} "
+                    f"messages={len(messages)}",
+                    flush=True,
+                )
             except Exception as e:
                 print(f"❌ Error invocando LLM: {e}")
                 if external_query_mode and last_tool_result:

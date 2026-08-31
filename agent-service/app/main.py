@@ -34,6 +34,7 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 from app.knowledge_provenance import USER_ASSERTION_SOURCE
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.config import settings
+from app.interactive_priority import interactive_work
 
 from app.agent.core import MachiningAgent
 from app.agent.orchestrator import SolidSETOrchestrator
@@ -274,6 +275,19 @@ async def log_request_origin_ip(request: Request, call_next):
             f"status={status_code} duration_ms={elapsed_ms:.1f}",
             flush=True,
         )
+
+@app.middleware("http")
+async def prioritize_interactive_requests(request: Request, call_next):
+    """Hace que las ingestas cedan recursos durante generación interactiva."""
+    interactive_paths = (
+        "/api/v1/agent/dialogue",
+        "/api/v1/agent/notification/chat-question/suggest-response",
+    )
+    if request.url.path not in interactive_paths:
+        return await call_next(request)
+    with interactive_work("http"):
+        return await call_next(request)
+
 
 # Instancia del agente
 agent = MachiningAgent()
@@ -5099,6 +5113,7 @@ def _reason_about_related_record(
     """Razonador aislado: sin historial, RAG, herramientas ni prompt conversacional."""
     request_llm, _, provider = agent.get_llm_for_metadata({
         **metadata, "model_capability": "general",
+        "max_output_tokens": settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS,
     })
     print(
         f"🧠 Analizando registro aislado provider={provider.provider} "
@@ -6721,6 +6736,11 @@ def health_check():
             "dialogue_processing_timeout_seconds": settings.DIALOGUE_PROCESSING_TIMEOUT_SECONDS,
             "dialogue_hard_timeout_seconds": settings.DIALOGUE_HARD_TIMEOUT_SECONDS,
             "dialogue_slow_log_seconds": settings.DIALOGUE_SLOW_LOG_SECONDS,
+            "compact_runtime_prompt": settings.LLM_COMPACT_RUNTIME_PROMPT,
+            "dialogue_max_output_tokens": settings.LLM_DIALOGUE_MAX_OUTPUT_TOKENS,
+            "suggestion_max_output_tokens": settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS,
+            "interactive_priority_enabled": settings.INTERACTIVE_PRIORITY_ENABLED,
+            "ingestion_pause_during_interactive": settings.INGESTION_PAUSE_DURING_INTERACTIVE,
             "dialogue_metrics": _get_dialogue_metrics_snapshot(),
             "notification_listener_enabled": notification_listener.is_enabled(),
             "notification_background_enabled": settings.NOTIF_API_BACKGROUND_ENABLED,

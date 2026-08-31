@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     EMBEDDING_VECTOR_SIZE: int = max(0, int(os.getenv("EMBEDDING_VECTOR_SIZE", "0")))
     LLM_MAX_OUTPUT_TOKENS: int = max(128, int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1024")))
     LLM_REQUEST_TIMEOUT_SECONDS: int = max(10, int(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "60")))
+    LLM_COMPACT_RUNTIME_PROMPT: bool = _env_bool("LLM_COMPACT_RUNTIME_PROMPT", "true")
+    LLM_DIALOGUE_MAX_OUTPUT_TOKENS: int = max(
+        128, int(os.getenv("LLM_DIALOGUE_MAX_OUTPUT_TOKENS", "640"))
+    )
+    LLM_SUGGESTION_MAX_OUTPUT_TOKENS: int = max(
+        128, int(os.getenv("LLM_SUGGESTION_MAX_OUTPUT_TOKENS", "384"))
+    )
+    LLM_MAX_HISTORY_MESSAGES: int = max(
+        2, min(20, int(os.getenv("LLM_MAX_HISTORY_MESSAGES", "6")))
+    )
+    LLM_MAX_TOOL_ITERATIONS: int = max(
+        1, min(5, int(os.getenv("LLM_MAX_TOOL_ITERATIONS", "3")))
+    )
     
     # Vector Database (Qdrant)
     VECTOR_DB_URL: str = os.getenv("VECTOR_DB_URL", "http://vector-db:6333")
@@ -181,6 +194,22 @@ class Settings(BaseSettings):
     EMBEDDING_CACHE_TTL_SECONDS: int = int(os.getenv("EMBEDDING_CACHE_TTL_SECONDS", "86400"))
     EMBEDDING_REDIS_CACHE_PREFIX: str = os.getenv("EMBEDDING_REDIS_CACHE_PREFIX", "machining:embedding:v1")
     DIALOGUE_SLOW_LOG_SECONDS: float = float(os.getenv("DIALOGUE_SLOW_LOG_SECONDS", "8"))
+    LLM_SLOW_CALL_SECONDS: float = max(
+        0.1, float(os.getenv("LLM_SLOW_CALL_SECONDS", "5"))
+    )
+    INTERACTIVE_PRIORITY_ENABLED: bool = _env_bool("INTERACTIVE_PRIORITY_ENABLED", "true")
+    INTERACTIVE_PRIORITY_LEASE_SECONDS: int = max(
+        15, int(os.getenv("INTERACTIVE_PRIORITY_LEASE_SECONDS", "45"))
+    )
+    INTERACTIVE_PRIORITY_HEARTBEAT_SECONDS: int = max(
+        5, int(os.getenv("INTERACTIVE_PRIORITY_HEARTBEAT_SECONDS", "10"))
+    )
+    INGESTION_PAUSE_DURING_INTERACTIVE: bool = _env_bool(
+        "INGESTION_PAUSE_DURING_INTERACTIVE", "true"
+    )
+    INGESTION_INTERACTIVE_POLL_SECONDS: float = max(
+        0.25, float(os.getenv("INGESTION_INTERACTIVE_POLL_SECONDS", "1"))
+    )
 
     # Notification API listener (SolidSET Communicator)
     NOTIF_API_ENABLED: bool = _env_bool("NOTIF_API_ENABLED", "true")

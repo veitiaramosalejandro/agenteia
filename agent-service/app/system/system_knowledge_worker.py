@@ -32,6 +32,21 @@ def _requested_tables(run: dict[str, Any]) -> list[str] | None:
     return [str(item) for item in value] if isinstance(value, list) else None
 
 
+def _retry_delay(error: Exception, attempts: int) -> int:
+    """Los reinicios de runtimes locales no deben activar un backoff de 15 min."""
+    detail = str(error).casefold()
+    transient = (
+        "server disconnected", "connection refused", "connection reset",
+        "timed out", "timeout", "remote protocol error",
+    )
+    if any(marker in detail for marker in transient):
+        return settings.SYSTEM_KNOWLEDGE_RETRY_SECONDS
+    return min(
+        900,
+        settings.SYSTEM_KNOWLEDGE_RETRY_SECONDS * (2 ** min(attempts - 1, 4)),
+    )
+
+
 def run_worker() -> None:
     worker_id = f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
     print(f"🧠 System knowledge worker activo worker={worker_id}", flush=True)
@@ -70,7 +85,7 @@ def run_worker() -> None:
             )
         except Exception as exc:
             attempts = max(1, int(run.get("AttemptCount") or 1))
-            delay = min(900, settings.SYSTEM_KNOWLEDGE_RETRY_SECONDS * (2 ** min(attempts - 1, 4)))
+            delay = _retry_delay(exc, attempts)
             try:
                 retry_run(run_id, str(exc), delay)
             except Exception as retry_exc:

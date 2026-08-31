@@ -56,6 +56,11 @@ services:
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
       DIALOGUE_MAX_CONCURRENT: 1
+      LLM_COMPACT_RUNTIME_PROMPT: ${LLM_COMPACT_RUNTIME_PROMPT:-true}
+      LLM_DIALOGUE_MAX_OUTPUT_TOKENS: ${LLM_DIALOGUE_MAX_OUTPUT_TOKENS:-640}
+      LLM_SUGGESTION_MAX_OUTPUT_TOKENS: ${LLM_SUGGESTION_MAX_OUTPUT_TOKENS:-384}
+      INTERACTIVE_PRIORITY_ENABLED: ${INTERACTIVE_PRIORITY_ENABLED:-true}
+      INGESTION_PAUSE_DURING_INTERACTIVE: ${INGESTION_PAUSE_DURING_INTERACTIVE:-true}
       # SQL_SERVER_HOST/INSTANCE/PORT proceden de .env.production. No deben
       # interpolarse aquí desde el .env de desarrollo.
       # Las respuestas usan la identidad por recurso almacenada en PostgreSQL.

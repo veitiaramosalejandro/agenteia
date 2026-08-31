@@ -17,6 +17,7 @@ from app.main import (
     notification_listener,
 )
 from app.response_queue import AgentResponseQueue
+from app.interactive_priority import interactive_work
 
 
 async def run_worker() -> None:
@@ -55,7 +56,8 @@ async def run_worker() -> None:
                     _attach_solidset_instance(candidates, instance)
                 for candidate in candidates:
                     candidate["response_request_id"] = request_id
-                result = await _process_auto_replies(candidates)
+                with interactive_work("agent-response-worker"):
+                    result = await _process_auto_replies(candidates)
                 if candidates and int(result) == 0:
                     raise RuntimeError("Ningún agente pudo completar el envío.")
                 try:

@@ -17,6 +17,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointIdsList, PointStruct
 
 from app.config import settings
+from app.interactive_priority import wait_for_interactive_idle
 from app.connectors.solidset_sql import connect as connect_solidset_sql
 from app.rag.vector_store import ensure_vector_collection
 
@@ -720,6 +721,12 @@ def run_system_knowledge_ingestion(
                     changed, unchanged = _documents_requiring_embedding(documents, run_id)
                     skipped += unchanged
                     for offset in range(0, len(changed), 100):
+                        waited = wait_for_interactive_idle()
+                        if waited >= 0.5:
+                            print(
+                                f"⏸️ Ingesta de sistema cedió {waited:.1f}s al chat "
+                                f"run={run_id}", flush=True,
+                            )
                         indexed += _upsert_documents(changed[offset:offset + 100], run_id)
                         _run_update(
                             run_id, RowsRead=read, RowsIndexed=indexed,

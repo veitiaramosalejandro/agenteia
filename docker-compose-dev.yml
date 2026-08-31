@@ -48,7 +48,13 @@ services:
       POSTGRES_PORT: 5432
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
-      DIALOGUE_MAX_CONCURRENT: ${DIALOGUE_MAX_CONCURRENT:-1}
+      # Una sola inferencia interactiva evita colas internas en una única GPU.
+      DIALOGUE_MAX_CONCURRENT: 1
+      LLM_COMPACT_RUNTIME_PROMPT: ${LLM_COMPACT_RUNTIME_PROMPT:-true}
+      LLM_DIALOGUE_MAX_OUTPUT_TOKENS: ${LLM_DIALOGUE_MAX_OUTPUT_TOKENS:-640}
+      LLM_SUGGESTION_MAX_OUTPUT_TOKENS: ${LLM_SUGGESTION_MAX_OUTPUT_TOKENS:-384}
+      INTERACTIVE_PRIORITY_ENABLED: ${INTERACTIVE_PRIORITY_ENABLED:-true}
+      INGESTION_PAUSE_DURING_INTERACTIVE: ${INGESTION_PAUSE_DURING_INTERACTIVE:-true}
       # Igual que producción: cada agente usa el SysLogin de PostgreSQL.
       SOLIDSET_LOGIN_USERNAME: ""
       SOLIDSET_LOGIN_PASSWORD: ""
@@ -243,7 +249,7 @@ services:
         aliases:
           - ollama-llm
 
-  # Embeddings de RAG conversacional e histórico, aislados de la ingesta masiva.
+  # Embeddings de RAG en CPU: en un host con una sola GPU evita competir con chat.
   ollama-embeddings:
     image: ollama/ollama:latest
     container_name: machining_ollama_embeddings
@@ -269,18 +275,10 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     networks:
       - machining-network
 
-  # Runtime GPU exclusivo para la ingesta completa de conocimiento del sistema.
-  # Evita que millones de filas bloqueen embeddings conversacionales/históricos.
+  # Runtime CPU para ingesta masiva; cede entre lotes mientras responde el chat.
   ollama-system-embeddings:
     image: ollama/ollama:latest
     container_name: machining_ollama_system_embeddings
@@ -299,19 +297,13 @@ services:
       - OLLAMA_CONTEXT_LENGTH=2048
       - OLLAMA_KEEP_ALIVE=${OLLAMA_SYSTEM_EMBEDDING_KEEP_ALIVE:-24h}
     mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-2g}
+    cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-2.0}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
       timeout: 5s
       retries: 12
       start_period: 15s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     networks:
       - machining-network
 

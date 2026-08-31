@@ -18,6 +18,7 @@ from app.historical.store import (
     ensure_schema, historical_agent_is_active, save_document, set_cursor, upsert_audit,
 )
 from app.rag.vector_store import ensure_vector_collection
+from app.interactive_priority import wait_for_interactive_idle
 
 
 def _document(row: dict[str, Any], instance_id: str, scope: str, agent: dict[str, Any]) -> dict[str, Any]:
@@ -101,6 +102,9 @@ def process_batch(batch: dict[str, Any]) -> dict[str, int]:
         )
         return {"accepted":accepted,"rejected":rejected,"indexed":0}
     if documents:
+        waited = wait_for_interactive_idle()
+        if waited >= 0.5:
+            print(f"⏸️ Ingesta histórica cedió {waited:.1f}s al chat", flush=True)
         embeddings = OllamaEmbeddings(base_url=settings.EMBEDDING_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
         client = QdrantClient(url=settings.VECTOR_DB_URL)
         ensure_vector_collection(client, settings.VECTOR_COLLECTION_NAME, embeddings)
