@@ -501,6 +501,17 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertEqual(2, len(result))
         self.assertTrue(all("canal" in item or "conversa" in item for item in result))
 
+    def test_safe_fallback_uses_concrete_same_resource_channel_context(self):
+        result = _safe_chat_question_fallback(
+            "pt", 2,
+            "[2026-09-01 10:00] Victor: Rever o controlo dimensional da célula.\n"
+            "[2026-09-01 10:05] Alejandro: Validar a integração do robô.",
+        )
+        self.assertEqual(2, len(result))
+        self.assertIn("integração do robô", result[0])
+        self.assertIn("controlo dimensional", result[1])
+        self.assertNotIn("qual dos temas", " ".join(result).casefold())
+
     def test_distinguishes_task_proposal_from_task_listing(self):
         self.assertTrue(_is_business_recommendation_request(
             "¿Qué tarea debería ponerle al recurso Alejandro Veitia?"

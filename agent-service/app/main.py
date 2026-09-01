@@ -5311,8 +5311,25 @@ def _reason_about_related_record(
     return str(result.content if hasattr(result, "content") else result).strip()
 
 
-def _safe_chat_question_fallback(language: str, count: int) -> list[str]:
+def _safe_chat_question_fallback(
+    language: str, count: int, scope_context: str = ""
+) -> list[str]:
     """Never exposes a model-format failure to the SolidSET advice UI."""
+    grounded: list[str] = []
+    for line in reversed(str(scope_context or "").splitlines()):
+        match = re.match(r"^(?:\[[^]]+\]\s*)?[^:]{1,120}:\s*(.+)$", line.strip())
+        message = _sanitize_related_record_value(match.group(1) if match else "")
+        if not message or len(message) < 12:
+            continue
+        candidate = {
+            "pt": f"Aprofundar este ponto da conversa: {message}",
+            "es": f"Profundizar en este punto de la conversación: {message}",
+            "en": f"Explore this point from the conversation: {message}",
+        }.get(language, f"Aprofundar este ponto da conversa: {message}")
+        if candidate.casefold() not in {item.casefold() for item in grounded}:
+            grounded.append(candidate[:360])
+        if len(grounded) >= max(1, min(4, count)):
+            return grounded
     messages = {
         "pt": [
             "Podemos confirmar qual dos temas recentes deste canal deve ser tratado primeiro?",
@@ -5620,6 +5637,9 @@ async def suggest_chat_question_response(
         )
         metadata = {
             "response_suggestion_mode": True,
+            # El solicitante humano y el agente verificado comparten dueño y
+            # ámbito de conocimiento. No es una conversación entre recursos.
+            "self_twin_collaboration_mode": True,
             "advice_mode": advice_mode and not advice_request,
             "advice_refine": advice_refine,
             "advice_request": advice_request,
@@ -5824,7 +5844,7 @@ async def suggest_chat_question_response(
             else:
                 print("⚠️ O modelo não respeitou o contrato após reparação; usando sugestões seguras.")
                 suggestions = _safe_chat_question_fallback(
-                    metadata["response_language"], suggestion_count
+                    metadata["response_language"], suggestion_count, scope_context
                 )
         suggestions = [
             _sanitize_related_record_value(item) for item in suggestions

@@ -3385,6 +3385,18 @@ class MachiningAgent:
                 suggestion_count = max(
                     1, min(6, int(message_metadata.get("response_suggestion_count") or 3))
                 )
+                if message_metadata.get("self_twin_collaboration_mode"):
+                    system_prompt += (
+                        "\n\n=== COLABORACIÓN DEL RECURSO CON SU PROPIO GEMELO ===\n"
+                        "El recurso humano solicitante es el propietario del agente seleccionado: comparten "
+                        "el mismo ámbito privado de conocimiento, reglas aprendidas e histórico autorizado, "
+                        "aunque conservan autoría separada. Esta pantalla sirve para pedir consejos al propio "
+                        "gemelo o enseñarle información. Usa solo el conocimiento de este recurso y el contexto "
+                        "actual; nunca consultes la memoria de otro agente. Una afirmación enseñada por el humano "
+                        "es conocimiento de usuario, no una respuesta previa del modelo. Redacta propuestas para "
+                        "que el humano las use o continúe refinándolas; no apliques aquí la regla de conversación "
+                        "entre recursos distintos ni hables del propietario como un tercero."
+                    )
                 if message_metadata.get("related_guidance_mode"):
                     response_language = str(
                         message_metadata.get("response_language") or "pt"
