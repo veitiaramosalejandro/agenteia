@@ -47,6 +47,18 @@ class TestInteractivePriority(unittest.TestCase):
             self.assertLess(len(prompt), 2200)
             self.assertIn("SELECT", prompt)
 
+    def test_runtime_prompts_preserve_twin_identity_in_every_language(self):
+        required_markers = {
+            "es": ("gemelo digital", "primera persona", "tercera persona", "memoria persistente aislada"),
+            "pt": ("gémeo digital", "primeira pessoa", "terceira pessoa", "memória persistente isolada"),
+            "en": ("digital twin", "first person", "third person", "isolated persistent memory"),
+        }
+        for language, markers in required_markers.items():
+            prompt = runtime_prompt(language)
+            for marker in markers:
+                with self.subTest(language=language, marker=marker):
+                    self.assertIn(marker, prompt)
+
     def test_embedding_restart_uses_short_retry_delay(self):
         with patch(
             "app.system.system_knowledge_worker.settings.SYSTEM_KNOWLEDGE_RETRY_SECONDS", 60

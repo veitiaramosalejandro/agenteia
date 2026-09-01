@@ -86,6 +86,32 @@ class TaskSubjectIsolationTests(unittest.TestCase):
                 self.assertEqual("victor-resource", resource)
                 self.assertIsNone(error)
 
+    def test_implicit_second_person_defaults_to_addressed_agent_twin(self):
+        resource, error = self.agent._business_subject_resource(
+            "¿Cuántas tareas incumpliste?",
+            requester_resource_id="alejandro-resource",
+            agent_resource_id="victor-resource",
+            addressed_to_agent=True,
+        )
+        self.assertEqual("victor-resource", resource)
+        self.assertIsNone(error)
+
+    def test_unqualified_business_entity_defaults_to_agent_only_when_addressed(self):
+        addressed_resource, _ = self.agent._business_subject_resource(
+            "Actividades pendientes",
+            requester_resource_id="alejandro-resource",
+            agent_resource_id="victor-resource",
+            addressed_to_agent=True,
+        )
+        ordinary_resource, _ = self.agent._business_subject_resource(
+            "Actividades pendientes",
+            requester_resource_id="alejandro-resource",
+            agent_resource_id="victor-resource",
+            addressed_to_agent=False,
+        )
+        self.assertEqual("victor-resource", addressed_resource)
+        self.assertEqual("alejandro-resource", ordinary_resource)
+
     def test_internal_person_lookup_lists_ambiguous_resources(self):
         self.agent.sistema_aprendizaje = _LearningStub([
             {"DisplayName": "Paulo Ferreira", "Username": "paulo.ferreira"},

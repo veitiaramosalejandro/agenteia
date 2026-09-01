@@ -1472,6 +1472,7 @@ class MachiningAgent:
         *,
         resource_id: Optional[str],
         perspective: str = "neutral",
+        subject_label: str = "",
     ) -> Optional[str]:
         """Resuelve registros operativos mediante un plan derivado del catálogo."""
         instance = current_instance()
@@ -1530,6 +1531,7 @@ class MachiningAgent:
                 plan,
                 self._detect_user_language(user_text),
                 perspective=perspective,
+                subject_label=subject_label,
             )
         except Exception as exc:
             print(f"⚠️ No se pudo resolver el registro mediante el esquema: {exc}", flush=True)
@@ -1541,6 +1543,7 @@ class MachiningAgent:
         *,
         requester_resource_id: Optional[str],
         agent_resource_id: Optional[str],
+        addressed_to_agent: bool = False,
     ) -> tuple[Optional[str], Optional[str]]:
         """Resuelve el recurso sujeto de consultas internas sin confiar IDs al LLM."""
         text = self._normalize_context_query(user_text).strip()
@@ -1614,12 +1617,20 @@ class MachiningAgent:
             lowered,
         ))
         if requires_personal_subject:
+            if addressed_to_agent and agent_resource_id:
+                return str(agent_resource_id), None
             return None, self._localized(
                 user_text,
                 es="No está claro de qué recurso preguntas. Indica si es tu información, la del agente o la de otro recurso.",
                 pt="Não está claro sobre qual recurso pergunta. Indique se é a sua informação, a do agente ou a de outro recurso.",
                 en="It is unclear which resource you mean. Specify whether it is yours, the agent's, or another resource's information.",
             )
+        # En un diálogo dirigido a un agente, una consulta operacional sin
+        # propietario explícito se interpreta respecto de su gemelo humano.
+        # Esto cubre flexiones verbales abiertas ("incumpliste", "participaste",
+        # etc.) sin mantener una lista fija de verbos por idioma.
+        if addressed_to_agent and agent_resource_id:
+            return str(agent_resource_id), None
         return requester_resource_id, None
 
     @staticmethod
@@ -2814,11 +2825,22 @@ class MachiningAgent:
                 user_text,
                 requester_resource_id=resource_id or None,
                 agent_resource_id=agent_resource_id or None,
+                addressed_to_agent=auto_reply_mode,
+            )
+            requester_is_twin = bool(
+                resource_id
+                and agent_resource_id
+                and resource_id.casefold() == agent_resource_id.casefold()
             )
             if business_subject_id and agent_resource_id and (
                 business_subject_id.casefold() == agent_resource_id.casefold()
             ):
-                business_perspective = "agent"
+                # Frente a otros recursos el agente habla como su gemelo. Si
+                # el propio gemelo humano le pregunta, se diferencia de él y
+                # lo menciona externamente para no confundir ambas identidades.
+                business_perspective = (
+                    "third_party" if requester_is_twin else "agent"
+                )
             elif business_subject_id and resource_id and (
                 business_subject_id.casefold() == resource_id.casefold()
             ):
@@ -2829,6 +2851,11 @@ class MachiningAgent:
                 user_text,
                 resource_id=business_subject_id,
                 perspective=business_perspective,
+                subject_label=(
+                    re.sub(r"\s*\[IA\]\s*$", "", agent_name, flags=re.IGNORECASE).strip()
+                    if business_perspective == "third_party"
+                    else ""
+                ),
             )
         if record_response is not None:
             if history:

@@ -602,6 +602,7 @@ def render_record_rows(
     plan: SchemaRecordPlan,
     language: str,
     perspective: str = "neutral",
+    subject_label: str = "",
 ) -> str:
     if not rows:
         if plan.temporal_scope == "latest":
@@ -641,10 +642,13 @@ def render_record_rows(
                 "en": f"You have **{len(rows)} verified pending activities**:",
             }.get(language, f"Tienes **{len(rows)} actividades pendientes verificadas**:")
         else:
+            owner = subject_label or {
+                "pt": "Este recurso", "en": "This resource"
+            }.get(language, "Este recurso")
             heading = {
-            "pt": f"Encontrei **{len(rows)} atividades verificadas** relacionadas com este recurso:",
-            "en": f"I found **{len(rows)} verified activities** related to this resource:",
-            }.get(language, f"Encontré **{len(rows)} actividades verificadas** relacionadas con este recurso:")
+                "pt": f"{owner} tem **{len(rows)} atividades verificadas** pendentes:",
+                "en": f"{owner} has **{len(rows)} verified pending activities**:",
+            }.get(language, f"{owner} tiene **{len(rows)} actividades pendientes verificadas**:")
         return heading + "\n" + "\n".join(rendered)
     if plan.response_mode == "overdue_count":
         count = int(row.get("OverdueCount") or 0)
@@ -661,10 +665,16 @@ def render_record_rows(
                 "pt": f"Tem **{count} {pt_tasks} ainda abaixo de 100% de progresso**.",
                 "en": f"You have **{count} {en_tasks} still below 100% progress**.",
             }.get(language, f"Tienes **{count} {es_tasks} todavía por debajo del 100% de progreso**.")
+        if not subject_label:
+            return {
+                "pt": f"Encontrei **{count} {pt_tasks} ainda abaixo de 100% de progresso** relacionada com este recurso." if count == 1 else f"Encontrei **{count} {pt_tasks} ainda abaixo de 100% de progresso** relacionadas com este recurso.",
+                "en": f"I found **{count} {en_tasks} still below 100% progress** related to this resource.",
+            }.get(language, f"Encontré **{count} {es_tasks} todavía por debajo del 100% de progreso** {'relacionada' if count == 1 else 'relacionadas'} con este recurso.")
+        owner = subject_label
         return {
-            "pt": f"Encontrei **{count} {pt_tasks} ainda abaixo de 100% de progresso** relacionada com este recurso." if count == 1 else f"Encontrei **{count} {pt_tasks} ainda abaixo de 100% de progresso** relacionadas com este recurso.",
-            "en": f"I found **{count} {en_tasks} still below 100% progress** related to this resource.",
-        }.get(language, f"Encontré **{count} {es_tasks} todavía por debajo del 100% de progreso** {'relacionada' if count == 1 else 'relacionadas'} con este recurso.")
+            "pt": f"{owner} tem **{count} {pt_tasks} ainda abaixo de 100% de progresso**.",
+            "en": f"{owner} has **{count} {en_tasks} still below 100% progress**.",
+        }.get(language, f"{owner} tiene **{count} {es_tasks} todavía por debajo del 100% de progreso**.")
     if plan.response_mode == "summary":
         total = int(row.get("TaskCount") or 0)
         completed = int(row.get("CompletedCount") or 0)
@@ -708,21 +718,42 @@ def render_record_rows(
                 f"**{in_progress} en progreso** y **{not_started} sin progreso registrado**. "
                 f"Tu progreso medio es **{average_text}** y tu cumplimiento total es **{completion_rate:.2f}%**."
             ))
+        if not subject_label:
+            return {
+                "pt": (
+                    f"Resumo verificado das tarefas relacionadas com este recurso: **{total} tarefas**; "
+                    f"**{completed} concluídas a 100%**, **{in_progress} em progresso**, "
+                    f"**{not_started} sem progresso registado** e **{active} com estado de trabalho ativo**. "
+                    f"Progresso médio: **{average_text}**; cumprimento integral: **{completion_rate:.2f}%**."
+                ),
+                "en": (
+                    f"Verified summary of tasks related to this resource: **{total} tasks**; "
+                    f"**{completed} completed at 100%**, **{in_progress} in progress**, "
+                    f"**{not_started} with no recorded progress**, and **{active} with active work status**. "
+                    f"Average progress: **{average_text}**; full completion rate: **{completion_rate:.2f}%**."
+                ),
+            }.get(language, (
+                f"Resumen verificado de las tareas relacionadas con este recurso: **{total} tareas**; "
+                f"**{completed} completadas al 100%**, **{in_progress} en progreso**, "
+                f"**{not_started} sin progreso registrado** y **{active} con estado de trabajo activo**. "
+                f"Progreso medio: **{average_text}**; cumplimiento total: **{completion_rate:.2f}%**."
+            ))
+        owner = subject_label
         return {
             "pt": (
-                f"Resumo verificado das tarefas relacionadas com este recurso: **{total} tarefas**; "
+                f"{owner} tem **{total} tarefas**; "
                 f"**{completed} concluídas a 100%**, **{in_progress} em progresso**, "
                 f"**{not_started} sem progresso registado** e **{active} com estado de trabalho ativo**. "
                 f"Progresso médio: **{average_text}**; cumprimento integral: **{completion_rate:.2f}%**."
             ),
             "en": (
-                f"Verified summary of tasks related to this resource: **{total} tasks**; "
+                f"{owner} has **{total} tasks**; "
                 f"**{completed} completed at 100%**, **{in_progress} in progress**, "
                 f"**{not_started} with no recorded progress**, and **{active} with active work status**. "
                 f"Average progress: **{average_text}**; full completion rate: **{completion_rate:.2f}%**."
             ),
         }.get(language, (
-            f"Resumen verificado de las tareas relacionadas con este recurso: **{total} tareas**; "
+            f"{owner} tiene **{total} tareas**; "
             f"**{completed} completadas al 100%**, **{in_progress} en progreso**, "
             f"**{not_started} sin progreso registrado** y **{active} con estado de trabajo activo**. "
             f"Progreso medio: **{average_text}**; cumplimiento total: **{completion_rate:.2f}%**."
@@ -745,10 +776,16 @@ def render_record_rows(
                 "pt": f"A sua tarefa mais recente é **{title}**{suffix}.",
                 "en": f"Your latest task is **{title}**{suffix}.",
             }.get(language, f"Tu última tarea es **{title}**{suffix}.")
+        if not subject_label:
+            return {
+                "pt": f"A tarefa mais recente relacionada com este recurso é **{title}**{suffix}.",
+                "en": f"The latest task related to this resource is **{title}**{suffix}.",
+            }.get(language, f"La última tarea relacionada con este recurso es **{title}**{suffix}.")
+        owner = subject_label
         return {
-            "pt": f"A tarefa mais recente relacionada com este recurso é **{title}**{suffix}.",
-            "en": f"The latest task related to this resource is **{title}**{suffix}.",
-        }.get(language, f"La última tarea relacionada con este recurso es **{title}**{suffix}.")
+            "pt": f"A tarefa mais recente de {owner} é **{title}**{suffix}.",
+            "en": f"{owner}'s latest task is **{title}**{suffix}.",
+        }.get(language, f"La última tarea de {owner} es **{title}**{suffix}.")
     if perspective == "agent":
         return {
             "pt": f"A tarefa atual em que estou a trabalhar é **{title}**{suffix}.",
@@ -759,7 +796,8 @@ def render_record_rows(
             "pt": f"A tarefa atual em que está a trabalhar é **{title}**{suffix}.",
             "en": f"The current task you are working on is **{title}**{suffix}.",
         }.get(language, f"La tarea actual en la que estás trabajando es **{title}**{suffix}.")
+    owner = subject_label or {"pt": "Este recurso", "en": "This resource"}.get(language, "Este recurso")
     return {
-        "pt": f"A tarefa atual em que este recurso está a trabalhar é **{title}**{suffix}.",
-        "en": f"The current task this resource is working on is **{title}**{suffix}.",
-    }.get(language, f"La tarea actual en la que trabaja este recurso es **{title}**{suffix}.")
+        "pt": f"A tarefa atual em que {owner} está a trabalhar é **{title}**{suffix}.",
+        "en": f"The current task {owner} is working on is **{title}**{suffix}.",
+    }.get(language, f"La tarea actual en la que trabaja {owner} es **{title}**{suffix}.")
