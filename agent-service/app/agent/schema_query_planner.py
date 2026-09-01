@@ -16,6 +16,14 @@ _RELATION_TERMS = {
     "pertenezco", "pertenece", "pertenço", "pertence", "belong", "belongs",
     "asociado", "asociada", "associado", "associada", "associated",
 }
+
+
+def _has_relation_intent(words: set[str]) -> bool:
+    """Reconoce flexiones abiertas sin enumerar cada conjugación."""
+    stems = ("pertenec", "pertenc", "belong", "asocia", "associa", "associat")
+    return bool(words.intersection(_RELATION_TERMS)) or any(
+        word.startswith(stem) for word in words for stem in stems
+    )
 _DISPLAY_COLUMNS = (
     "DisplayName", "FullName", "ShortName", "Name", "accountname", "Code",
     "Description", "Username", "ID",
@@ -163,7 +171,7 @@ def plan_identity_relationship_queries(
     """Devuelve rutas FK candidatas ordenadas para permitir fallback sin LLM."""
     words = _words(user_text)
     concept = _concept(user_text)
-    if not concept or not words.intersection(_RELATION_TERMS):
+    if not concept or not _has_relation_intent(words):
         return ()
     identities = (
         (("IDLogin",), str(login_id or "").strip()),
@@ -239,11 +247,94 @@ def plan_identity_relationship_queries(
                 anchor_table=anchor_name, target_table=target_name,
                 selected_columns=tuple(selected), path=(anchor_name, target_name),
             ))
+    if concept == "company" and resource_id:
+        community_company = _plan_resource_company_via_community(
+            tables, str(resource_id)
+        )
+        if community_company is not None:
+            plans.append(community_company)
     return tuple(plans)
 
 
+def _plan_resource_company_via_community(
+    tables: dict[str, dict[str, Any]], resource_id: str,
+) -> Optional[SchemaQueryPlan]:
+    """Planifica recurso→comunidad→empresa validando cada FK del catálogo."""
+    required = {
+        name: tables.get(name.casefold())
+        for name in (
+            "SysCommunity2Resource", "SysCommunity",
+            "SysCommunity2Company", "Entity",
+        )
+    }
+    if any(table is None for table in required.values()):
+        return None
+
+    def columns(table: dict[str, Any]) -> dict[str, str]:
+        return {
+            _column_name(column).casefold(): _column_name(column)
+            for column in table.get("columns") or [] if isinstance(column, dict)
+        }
+
+    def has_fk(table: dict[str, Any], column: str, target: str, target_column: str) -> bool:
+        return any(
+            str(fk.get("column") or "").casefold() == column.casefold()
+            and str(fk.get("referencedTable") or "").casefold() == target.casefold()
+            and str(fk.get("referencedColumn") or "").casefold() == target_column.casefold()
+            for fk in table.get("foreignKeys") or [] if isinstance(fk, dict)
+        )
+
+    resource_link = required["SysCommunity2Resource"]
+    community = required["SysCommunity"]
+    company_link = required["SysCommunity2Company"]
+    entity = required["Entity"]
+    resource_columns = columns(resource_link)
+    community_columns = columns(community)
+    company_columns = columns(company_link)
+    entity_columns = columns(entity)
+    required_columns = (
+        resource_columns.get("idresource"), resource_columns.get("idcommunity"),
+        community_columns.get("id"), company_columns.get("idcommunity"),
+        company_columns.get("idcompany"), entity_columns.get("id"),
+    )
+    if not all(required_columns):
+        return None
+    if not (
+        has_fk(resource_link, resource_columns["idcommunity"], "SysCommunity", community_columns["id"])
+        and has_fk(company_link, company_columns["idcommunity"], "SysCommunity", community_columns["id"])
+        and has_fk(company_link, company_columns["idcompany"], "Entity", entity_columns["id"])
+    ):
+        return None
+    selected = tuple(
+        entity_columns[name.casefold()]
+        for name in _DISPLAY_COLUMNS
+        if name.casefold() in entity_columns
+    )[:4]
+    if not selected:
+        return None
+    select_sql = ", ".join(f"target.[{name}] AS [{name}]" for name in selected)
+    query = (
+        f"SELECT DISTINCT TOP 50 {select_sql} "
+        "FROM [dbo].[SysCommunity2Resource] AS membership "
+        "INNER JOIN [dbo].[SysCommunity] AS community "
+        f"ON membership.[{resource_columns['idcommunity']}] = community.[{community_columns['id']}] "
+        "INNER JOIN [dbo].[SysCommunity2Company] AS company_membership "
+        f"ON company_membership.[{company_columns['idcommunity']}] = community.[{community_columns['id']}] "
+        "INNER JOIN [dbo].[Entity] AS target "
+        f"ON company_membership.[{company_columns['idcompany']}] = target.[{entity_columns['id']}] "
+        f"WHERE membership.[{resource_columns['idresource']}] = %s"
+    )
+    return SchemaQueryPlan(
+        query=query, parameters=[resource_id], concept="company",
+        anchor_table="SysCommunity2Resource", target_table="Entity",
+        selected_columns=selected,
+        path=("SysCommunity2Resource", "SysCommunity", "SysCommunity2Company", "Entity"),
+    )
+
+
 def render_relationship_rows(
-    rows: list[dict[str, Any]], plan: SchemaQueryPlan, language: str
+    rows: list[dict[str, Any]], plan: SchemaQueryPlan, language: str,
+    *, perspective: str = "requester", subject_label: str = "",
 ) -> str:
     values: list[str] = []
     for row in rows:
@@ -260,6 +351,17 @@ def render_relationship_rows(
             "en": "I found no verifiable active relationship for your user.",
         }.get(language, "No encontré una relación activa verificable para tu usuario.")
     rendered = ", ".join(values)
+    if perspective == "agent":
+        return {
+            "pt": f"No sistema, pertenço a **{rendered}**.",
+            "en": f"In the system, I belong to **{rendered}**.",
+        }.get(language, f"En el sistema pertenezco a **{rendered}**.")
+    if perspective == "third_party":
+        owner = subject_label or {"pt": "Este recurso", "en": "This resource"}.get(language, "Este recurso")
+        return {
+            "pt": f"No sistema, {owner} pertence a **{rendered}**.",
+            "en": f"In the system, {owner} belongs to **{rendered}**.",
+        }.get(language, f"En el sistema, {owner} pertenece a **{rendered}**.")
     return {
         "pt": f"A empresa à qual você pertence no sistema é **{rendered}**.",
         "en": f"In the system, you belong to: **{rendered}**.",

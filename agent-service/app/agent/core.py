@@ -1422,6 +1422,8 @@ class MachiningAgent:
         *,
         login_id: Optional[str],
         resource_id: Optional[str],
+        perspective: str = "requester",
+        subject_label: str = "",
     ) -> Optional[str]:
         """Planifica y ejecuta una relación usando únicamente el grafo FK capturado."""
         instance = current_instance()
@@ -1461,7 +1463,11 @@ class MachiningAgent:
                 if not isinstance(rows, list) or not rows:
                     continue
                 language = self._detect_user_language(user_text)
-                return render_relationship_rows(rows, plan, language)
+                return render_relationship_rows(
+                    rows, plan, language,
+                    perspective=perspective,
+                    subject_label=subject_label,
+                )
             return None
         except Exception as exc:
             print(f"⚠️ No se pudo resolver la relación mediante el grafo FK: {exc}", flush=True)
@@ -1553,7 +1559,8 @@ class MachiningAgent:
             r"(?:tarea|tareas|tarefa|tarefas|task|tasks|actividad|actividades|"
             r"atividade|atividades|activity|activities|chat|chats|mensaje|mensajes|"
             r"mensagem|mensagens|message|messages|canal|canales|canais|channel|channels|"
-            r"workroom|workrooms)"
+            r"workroom|workrooms|empresa|empresas|companhia|companhias|company|companies|"
+            r"comunidad|comunidades|comunidade|comunidades|community|communities)"
         )
         if not re.search(rf"\b{entity_pattern}\b", lowered):
             return requester_resource_id, None
@@ -2872,8 +2879,16 @@ class MachiningAgent:
         if business_knowledge_query and not response_suggestion_mode:
             relationship_response = self._resolve_schema_relationship_from_db(
                 user_text,
-                login_id=login_id or None,
+                # El login autenticado pertenece al interlocutor. Solo puede
+                # anclar la consulta cuando el sujeto también es ese recurso.
+                login_id=(login_id or None) if business_perspective == "requester" else None,
                 resource_id=business_subject_id,
+                perspective=business_perspective,
+                subject_label=(
+                    re.sub(r"\s*\[IA\]\s*$", "", agent_name, flags=re.IGNORECASE).strip()
+                    if business_perspective == "third_party"
+                    else ""
+                ),
             )
         if relationship_response is not None:
             if history:

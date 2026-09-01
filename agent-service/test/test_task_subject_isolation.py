@@ -96,6 +96,16 @@ class TaskSubjectIsolationTests(unittest.TestCase):
         self.assertEqual("victor-resource", resource)
         self.assertIsNone(error)
 
+    def test_company_membership_targets_addressed_agent_twin(self):
+        resource, error = self.agent._business_subject_resource(
+            "¿A qué empresa perteneces?",
+            requester_resource_id="alejandro-resource",
+            agent_resource_id="victor-resource",
+            addressed_to_agent=True,
+        )
+        self.assertEqual("victor-resource", resource)
+        self.assertIsNone(error)
+
     def test_unqualified_business_entity_defaults_to_agent_only_when_addressed(self):
         addressed_resource, _ = self.agent._business_subject_resource(
             "Actividades pendientes",

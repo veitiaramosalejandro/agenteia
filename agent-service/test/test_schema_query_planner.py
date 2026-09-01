@@ -46,6 +46,23 @@ CATALOG = {
             "schemaName": "dbo", "tableName": "SysLogin",
             "columns": [{"name": "IDLogin"}, {"name": "FullName"}], "foreignKeys": [],
         },
+        {
+            "schemaName": "dbo", "tableName": "SysCommunity2Resource",
+            "columns": [{"name": "IDCommunity"}, {"name": "IDResource"}],
+            "foreignKeys": [{"column": "IDCommunity", "referencedTable": "SysCommunity", "referencedColumn": "ID"}],
+        },
+        {
+            "schemaName": "dbo", "tableName": "SysCommunity",
+            "columns": [{"name": "ID"}, {"name": "Name"}], "foreignKeys": [],
+        },
+        {
+            "schemaName": "dbo", "tableName": "SysCommunity2Company",
+            "columns": [{"name": "IDCommunity"}, {"name": "IDCompany"}],
+            "foreignKeys": [
+                {"column": "IDCommunity", "referencedTable": "SysCommunity", "referencedColumn": "ID"},
+                {"column": "IDCompany", "referencedTable": "Entity", "referencedColumn": "ID"},
+            ],
+        },
     ]
 }
 
@@ -92,6 +109,17 @@ class SchemaQueryPlannerTests(unittest.TestCase):
         self.assertEqual([login_id], plan.parameters)
         self.assertNotIn(login_id, plan.query)
 
+    def test_spanish_second_person_company_membership_uses_resource_fk(self):
+        plan = plan_identity_relationship_query(
+            "¿A qué empresa perteneces?", CATALOG, resource_id="victor-resource"
+        )
+        self.assertIsNotNone(plan)
+        self.assertEqual(("SysResources", "Entity"), plan.path)
+        response = render_relationship_rows(
+            [{"ShortName": "ISICOM"}], plan, "es", perspective="agent"
+        )
+        self.assertEqual("En el sistema pertenezco a **ISICOM**.", response)
+
     def test_plan_requires_foreign_key_not_similar_names_only(self):
         catalog = {"tables": [dict(CATALOG["tables"][0], foreignKeys=[]), CATALOG["tables"][1]]}
         self.assertIsNone(plan_identity_relationship_query(
@@ -104,12 +132,29 @@ class SchemaQueryPlannerTests(unittest.TestCase):
             login_id="login-1", resource_id="resource-1",
         )
         self.assertEqual(
-            {("SysCompany2Login", "Entity"), ("SysResources", "Entity")},
+            {
+                ("SysCompany2Login", "Entity"),
+                ("SysResources", "Entity"),
+                ("SysCommunity2Resource", "SysCommunity", "SysCommunity2Company", "Entity"),
+            },
             {plan.path for plan in plans},
         )
         resource_plan = next(plan for plan in plans if plan.anchor_table == "SysResources")
         self.assertIn("anchor.[ResourceId] = %s", resource_plan.query)
         self.assertEqual(["resource-1"], resource_plan.parameters)
+
+    def test_company_membership_has_verified_community_fallback(self):
+        plans = plan_identity_relationship_queries(
+            "¿A qué empresa perteneces?", CATALOG, resource_id="victor-resource"
+        )
+        plan = next(item for item in plans if len(item.path) == 4)
+        self.assertEqual(
+            ("SysCommunity2Resource", "SysCommunity", "SysCommunity2Company", "Entity"),
+            plan.path,
+        )
+        self.assertIn("membership.[IDResource] = %s", plan.query)
+        self.assertIn("company_membership.[IDCompany] = target.[ID]", plan.query)
+        self.assertEqual(["victor-resource"], plan.parameters)
 
     def test_renderer_uses_only_returned_rows(self):
         plan = plan_identity_relationship_query(
