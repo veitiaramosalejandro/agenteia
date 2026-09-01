@@ -797,14 +797,21 @@ class MachiningAgent:
         )
         return heading + "\n" + "\n".join(f"- {name}" for name in names)
 
-    def _resolve_last_chat_message_from_db(self, user_id: str, canal_id: Optional[str], user_text: str) -> Optional[str]:
+    def _resolve_last_chat_message_from_db(
+        self,
+        user_id: str,
+        canal_id: Optional[str],
+        user_text: str,
+        *,
+        subject_resource_id: Optional[str] = None,
+    ) -> Optional[str]:
         """Resuelve de forma directa mensajes recientes del canal desde la BD del sistema."""
         try:
             requested_limit = self._extract_last_messages_limit(user_text)
             requested_offset = self._extract_last_messages_offset(user_text)
             exclude_agent_dialogue = self._requests_excluding_agent_dialogue(user_text)
             missing_canal_scope = not bool((canal_id or "").strip())
-            target_user_id = user_id
+            target_user_id = str(subject_resource_id or user_id)
             target_person = self._extract_target_person_name(user_text)
             if target_person:
                 resolved_target_user = self.sistema_aprendizaje.obtener_recurso_id_por_nombre(target_person)
@@ -821,7 +828,11 @@ class MachiningAgent:
                     max(20, (requested_limit + requested_offset) * (6 if exclude_agent_dialogue else 1)),
                 ),
                 offset=0,
-                sender_resource_id=target_user_id if target_person else None,
+                sender_resource_id=(
+                    target_user_id
+                    if target_person or target_user_id.casefold() != str(user_id).casefold()
+                    else None
+                ),
             )
             if not rows:
                 return None
@@ -1387,6 +1398,7 @@ class MachiningAgent:
         instance = current_instance()
         if not instance or not instance.get("ID"):
             return None
+
         try:
             snapshot = get_solidset_schema_snapshot(instance["ID"])
             catalog = (snapshot or {}).get("Catalog")
@@ -1408,16 +1420,123 @@ class MachiningAgent:
                 "query": plan.query,
                 "parameters_json": json.dumps(plan.parameters),
             }))
+            if raw_result.startswith(("Error ", "⚠️")):
+                print(
+                    f"⚠️ Consulta operacional rechazada concept={plan.concept}: "
+                    f"{raw_result[:300]}",
+                    flush=True,
+                )
+                return self._localized(
+                    user_text,
+                    es="No pude verificar esa información en SQL Server. Para proteger los datos de cada recurso, no responderé usando información de otro recurso ni una suposición.",
+                    pt="Não consegui verificar essa informação no SQL Server. Para proteger os dados de cada recurso, não responderei com informação de outro recurso nem com uma suposição.",
+                    en="I could not verify that information in SQL Server. To protect each resource's data, I will not answer with another resource's information or a guess.",
+                )
             if raw_result.startswith("La consulta se ejecutó correctamente"):
                 rows = []
             else:
-                rows = json.loads(raw_result)
+                try:
+                    rows = json.loads(raw_result)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    return self._localized(
+                        user_text,
+                        es="SQL Server no devolvió un resultado verificable. No utilizaré memoria de otro recurso ni inventaré una respuesta.",
+                        pt="O SQL Server não devolveu um resultado verificável. Não utilizarei memória de outro recurso nem inventarei uma resposta.",
+                        en="SQL Server did not return a verifiable result. I will not use another resource's memory or invent an answer.",
+                    )
             if not isinstance(rows, list):
                 return None
             return render_record_rows(rows, plan, self._detect_user_language(user_text))
         except Exception as exc:
             print(f"⚠️ No se pudo resolver el registro mediante el esquema: {exc}", flush=True)
             return None
+
+    def _business_subject_resource(
+        self,
+        user_text: str,
+        *,
+        requester_resource_id: Optional[str],
+        agent_resource_id: Optional[str],
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Resuelve el recurso sujeto de consultas internas sin confiar IDs al LLM."""
+        text = self._normalize_context_query(user_text).strip()
+        lowered = text.casefold()
+        entity_pattern = (
+            r"(?:tarea|tareas|tarefa|tarefas|task|tasks|actividad|actividades|"
+            r"atividade|atividades|activity|activities|chat|chats|mensaje|mensajes|"
+            r"mensagem|mensagens|message|messages|canal|canales|canais|channel|channels|"
+            r"workroom|workrooms)"
+        )
+        if not re.search(rf"\b{entity_pattern}\b", lowered):
+            return requester_resource_id, None
+
+        first_person = bool(re.search(
+            r"\b(?:yo|eu|mi|mis|m[ií]a|m[ií]as|meu|minha|minhas|my|mine|"
+            r"tengo|estoy|tenho|estou|i\s+have|i\s+am)\b",
+            lowered,
+        ))
+        second_person = bool(re.search(
+            r"\b(?:t[uú]|tus|t[uú]a|tuy[oa]s?|usted|ustedes|voc[eê]|voc[eê]s|you|"
+            r"teu|teus|tua|tuas|seu|seus|sua|suas|your|yours|"
+            r"tienes|tens|t[eê]m|you\s+have|est[aá]s|you\s+are)\b",
+            lowered,
+        ))
+        if first_person and second_person:
+            return None, self._localized(
+                user_text,
+                es="La pregunta mezcla tus tareas con las mías. Indica qué recurso quieres consultar.",
+                pt="A pergunta mistura as suas tarefas com as minhas. Indique qual recurso deseja consultar.",
+                en="The question mixes your tasks with mine. Specify which resource to query.",
+            )
+        if second_person:
+            if agent_resource_id:
+                return str(agent_resource_id), None
+            return None, self._localized(
+                user_text,
+                es="No puedo verificar la identidad del agente destinatario y no consultaré tareas de otro recurso.",
+                pt="Não consigo verificar a identidade do agente destinatário e não consultarei tarefas de outro recurso.",
+                en="I cannot verify the recipient agent identity, so I will not query another resource's tasks.",
+            )
+        if first_person:
+            if requester_resource_id:
+                return str(requester_resource_id), None
+            return None, self._localized(
+                user_text,
+                es="No puedo verificar tu recurso autenticado y no consultaré tareas sin identidad.",
+                pt="Não consigo verificar o seu recurso autenticado e não consultarei tarefas sem identidade.",
+                en="I cannot verify your authenticated resource, so I will not query tasks without an identity.",
+            )
+
+        explicit = re.search(
+            rf"\b{entity_pattern}\s+(?:de|do|da|of)\s+"
+            r"(.+?)(?=\s+(?:en|no|na|in)\s+(?:el\s+|o\s+|the\s+)?sistema|[?.!,]|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if explicit:
+            person_name = " ".join(explicit.group(1).strip().split())[:120]
+            resolved = self.sistema_aprendizaje.obtener_recurso_id_por_nombre(person_name)
+            if resolved:
+                return str(resolved), None
+            return None, self._localized(
+                user_text,
+                es=f"No pude verificar un recurso único para **{person_name}**.",
+                pt=f"Não consegui verificar um recurso único para **{person_name}**.",
+                en=f"I could not verify a unique resource for **{person_name}**.",
+            )
+        requires_personal_subject = bool(re.search(
+            rf"\b(?:[uú]ltim[oa]s?|latest|last|atual|actual|current)\b.*\b{entity_pattern}\b|"
+            rf"\b{entity_pattern}\b.*\b(?:[uú]ltim[oa]s?|latest|last|atual|actual|current)\b",
+            lowered,
+        ))
+        if requires_personal_subject:
+            return None, self._localized(
+                user_text,
+                es="No está claro de qué recurso preguntas. Indica si es tu información, la del agente o la de otro recurso.",
+                pt="Não está claro sobre qual recurso pergunta. Indique se é a sua informação, a do agente ou a de outro recurso.",
+                en="It is unclear which resource you mean. Specify whether it is yours, the agent's, or another resource's information.",
+            )
+        return requester_resource_id, None
 
     @staticmethod
     def _contextual_web_query(user_text: str, previous_user_text: Any) -> str:
@@ -2567,9 +2686,16 @@ class MachiningAgent:
 
         # --- 3.0.1 REGISTROS OPERATIVOS PLANIFICADOS DESDE EL ESQUEMA ---
         record_response = None
+        business_subject_id = resource_id or None
+        subject_error = None
         if business_knowledge_query and not response_suggestion_mode:
-            record_response = self._resolve_schema_record_from_db(
-                user_text, resource_id=resource_id or None
+            business_subject_id, subject_error = self._business_subject_resource(
+                user_text,
+                requester_resource_id=resource_id or None,
+                agent_resource_id=agent_resource_id or None,
+            )
+            record_response = subject_error or self._resolve_schema_record_from_db(
+                user_text, resource_id=business_subject_id
             )
         if record_response is not None:
             if history:
@@ -2586,7 +2712,7 @@ class MachiningAgent:
             relationship_response = self._resolve_schema_relationship_from_db(
                 user_text,
                 login_id=login_id or None,
-                resource_id=resource_id or None,
+                resource_id=business_subject_id,
             )
         if relationship_response is not None:
             if history:
@@ -2648,7 +2774,9 @@ class MachiningAgent:
 
         # --- 3.4 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
         if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and self._is_channel_names_intent(user_text):
-            channel_names_response = self._resolve_channel_names_from_db(user_id, user_text)
+            channel_names_response = self._resolve_channel_names_from_db(
+                business_subject_id or user_id, user_text
+            )
             if history:
                 try:
                     history.add_user_message(user_text)
@@ -2725,7 +2853,12 @@ class MachiningAgent:
 
         # --- 3.9 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
         if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and self._is_last_chat_message_intent(user_text):
-            direct_response = self._resolve_last_chat_message_from_db(user_id, canal_id, user_text)
+            direct_response = self._resolve_last_chat_message_from_db(
+                user_id,
+                canal_id,
+                user_text,
+                subject_resource_id=business_subject_id,
+            )
             if direct_response is not None:
                 if history:
                     try:
@@ -3004,6 +3137,16 @@ class MachiningAgent:
                 "resultados obtenidos desde SolidSET Data API/SQL Server. No uses Internet, no "
                 "inventes datos y no afirmes que faltan tablas sin haber agotado esas fuentes."
             )
+            if business_subject_id:
+                system_prompt += (
+                    "\nRECURSO SUJETO VERIFICADO PARA ESTE TURNO:\n"
+                    f"IDResource: {business_subject_id}\n"
+                    "Toda consulta sobre información personal del turno —incluidos chats, mensajes, "
+                    "actividades, tareas y canales— debe filtrar este IDResource dentro de SQL o seguir "
+                    "una relación de clave foránea verificable hasta él. No sustituyas este recurso por "
+                    "el interlocutor, otro agente o un resultado semánticamente parecido. No muestres "
+                    "el identificador técnico en la respuesta."
+                )
             if business_schema_context:
                 system_prompt += (
                     "\n\n=== CATÁLOGO SQL REAL DE LA INSTANCIA ===\n"

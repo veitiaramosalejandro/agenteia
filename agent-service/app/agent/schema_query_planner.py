@@ -40,6 +40,7 @@ class SchemaRecordPlan:
     concept: str
     table: str
     selected_columns: tuple[str, ...]
+    temporal_scope: str = "latest"
 
 
 def plan_related_record_query(
@@ -305,10 +306,11 @@ def plan_identity_record_query(
     schema_name = str(table.get("schemaName") or "dbo")
     if not _valid_identifier(table_name) or not _valid_identifier(schema_name):
         return None
-    identity_columns = [
-        columns[name] for name in ("idresourceassign", "idresource", "resourceid")
-        if name in columns and _valid_identifier(columns[name])
-    ]
+    identity_columns = list(dict.fromkeys(
+        actual for normalized, actual in columns.items()
+        if (normalized == "resourceid" or normalized.startswith("idresource"))
+        and _valid_identifier(actual)
+    ))
     preferred = (
         "ShortName", "Code", "WorkStatus", "RunningStatus", "Status",
         "ProgressPercentage", "StartDate", "EndDate", "ModifiedTime", "IDTask",
@@ -318,8 +320,81 @@ def plan_identity_record_query(
     )
     if not selected:
         return None
-    where = ["(" + " OR ".join(f"src.[{name}] = %s" for name in identity_columns) + ")"]
+    resource_predicates = [f"src.[{name}] = %s" for name in identity_columns]
     parameters = [str(resource_id)] * len(identity_columns)
+
+    # Las asignaciones de una entidad pueden estar normalizadas en tablas de
+    # relación. Se descubren desde el catálogo y se incorporan al mismo filtro
+    # de identidad; nunca se recuperan filas globales para filtrarlas después.
+    task_key = columns.get("idtask")
+    if task_key:
+        relation_candidates: list[tuple[int, dict[str, Any], dict[str, str]]] = []
+        for relation_table in catalog.get("tables") or []:
+            if not isinstance(relation_table, dict) or relation_table is table:
+                continue
+            relation_name = str(relation_table.get("tableName") or "")
+            relation_columns = {
+                _column_name(column).casefold(): _column_name(column)
+                for column in relation_table.get("columns") or [] if isinstance(column, dict)
+            }
+            if "idtask" not in relation_columns:
+                continue
+            relation_identity = next((
+                actual for normalized, actual in relation_columns.items()
+                if normalized == "resourceid" or normalized.startswith("idresource")
+            ), None)
+            if not relation_identity:
+                continue
+            foreign_keys = [
+                fk for fk in relation_table.get("foreignKeys") or []
+                if isinstance(fk, dict)
+            ]
+            task_fk_verified = any(
+                str(fk.get("column") or "").casefold() == "idtask"
+                and str(fk.get("referencedTable") or "").casefold() == table_name.casefold()
+                and str(fk.get("referencedColumn") or "").casefold() == task_key.casefold()
+                for fk in foreign_keys
+            )
+            resource_fk_verified = any(
+                str(fk.get("column") or "").casefold() == relation_identity.casefold()
+                and str(fk.get("referencedTable") or "").casefold() == "sysresources"
+                for fk in foreign_keys
+            )
+            if not (task_fk_verified and resource_fk_verified):
+                continue
+            score = (4 if "task" in relation_name.casefold() else 0) + (
+                2 if "role" in relation_name.casefold() else 0
+            )
+            relation_candidates.append((score, relation_table, relation_columns))
+        relation_candidates.sort(
+            key=lambda item: (-item[0], str(item[1].get("tableName") or ""))
+        )
+        for index, (_score, relation_table, relation_columns) in enumerate(relation_candidates):
+            relation_name = str(relation_table.get("tableName") or "")
+            relation_schema = str(relation_table.get("schemaName") or "dbo")
+            relation_resource = next(
+                actual for normalized, actual in relation_columns.items()
+                if normalized == "resourceid" or normalized.startswith("idresource")
+            )
+            relation_task = relation_columns["idtask"]
+            if not all(_valid_identifier(value) for value in (
+                relation_name, relation_schema, relation_resource, relation_task,
+            )):
+                continue
+            alias = f"rel{index}"
+            active_clause = ""
+            if "linkstate" in relation_columns:
+                active_clause = f" AND ISNULL({alias}.[{relation_columns['linkstate']}], 1) <> 0"
+            resource_predicates.append(
+                f"EXISTS (SELECT 1 FROM [{relation_schema}].[{relation_name}] AS {alias} "
+                f"WHERE {alias}.[{relation_task}] = src.[{task_key}] "
+                f"AND {alias}.[{relation_resource}] = %s{active_clause})"
+            )
+            parameters.append(str(resource_id))
+
+    if not resource_predicates:
+        return None
+    where = ["(" + " OR ".join(resource_predicates) + ")"]
     archived = columns.get("archived")
     if archived:
         where.append(f"ISNULL(src.[{archived}], 0) = 0")
@@ -330,9 +405,11 @@ def plan_identity_record_query(
             where.append(f"ISNULL(src.[{work_status}], 0) <> 0")
         if progress:
             where.append(f"ISNULL(src.[{progress}], 0) < 100")
-    order_columns = [
-        columns[name] for name in ("workstatus", "modifiedtime", "startdate") if name in columns
-    ]
+    order_names = (
+        ("workstatus", "modifiedtime", "startdate")
+        if current_intent else ("modifiedtime", "startdate")
+    )
+    order_columns = [columns[name] for name in order_names if name in columns]
     order_sql = ", ".join(f"src.[{name}] DESC" for name in order_columns)
     query = (
         "SELECT TOP 10 "
@@ -344,11 +421,17 @@ def plan_identity_record_query(
     return SchemaRecordPlan(
         query=query, parameters=parameters, concept="task", table=table_name,
         selected_columns=selected,
+        temporal_scope="current" if current_intent else "latest",
     )
 
 
 def render_record_rows(rows: list[dict[str, Any]], plan: SchemaRecordPlan, language: str) -> str:
     if not rows:
+        if plan.temporal_scope == "latest":
+            return {
+                "pt": "Não encontrei nenhuma tarefa verificável relacionada com este recurso.",
+                "en": "I found no verifiable task related to this resource.",
+            }.get(language, "No encontré ninguna tarea verificable relacionada con este recurso.")
         return {
             "pt": "Não encontrei nenhuma tarefa atual em execução para o seu recurso.",
             "en": "I found no current task in progress for your resource.",
@@ -361,7 +444,12 @@ def render_record_rows(rows: list[dict[str, Any]], plan: SchemaRecordPlan, langu
         suffix = f" (progress: {progress}%)"
     elif progress is not None and language not in {"pt", "en"}:
         suffix = f" (progreso: {progress}%)"
+    if plan.temporal_scope == "latest":
+        return {
+            "pt": f"A tarefa mais recente relacionada com este recurso é **{title}**{suffix}.",
+            "en": f"The latest task related to this resource is **{title}**{suffix}.",
+        }.get(language, f"La última tarea relacionada con este recurso es **{title}**{suffix}.")
     return {
-        "pt": f"A tarefa atual em que você está a trabalhar é **{title}**{suffix}.",
-        "en": f"The current task you are working on is **{title}**{suffix}.",
-    }.get(language, f"La tarea actual en la que estás trabajando es **{title}**{suffix}.")
+        "pt": f"A tarefa atual em que este recurso está a trabalhar é **{title}**{suffix}.",
+        "en": f"The current task this resource is working on is **{title}**{suffix}.",
+    }.get(language, f"La tarea actual en la que trabaja este recurso es **{title}**{suffix}.")

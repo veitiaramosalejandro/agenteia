@@ -62,6 +62,17 @@ TASK_CATALOG = {
             {"name": "ModifiedTime"}, {"name": "Archived"},
         ],
         "foreignKeys": [],
+    }, {
+        "schemaName": "operations",
+        "tableName": "SysTaskResourceRole",
+        "columns": [
+            {"name": "IDTaskResourceRole"}, {"name": "IDTask"},
+            {"name": "IDResource"}, {"name": "LinkState"},
+        ],
+        "foreignKeys": [
+            {"column": "IDTask", "referencedTable": "SysTask", "referencedColumn": "IDTask"},
+            {"column": "IDResource", "referencedTable": "SysResources", "referencedColumn": "ResourceId"},
+        ],
     }]
 }
 
@@ -130,9 +141,27 @@ class SchemaQueryPlannerTests(unittest.TestCase):
         self.assertIn("FROM [operations].[SysTask]", plan.query)
         self.assertIn("src.[IDResource] = %s", plan.query)
         self.assertIn("src.[IDResourceAssign] = %s", plan.query)
+        self.assertIn("[operations].[SysTaskResourceRole]", plan.query)
+        self.assertIn("rel0.[IDResource] = %s", plan.query)
+        self.assertIn("ISNULL(rel0.[LinkState], 1) <> 0", plan.query)
         self.assertIn("ISNULL(src.[WorkStatus], 0) <> 0", plan.query)
-        self.assertEqual([resource_id, resource_id], plan.parameters)
+        self.assertEqual([resource_id, resource_id, resource_id], plan.parameters)
         self.assertNotIn(resource_id, plan.query)
+
+    def test_latest_task_uses_relation_and_latest_renderer(self):
+        plan = plan_identity_record_query(
+            "¿Cuál fue tu última tarea en el sistema?",
+            TASK_CATALOG,
+            resource_id="victor-resource",
+        )
+        self.assertIsNotNone(plan)
+        self.assertEqual("latest", plan.temporal_scope)
+        self.assertIn("EXISTS (SELECT 1", plan.query)
+        self.assertEqual(["victor-resource"] * 3, plan.parameters)
+        response = render_record_rows(
+            [{"ShortName": "Tarea de Victor", "ProgressPercentage": 90}], plan, "es"
+        )
+        self.assertIn("última tarea relacionada", response)
 
     def test_current_task_in_portuguese_uses_same_safe_plan(self):
         plan = plan_identity_record_query(
