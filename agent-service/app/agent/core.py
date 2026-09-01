@@ -780,7 +780,9 @@ class MachiningAgent:
             print(f"⚠️ Error generando resumen directo del canal: {exc}")
             return "No pude generar el resumen del canal en este momento."
 
-    def _resolve_channel_names_from_db(self, user_id: str, user_text: str) -> str:
+    def _resolve_channel_names_from_db(
+        self, user_id: str, user_text: str, *, perspective: str = "requester"
+    ) -> str:
         rows = self.sistema_aprendizaje.obtener_canales_usuario(user_id)
         if not rows:
             return self._localized(
@@ -791,12 +793,27 @@ class MachiningAgent:
             )
         names = list(dict.fromkeys(str(row.get("name") or "").strip() for row in rows))
         names = [name for name in names if name]
-        heading = self._localized(
-            user_text,
-            es=f"Tienes acceso a **{len(names)} canales** en SOLIDSET:",
-            pt=f"Tem acesso a **{len(names)} canais** no SOLIDSET:",
-            en=f"You have access to **{len(names)} channels** in SOLIDSET:",
-        )
+        if perspective == "agent":
+            heading = self._localized(
+                user_text,
+                es=f"Participo en **{len(names)} canales** en SOLIDSET:",
+                pt=f"Participo em **{len(names)} canais** no SOLIDSET:",
+                en=f"I participate in **{len(names)} channels** in SOLIDSET:",
+            )
+        elif perspective == "requester":
+            heading = self._localized(
+                user_text,
+                es=f"Tienes acceso a **{len(names)} canales** en SOLIDSET:",
+                pt=f"Tem acesso a **{len(names)} canais** no SOLIDSET:",
+                en=f"You have access to **{len(names)} channels** in SOLIDSET:",
+            )
+        else:
+            heading = self._localized(
+                user_text,
+                es=f"Este recurso participa en **{len(names)} canales** en SOLIDSET:",
+                pt=f"Este recurso participa em **{len(names)} canais** no SOLIDSET:",
+                en=f"This resource participates in **{len(names)} channels** in SOLIDSET:",
+            )
         visible = names[:50]
         result = heading + "\n" + "\n".join(f"- {name}" for name in visible)
         if len(names) > len(visible):
@@ -1450,7 +1467,11 @@ class MachiningAgent:
             return None
 
     def _resolve_schema_record_from_db(
-        self, user_text: str, *, resource_id: Optional[str]
+        self,
+        user_text: str,
+        *,
+        resource_id: Optional[str],
+        perspective: str = "neutral",
     ) -> Optional[str]:
         """Resuelve registros operativos mediante un plan derivado del catálogo."""
         instance = current_instance()
@@ -1504,7 +1525,12 @@ class MachiningAgent:
                     )
             if not isinstance(rows, list):
                 return None
-            return render_record_rows(rows, plan, self._detect_user_language(user_text))
+            return render_record_rows(
+                rows,
+                plan,
+                self._detect_user_language(user_text),
+                perspective=perspective,
+            )
         except Exception as exc:
             print(f"⚠️ No se pudo resolver el registro mediante el esquema: {exc}", flush=True)
             return None
@@ -2781,6 +2807,7 @@ class MachiningAgent:
         # --- 3.0.1 REGISTROS OPERATIVOS PLANIFICADOS DESDE EL ESQUEMA ---
         record_response = None
         business_subject_id = resource_id or None
+        business_perspective = "requester"
         subject_error = None
         if business_knowledge_query and not response_suggestion_mode:
             business_subject_id, subject_error = self._business_subject_resource(
@@ -2788,8 +2815,20 @@ class MachiningAgent:
                 requester_resource_id=resource_id or None,
                 agent_resource_id=agent_resource_id or None,
             )
+            if business_subject_id and agent_resource_id and (
+                business_subject_id.casefold() == agent_resource_id.casefold()
+            ):
+                business_perspective = "agent"
+            elif business_subject_id and resource_id and (
+                business_subject_id.casefold() == resource_id.casefold()
+            ):
+                business_perspective = "requester"
+            else:
+                business_perspective = "third_party"
             record_response = subject_error or self._resolve_schema_record_from_db(
-                user_text, resource_id=business_subject_id
+                user_text,
+                resource_id=business_subject_id,
+                perspective=business_perspective,
             )
         if record_response is not None:
             if history:
@@ -2869,7 +2908,9 @@ class MachiningAgent:
         # --- 3.4 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
         if not response_suggestion_mode and not vector_answers_business_query and valid_user_guid and self._is_channel_names_intent(user_text):
             channel_names_response = self._resolve_channel_names_from_db(
-                business_subject_id or user_id, user_text
+                business_subject_id or user_id,
+                user_text,
+                perspective=business_perspective,
             )
             if history:
                 try:

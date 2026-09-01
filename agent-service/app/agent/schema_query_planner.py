@@ -597,7 +597,12 @@ def _plan_resource_activity_query(
     )
 
 
-def render_record_rows(rows: list[dict[str, Any]], plan: SchemaRecordPlan, language: str) -> str:
+def render_record_rows(
+    rows: list[dict[str, Any]],
+    plan: SchemaRecordPlan,
+    language: str,
+    perspective: str = "neutral",
+) -> str:
     if not rows:
         if plan.temporal_scope == "latest":
             return {
@@ -625,17 +630,41 @@ def render_record_rows(rows: list[dict[str, Any]], plan: SchemaRecordPlan, langu
             if end_date not in (None, ""):
                 details.append(f"fin: {end_date}")
             rendered.append(f"- **{title}**" + (f" ({'; '.join(details)})" if details else ""))
-        heading = {
+        if perspective == "agent":
+            heading = {
+                "pt": f"Tenho **{len(rows)} atividades verificadas** pendentes:",
+                "en": f"I have **{len(rows)} verified pending activities**:",
+            }.get(language, f"Tengo **{len(rows)} actividades pendientes verificadas**:")
+        elif perspective == "requester":
+            heading = {
+                "pt": f"Tem **{len(rows)} atividades verificadas** pendentes:",
+                "en": f"You have **{len(rows)} verified pending activities**:",
+            }.get(language, f"Tienes **{len(rows)} actividades pendientes verificadas**:")
+        else:
+            heading = {
             "pt": f"Encontrei **{len(rows)} atividades verificadas** relacionadas com este recurso:",
             "en": f"I found **{len(rows)} verified activities** related to this resource:",
-        }.get(language, f"Encontré **{len(rows)} actividades verificadas** relacionadas con este recurso:")
+            }.get(language, f"Encontré **{len(rows)} actividades verificadas** relacionadas con este recurso:")
         return heading + "\n" + "\n".join(rendered)
     if plan.response_mode == "overdue_count":
         count = int(row.get("OverdueCount") or 0)
+        es_tasks = "tarea vencida" if count == 1 else "tareas vencidas"
+        pt_tasks = "tarefa vencida" if count == 1 else "tarefas vencidas"
+        en_tasks = "overdue task" if count == 1 else "overdue tasks"
+        if perspective == "agent":
+            return {
+                "pt": f"Tenho **{count} {pt_tasks} que ainda está abaixo de 100% de progresso**." if count == 1 else f"Tenho **{count} {pt_tasks} que ainda estão abaixo de 100% de progresso**.",
+                "en": f"I have **{count} {en_tasks} still below 100% progress**.",
+            }.get(language, f"Tengo **{count} {es_tasks} que todavía {'está' if count == 1 else 'están'} por debajo del 100% de progreso**.")
+        if perspective == "requester":
+            return {
+                "pt": f"Tem **{count} {pt_tasks} ainda abaixo de 100% de progresso**.",
+                "en": f"You have **{count} {en_tasks} still below 100% progress**.",
+            }.get(language, f"Tienes **{count} {es_tasks} todavía por debajo del 100% de progreso**.")
         return {
-            "pt": f"Encontrei **{count} tarefas vencidas e ainda abaixo de 100% de progresso** relacionadas com este recurso.",
-            "en": f"I found **{count} overdue tasks still below 100% progress** related to this resource.",
-        }.get(language, f"Encontré **{count} tareas vencidas y todavía por debajo del 100% de progreso** relacionadas con este recurso.")
+            "pt": f"Encontrei **{count} {pt_tasks} ainda abaixo de 100% de progresso** relacionada com este recurso." if count == 1 else f"Encontrei **{count} {pt_tasks} ainda abaixo de 100% de progresso** relacionadas com este recurso.",
+            "en": f"I found **{count} {en_tasks} still below 100% progress** related to this resource.",
+        }.get(language, f"Encontré **{count} {es_tasks} todavía por debajo del 100% de progreso** {'relacionada' if count == 1 else 'relacionadas'} con este recurso.")
     if plan.response_mode == "summary":
         total = int(row.get("TaskCount") or 0)
         completed = int(row.get("CompletedCount") or 0)
@@ -645,6 +674,40 @@ def render_record_rows(rows: list[dict[str, Any]], plan: SchemaRecordPlan, langu
         average = row.get("AverageProgress")
         average_text = f"{float(average):.2f}%" if average is not None else "sin dato"
         completion_rate = (completed * 100 / total) if total else 0.0
+        if perspective == "agent":
+            return {
+                "pt": (
+                    f"Tenho **{total} tarefas**: **{completed} concluídas a 100%**, "
+                    f"**{in_progress} em progresso** e **{not_started} sem progresso registado**. "
+                    f"O meu progresso médio é **{average_text}** e o cumprimento integral é **{completion_rate:.2f}%**."
+                ),
+                "en": (
+                    f"I have **{total} tasks**: **{completed} completed at 100%**, "
+                    f"**{in_progress} in progress**, and **{not_started} with no recorded progress**. "
+                    f"My average progress is **{average_text}** and my full completion rate is **{completion_rate:.2f}%**."
+                ),
+            }.get(language, (
+                f"Tengo **{total} tareas**: **{completed} completadas al 100%**, "
+                f"**{in_progress} en progreso** y **{not_started} sin progreso registrado**. "
+                f"Mi progreso medio es **{average_text}** y mi cumplimiento total es **{completion_rate:.2f}%**."
+            ))
+        if perspective == "requester":
+            return {
+                "pt": (
+                    f"Tem **{total} tarefas**: **{completed} concluídas a 100%**, "
+                    f"**{in_progress} em progresso** e **{not_started} sem progresso registado**. "
+                    f"O seu progresso médio é **{average_text}** e o cumprimento integral é **{completion_rate:.2f}%**."
+                ),
+                "en": (
+                    f"You have **{total} tasks**: **{completed} completed at 100%**, "
+                    f"**{in_progress} in progress**, and **{not_started} with no recorded progress**. "
+                    f"Your average progress is **{average_text}** and your full completion rate is **{completion_rate:.2f}%**."
+                ),
+            }.get(language, (
+                f"Tienes **{total} tareas**: **{completed} completadas al 100%**, "
+                f"**{in_progress} en progreso** y **{not_started} sin progreso registrado**. "
+                f"Tu progreso medio es **{average_text}** y tu cumplimiento total es **{completion_rate:.2f}%**."
+            ))
         return {
             "pt": (
                 f"Resumo verificado das tarefas relacionadas com este recurso: **{total} tarefas**; "
@@ -672,10 +735,30 @@ def render_record_rows(rows: list[dict[str, Any]], plan: SchemaRecordPlan, langu
     elif progress is not None and language not in {"pt", "en"}:
         suffix = f" (progreso: {progress}%)"
     if plan.temporal_scope == "latest":
+        if perspective == "agent":
+            return {
+                "pt": f"A minha tarefa mais recente é **{title}**{suffix}.",
+                "en": f"My latest task is **{title}**{suffix}.",
+            }.get(language, f"Mi última tarea es **{title}**{suffix}.")
+        if perspective == "requester":
+            return {
+                "pt": f"A sua tarefa mais recente é **{title}**{suffix}.",
+                "en": f"Your latest task is **{title}**{suffix}.",
+            }.get(language, f"Tu última tarea es **{title}**{suffix}.")
         return {
             "pt": f"A tarefa mais recente relacionada com este recurso é **{title}**{suffix}.",
             "en": f"The latest task related to this resource is **{title}**{suffix}.",
         }.get(language, f"La última tarea relacionada con este recurso es **{title}**{suffix}.")
+    if perspective == "agent":
+        return {
+            "pt": f"A tarefa atual em que estou a trabalhar é **{title}**{suffix}.",
+            "en": f"The current task I am working on is **{title}**{suffix}.",
+        }.get(language, f"La tarea actual en la que estoy trabajando es **{title}**{suffix}.")
+    if perspective == "requester":
+        return {
+            "pt": f"A tarefa atual em que está a trabalhar é **{title}**{suffix}.",
+            "en": f"The current task you are working on is **{title}**{suffix}.",
+        }.get(language, f"La tarea actual en la que estás trabajando es **{title}**{suffix}.")
     return {
         "pt": f"A tarefa atual em que este recurso está a trabalhar é **{title}**{suffix}.",
         "en": f"The current task this resource is working on is **{title}**{suffix}.",

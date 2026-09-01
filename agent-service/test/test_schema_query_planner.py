@@ -201,6 +201,43 @@ class SchemaQueryPlannerTests(unittest.TestCase):
         response = render_record_rows([{"OverdueCount": 7}], plan, "es")
         self.assertIn("**7 tareas", response)
 
+        agent_response = render_record_rows(
+            [{"OverdueCount": 7}], plan, "es", perspective="agent"
+        )
+        self.assertEqual(
+            "Tengo **7 tareas vencidas que todavía están por debajo del 100% de progreso**.",
+            agent_response,
+        )
+        requester_response = render_record_rows(
+            [{"OverdueCount": 7}], plan, "es", perspective="requester"
+        )
+        self.assertTrue(requester_response.startswith("Tienes **7 tareas"))
+
+        singular_response = render_record_rows(
+            [{"OverdueCount": 1}], plan, "es", perspective="agent"
+        )
+        self.assertEqual(
+            "Tengo **1 tarea vencida que todavía está por debajo del 100% de progreso**.",
+            singular_response,
+        )
+
+    def test_agent_task_summary_uses_first_person_without_changing_facts(self):
+        plan = plan_identity_record_query(
+            "Dame un resumen del estado de tus tareas y cumplimiento",
+            TASK_CATALOG,
+            resource_id="victor-resource",
+        )
+        response = render_record_rows([{
+            "TaskCount": 20,
+            "CompletedCount": 5,
+            "InProgressCount": 12,
+            "NotStartedCount": 3,
+            "AverageProgress": "62.50",
+            "ActiveCount": 2,
+        }], plan, "es", perspective="agent")
+        self.assertTrue(response.startswith("Tengo **20 tareas**"))
+        self.assertIn("Mi progreso medio es **62.50%**", response)
+
     def test_current_task_in_portuguese_uses_same_safe_plan(self):
         plan = plan_identity_record_query(
             "Qual é a tarefa atual em que estou a trabalhar?",
