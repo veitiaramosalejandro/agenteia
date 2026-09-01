@@ -41,6 +41,7 @@ class SchemaRecordPlan:
     table: str
     selected_columns: tuple[str, ...]
     temporal_scope: str = "latest"
+    response_mode: str = "single"
 
 
 def plan_related_record_query(
@@ -274,10 +275,21 @@ def plan_identity_record_query(
     """Planifica registros actuales por semántica de columnas, sin nombres SQL fijos."""
     words = _words(user_text)
     task_terms = {"tarea", "tareas", "tarefa", "tarefas", "task", "tasks"}
+    activity_terms = {"actividad", "actividades", "atividade", "atividades", "activity", "activities"}
+    if words.intersection(activity_terms) and resource_id:
+        return _plan_resource_activity_query(user_text, catalog, str(resource_id))
     if not words.intersection(task_terms) or not resource_id:
         return None
     current_intent = bool(words.intersection({
         "actual", "atual", "current", "trabajando", "trabalhando", "trabalhar", "working",
+    }))
+    summary_intent = bool(words.intersection({
+        "resumen", "resumo", "summary", "estado", "status", "cumplimiento",
+        "cumprimento", "progreso", "progresso", "progress",
+    }))
+    overdue_intent = bool(words.intersection({
+        "incumpli", "incumpliste", "incumplida", "incumplidas", "vencida", "vencidas",
+        "atrasada", "atrasadas", "overdue", "late",
     }))
     candidates: list[tuple[int, dict[str, Any], dict[str, str]]] = []
     for table in catalog.get("tables") or []:
@@ -411,17 +423,177 @@ def plan_identity_record_query(
     )
     order_columns = [columns[name] for name in order_names if name in columns]
     order_sql = ", ".join(f"src.[{name}] DESC" for name in order_columns)
-    query = (
-        "SELECT TOP 10 "
-        + ", ".join(f"src.[{name}] AS [{name}]" for name in selected)
-        + f" FROM [{schema_name}].[{table_name}] AS src WHERE "
-        + " AND ".join(where)
-        + (f" ORDER BY {order_sql}" if order_sql else "")
-    )
+    if overdue_intent and columns.get("duedate"):
+        due_date = columns["duedate"]
+        progress = columns.get("progresspercentage")
+        overdue_where = list(where)
+        overdue_where.append(f"src.[{due_date}] < GETDATE()")
+        if progress:
+            overdue_where.append(f"ISNULL(src.[{progress}], 0) < 100")
+        query = (
+            f"SELECT COUNT(*) AS [OverdueCount] FROM [{schema_name}].[{table_name}] AS src WHERE "
+            + " AND ".join(overdue_where)
+        )
+        selected = ("OverdueCount",)
+    elif summary_intent:
+        aggregates = ["COUNT(*) AS [TaskCount]"]
+        progress = columns.get("progresspercentage")
+        if progress:
+            aggregates.extend((
+                f"SUM(CASE WHEN src.[{progress}] >= 100 THEN 1 ELSE 0 END) AS [CompletedCount]",
+                f"SUM(CASE WHEN src.[{progress}] > 0 AND src.[{progress}] < 100 THEN 1 ELSE 0 END) AS [InProgressCount]",
+                f"SUM(CASE WHEN src.[{progress}] IS NULL OR src.[{progress}] <= 0 THEN 1 ELSE 0 END) AS [NotStartedCount]",
+                f"AVG(CAST(src.[{progress}] AS decimal(18,2))) AS [AverageProgress]",
+            ))
+        work_status = columns.get("workstatus")
+        if work_status:
+            aggregates.append(
+                f"SUM(CASE WHEN ISNULL(src.[{work_status}], 0) <> 0 THEN 1 ELSE 0 END) AS [ActiveCount]"
+            )
+        query = (
+            "SELECT " + ", ".join(aggregates)
+            + f" FROM [{schema_name}].[{table_name}] AS src WHERE "
+            + " AND ".join(where)
+        )
+        selected = tuple(
+            name for name in (
+                "TaskCount", "CompletedCount", "InProgressCount", "NotStartedCount",
+                "AverageProgress", "ActiveCount",
+            )
+            if any(f"[{name}]" in aggregate for aggregate in aggregates)
+        )
+    else:
+        query = (
+            "SELECT TOP 10 "
+            + ", ".join(f"src.[{name}] AS [{name}]" for name in selected)
+            + f" FROM [{schema_name}].[{table_name}] AS src WHERE "
+            + " AND ".join(where)
+            + (f" ORDER BY {order_sql}" if order_sql else "")
+        )
     return SchemaRecordPlan(
         query=query, parameters=parameters, concept="task", table=table_name,
         selected_columns=selected,
         temporal_scope="current" if current_intent else "latest",
+        response_mode=("overdue_count" if overdue_intent and columns.get("duedate")
+                       else "summary" if summary_intent else "single"),
+    )
+
+
+def _plan_resource_activity_query(
+    user_text: str, catalog: dict[str, Any], resource_id: str,
+) -> Optional[SchemaRecordPlan]:
+    """Planifica actividades mediante columnas y relaciones FK verificadas."""
+    table = next((
+        value for value in catalog.get("tables") or []
+        if isinstance(value, dict)
+        and str(value.get("tableName") or "").casefold() == "activity"
+    ), None)
+    if not table:
+        return None
+    table_name = str(table.get("tableName") or "")
+    schema_name = str(table.get("schemaName") or "dbo")
+    columns = {
+        _column_name(column).casefold(): _column_name(column)
+        for column in table.get("columns") or [] if isinstance(column, dict)
+    }
+    activity_key = columns.get("idactivity")
+    if not activity_key or not all(_valid_identifier(v) for v in (table_name, schema_name, activity_key)):
+        return None
+
+    direct_resource_columns = list(dict.fromkeys(
+        actual for normalized, actual in columns.items()
+        if (normalized == "resourceid" or normalized.startswith("idresource"))
+        and _valid_identifier(actual)
+    ))
+    predicates = [f"src.[{column}] = %s" for column in direct_resource_columns]
+    parameters = [resource_id] * len(direct_resource_columns)
+
+    for index, relation in enumerate(catalog.get("tables") or []):
+        if not isinstance(relation, dict):
+            continue
+        relation_columns = {
+            _column_name(column).casefold(): _column_name(column)
+            for column in relation.get("columns") or [] if isinstance(column, dict)
+        }
+        relation_resource = next((
+            actual for normalized, actual in relation_columns.items()
+            if normalized == "resourceid" or normalized.startswith("idresource")
+        ), None)
+        relation_activity = relation_columns.get("idactivity")
+        if not relation_resource or not relation_activity:
+            continue
+        foreign_keys = [fk for fk in relation.get("foreignKeys") or [] if isinstance(fk, dict)]
+        links_activity = any(
+            str(fk.get("column") or "").casefold() == relation_activity.casefold()
+            and str(fk.get("referencedTable") or "").casefold() == table_name.casefold()
+            and str(fk.get("referencedColumn") or "").casefold() == activity_key.casefold()
+            for fk in foreign_keys
+        )
+        links_resource = any(
+            str(fk.get("column") or "").casefold() == relation_resource.casefold()
+            and str(fk.get("referencedTable") or "").casefold() == "sysresources"
+            for fk in foreign_keys
+        )
+        if not (links_activity and links_resource):
+            continue
+        relation_name = str(relation.get("tableName") or "")
+        relation_schema = str(relation.get("schemaName") or "dbo")
+        if not all(_valid_identifier(v) for v in (
+            relation_name, relation_schema, relation_resource, relation_activity,
+        )):
+            continue
+        alias = f"rel{index}"
+        active_clauses = []
+        if "linkstate" in relation_columns:
+            active_clauses.append(f"ISNULL({alias}.[{relation_columns['linkstate']}], 1) <> 0")
+        if "participationactive" in relation_columns:
+            active_clauses.append(
+                f"ISNULL({alias}.[{relation_columns['participationactive']}], 1) <> 0"
+            )
+        suffix = "" if not active_clauses else " AND " + " AND ".join(active_clauses)
+        predicates.append(
+            f"EXISTS (SELECT 1 FROM [{relation_schema}].[{relation_name}] AS {alias} "
+            f"WHERE {alias}.[{relation_activity}] = src.[{activity_key}] "
+            f"AND {alias}.[{relation_resource}] = %s{suffix})"
+        )
+        parameters.append(resource_id)
+    if not predicates:
+        return None
+
+    where = ["(" + " OR ".join(predicates) + ")"]
+    words = _words(user_text)
+    pending = bool(words.intersection({
+        "pendiente", "pendientes", "pendente", "pendentes", "pending", "open",
+    }))
+    if pending and "iscomplete" in columns:
+        where.append(f"ISNULL(src.[{columns['iscomplete']}], 0) = 0")
+    selected_names = (
+        "subject", "activitycode", "statusdescription", "status", "iscomplete",
+        "priority", "startdate", "enddate", "modifiedtime", "idactivity",
+    )
+    selected = tuple(columns[name] for name in selected_names if name in columns)
+    if not selected:
+        return None
+    order_names = ("enddate", "modifiedtime", "startdate") if pending else (
+        "modifiedtime", "startdate",
+    )
+    order_columns = [columns[name] for name in order_names if name in columns]
+    query = (
+        "SELECT TOP 15 "
+        + ", ".join(f"src.[{name}] AS [{name}]" for name in selected)
+        + f" FROM [{schema_name}].[{table_name}] AS src WHERE "
+        + " AND ".join(where)
+        + (" ORDER BY " + ", ".join(f"src.[{name}] DESC" for name in order_columns)
+           if order_columns else "")
+    )
+    return SchemaRecordPlan(
+        query=query,
+        parameters=parameters,
+        concept="activity",
+        table=table_name,
+        selected_columns=selected,
+        temporal_scope="current" if pending else "latest",
+        response_mode="list",
     )
 
 
@@ -437,6 +609,61 @@ def render_record_rows(rows: list[dict[str, Any]], plan: SchemaRecordPlan, langu
             "en": "I found no current task in progress for your resource.",
         }.get(language, "No encontré ninguna tarea actual en ejecución para tu recurso.")
     row = rows[0]
+    if plan.response_mode == "list":
+        rendered = []
+        for item in rows:
+            title = str(
+                item.get("subject") or item.get("Subject")
+                or item.get("activityCode") or item.get("ActivityCode")
+                or item.get("IDActivity") or "Actividad sin título"
+            ).strip()
+            status = item.get("StatusDescription") or item.get("statusDescription")
+            end_date = item.get("endDate") or item.get("EndDate")
+            details = []
+            if status not in (None, ""):
+                details.append(f"estado: {status}")
+            if end_date not in (None, ""):
+                details.append(f"fin: {end_date}")
+            rendered.append(f"- **{title}**" + (f" ({'; '.join(details)})" if details else ""))
+        heading = {
+            "pt": f"Encontrei **{len(rows)} atividades verificadas** relacionadas com este recurso:",
+            "en": f"I found **{len(rows)} verified activities** related to this resource:",
+        }.get(language, f"Encontré **{len(rows)} actividades verificadas** relacionadas con este recurso:")
+        return heading + "\n" + "\n".join(rendered)
+    if plan.response_mode == "overdue_count":
+        count = int(row.get("OverdueCount") or 0)
+        return {
+            "pt": f"Encontrei **{count} tarefas vencidas e ainda abaixo de 100% de progresso** relacionadas com este recurso.",
+            "en": f"I found **{count} overdue tasks still below 100% progress** related to this resource.",
+        }.get(language, f"Encontré **{count} tareas vencidas y todavía por debajo del 100% de progreso** relacionadas con este recurso.")
+    if plan.response_mode == "summary":
+        total = int(row.get("TaskCount") or 0)
+        completed = int(row.get("CompletedCount") or 0)
+        in_progress = int(row.get("InProgressCount") or 0)
+        not_started = int(row.get("NotStartedCount") or 0)
+        active = int(row.get("ActiveCount") or 0)
+        average = row.get("AverageProgress")
+        average_text = f"{float(average):.2f}%" if average is not None else "sin dato"
+        completion_rate = (completed * 100 / total) if total else 0.0
+        return {
+            "pt": (
+                f"Resumo verificado das tarefas relacionadas com este recurso: **{total} tarefas**; "
+                f"**{completed} concluídas a 100%**, **{in_progress} em progresso**, "
+                f"**{not_started} sem progresso registado** e **{active} com estado de trabalho ativo**. "
+                f"Progresso médio: **{average_text}**; cumprimento integral: **{completion_rate:.2f}%**."
+            ),
+            "en": (
+                f"Verified summary of tasks related to this resource: **{total} tasks**; "
+                f"**{completed} completed at 100%**, **{in_progress} in progress**, "
+                f"**{not_started} with no recorded progress**, and **{active} with active work status**. "
+                f"Average progress: **{average_text}**; full completion rate: **{completion_rate:.2f}%**."
+            ),
+        }.get(language, (
+            f"Resumen verificado de las tareas relacionadas con este recurso: **{total} tareas**; "
+            f"**{completed} completadas al 100%**, **{in_progress} en progreso**, "
+            f"**{not_started} sin progreso registrado** y **{active} con estado de trabajo activo**. "
+            f"Progreso medio: **{average_text}**; cumplimiento total: **{completion_rate:.2f}%**."
+        ))
     title = str(row.get("ShortName") or row.get("Code") or row.get("IDTask") or "").strip()
     progress = row.get("ProgressPercentage")
     suffix = f" (progresso: {progress}%)" if progress is not None and language == "pt" else ""

@@ -859,6 +859,34 @@ class SistemaAprendizaje:
             print(f"⚠️ Error buscando recurso por nombre '{nombre}': {e}")
             return None
 
+    def buscar_recursos_por_nombre(self, nombre: str, limit: int = 10) -> List[Dict]:
+        """Devuelve coincidencias internas auditables sin elegir una ambigua."""
+        nombre = (nombre or "").strip()
+        if not nombre:
+            return []
+        try:
+            with self._connect_sql_with_retry(context="resources_by_name") as conn:
+                with conn.cursor(as_dict=True) as cursor:
+                    self._execute_with_retry(
+                        cursor,
+                        query="""
+                            SELECT DISTINCT TOP (%s)
+                              sr.ResourceId, sr.DisplayName, sl.FullName, sl.Username
+                            FROM dbo.SysResources sr WITH (NOLOCK)
+                            LEFT JOIN dbo.SysLogin sl WITH (NOLOCK)
+                              ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
+                            WHERE sl.FullName LIKE %s OR sl.Username LIKE %s
+                               OR sr.DisplayName LIKE %s
+                            ORDER BY sl.FullName, sl.Username, sr.DisplayName
+                        """,
+                        params=(max(1, min(int(limit), 20)), f"%{nombre}%", f"%{nombre}%", f"%{nombre}%"),
+                        context="resources_by_name_query",
+                    )
+                    return [dict(row) for row in (cursor.fetchall() or [])]
+        except Exception as exc:
+            print(f"⚠️ Error buscando recursos por nombre '{nombre}': {exc}")
+            return []
+
     # ============================================================
     # 2. OBTENER MENSAJES DE CHAT (VERSIÓN ULTRARÁPIDA)
     # ============================================================

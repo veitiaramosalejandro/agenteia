@@ -12,6 +12,10 @@ class _LearningStub:
         self.names.append(name)
         return self.resolved
 
+    def buscar_recursos_por_nombre(self, name, limit=10):
+        self.names.append(name)
+        return list(self.resolved or []) if isinstance(self.resolved, list) else []
+
 
 class TaskSubjectIsolationTests(unittest.TestCase):
     def setUp(self):
@@ -81,6 +85,16 @@ class TaskSubjectIsolationTests(unittest.TestCase):
                 )
                 self.assertEqual("victor-resource", resource)
                 self.assertIsNone(error)
+
+    def test_internal_person_lookup_lists_ambiguous_resources(self):
+        self.agent.sistema_aprendizaje = _LearningStub([
+            {"DisplayName": "Paulo Ferreira", "Username": "paulo.ferreira"},
+            {"DisplayName": "Paulo Mateus", "Username": "Paulo.Mateus"},
+        ])
+        response = self.agent._resolve_internal_person_information("¿Información de Paulo?")
+        self.assertIn("Paulo Ferreira", response)
+        self.assertIn("Paulo Mateus", response)
+        self.assertIn("varios recursos internos", response)
 
 
 if __name__ == "__main__":

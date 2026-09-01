@@ -493,7 +493,8 @@ class MachiningAgent:
         has_channel = any(term in text for term in ("canal", "canales", "canais", "channel", "channels", "workroom", "sala"))
         asks_names = any(term in text for term in (
             "nombre", "nombres", "lista", "listar", "cuales", "cuáles", "dime",
-            "nome", "nomes", "quais", "names", "list", "which",
+            "nome", "nomes", "quais", "names", "list", "which", "participas",
+            "participa", "perteneces", "pertenece", "participa", "pertence",
         ))
         return has_channel and asks_names
 
@@ -788,14 +789,67 @@ class MachiningAgent:
                 pt="Não encontrei canais acessíveis para o seu utilizador no SQL Server.",
                 en="I could not find any channels accessible to your user in SQL Server.",
             )
-        names = [row["name"] for row in rows]
+        names = list(dict.fromkeys(str(row.get("name") or "").strip() for row in rows))
+        names = [name for name in names if name]
         heading = self._localized(
             user_text,
             es=f"Tienes acceso a **{len(names)} canales** en SOLIDSET:",
             pt=f"Tem acesso a **{len(names)} canais** no SOLIDSET:",
             en=f"You have access to **{len(names)} channels** in SOLIDSET:",
         )
-        return heading + "\n" + "\n".join(f"- {name}" for name in names)
+        visible = names[:50]
+        result = heading + "\n" + "\n".join(f"- {name}" for name in visible)
+        if len(names) > len(visible):
+            result += self._localized(
+                user_text,
+                es=f"\n- … y {len(names) - len(visible)} canales adicionales. Puedes pedirme que los filtre por nombre o tipo.",
+                pt=f"\n- … e mais {len(names) - len(visible)} canais. Pode pedir-me para os filtrar por nome ou tipo.",
+                en=f"\n- … and {len(names) - len(visible)} additional channels. You can ask me to filter them by name or type.",
+            )
+        return result
+
+    def _resolve_internal_person_information(self, user_text: str) -> Optional[str]:
+        """Resuelve solicitudes generales de personas contra recursos internos."""
+        text = self._normalize_context_query(user_text).strip()
+        match = re.search(
+            r"\b(?:informaci[oó]n|informação|information|datos|dados|details?|detalles)\s+"
+            r"(?:de|do|da|about)\s+(.+?)[?.!]*$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        name = " ".join(match.group(1).strip().split())[:120]
+        rows = self.sistema_aprendizaje.buscar_recursos_por_nombre(name, limit=10)
+        if not rows:
+            return self._localized(
+                user_text,
+                es=f"No encontré ningún recurso interno que coincida con **{name}**.",
+                pt=f"Não encontrei nenhum recurso interno correspondente a **{name}**.",
+                en=f"I found no internal resource matching **{name}**.",
+            )
+        labels = []
+        for row in rows:
+            display = str(row.get("DisplayName") or row.get("FullName") or "").strip()
+            username = str(row.get("Username") or "").strip()
+            label = display or username
+            if label:
+                labels.append(f"{label} (@{username})" if username and username != label else label)
+        labels = list(dict.fromkeys(labels))
+        if len(labels) == 1:
+            return self._localized(
+                user_text,
+                es=f"Encontré el recurso interno **{labels[0]}**. Indica qué información necesitas: tareas, actividades, canales, mensajes o estado.",
+                pt=f"Encontrei o recurso interno **{labels[0]}**. Indique que informação precisa: tarefas, atividades, canais, mensagens ou estado.",
+                en=f"I found the internal resource **{labels[0]}**. Specify what you need: tasks, activities, channels, messages, or status.",
+            )
+        rendered = "\n".join(f"- {label}" for label in labels)
+        return self._localized(
+            user_text,
+            es=f"Encontré varios recursos internos que coinciden con **{name}**:\n{rendered}\nIndica cuál deseas consultar.",
+            pt=f"Encontrei vários recursos internos correspondentes a **{name}**:\n{rendered}\nIndique qual deseja consultar.",
+            en=f"I found several internal resources matching **{name}**:\n{rendered}\nSpecify which one you want to query.",
+        )
 
     def _resolve_last_chat_message_from_db(
         self,
@@ -1310,6 +1364,10 @@ class MachiningAgent:
             "pertenezco", "pertenece", "pertenço", "pertence", "belong",
             "trabajando", "trabajar", "trabalhando", "trabalhar", "working",
             "tarea actual", "tarefa atual", "current task", "en curso", "em curso",
+            "pendiente", "pendientes", "pendente", "pendentes", "pending",
+            "participa", "participas", "participação", "participacion", "participación",
+            "incumpl", "vencida", "vencidas", "overdue", "late",
+            "este mes", "this month", "este mês", "cambió", "cambio", "mudou", "changed",
         )
         if any(term in text for term in live_terms):
             return True
@@ -2533,10 +2591,15 @@ class MachiningAgent:
             # sending an internal/personal question to public web search.
             external_query_mode = False
             tool_allowlist = set()
-        elif (
-            self._is_external_information_query(user_text)
-            or not self._is_internal_domain_query(user_text)
-        ):
+        elif self._is_external_information_query(user_text):
+            external_query_mode = True
+            if tool_allowlist is None:
+                tool_allowlist = {"google_web_search"}
+        elif auto_reply_mode:
+            external_query_mode = False
+            if tool_allowlist is None:
+                tool_allowlist = {"query_sql_server", "get_db_schema"}
+        elif not self._is_internal_domain_query(user_text):
             external_query_mode = True
             if tool_allowlist is None:
                 tool_allowlist = {"google_web_search"}
@@ -2683,6 +2746,37 @@ class MachiningAgent:
         vector_answers_business_query = bool(
             business_rag_context and not live_business_query
         )
+
+        normalized_business_text = self._normalize_context_query(user_text).casefold()
+        asks_unspecified_change = bool(re.search(
+            r"\b(?:cambi[oó]|cambios|changed|changes|mudou|mudan[cç]as?)\b",
+            normalized_business_text,
+        )) and bool(re.search(
+            r"\b(?:mes|month|m[eê]s|semana|week|a[nñ]o|year)\b",
+            normalized_business_text,
+        )) and not self._is_internal_domain_query(user_text)
+        if auto_reply_mode and asks_unspecified_change:
+            return self._localized(
+                user_text,
+                es="¿Qué cambios quieres revisar: tareas, actividades, canales, mensajes, reuniones u otro ámbito de SolidSET?",
+                pt="Que alterações pretende consultar: tarefas, atividades, canais, mensagens, reuniões ou outro âmbito do SolidSET?",
+                en="Which changes do you want to review: tasks, activities, channels, messages, meetings, or another SolidSET area?",
+            )
+
+        # Las referencias nominales sin entidad (p. ej. "información de Paulo")
+        # se resuelven primero contra recursos internos. Nunca se derivan a web
+        # ni se elige silenciosamente una coincidencia parcial ambigua.
+        person_information_response = None
+        if not response_suggestion_mode:
+            person_information_response = self._resolve_internal_person_information(user_text)
+        if person_information_response is not None:
+            if history:
+                try:
+                    history.add_user_message(user_text)
+                    history.add_ai_message(person_information_response)
+                except Exception as exc:
+                    print(f"⚠️ Error guardando respuesta de recurso interno: {exc}")
+            return person_information_response
 
         # --- 3.0.1 REGISTROS OPERATIVOS PLANIFICADOS DESDE EL ESQUEMA ---
         record_response = None

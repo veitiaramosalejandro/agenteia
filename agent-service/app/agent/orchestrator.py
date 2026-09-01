@@ -93,10 +93,14 @@ class SolidSETOrchestrator:
             route = "general_conversation"
         elif is_business(user_text):
             route = "work_sql_rag"
-        elif (
-            self.agent._is_external_information_query(user_text)
-            or not self.agent._is_internal_domain_query(user_text)
-        ):
+        elif self.agent._is_external_information_query(user_text):
+            route = "external_web"
+        elif bool(state.get("auto_reply_mode")):
+            # Una pregunta dirigida a un agente SolidSET se interpreta primero
+            # contra su conocimiento y datos de trabajo. La ausencia de una
+            # palabra de dominio no autoriza una búsqueda pública.
+            route = "work_sql_rag"
+        elif not self.agent._is_internal_domain_query(user_text):
             route = "external_web"
         else:
             route = "work_sql_rag"

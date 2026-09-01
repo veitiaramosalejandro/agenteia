@@ -51,6 +51,11 @@ class LanguageResolver:
         clean = " ".join(str(text or "").split())
         if not clean or self._detector is None:
             return LanguageDecision("", 0.0, "undetermined")
+        # Los signos de interrogación/exclamación de apertura son evidencia
+        # ortográfica inequívoca y evitan que frases españolas cortas se
+        # clasifiquen como francés o portugués.
+        if "¿" in clean or "¡" in clean:
+            return LanguageDecision("es", 1.0, "orthographic_signal")
         try:
             values = self._detector.compute_language_confidence_values(clean)
             if not values:

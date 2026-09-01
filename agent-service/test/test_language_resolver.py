@@ -55,6 +55,13 @@ class TestLanguageResolver(unittest.TestCase):
         self.assertEqual("pt", decision.language)
         self.assertEqual("locale", decision.source)
 
+    def test_opening_question_mark_is_unambiguous_spanish_signal(self):
+        decision = self.resolver.resolve(
+            "¿En qué canales participas?", session_id="short-spanish", locale="pt-PT"
+        )
+        self.assertEqual("es", decision.language)
+        self.assertEqual("orthographic_signal", decision.source)
+
 
 if __name__ == "__main__":
     unittest.main()

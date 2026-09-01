@@ -951,6 +951,34 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
                         in wanted
                     )
                 ]
+                # Incluye automáticamente un salto del grafo FK. Así el modelo
+                # recibe las tablas puente reales (recurso–actividad,
+                # recurso–canal, etc.) sin depender de una lista fija por tema.
+                selected_names = {
+                    str(table.get("tableName") or "").casefold()
+                    for table in cached_tables
+                }
+                related_names = set(selected_names)
+                for table in cached_catalog.get("tables") or []:
+                    table_name = str(table.get("tableName") or "").casefold()
+                    foreign_keys = [
+                        fk for fk in table.get("foreignKeys") or []
+                        if isinstance(fk, dict)
+                    ]
+                    if table_name in selected_names:
+                        related_names.update(
+                            str(fk.get("referencedTable") or "").casefold()
+                            for fk in foreign_keys
+                        )
+                    if any(
+                        str(fk.get("referencedTable") or "").casefold() in selected_names
+                        for fk in foreign_keys
+                    ):
+                        related_names.add(table_name)
+                cached_tables = [
+                    table for table in cached_catalog.get("tables") or []
+                    if str(table.get("tableName") or "").casefold() in related_names
+                ]
                 if wanted.issubset({
                     str(table.get("tableName") or "").lower() for table in cached_tables
                 }):

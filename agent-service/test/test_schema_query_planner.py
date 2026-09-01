@@ -60,6 +60,7 @@ TASK_CATALOG = {
             {"name": "TechnicalSpecification"},
             {"name": "WorkStatus"}, {"name": "ProgressPercentage"},
             {"name": "ModifiedTime"}, {"name": "Archived"},
+            {"name": "DueDate"},
         ],
         "foreignKeys": [],
     }, {
@@ -162,6 +163,43 @@ class SchemaQueryPlannerTests(unittest.TestCase):
             [{"ShortName": "Tarea de Victor", "ProgressPercentage": 90}], plan, "es"
         )
         self.assertIn("última tarea relacionada", response)
+
+    def test_task_summary_builds_aggregate_query_and_data_driven_response(self):
+        plan = plan_identity_record_query(
+            "Dame un resumen del estado de tus tareas y cumplimiento",
+            TASK_CATALOG,
+            resource_id="victor-resource",
+        )
+        self.assertIsNotNone(plan)
+        self.assertEqual("summary", plan.response_mode)
+        self.assertIn("COUNT(*) AS [TaskCount]", plan.query)
+        self.assertIn("AVG(CAST(src.[ProgressPercentage]", plan.query)
+        self.assertNotIn("TOP 10", plan.query)
+        self.assertEqual(["victor-resource"] * 3, plan.parameters)
+        response = render_record_rows([{
+            "TaskCount": 20,
+            "CompletedCount": 5,
+            "InProgressCount": 12,
+            "NotStartedCount": 3,
+            "AverageProgress": "62.50",
+            "ActiveCount": 2,
+        }], plan, "es")
+        self.assertIn("**20 tareas**", response)
+        self.assertIn("**62.50%**", response)
+        self.assertIn("**25.00%**", response)
+
+    def test_overdue_task_question_builds_verified_count(self):
+        plan = plan_identity_record_query(
+            "¿Cuántas tareas incumpliste?", TASK_CATALOG,
+            resource_id="victor-resource",
+        )
+        self.assertIsNotNone(plan)
+        self.assertEqual("overdue_count", plan.response_mode)
+        self.assertIn("COUNT(*) AS [OverdueCount]", plan.query)
+        self.assertIn("src.[DueDate] < GETDATE()", plan.query)
+        self.assertIn("ISNULL(src.[ProgressPercentage], 0) < 100", plan.query)
+        response = render_record_rows([{"OverdueCount": 7}], plan, "es")
+        self.assertIn("**7 tareas", response)
 
     def test_current_task_in_portuguese_uses_same_safe_plan(self):
         plan = plan_identity_record_query(

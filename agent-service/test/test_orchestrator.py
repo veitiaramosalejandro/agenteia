@@ -50,6 +50,32 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(agent.calls[0]["tool_allowlist"], {"google_web_search"})
         self.assertTrue(agent.calls[0]["external_query_mode"])
 
+    def test_ambiguous_agent_question_stays_internal_in_auto_reply(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+        orchestrator.invoke(
+            session_id="s-agent",
+            user_text="¿Qué cambió este mes?",
+            auto_reply_mode=True,
+            tool_allowlist={"query_sql_server", "get_db_schema"},
+        )
+        self.assertEqual(
+            agent.calls[0]["tool_allowlist"],
+            {"query_sql_server", "get_db_schema"},
+        )
+        self.assertFalse(agent.calls[0]["external_query_mode"])
+
+    def test_internal_person_question_never_escapes_to_web_in_auto_reply(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+        orchestrator.invoke(
+            session_id="s-person",
+            user_text="Información de Paulo?",
+            auto_reply_mode=True,
+            tool_allowlist={"query_sql_server", "get_db_schema"},
+        )
+        self.assertFalse(agent.calls[0]["external_query_mode"])
+
     def test_work_query_preserves_requested_tools(self):
         agent = FakeAgent()
         orchestrator = SolidSETOrchestrator(agent)
