@@ -15,6 +15,7 @@ from app.main import (
     _suggestion_tool_allowlist,
     _verified_suggestion_business_context,
     _suggestion_request_text,
+    _local_arithmetic_response,
     _local_temporal_response,
     _parse_chat_question_suggestions,
     _suggestion_language_is_consistent,
@@ -42,6 +43,12 @@ from app.knowledge_provenance import (
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
+    def test_pure_arithmetic_is_resolved_locally_and_safely(self):
+        self.assertEqual("8*8 = **64**.", _local_arithmetic_response("8*8 ?"))
+        self.assertEqual("(12+4)/2 = **8**.", _local_arithmetic_response("(12+4)/2"))
+        self.assertIsNone(_local_arithmetic_response("__import__('os')"))
+        self.assertIsNone(_local_arithmetic_response("8/0"))
+
     def test_relative_date_assertion_is_not_durable_knowledge(self):
         self.assertTrue(_is_relative_temporal_assertion("Hoy es 28 de agosto."))
         self.assertTrue(_is_relative_temporal_assertion("Hoje é 28 de agosto."))

@@ -799,6 +799,52 @@ def _weather_location_prompt(raw_text: str) -> Optional[str]:
     return "¿De qué ciudad o localidad quieres conocer el tiempo?"
 
 
+def _local_arithmetic_response(raw_text: str) -> Optional[str]:
+    """Resuelve expresiones aritméticas puras sin depender del LLM."""
+    expression = " ".join((raw_text or "").strip().split()).strip(" ¿?¡!=")
+    if not expression or len(expression) > 120:
+        return None
+    if not re.fullmatch(r"[0-9\s.,+\-*/%()]+", expression):
+        return None
+    expression = expression.replace(",", ".")
+    binary_operations = {
+        ast.Add: lambda left, right: left + right,
+        ast.Sub: lambda left, right: left - right,
+        ast.Mult: lambda left, right: left * right,
+        ast.Div: lambda left, right: left / right,
+        ast.FloorDiv: lambda left, right: left // right,
+        ast.Mod: lambda left, right: left % right,
+        ast.Pow: lambda left, right: left ** right,
+    }
+    unary_operations = {
+        ast.UAdd: lambda value: value,
+        ast.USub: lambda value: -value,
+    }
+
+    def evaluate(node: ast.AST) -> int | float:
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body)
+        if isinstance(node, ast.Constant) and type(node.value) in {int, float}:
+            return node.value
+        if isinstance(node, ast.UnaryOp) and type(node.op) in unary_operations:
+            return unary_operations[type(node.op)](evaluate(node.operand))
+        if isinstance(node, ast.BinOp) and type(node.op) in binary_operations:
+            left, right = evaluate(node.left), evaluate(node.right)
+            if isinstance(node.op, ast.Pow) and (abs(right) > 10 or abs(left) > 1_000_000):
+                raise ValueError("potencia fuera de límite")
+            return binary_operations[type(node.op)](left, right)
+        raise ValueError("expresión no permitida")
+
+    try:
+        result = evaluate(ast.parse(expression, mode="eval"))
+        if not isinstance(result, (int, float)) or abs(result) > 1e15:
+            return None
+        rendered = str(int(result)) if float(result).is_integer() else f"{result:.10g}"
+        return f"{expression} = **{rendered}**."
+    except (SyntaxError, ValueError, ZeroDivisionError, OverflowError):
+        return None
+
+
 def _local_temporal_response(
     raw_text: str,
     *,
@@ -1480,7 +1526,8 @@ def _candidate_qualifies_for_auto_reply(candidate: dict) -> bool:
 
 
 async def _process_auto_replies(
-    candidates: list[dict], *, preview_only: bool = False
+    candidates: list[dict], *, preview_only: bool = False,
+    _already_routed: bool = False, _finalize_status: bool = True,
 ) -> int | list[dict[str, Any]]:
     print(
         f"🤖 Iniciando procesamiento de auto-respuesta; candidatos={len(candidates)}",
@@ -1511,7 +1558,8 @@ async def _process_auto_replies(
         return 0
 
     _update_response_status(response_request_id, "processing")
-    candidates = _route_candidates_to_selected_agents(candidates)
+    if not _already_routed:
+        candidates = _route_candidates_to_selected_agents(candidates)
     print(
         f"🤖 Enrutamiento de auto-respuesta completado; ejecuciones={len(candidates)}",
         flush=True,
@@ -1524,6 +1572,50 @@ async def _process_auto_replies(
         10,
         max(1, settings.SOLIDSET_AUTO_REPLY_MAX_PER_CYCLE, len(candidates)),
     )
+    if not _already_routed:
+        unique_candidates: list[dict] = []
+        unique_fingerprints: set[str] = set()
+        for candidate in candidates:
+            fingerprint = str(candidate.get("fingerprint") or "").strip()
+            if not fingerprint or fingerprint in unique_fingerprints:
+                continue
+            unique_fingerprints.add(fingerprint)
+            unique_candidates.append(candidate)
+            if len(unique_candidates) >= max_replies:
+                break
+        # Cada gemelo genera y envía de forma independiente. ``gather`` no
+        # conserva un orden de entrega: responde primero quien termina antes.
+        results = await asyncio.gather(*(
+            _process_auto_replies(
+                [candidate],
+                preview_only=preview_only,
+                _already_routed=True,
+                _finalize_status=False,
+            )
+            for candidate in unique_candidates
+        ), return_exceptions=True)
+        failures = [result for result in results if isinstance(result, Exception)]
+        for failure in failures:
+            print(f"⚠️ Ejecución paralela de agente fallida: {failure}", flush=True)
+        if preview_only:
+            flattened = [
+                payload
+                for result in results if isinstance(result, list)
+                for payload in result
+            ]
+            return flattened
+        completed = sum(
+            int(result) for result in results
+            if not isinstance(result, Exception) and isinstance(result, int)
+        )
+        if response_request_id:
+            _update_response_status(
+                response_request_id,
+                "completed" if completed > 0 or not unique_candidates else "failed",
+                error=None if completed > 0 or not unique_candidates else "Ningún agente pudo enviar la respuesta.",
+                response_count=completed,
+            )
+        return completed
     sent = 0
     queued_for_delivery = 0
     preview_payloads: list[dict[str, Any]] = []
@@ -1605,13 +1697,12 @@ async def _process_auto_replies(
         relevant_agent_knowledge = ""
         if agent_resource_id:
             try:
-                relevant_agent_knowledge = (
-                    agent.sistema_aprendizaje.consultar_conocimiento_agente(
+                relevant_agent_knowledge = await asyncio.to_thread(
+                    agent.sistema_aprendizaje.consultar_conocimiento_agente,
                         incoming_text,
                         agent_resource_id=agent_resource_id,
                         canal_id=channel_id,
                         min_score=settings.BUSINESS_RAG_MIN_SCORE,
-                    )
                 )
             except Exception as exc:
                 print(
@@ -1673,6 +1764,8 @@ async def _process_auto_replies(
                 locale=str(candidate.get("locale") or "pt-PT"),
                 country_code=str(candidate.get("country_code") or "PT"),
             )
+        if response_text is None:
+            response_text = _local_arithmetic_response(incoming_text)
         if response_text is None:
             response_text = _weather_location_prompt(incoming_text)
         if response_text is not None:
@@ -1880,7 +1973,7 @@ async def _process_auto_replies(
             )
             print(f"⚠️ Error enviando auto-respuesta a SOLIDSET (canal {channel_id}): {exc}")
 
-    if response_request_id and not preview_only:
+    if response_request_id and not preview_only and _finalize_status:
         _update_response_status(
             response_request_id,
             "completed" if sent > 0 or not candidates else ("queued" if queued_for_delivery else "failed"),
