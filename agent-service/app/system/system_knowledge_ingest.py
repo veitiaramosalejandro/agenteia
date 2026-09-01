@@ -26,7 +26,7 @@ from app.rag.vector_store import ensure_vector_collection
 # excluyen porque tienen pipelines con permisos propios y contenido sensible.
 DEFAULT_BUSINESS_TABLES = (
     "Activity", "SysTask", "SysWorkRoom", "SysResources", "SysLogin",
-    "SysCommunity", "SysPerson", "SysChat",
+    "Entity", "SysCommunity", "SysPerson", "SysChat",
 )
 
 # Estas tablas describen relaciones y no deben producir cientos de miles de
@@ -49,16 +49,35 @@ RELATION_AGGREGATIONS: dict[str, tuple[dict[str, Any], ...]] = {
          "fields": ("IDResource", "IDLogin", "IsOwner", "ResourceAccessType", "AllowPublish")},
         {"table": "SysCompany2Workroom", "parent_key": "IDWorkRoom", "relation_key": "IDWorkRoom",
          "fields": ("IDCompany",)},
+        {"table": "SysCommunity2WorkRoom", "parent_key": "IDWorkRoom", "relation_key": "IDWorkRoom",
+         "fields": ("IDCommunity", "IsDefault", "RelationType", "ChannelType")},
     ),
     "SysResources": (
         {"table": "SysLogin2SysResource", "parent_key": "ResourceId", "relation_key": "IDResource",
          "fields": ("IDLogin", "IDPerson", "IsDefault", "Active", "JoinRequestStatus")},
+        {"table": "SysCommunity2Resource", "parent_key": "ResourceId", "relation_key": "IDResource",
+         "fields": ("IDCommunity", "IsOwner", "IsSilenced", "JoinRequestStatus")},
+    ),
+    "Entity": (
+        {"table": "SysCommunity2Company", "parent_key": "ID", "relation_key": "IDCompany",
+         "fields": ("IDCommunity", "IsDefault", "JoinRequestStatus")},
+        {"table": "SysCompany2Login", "parent_key": "ID", "relation_key": "IDCompany",
+         "fields": ("IDLogin", "JoinRequestStatus")},
+        {"table": "SysCompany2Workroom", "parent_key": "ID", "relation_key": "IDCompany",
+         "fields": ("IDWorkRoom",)},
+        # SysResources también conserva sus propios documentos. Aquí se usa
+        # adicionalmente para autorizar el conocimiento de la empresa a todos
+        # sus recursos, no solo al creador del registro Entity.
+        {"table": "SysResources", "parent_key": "ID", "relation_key": "IDCompany",
+         "fields": ("ResourceId", "DisplayName", "Active"), "keep_documents": True},
     ),
     "SysCommunity": (
         {"table": "SysCommunity2Resource", "parent_key": "ID", "relation_key": "IDCommunity",
          "fields": ("IDResource", "IsOwner", "IsSilenced", "JoinRequestStatus")},
         {"table": "SysCommunity2Company", "parent_key": "ID", "relation_key": "IDCommunity",
          "fields": ("IDCompany", "IsDefault", "JoinRequestStatus")},
+        {"table": "SysCommunity2WorkRoom", "parent_key": "ID", "relation_key": "IDCommunity",
+         "fields": ("IDWorkRoom", "IsDefault", "RelationType", "ChannelType")},
     ),
     "SysLogin": (
         {"table": "SysCompany2Login", "parent_key": "IDLogin", "relation_key": "IDLogin",
@@ -82,6 +101,7 @@ RELATION_TABLES = tuple(dict.fromkeys(
     str(spec["table"])
     for specs in RELATION_AGGREGATIONS.values()
     for spec in specs
+    if not spec.get("keep_documents")
 ))
 
 TABLE_PURPOSES = {
@@ -90,8 +110,9 @@ TABLE_PURPOSES = {
     "SysResources": "recursos del sistema, identidad operativa, estado y empresa",
     "SysLogin": "usuarios y nombres de acceso asociados a personas y recursos",
     "SysWorkRoom": "canales o salas de trabajo del sistema",
-    "SysCommunity": "comunidades y agrupaciones organizativas",
-    "SysPerson": "personas y empresas del sistema vinculadas con recursos y logins",
+    "Entity": "empresas y organizaciones del sistema; Entity.ID es la identidad de empresa usada por las relaciones de comunidad, recursos, logins y canales",
+    "SysCommunity": "comunidades, empresas vinculadas, recursos miembros y canales relacionados",
+    "SysPerson": "personas del sistema vinculadas con recursos y logins",
     "SysChat": "mensajes y conversaciones relacionados con canales, recursos, actividades, tareas y registros",
 }
 
@@ -592,6 +613,7 @@ def run_system_knowledge_ingestion(
                 str(spec["table"]).lower(): parent
                 for parent, specs in RELATION_AGGREGATIONS.items()
                 for spec in specs
+                if not spec.get("keep_documents")
             }
             entity_requested: list[str] = []
             for name in requested:

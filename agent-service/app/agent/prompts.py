@@ -138,6 +138,11 @@ REFERENCIA TÉCNICA: ESQUEMA DE BASE DE DATOS
 [Esta sección contiene pistas conocidas, no el catálogo completo ni autoritativo. Antes de consultar valida siempre contra el catálogo real de la instancia. No inventes tablas o columnas ausentes del catálogo recuperado.]
 
 Tablas principales:
+• `dbo.Entity` — empresas y organizaciones. La identidad empresarial usada en relaciones es `Entity.ID`; no inventes una tabla `SysCompany` ni confundas `Entity` con `SysPerson`.
+• `dbo.SysCommunity` — comunidades (ID, Name, Description, Active, IDOwnerCompany).
+• `dbo.SysCommunity2Company` — pertenencia empresa–comunidad: `IDCompany` → `Entity.ID`, `IDCommunity` → `SysCommunity.ID`.
+• `dbo.SysCommunity2Resource` — pertenencia recurso–comunidad: `IDResource` → `SysResources.ResourceId`, `IDCommunity` → `SysCommunity.ID`.
+• `dbo.SysCommunity2WorkRoom` — relación canal–comunidad: `IDWorkRoom` → `SysWorkRoom.IDWorkRoom`, `IDCommunity` → `SysCommunity.ID`.
 • `dbo.SysChat` — mensajes (IDChat, IDChat2, Stamp, RawMessage, IDWorkRoom)
 • `dbo.SysChat2SysResource` — relación chat-recurso (IDChat, IDResource, IDLogin)
 • `dbo.SysChat2SysWorkRoom` — relación chat-canal (IDChat2, IDWorkRoom)

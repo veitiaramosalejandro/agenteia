@@ -1288,6 +1288,7 @@ class MachiningAgent:
             "membro", "membros", "actividad", "actividades", "activity", "activities",
             "atividade", "atividades", "tarea", "tareas", "task", "tasks", "tarefa", "tarefas",
             "empresa", "empresas", "company", "companies", "companhia", "companhias",
+            "comunidad", "comunidades", "community", "communities", "comunidade",
             "organización", "organizacion", "organização", "organizacao", "organization",
             "organisation",
         )

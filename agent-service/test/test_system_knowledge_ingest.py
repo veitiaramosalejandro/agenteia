@@ -8,6 +8,8 @@ from app.system.system_knowledge_ingest import (
     _checkpoint_from_row,
     DEFAULT_BUSINESS_TABLES,
     RELATION_TABLES,
+    RELATION_AGGREGATIONS,
+    TABLE_PURPOSES,
 )
 from app.system.learning import SistemaAprendizaje
 
@@ -19,6 +21,7 @@ class TestSystemKnowledgeIngest(unittest.TestCase):
         self.assertIn("Activity", DEFAULT_BUSINESS_TABLES)
         self.assertIn("SysPerson", DEFAULT_BUSINESS_TABLES)
         self.assertIn("SysChat", DEFAULT_BUSINESS_TABLES)
+        self.assertIn("Entity", DEFAULT_BUSINESS_TABLES)
         self.assertNotIn("Entity_SysCompany", DEFAULT_BUSINESS_TABLES)
         self.assertNotIn("Entity_SysPerson", DEFAULT_BUSINESS_TABLES)
         self.assertNotIn("SysFilesSystem", DEFAULT_BUSINESS_TABLES)
@@ -30,7 +33,22 @@ class TestSystemKnowledgeIngest(unittest.TestCase):
         self.assertIn("SysChat2SysResource", RELATION_TABLES)
         self.assertIn("SysChat2SysWorkRoom", RELATION_TABLES)
         self.assertIn("SysChat2Record", RELATION_TABLES)
+        self.assertIn("SysCommunity2Company", RELATION_TABLES)
+        self.assertIn("SysCommunity2Resource", RELATION_TABLES)
+        self.assertIn("SysCommunity2WorkRoom", RELATION_TABLES)
         self.assertTrue(set(DEFAULT_BUSINESS_TABLES).isdisjoint(RELATION_TABLES))
+
+    def test_company_community_resource_and_channel_graph_is_complete(self):
+        entity_relations = {item["table"] for item in RELATION_AGGREGATIONS["Entity"]}
+        community_relations = {item["table"] for item in RELATION_AGGREGATIONS["SysCommunity"]}
+        resource_relations = {item["table"] for item in RELATION_AGGREGATIONS["SysResources"]}
+        workroom_relations = {item["table"] for item in RELATION_AGGREGATIONS["SysWorkRoom"]}
+        self.assertIn("SysCommunity2Company", entity_relations)
+        self.assertIn("SysCommunity2Company", community_relations)
+        self.assertIn("SysCommunity2Resource", resource_relations)
+        self.assertIn("SysCommunity2WorkRoom", community_relations)
+        self.assertIn("SysCommunity2WorkRoom", workroom_relations)
+        self.assertIn("empresas y organizaciones", TABLE_PURPOSES["Entity"])
 
     def test_keyset_pagination_uses_primary_key_without_offset(self):
         where, parameters = _keyset_where(

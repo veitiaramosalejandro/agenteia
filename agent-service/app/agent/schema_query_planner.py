@@ -10,7 +10,7 @@ _CONCEPTS = {
     "company": {"empresa", "empresas", "companhia", "companhias", "company", "companies"},
     "organization": {"organización", "organizacion", "organização", "organizacao", "organization"},
     "resource": {"recurso", "recursos", "resource", "resources"},
-    "community": {"comunidad", "comunidade", "community"},
+    "community": {"comunidad", "comunidades", "comunidade", "comunidades", "community", "communities"},
 }
 _RELATION_TERMS = {
     "pertenezco", "pertenece", "pertenço", "pertence", "belong", "belongs",
