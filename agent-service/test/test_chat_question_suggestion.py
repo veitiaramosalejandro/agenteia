@@ -31,6 +31,7 @@ from app.main import (
     _sanitize_related_record_value,
     _extract_learnable_suggestion_fact,
     _is_relative_temporal_assertion,
+    _is_safe_auto_reply_output,
     _learn_direct_agent_assertion,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
@@ -48,6 +49,10 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertEqual("(12+4)/2 = **8**.", _local_arithmetic_response("(12+4)/2"))
         self.assertIsNone(_local_arithmetic_response("__import__('os')"))
         self.assertIsNone(_local_arithmetic_response("8/0"))
+
+    def test_internal_tool_payload_is_not_safe_user_output(self):
+        leaked = '{"tool": "query_sql_server", "arguments": {"sql_query": "SELECT * FROM Tareas"}}'
+        self.assertFalse(_is_safe_auto_reply_output(leaked))
 
     def test_relative_date_assertion_is_not_durable_knowledge(self):
         self.assertTrue(_is_relative_temporal_assertion("Hoy es 28 de agosto."))

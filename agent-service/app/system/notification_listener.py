@@ -1160,6 +1160,13 @@ class NotificationApiListener:
         sender_resource = payload.get("IDSenderResource") if payload else None
         sender_name = payload.get("SenderFullName") if payload else None
         raw_message = payload.get("RawMessage") if payload else None
+        info_payload = payload.get("Info") if isinstance(payload.get("Info"), dict) else {}
+        generated_by_ia = str(
+            info_payload.get("generated_by_ia")
+            or info_payload.get("GeneratedByIA")
+            or payload.get("GeneratedByIA")
+            or ""
+        ).strip().casefold() in {"1", "true", "yes", "sim"}
         structured_activity = self._structured_resource_activity(payload) if payload else None
         channel_name = payload.get("ChannelName") or payload.get("OriginChannelName") if payload else None
         channel_kind = payload.get("ChannelKind") or payload.get("OriginChannelKind") if payload else None
@@ -1247,19 +1254,27 @@ class NotificationApiListener:
                 ).strip(),
                 "mask_message": payload.get("MaskMessage"),
                 "fingerprint": fingerprint,
+                "knowledge_scope": "global_shared",
+                "human_authored": not generated_by_ia,
+                "solidset_instance_id": str(payload.get("_SolidSETInstanceID") or ""),
                 "captured_at": datetime.utcnow().isoformat(),
                 "payload": data,
                 "structured_activity": structured_activity,
             },
         )
-        learned_global = self.sistema.aprender_actividad(actividad)
+        # Las respuestas generadas nunca vuelven a entrar como conocimiento.
+        # Los mensajes humanos sí alimentan el ámbito factual compartido.
+        learned_global = (
+            self.sistema.aprender_actividad(actividad)
+            if not generated_by_ia else True
+        )
 
         # Cada mensaje permanece en el aprendizaje global. Además, cuando el
         # remitente es el recurso humano propietario de un agente activo, se
         # guarda una segunda representación privada etiquetada para ese agente.
         # consultar_documentacion filtra agent_resource_id y evita que otro
         # agente utilice este patrón personal.
-        if sender_resource and (raw_message or structured_activity):
+        if sender_resource and not generated_by_ia and (raw_message or structured_activity):
             try:
                 owner_agent = get_active_agent_identity_for_resource(sender_resource)
             except Exception as exc:

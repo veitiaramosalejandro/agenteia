@@ -1560,6 +1560,8 @@ class SistemaAprendizaje:
         canal_id: Optional[str] = None,
         limit: int = 3,
         agent_resource_id: Optional[str] = None,
+        global_shared_only: bool = False,
+        solidset_instance_id: Optional[str] = None,
     ) -> str:
         """Consulta el conocimiento aprendido, opcionalmente filtrado por canal."""
         query_vector = self._embed_query_safe(query, context="consultar_aprendizaje")
@@ -1569,18 +1571,29 @@ class SistemaAprendizaje:
         resultados = []
         
         # Búsqueda con filtro de canal
-        if canal_id:
+        if canal_id or global_shared_only:
             # ✅ Crear el filtro correctamente para v1.18.0
             from qdrant_client.http import models
-            conditions = [models.FieldCondition(
-                key="canal_id",
-                match=models.MatchValue(value=canal_id)
-            )]
+            conditions = []
+            if canal_id:
+                conditions.append(models.FieldCondition(
+                    key="canal_id", match=models.MatchValue(value=canal_id)
+                ))
             if agent_resource_id:
                 conditions.append(models.FieldCondition(
                     key="metadatos.agent_resource_id",
                     match=models.MatchValue(value=agent_resource_id),
                 ))
+            if global_shared_only:
+                conditions.append(models.FieldCondition(
+                    key="metadatos.knowledge_scope",
+                    match=models.MatchValue(value="global_shared"),
+                ))
+                if solidset_instance_id:
+                    conditions.append(models.FieldCondition(
+                        key="metadatos.solidset_instance_id",
+                        match=models.MatchValue(value=str(solidset_instance_id)),
+                    ))
             filtro = models.Filter(must=conditions)
             resultados.extend(
                 self._search_aprendizaje(
@@ -1591,7 +1604,7 @@ class SistemaAprendizaje:
             )
         
         # Búsqueda sin filtro (si no hay resultados con filtro o siempre)
-        if (not agent_resource_id) and (not resultados or len(resultados) < limit):
+        if (not agent_resource_id) and (not global_shared_only) and (not resultados or len(resultados) < limit):
             resultados.extend(
                 self._search_aprendizaje(
                     query_vector, 

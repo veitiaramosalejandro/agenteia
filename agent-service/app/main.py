@@ -779,6 +779,9 @@ def _is_safe_auto_reply_output(response_text: str) -> bool:
         "resultado de la busqueda para responder el turno actual",
         "resultado de la búsqueda para responder el turno actual",
         "resultado da busca para responder o turno atual",
+        '"tool": "query_sql_server"',
+        "query_sql_server",
+        "select * from",
     )
     return not any(marker in text for marker in forbidden)
 
@@ -1488,6 +1491,34 @@ def _is_relative_temporal_assertion(raw_text: str) -> bool:
     ))
 
 
+def _learn_global_user_fact(
+    *, resource_id: str, workroom_id: str, fact: str, origin: str,
+    solidset_instance_id: str = "",
+) -> bool:
+    """Indexa un hecho humano compartido sin compartir su perfil conductual."""
+    normalized = " ".join(str(fact or "").split()).strip()
+    if not normalized or _is_relative_temporal_assertion(normalized):
+        return False
+    digest = hashlib.sha256(
+        f"{resource_id}|{workroom_id}|{normalized.casefold()}".encode("utf-8")
+    ).hexdigest()[:32]
+    return bool(agent.sistema_aprendizaje.aprender_actividad(Actividad(
+        id=f"global_fact_{digest}",
+        recurso_humano_id=resource_id,
+        canal_id=workroom_id or "solidset_global",
+        tipo="global_user_fact",
+        descripcion=f"Hecho proporcionado por un recurso humano: {normalized}",
+        timestamp=datetime.now(),
+        metadatos={
+            "source": USER_ASSERTION_SOURCE,
+            "knowledge_scope": "global_shared",
+            "human_authored": True,
+            "learning_origin": origin,
+            "solidset_instance_id": solidset_instance_id,
+        },
+    )))
+
+
 def _learn_direct_agent_assertion(candidate: dict[str, Any]) -> bool:
     """Persiste una afirmación del recurso en el ámbito del agente seleccionado."""
     assertion = _sanitize_auto_reply_input(str(candidate.get("message") or ""))
@@ -1510,6 +1541,13 @@ def _learn_direct_agent_assertion(candidate: dict[str, Any]) -> bool:
             indexed = agent.sistema_aprendizaje.aprender_conocimiento_agente(saved)
             if not indexed:
                 raise RuntimeError("No se pudo indexar el conocimiento en Qdrant")
+        _learn_global_user_fact(
+            resource_id=agent_resource_id,
+            workroom_id=channel_id,
+            fact=assertion,
+            origin="direct_agent_message",
+            solidset_instance_id=str(candidate.get("solidset_instance_id") or ""),
+        )
         print(
             f"🧠 Afirmación aprendida por agente resource={agent_resource_id} "
             f"workroom={channel_id or '-'} knowledge_id={saved.get('ID')}",
@@ -5010,7 +5048,8 @@ def _extract_learnable_suggestion_fact(text: str) -> str:
 
 
 def _persist_suggestion_fact(
-    *, resource_id: str, workroom_id: str, fact: str
+    *, resource_id: str, workroom_id: str, fact: str,
+    solidset_instance_id: str = "",
 ) -> dict[str, Any]:
     saved = save_agent_knowledge({
         "IDResource": resource_id,
@@ -5033,6 +5072,11 @@ def _persist_suggestion_fact(
     indexed_scheduled = not bool(saved.get("WasExisting"))
     if indexed_scheduled:
         threading.Thread(target=_index, daemon=True).start()
+    _learn_global_user_fact(
+        resource_id=resource_id, workroom_id=workroom_id, fact=fact,
+        origin="suggestion_panel",
+        solidset_instance_id=solidset_instance_id,
+    )
     return {"saved": saved, "indexed_scheduled": indexed_scheduled}
 
 
@@ -5479,6 +5523,7 @@ async def suggest_chat_question_response(
                     resource_id=context["requester_resource"],
                     workroom_id=context["workroom_id"],
                     fact=learned_fact,
+                    solidset_instance_id=str(solidset_instance["ID"]),
                 )
                 print(
                     "🧠 Hecho aprendido desde chat-question "
@@ -5849,7 +5894,12 @@ async def suggest_chat_question_response(
         suggestions = [
             _sanitize_related_record_value(item) for item in suggestions
             if _sanitize_related_record_value(item)
+            and _is_safe_auto_reply_output(_sanitize_related_record_value(item))
         ]
+        if not suggestions:
+            suggestions = _safe_chat_question_fallback(
+                metadata["response_language"], suggestion_count, scope_context
+            )
         language = metadata["response_language"]
         title = _suggestion_title(language, initial=ambient_mode)
         result = {

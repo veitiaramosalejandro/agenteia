@@ -3160,6 +3160,20 @@ class MachiningAgent:
                 limit=3,
                 agent_resource_id=agent_resource_id,
             )
+            aprendizaje_global = self.sistema_aprendizaje.consultar_aprendizaje(
+                context_query,
+                # Los hechos explícitamente compartidos son comunes a todos
+                # los agentes de la instancia, no solo al canal de origen.
+                canal_id=None,
+                limit=3,
+                global_shared_only=True,
+                solidset_instance_id=solidset_instance_id or None,
+            )
+            if aprendizaje_global and "No hay conocimiento" not in aprendizaje_global:
+                aprendizaje_relevante = "\n\n".join(
+                    value for value in (aprendizaje_relevante, aprendizaje_global)
+                    if value and "No hay conocimiento" not in value
+                )
         elif (
             valid_user_guid
             and not suggestion_refine_mode

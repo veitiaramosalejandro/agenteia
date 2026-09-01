@@ -105,10 +105,30 @@ class TestFrameworkMessageCapture(unittest.TestCase):
             call.args[0] for call in listener.sistema.aprender_actividad.call_args_list
         ]
         self.assertNotIn("agent_resource_id", global_activity.metadatos)
+        self.assertEqual("global_shared", global_activity.metadatos["knowledge_scope"])
+        self.assertTrue(global_activity.metadatos["human_authored"])
         self.assertEqual(
             owner["IDResource"], private_activity.metadatos["agent_resource_id"]
         )
         self.assertEqual("agent_owner_behavior", private_activity.metadatos["scope"])
+
+    def test_generated_agent_response_is_never_relearned_as_global_fact(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        listener.sistema = Mock()
+        entry = {
+            "source": "framework_hub_realtime",
+            "endpoint": "/framework-message",
+            "channel_id": "room-1",
+            "data": {
+                "RawMessage": "SQL inventado por el modelo",
+                "IDSenderResource": "agent-resource",
+                "IDWorkRoom": "room-1",
+                "Info": {"generated_by_ia": "1"},
+            },
+        }
+        learned = listener._learn_entry(entry, "generated-agent-message")
+        self.assertTrue(learned)
+        listener.sistema.aprender_actividad.assert_not_called()
 
     def test_normalizes_framework_message_dto(self):
         listener = NotificationApiListener.__new__(NotificationApiListener)
