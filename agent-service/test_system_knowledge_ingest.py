@@ -17,13 +17,19 @@ class TestSystemKnowledgeIngest(unittest.TestCase):
         self.assertIn("SysResources", DEFAULT_BUSINESS_TABLES)
         self.assertIn("SysTask", DEFAULT_BUSINESS_TABLES)
         self.assertIn("Activity", DEFAULT_BUSINESS_TABLES)
-        self.assertNotIn("SysChat", DEFAULT_BUSINESS_TABLES)
+        self.assertIn("SysPerson", DEFAULT_BUSINESS_TABLES)
+        self.assertIn("SysChat", DEFAULT_BUSINESS_TABLES)
+        self.assertNotIn("Entity_SysCompany", DEFAULT_BUSINESS_TABLES)
+        self.assertNotIn("Entity_SysPerson", DEFAULT_BUSINESS_TABLES)
         self.assertNotIn("SysFilesSystem", DEFAULT_BUSINESS_TABLES)
 
     def test_relation_tables_are_aggregated_not_individually_vectorized(self):
         self.assertIn("SysTaskResourceRole", RELATION_TABLES)
         self.assertIn("SysActivityResourceRoleActivity", RELATION_TABLES)
         self.assertIn("SysWorkRoomResource", RELATION_TABLES)
+        self.assertIn("SysChat2SysResource", RELATION_TABLES)
+        self.assertIn("SysChat2SysWorkRoom", RELATION_TABLES)
+        self.assertIn("SysChat2Record", RELATION_TABLES)
         self.assertTrue(set(DEFAULT_BUSINESS_TABLES).isdisjoint(RELATION_TABLES))
 
     def test_keyset_pagination_uses_primary_key_without_offset(self):

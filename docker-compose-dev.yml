@@ -267,8 +267,8 @@ services:
       - OLLAMA_MAX_QUEUE=${OLLAMA_EMBEDDING_MAX_QUEUE:-64}
       - OLLAMA_CONTEXT_LENGTH=2048
       - OLLAMA_KEEP_ALIVE=${OLLAMA_EMBEDDING_KEEP_ALIVE:-24h}
-    cpus: ${OLLAMA_EMBEDDING_CPUS:-2.0}
-    mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-3g}
+    #cpus: ${OLLAMA_EMBEDDING_CPUS:-2.0}
+    #mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-3g}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -296,8 +296,8 @@ services:
       - OLLAMA_MAX_QUEUE=${OLLAMA_SYSTEM_EMBEDDING_MAX_QUEUE:-128}
       - OLLAMA_CONTEXT_LENGTH=2048
       - OLLAMA_KEEP_ALIVE=${OLLAMA_SYSTEM_EMBEDDING_KEEP_ALIVE:-24h}
-    mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-2g}
-    cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-2.0}
+    #mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-2g}
+    #cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-2.0}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s

@@ -22,11 +22,11 @@ from app.connectors.solidset_sql import connect as connect_solidset_sql
 from app.rag.vector_store import ensure_vector_collection
 
 
-# Tablas de negocio visibles en docs/BD-SolidSet.png. SysChat y archivos se
-# excluyen: tienen pipelines con permisos propios y/o contenido potencialmente sensible.
+# Tablas de negocio físicas verificadas en ISIFrameIsicom.sql. Los archivos se
+# excluyen porque tienen pipelines con permisos propios y contenido sensible.
 DEFAULT_BUSINESS_TABLES = (
     "Activity", "SysTask", "SysWorkRoom", "SysResources", "SysLogin",
-    "SysCommunity", "Entity_SysCompany", "Entity_SysPerson", "SysPerson",
+    "SysCommunity", "SysPerson", "SysChat",
 )
 
 # Estas tablas describen relaciones y no deben producir cientos de miles de
@@ -64,6 +64,18 @@ RELATION_AGGREGATIONS: dict[str, tuple[dict[str, Any], ...]] = {
         {"table": "SysCompany2Login", "parent_key": "IDLogin", "relation_key": "IDLogin",
          "fields": ("IDCompany", "JoinRequestStatus")},
     ),
+    "SysChat": (
+        {"table": "SysChat2Activity", "parent_key": "IDChat2", "relation_key": "IDChat",
+         "fields": ("IDActivity",)},
+        {"table": "SysChat2Record", "parent_key": "IDChat2", "relation_key": "IDChat",
+         "fields": ("IDRecord", "GIDRecord", "IDRecordModule", "RecordCode", "RecordShortName", "RelatedRecordKind")},
+        {"table": "SysChat2SysResource", "parent_key": "IDChat2", "relation_key": "IDChat",
+         "fields": ("IDResource", "IDLogin", "Type", "LinkKind", "IDChannel", "Sequence", "IDMeeting")},
+        {"table": "SysChat2SysWorkRoom", "parent_key": "IDChat2", "relation_key": "IDChat2",
+         "fields": ("IDWorkRoom", "Kind", "IDMeeting")},
+        {"table": "SysChat2Task", "parent_key": "IDChat2", "relation_key": "IDChat",
+         "fields": ("IDTask",)},
+    ),
 }
 
 RELATION_TABLES = tuple(dict.fromkeys(
@@ -79,9 +91,8 @@ TABLE_PURPOSES = {
     "SysLogin": "usuarios y nombres de acceso asociados a personas y recursos",
     "SysWorkRoom": "canales o salas de trabajo del sistema",
     "SysCommunity": "comunidades y agrupaciones organizativas",
-    "Entity_SysCompany": "empresas y organizaciones",
-    "Entity_SysPerson": "personas vinculadas con recursos y logins",
-    "SysPerson": "personas vinculadas con recursos y logins",
+    "SysPerson": "personas y empresas del sistema vinculadas con recursos y logins",
+    "SysChat": "mensajes y conversaciones relacionados con canales, recursos, actividades, tareas y registros",
 }
 
 SENSITIVE_COLUMN = re.compile(
