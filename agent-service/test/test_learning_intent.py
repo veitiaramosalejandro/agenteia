@@ -1,6 +1,7 @@
 import unittest
 
 from app.main import (
+    _is_external_information_query,
     _is_informational_learning_message,
     _learning_acknowledgement,
     _looks_like_question_or_request,
@@ -8,6 +9,11 @@ from app.main import (
 
 
 class LearningIntentTests(unittest.TestCase):
+    def test_current_portuguese_president_routes_to_external_search(self):
+        self.assertTrue(_is_external_information_query(
+            "quem é o presidente de Portugal?"
+        ))
+
     def test_portuguese_company_fact_is_learning(self):
         text = "ROBOTEA é o representante oficial da marca SolidSET, especializada em automação industrial."
         self.assertTrue(_is_informational_learning_message(text))

@@ -68,6 +68,21 @@ class TestWebSearch(unittest.TestCase):
             "Sí, necesito que busques por favor"
         ))
 
+    def test_portuguese_current_president_is_external_and_forces_fresh_search(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        question = "quem é o presidente de Portugal?"
+        self.assertTrue(agent._is_external_information_query(question))
+        self.assertTrue(agent._is_current_officeholder_query(question))
+
+    def test_current_officeholder_detection_is_multilingual(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertTrue(agent._is_current_officeholder_query(
+            "¿Quién es el presidente de Portugal?"
+        ))
+        self.assertTrue(agent._is_current_officeholder_query(
+            "Who is the prime minister of Portugal?"
+        ))
+
     def test_domain_only_turn_is_external_and_keeps_previous_topic(self):
         agent = MachiningAgent.__new__(MachiningAgent)
         self.assertTrue(agent._is_external_information_query("www.marca.com"))

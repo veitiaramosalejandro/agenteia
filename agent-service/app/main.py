@@ -983,7 +983,15 @@ def _is_external_information_query(raw_text: str) -> bool:
         "weather", "forecast", "previsão", "previsao", "noticias", "news",
         "resultado deportivo", "precio actual", "cotizacion", "cotización",
     )
-    return any(term in text for term in external_terms)
+    current_officeholder = bool(re.search(
+        r"\b(?:quem|qui[eé]n|who|qual)\s+(?:[eé]|es|is|ser[aá])\s+(?:o |a |el |la |the )?"
+        r"(?:presidente|president|primeiro[- ]ministro|primer ministro|prime minister|"
+        r"governador|gobernador|governor|prefeito|alcalde|mayor|ceo|diretor executivo|"
+        r"director ejecutivo)\b",
+        text,
+        flags=re.IGNORECASE,
+    ))
+    return current_officeholder or any(term in text for term in external_terms)
 
 
 def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
@@ -1134,8 +1142,9 @@ def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> 
     """Apply SolidSET's explicit QuestionType response contract.
 
     Type 1 has priority and type 3 is an explicit request. Type 0 is
-    unclassified and may respond only when the text contains ``?``. Type 2
-    and missing/unknown values remain learning-only.
+    unclassified: an explicit ``talkWithAgent=true`` destination authorizes
+    a response even without ``?`` (for example ``34 + 25``). Type 2 and
+    missing/unknown values remain learning-only.
     """
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     question_type = _get_payload_value(chat, "questionType", "QuestionType")
@@ -1145,7 +1154,17 @@ def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> 
         return False
     if normalized_type in {1, 3}:
         return True
-    return normalized_type == 0 and "?" in str(raw_text or "")
+    text = str(raw_text or "").strip()
+    return normalized_type == 0 and (
+        "?" in text
+        or (
+            _payload_has_talk_with_agent(payload)
+            and (
+                _local_arithmetic_response(text) is not None
+                or _looks_like_question_or_request(text)
+            )
+        )
+    )
 
 
 def _selected_agent_resource_ids(candidate: dict) -> list[str]:
@@ -1817,10 +1836,10 @@ async def _process_auto_replies(
             )
         if response_text is None:
             try:
-                external_query = bool(
-                    not relevant_agent_knowledge
-                    and _is_external_information_query(incoming_text)
-                )
+                # La intención actual prevalece sobre recuerdos recuperados. Una
+                # memoria (incluso relevante) no debe impedir verificar noticias,
+                # clima, precios o titulares de cargos que pueden haber cambiado.
+                external_query = _is_external_information_query(incoming_text)
                 if external_query:
                     _update_response_status(
                         response_request_id,

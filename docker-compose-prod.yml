@@ -156,8 +156,10 @@ services:
         condition: service_healthy
       vector-db:
         condition: service_healthy
-    cpus: ${AGENT_WORKER_CPUS:-8.0}
-    mem_limit: ${AGENT_WORKER_MEMORY_LIMIT:-12g}
+    deploy:
+      replicas: ${AGENT_WORKER_REPLICAS:-2}
+    cpus: ${AGENT_WORKER_CPUS:-4.0}
+    mem_limit: ${AGENT_WORKER_MEMORY_LIMIT:-6g}
     networks:
       - machining-network
     logging: *default-logging

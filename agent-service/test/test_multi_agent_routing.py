@@ -47,6 +47,13 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(_payload_requests_agent_response(
             {"Chat": {"questionType": 0}}, "Kimi K3 fue presentado en 2026"
         ))
+        self.assertTrue(_payload_requests_agent_response(
+            {"Chat": {
+                "questionType": 0,
+                "resourceTable": [{"type": 2, "talkWithAgent": True}],
+            }},
+            "34 + 25",
+        ))
 
     def test_type_two_question_type_zero_with_question_mark_is_authorized(self):
         agent_resource = uuid4()
@@ -135,6 +142,27 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             "addressed_to_agent": True,
             "is_direct": True,
         }
+        self.assertIsNone(_auto_reply_rejection_reason(candidate))
+
+    def test_explicit_agent_arithmetic_without_question_mark_is_authorized(self):
+        agent_resource = uuid4()
+        candidate = {
+            "fingerprint": "explicit-arithmetic",
+            "message": "34 + 25",
+            "channel_id": str(uuid4()),
+            "payload": {"Chat": {
+                "questionType": 0,
+                "resourceTable": [{
+                    "idResource": str(agent_resource),
+                    "type": 2,
+                    "talkWithAgent": True,
+                }],
+            }},
+            "agent_resource_id": str(agent_resource),
+            "addressed_to_agent": True,
+            "is_direct": True,
+        }
+
         self.assertIsNone(_auto_reply_rejection_reason(candidate))
 
     def test_type_two_with_question_type_two_is_learning_only(self):
