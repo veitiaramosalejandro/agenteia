@@ -969,6 +969,63 @@ class SistemaAprendizaje:
             print(f"⚠️ Error obteniendo mensajes de chat desde BD: {e}")
             return []
 
+    def obtener_mensaje_chat_por_id(
+        self, user_id: str, chat_id: str, canal_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Obtiene un mensaje citado sólo si el solicitante puede acceder a su canal."""
+        identity = self._resolve_user_identity(user_id)
+        if not str(chat_id or "").strip():
+            return None
+        try:
+            with self._connect_sql_with_retry(context="quoted_chat_message") as conn:
+                with conn.cursor(as_dict=True) as cursor:
+                    self._execute_with_retry(
+                        cursor,
+                        query="""
+                            SELECT TOP 1
+                                c.IDChat2, c.RawMessage, c.Stamp, c.IDWorkRoom,
+                                c.IDSenderResource,
+                                COALESCE(sl.FullName, sl.Username, 'Participante') AS SenderDisplayName
+                            FROM dbo.SysChat c WITH (NOLOCK)
+                            LEFT JOIN dbo.SysLogin sl WITH (NOLOCK) ON sl.IDLogin = c.IDSender
+                            WHERE c.IDChat2 = TRY_CONVERT(bigint, %s)
+                              AND c.RawMessage IS NOT NULL
+                              AND LEN(LTRIM(RTRIM(c.RawMessage))) > 0
+                              AND (%s = '' OR c.IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s))
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM dbo.SysWorkRoomResource req WITH (NOLOCK)
+                                  LEFT JOIN dbo.SysLogin rsl WITH (NOLOCK) ON rsl.IDLogin = req.IDLogin
+                                  WHERE req.IDWorkRoom = c.IDWorkRoom
+                                    AND (
+                                        req.IDResource = TRY_CONVERT(uniqueidentifier, %s)
+                                        OR req.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
+                                        OR rsl.Username = %s
+                                    )
+                              )
+                        """,
+                        params=(
+                            str(chat_id), str(canal_id or ""), str(canal_id or ""),
+                            identity.get("resource_id"), identity.get("login_id"),
+                            identity.get("username"),
+                        ),
+                        context="quoted_chat_message_query",
+                    )
+                    row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "chat_id": str(row.get("IDChat2") or ""),
+                "message": str(row.get("RawMessage") or "").strip(),
+                "timestamp": row.get("Stamp"),
+                "channel_id": str(row.get("IDWorkRoom") or ""),
+                "sender_resource_id": str(row.get("IDSenderResource") or ""),
+                "sender_display_name": str(row.get("SenderDisplayName") or "Participante").strip(),
+            }
+        except Exception as exc:
+            print(f"⚠️ Error obteniendo mensaje citado {chat_id}: {exc}")
+            return None
+
     def obtener_usuarios_recurso_del_canal(self, user_id: str, canal_id: Optional[str], limit: int = 80) -> List[Dict[str, Any]]:
         """Obtiene usuarios recurso del canal de forma liviana y con validación de acceso."""
         identity = self._resolve_user_identity(user_id)

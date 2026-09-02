@@ -165,7 +165,7 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
         self.assertEqual("Ana: Tema pendiente", rendered)
 
-    def test_advice_session_is_stable_between_initial_and_continuous_payloads(self):
+    def test_quoted_message_uses_an_isolated_session(self):
         common = {
             "requester_resource": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
             "workroom_id": "d8e82821-d52f-44bf-9b70-682651a6196e",
@@ -173,7 +173,7 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         initial = {**common, "request_id": "1757618085", "quoted_chat_id": ""}
         continuous = {**common, "request_id": "1757618087", "quoted_chat_id": "1757618088"}
 
-        self.assertEqual(
+        self.assertNotEqual(
             _chat_question_session_id(initial),
             _chat_question_session_id(continuous),
         )
