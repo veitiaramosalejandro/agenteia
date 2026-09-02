@@ -94,6 +94,7 @@ from app.system.reaction_capture import (
 from app.system.schema import Actividad
 from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
 from app.response_queue import AgentResponseQueue
+from app.suggestion_queue import SuggestionQueue
 from app.historical.producer import enqueue_next_batch
 from app.historical.queue import HistoricalQueue
 from app.historical.store import (
@@ -294,6 +295,7 @@ agent = MachiningAgent()
 orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
 response_queue = AgentResponseQueue()
+suggestion_queue = SuggestionQueue()
 historical_queue = HistoricalQueue()
 
 _active_dialogues = 0
@@ -5439,10 +5441,11 @@ def _safe_chat_question_fallback(
 @app.post(
     "/api/v1/agent/notification/chat-question/suggest-response",
     response_model=ChatQuestionSuggestionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Suggest a response to a quoted SolidSET chat message",
     responses={
-        200: {
-            "description": "Independent response suggestions for user selection.",
+        202: {
+            "description": "Suggestion accepted into the durable processing queue.",
         },
         404: {"description": "The requester's own AI agent is not active."},
         422: {"description": "The FrameworkMessage lacks required chat context."},
@@ -5456,7 +5459,54 @@ async def suggest_chat_question_response(
     ],
     request: Request,
 ) -> ChatQuestionSuggestionResponse:
-    """Returns suggestions grounded in the requester's agent without sending them."""
+    """Accepts quickly; durable workers publish the result through status."""
+    payload = message.model_dump(mode="json")
+    context = _chat_question_suggestion_context(payload)
+    request_id = context["request_id"]
+    if not request_id or not context["requester_resource"] or not context["workroom_id"]:
+        raise HTTPException(status_code=422, detail="O pedido não contém identidade e chat válidos.")
+    try:
+        instance = _resolve_request_solidset_instance(request)
+        if not instance:
+            raise HTTPException(status_code=400, detail="Instância SolidSET desconhecida.")
+        existing = _load_response_status(request_id)
+        if existing and existing.get("status") in {
+            "queued", "processing", "searching", "thinking", "completed"
+        }:
+            result = existing.get("result") or {}
+            return ChatQuestionSuggestionResponse(
+                requestId=request_id,
+                questionChatId=str(result.get("questionChatId") or context["quoted_chat_id"] or request_id),
+                status=str(existing.get("status") or "queued"),
+                code=int(existing.get("code") or 0),
+                language=str(result.get("language") or "pt"),
+                title=result.get("title"),
+                suggestions=[ChatQuestionSuggestionItem(**item) for item in result.get("suggestions") or []],
+                statusUrl=f"/api/v1/agent/responses/{request_id}/status",
+            )
+        _create_response_status(request_id, request_id, 1)
+        await asyncio.to_thread(suggestion_queue.enqueue, request_id, payload, dict(instance))
+    except redis.RedisError as exc:
+        _update_response_status(request_id, "failed", error=str(exc))
+        raise HTTPException(status_code=503, detail="A fila de sugestões não está disponível.") from exc
+    print(f"📥 Sugestão enfileirada requestId={request_id}", flush=True)
+    return ChatQuestionSuggestionResponse(
+        requestId=request_id,
+        questionChatId=context["quoted_chat_id"] or request_id,
+        status="queued",
+        code=_RESPONSE_STATUS_CODES["queued"],
+        language="pt",
+        title=None,
+        suggestions=[],
+        statusUrl=f"/api/v1/agent/responses/{request_id}/status",
+    )
+
+
+async def _process_chat_question_response_suggestion(
+    message: FrameworkMessageDTO,
+    solidset_instance: dict[str, Any],
+) -> ChatQuestionSuggestionResponse:
+    """Processes one queued suggestion independently of the HTTP connection."""
     request_started = perf_counter()
 
     def log_stage(stage: str, started: float) -> None:
@@ -5523,12 +5573,12 @@ async def suggest_chat_question_response(
             detail="Não foi possível identificar o canal da conversa.",
         )
 
-    _create_response_status(request_id, request_id, 1)
+    if _load_response_status(request_id) is None:
+        _create_response_status(request_id, request_id, 1)
     status_agent_id = context["requester_resource"]
     agent_name = ""
     try:
         _update_response_status(request_id, "processing")
-        solidset_instance = _resolve_request_solidset_instance(request)
         if not solidset_instance or not solidset_instance.get("DataAPI"):
             raise LookupError("A instância SolidSET não tem um fornecedor de dados configurado.")
         identity_started = perf_counter()
@@ -6081,6 +6131,15 @@ def read_agent_response_queue_status() -> dict[str, Any]:
         return response_queue.stats()
     except redis.RedisError as exc:
         raise HTTPException(status_code=503, detail="O Redis Stream não está disponível.") from exc
+
+
+@app.get("/api/v1/agent/responses/suggestions/queue/status")
+def read_suggestion_queue_status() -> dict[str, Any]:
+    """Exposes durable suggestion backlog and active consumer count."""
+    try:
+        return suggestion_queue.stats()
+    except redis.RedisError as exc:
+        raise HTTPException(status_code=503, detail="A fila de sugestões não está disponível.") from exc
 
 
 class HistoricalIngestionStartRequest(BaseModel):

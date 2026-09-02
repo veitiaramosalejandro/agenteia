@@ -97,6 +97,22 @@ class Settings(BaseSettings):
     AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS: int = max(
         10, int(os.getenv("AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS", "15"))
     )
+    SUGGESTION_QUEUE_ENABLED: bool = _env_bool("SUGGESTION_QUEUE_ENABLED", "true")
+    SUGGESTION_STREAM: str = os.getenv(
+        "SUGGESTION_STREAM", "machining:agent-suggestions:v1"
+    )
+    SUGGESTION_CONSUMER_GROUP: str = os.getenv(
+        "SUGGESTION_CONSUMER_GROUP", "agent-suggestion-workers-v1"
+    )
+    SUGGESTION_STREAM_MAXLEN: int = max(
+        1000, int(os.getenv("SUGGESTION_STREAM_MAXLEN", "10000"))
+    )
+    SUGGESTION_MAX_RETRIES: int = max(
+        0, min(5, int(os.getenv("SUGGESTION_MAX_RETRIES", "2")))
+    )
+    SUGGESTION_CLAIM_IDLE_MS: int = max(
+        30000, int(os.getenv("SUGGESTION_CLAIM_IDLE_MS", "180000"))
+    )
     SOLIDSET_RETRY_QUEUE_ENABLED: bool = _env_bool("SOLIDSET_RETRY_QUEUE_ENABLED", "true")
     SOLIDSET_RETRY_QUEUE_KEY: str = os.getenv(
         "SOLIDSET_RETRY_QUEUE_KEY", "machining:solidset-deliveries:v1"
