@@ -1,9 +1,9 @@
 services:
   ollama-chat:
     environment:
-      # qwen2.5:7b + contexto 4096 cabe en los 8 GiB de la M4000, pero dos
-      # inferencias paralelas reducen demasiado el margen de VRAM.
-      - OLLAMA_NUM_PARALLEL=1
+      # Dos slots dieron la mejor latencia/throughput en la Quadro M4000:
+      # cuatro caben en VRAM, pero aumentaron la latencia individual 55–91 %.
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_CHAT_NUM_PARALLEL:-2}
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_GPU_OVERHEAD=${OLLAMA_GPU_OVERHEAD:-536870912}
       - NVIDIA_VISIBLE_DEVICES=all

@@ -4718,6 +4718,13 @@ def _suggestion_count(*, initial: bool, completed_turns: int) -> int:
     return max(1, 4 - max(1, completed_turns))
 
 
+def _should_repair_suggestions(
+    suggestions: list[str], *, expected_count: int, concrete_answer_mode: bool
+) -> bool:
+    """Concrete factual answers never pay for a second formatting inference."""
+    return bool(not concrete_answer_mode and len(suggestions) != expected_count)
+
+
 def _suggestion_title(language: str, *, initial: bool) -> str | None:
     if not initial:
         return None
@@ -4737,6 +4744,15 @@ def _suggestion_tool_allowlist(
     if agent._is_business_knowledge_query(quoted_message):
         return {"query_sql_server", "get_db_schema"}
     if agent._is_external_information_query(quoted_message):
+        return {"google_web_search"}
+    # Product/model identifiers such as ``kimi-k3`` or ``qwen2.5`` are
+    # distinctive external entities even when the user does not say
+    # "search the web" explicitly.  Routing them here avoids a first LLM
+    # pass whose only outcome is an unverifiable/deflecting answer.
+    if re.search(
+        r"\b[a-z][a-z0-9]*(?:[-.][a-z0-9]+)+\b",
+        str(quoted_message or "").casefold(),
+    ):
         return {"google_web_search"}
     return set()
 
@@ -5418,6 +5434,14 @@ async def suggest_chat_question_response(
     request: Request,
 ) -> ChatQuestionSuggestionResponse:
     """Returns suggestions grounded in the requester's agent without sending them."""
+    request_started = perf_counter()
+
+    def log_stage(stage: str, started: float) -> None:
+        print(
+            f"SUGGESTION_STAGE request_id={request_id or 'pending'} "
+            f"stage={stage} elapsed={perf_counter() - started:.3f}s"
+        )
+
     print(message.model_dump_json(indent=2))
     payload = message.model_dump(mode="json")
     context = _chat_question_suggestion_context(payload)
@@ -5484,6 +5508,7 @@ async def suggest_chat_question_response(
         solidset_instance = _resolve_request_solidset_instance(request)
         if not solidset_instance or not solidset_instance.get("DataAPI"):
             raise LookupError("A instância SolidSET não tem um fornecedor de dados configurado.")
+        identity_started = perf_counter()
         verification = await asyncio.to_thread(
             verify_and_sync_solidset_agent_mapping,
             context["requester_resource"],
@@ -5498,6 +5523,7 @@ async def suggest_chat_question_response(
             get_active_agent_identity_for_resource,
             context["requester_resource"],
         )
+        log_stage("identity_and_mapping", identity_started)
         if not identity:
             raise LookupError("O agente próprio do recurso não está ativo no PostgreSQL.")
         status_agent_id = str(
@@ -5535,6 +5561,7 @@ async def suggest_chat_question_response(
                 # Suggestion generation remains available if durable learning
                 # is temporarily unavailable; the error is observable in logs.
                 print(f"⚠️ No se pudo persistir el hecho del panel: {exc}")
+        context_started = perf_counter()
         private_knowledge = await asyncio.to_thread(
             get_agent_knowledge,
             context["requester_resource"],
@@ -5545,18 +5572,22 @@ async def suggest_chat_question_response(
             context["requester_resource"],
             context["workroom_id"],
         )
+        log_stage("private_context", context_started)
         scope_context = ""
+        related_started = perf_counter()
         related_records_context = await asyncio.to_thread(
             _verified_related_records_context,
             solidset_instance,
             context["related_records"],
         )
+        log_stage("related_records_sql", related_started)
         research_context = ""
         if related_records_context and _is_research_suggestion_request(effective_request_text):
             research_query = " ".join(
                 f"{effective_request_text} {related_records_context[:1400]}".split()
             )
             try:
+                web_started = perf_counter()
                 researched = await asyncio.to_thread(
                     google_web_search.invoke, {"query": research_query}
                 )
@@ -5565,12 +5596,14 @@ async def suggest_chat_question_response(
                     ("error", "la búsqueda", "no se encontraron")
                 ):
                     research_context = researched_text[:7000]
+                log_stage("web_search", web_started)
             except Exception as exc:
                 print(f"⚠️ No se pudo investigar el registro relacionado: {exc}")
         # The channel/meeting is read only for the initial empty payload. Later
         # turns reuse the same Redis-backed agent memory and refine the selected
         # suggestion without querying the conversation again.
         if ambient_mode:
+            channel_started = perf_counter()
             with solidset_sql_instance_context(solidset_instance):
                 recent_rows = await asyncio.to_thread(
                     agent.sistema_aprendizaje.obtener_mensajes_chat_desde_bd,
@@ -5579,6 +5612,7 @@ async def suggest_chat_question_response(
                     limit=30,
                 )
             scope_context = _format_suggestion_scope_context(recent_rows or [])
+            log_stage("channel_context_sql", channel_started)
             if not scope_context:
                 raise LookupError(
                     "Não foram encontradas mensagens acessíveis no canal ou na reunião para gerar sugestões."
@@ -5689,6 +5723,9 @@ async def suggest_chat_question_response(
             "advice_refine": advice_refine,
             "advice_request": advice_request,
             "concrete_answer_mode": concrete_answer_mode,
+            "strict_current_question": bool(
+                concrete_answer_mode and advice_request
+            ),
             "related_guidance_mode": related_guidance_mode,
             "response_suggestion_scope": (
                 "advice_refine"
@@ -5722,8 +5759,10 @@ async def suggest_chat_question_response(
             "agent_resource_id": context["requester_resource"],
             "agent_identity_id": status_agent_id,
             "agent_name": agent_name,
-            "agent_knowledge": "" if related_guidance_mode else private_knowledge,
-            "agent_reinforcement": reinforcement,
+            "agent_knowledge": (
+                "" if related_guidance_mode or concrete_answer_mode else private_knowledge
+            ),
+            "agent_reinforcement": "" if concrete_answer_mode else reinforcement,
             "workroom_id": context["workroom_id"],
             "recipient_count": 1,
             "importance": int(message.Importance or 0),
@@ -5771,6 +5810,7 @@ async def suggest_chat_question_response(
             )
             suggestions = [verified_business_context]
         else:
+            generation_started = perf_counter()
             if related_guidance_mode:
                 raw_suggestions = await asyncio.to_thread(
                     _reason_about_related_record,
@@ -5796,6 +5836,7 @@ async def suggest_chat_question_response(
                     tool_allowlist=suggestion_tool_allowlist,
                     auto_reply_mode=True,
                 )
+            log_stage("generation", generation_started)
             suggestions = _parse_chat_question_suggestions(
                 raw_suggestions,
                 limit=suggestion_count,
@@ -5820,7 +5861,11 @@ async def suggest_chat_question_response(
             ]
         if (
             (not verified_business_context or business_recommendation)
-            and len(suggestions) != suggestion_count
+            and _should_repair_suggestions(
+                suggestions,
+                expected_count=suggestion_count,
+                concrete_answer_mode=concrete_answer_mode,
+            )
         ):
             if related_guidance_mode:
                 # Un segundo pase del mismo modelo pequeño tiende a repetir el
@@ -5833,6 +5878,7 @@ async def suggest_chat_question_response(
                     ensure_ascii=False,
                 )
             else:
+                repair_started = perf_counter()
                 repaired_raw = await asyncio.to_thread(
                     _repair_chat_question_suggestions,
                     raw_suggestions,
@@ -5847,6 +5893,7 @@ async def suggest_chat_question_response(
                     ),
                     metadata=metadata,
                 )
+                log_stage("repair", repair_started)
             suggestions = _parse_chat_question_suggestions(
                 repaired_raw,
                 limit=suggestion_count,
@@ -5918,6 +5965,10 @@ async def suggest_chat_question_response(
             agent_name=agent_name,
             response_count=len(suggestions),
             result=result,
+        )
+        print(
+            f"SUGGESTION_TOTAL request_id={request_id} "
+            f"elapsed={perf_counter() - request_started:.3f}s"
         )
         return ChatQuestionSuggestionResponse(
             requestId=request_id,

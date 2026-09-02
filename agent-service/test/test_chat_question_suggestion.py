@@ -10,6 +10,7 @@ from app.main import (
     _related_record_direct_answer,
     _chat_question_session_id,
     _suggestion_count,
+    _should_repair_suggestions,
     _safe_chat_question_fallback,
     _suggestion_title,
     _suggestion_tool_allowlist,
@@ -44,6 +45,34 @@ from app.knowledge_provenance import (
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
+    def test_product_version_anchor_rejects_unrelated_rag_context(self):
+        machining_agent = MachiningAgent.__new__(MachiningAgent)
+
+        self.assertFalse(machining_agent._rag_context_matches_query(
+            "Que sabes de kimi-k3?",
+            "La actividad mas reciente trata sobre Real Madrid FC.",
+        ))
+        self.assertTrue(machining_agent._rag_context_matches_query(
+            "Que sabes de kimi-k3?",
+            "Kimi-k3 es el producto consultado por el usuario.",
+        ))
+
+    def test_concrete_answer_never_triggers_format_repair(self):
+        self.assertFalse(_should_repair_suggestions(
+            [], expected_count=1, concrete_answer_mode=True
+        ))
+        self.assertTrue(_should_repair_suggestions(
+            [], expected_count=3, concrete_answer_mode=False
+        ))
+
+    def test_product_version_question_is_routed_to_web_once(self):
+        self.assertEqual(
+            {"google_web_search"},
+            _suggestion_tool_allowlist(
+                "Que sabes de kimi-k3?", ambient_mode=False, advice_refine=False
+            ),
+        )
+
     def test_pure_arithmetic_is_resolved_locally_and_safely(self):
         self.assertEqual("8*8 = **64**.", _local_arithmetic_response("8*8 ?"))
         self.assertEqual("(12+4)/2 = **8**.", _local_arithmetic_response("(12+4)/2"))
