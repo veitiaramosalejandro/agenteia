@@ -427,6 +427,25 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
         self.assertEqual("Tareas verificadas: T-1 y T-2", result)
 
+    def test_channel_access_uses_authenticated_resource_without_llm(self):
+        with patch.object(
+            MachiningAgent,
+            "_resolve_channel_names_from_db",
+            return_value="Tienes acceso a 2 canales: Canal A y Canal B",
+        ) as resolver:
+            result = _verified_suggestion_business_context(
+                {"Code": "test"},
+                "Dime cuales son los canales a que tengo acceso?",
+                "resource-guid",
+            )
+
+        self.assertEqual("Tienes acceso a 2 canales: Canal A y Canal B", result)
+        resolver.assert_called_once_with(
+            "resource-guid",
+            "Dime cuales son los canales a que tengo acceso?",
+            perspective="requester",
+        )
+
     def test_suggestions_progressively_narrow(self):
         self.assertEqual(4, _suggestion_count(initial=True, completed_turns=0))
         self.assertEqual(3, _suggestion_count(initial=False, completed_turns=1))

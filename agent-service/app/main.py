@@ -4758,10 +4758,16 @@ def _suggestion_tool_allowlist(
 
 
 def _verified_suggestion_business_context(
-    solidset_instance: dict[str, Any], quoted_message: str
+    solidset_instance: dict[str, Any], quoted_message: str, user_id: str = ""
 ) -> str:
     """Reuse deterministic framework-message resolvers before drafting."""
     with solidset_sql_instance_context(solidset_instance):
+        if user_id and agent._is_channel_names_intent(quoted_message):
+            return agent._resolve_channel_names_from_db(
+                user_id,
+                quoted_message,
+                perspective="requester",
+            ).strip()
         for resolver in (
             agent._resolve_resource_tasks_from_db,
             agent._resolve_resource_activities_from_db,
@@ -5692,11 +5698,14 @@ async def suggest_chat_question_response(
             and not advice_refine
             and agent._is_business_knowledge_query(context["quoted_message"])
         )):
+            business_sql_started = perf_counter()
             verified_business_context = await asyncio.to_thread(
                 _verified_suggestion_business_context,
                 solidset_instance,
                 effective_request_text,
+                context["requester_resource"],
             )
+            log_stage("verified_business_sql", business_sql_started)
             if verified_business_context:
                 suggestion_source = (
                     f"{suggestion_source}\n\nDADOS OPERACIONAIS VERIFICADOS:\n"
