@@ -1,3 +1,11 @@
+# Produccion para Ryzen 9 3950X / 128 GiB. SERVER_DATA_ROOT debe apuntar al
+# almacenamiento persistente montado; por defecto se usan rutas del proyecto.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-20m}
+    max-file: ${DOCKER_LOG_MAX_FILES:-5}
+
 services:
   # API del agente. n8n accede internamente mediante http://agent-service:8000.
   nginx:
@@ -15,7 +23,7 @@ services:
       - ./certbot/internal:/etc/nginx/internal:ro
     depends_on:
       agent-service:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-health"]
       interval: 10s
@@ -24,6 +32,7 @@ services:
       start_period: 5s
     networks:
       - machining-network
+    logging: *default-logging
 
   certbot:
     image: certbot/certbot:latest
@@ -35,12 +44,15 @@ services:
 
   agent-service:
     image: agent-beta:0.0.1    
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
     container_name: machining_agent
     hostname: agent-service
     restart: always
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     env_file:
       - ${AGENT_ENV_FILE:-.env}
     environment:
@@ -51,11 +63,16 @@ services:
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
       POSTGRES_PORT: 5432
-      MODEL_NAME: qwen2.5:3b
-      OLLAMA_CONTEXT_LENGTH: 2048
-      DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
+      MODEL_NAME: ${MODEL_NAME:-qwen2.5:3b}
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-4096}
+      POSTGRES_USER: ${POSTGRES_USER:-robotea}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD debe estar definida}
+      POSTGRES_DB: ${POSTGRES_DB:-machining_db}
+      DB_URL: ${DB_URL:?DB_URL debe estar definida}
       REDIS_URL: redis://redis-cache:6379
-      DIALOGUE_MAX_CONCURRENT: 1
+      # La API admite dos solicitudes; Ollama serializa la inferencia del 7B
+      # para que una segunda KV cache no agote los 8 GiB de la Quadro M4000.
+      DIALOGUE_MAX_CONCURRENT: ${DIALOGUE_MAX_CONCURRENT:-2}
       LLM_COMPACT_RUNTIME_PROMPT: ${LLM_COMPACT_RUNTIME_PROMPT:-true}
       LLM_DIALOGUE_MAX_OUTPUT_TOKENS: ${LLM_DIALOGUE_MAX_OUTPUT_TOKENS:-640}
       LLM_SUGGESTION_MAX_OUTPUT_TOKENS: ${LLM_SUGGESTION_MAX_OUTPUT_TOKENS:-384}
@@ -73,28 +90,35 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:      
-      - ./data:/app/data
-      - ./audio:/app/audio
+      - ${SERVER_DATA_ROOT:-.}/data:/app/data
+      - ${SERVER_DATA_ROOT:-.}/audio:/app/audio
     depends_on:
       ollama-chat-init:
         condition: service_completed_successfully
       ollama-embeddings-init:
         condition: service_completed_successfully
-    #  timescaledb:
-    #    condition: service_healthy
-    #  redis-cache:
-    #    condition: service_healthy
-    #  vector-db:
-    #    condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      vector-db:
+        condition: service_healthy
+    cpus: ${AGENT_SERVICE_CPUS:-4.0}
+    mem_limit: ${AGENT_SERVICE_MEMORY_LIMIT:-8g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/agent/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - machining-network      
+    logging: *default-logging
 
   # Worker durable. Escala horizontalmente sin cambiar la API:
   # docker compose -f docker-compose-prod.yml up -d --scale agent-worker=4
   agent-worker:
     image: agent-beta:0.0.1
-    container_name: machining_agent_worker
-    hostname: agent-worker
     restart: always
     command: ["python", "-m", "app.response_worker"]
     env_file:
@@ -107,6 +131,9 @@ services:
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
       POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-robotea}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD debe estar definida}
+      POSTGRES_DB: ${POSTGRES_DB:-machining_db}
       REDIS_URL: redis://redis-cache:6379
       SOLIDSET_LOGIN_USERNAME: ""
       SOLIDSET_LOGIN_PASSWORD: ""
@@ -116,21 +143,24 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./data:/app/data
-      - ./audio:/app/audio
+      - ${SERVER_DATA_ROOT:-.}/data:/app/data
+      - ${SERVER_DATA_ROOT:-.}/audio:/app/audio
     depends_on:
       ollama-chat-init:
         condition: service_completed_successfully
       ollama-embeddings-init:
         condition: service_completed_successfully
-    #  timescaledb:
-    #    condition: service_healthy
-    #  redis-cache:
-    #    condition: service_healthy
-    #  vector-db:
-    #    condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      vector-db:
+        condition: service_healthy
+    cpus: ${AGENT_WORKER_CPUS:-8.0}
+    mem_limit: ${AGENT_WORKER_MEMORY_LIMIT:-12g}
     networks:
       - machining-network
+    logging: *default-logging
 
   solidset-retry-worker:
     image: agent-beta:0.0.1
@@ -151,8 +181,12 @@ services:
       SOLIDSET_LOGIN_RESOURCE_ID: ""
       SOLIDSET_RESOURCE_ID: ""
     extra_hosts: ["host.docker.internal:host-gateway"]
-    volumes: ["./data:/app/data"]
+    volumes: ["${SERVER_DATA_ROOT:-.}/data:/app/data"]
+    depends_on:
+      timescaledb: {condition: service_healthy}
+      redis-cache: {condition: service_healthy}
     networks: [machining-network]
+    logging: *default-logging
 
   historical-worker:
     image: agent-beta:0.0.1
@@ -169,13 +203,16 @@ services:
       POSTGRES_HOST: timescaledb
       REDIS_URL: redis://redis-cache:6379
     extra_hosts: ["host.docker.internal:host-gateway"]
-    volumes: ["./data:/app/data"]
+    volumes: ["${SERVER_DATA_ROOT:-.}/data:/app/data"]
     depends_on:
       ollama-embeddings-init: {condition: service_completed_successfully}
-    #  timescaledb: {condition: service_healthy}
-    #  redis-cache: {condition: service_healthy}
-    #  vector-db: {condition: service_healthy}
+      timescaledb: {condition: service_healthy}
+      redis-cache: {condition: service_healthy}
+      vector-db: {condition: service_healthy}
+    cpus: ${HISTORICAL_WORKER_CPUS:-6.0}
+    mem_limit: ${HISTORICAL_WORKER_MEMORY_LIMIT:-8g}
     networks: [machining-network]
+    logging: *default-logging
 
   historical-producer:
     extends:
@@ -197,24 +234,30 @@ services:
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
     extra_hosts: ["host.docker.internal:host-gateway"]
-    volumes: ["./data:/app/data"]
+    volumes: ["${SERVER_DATA_ROOT:-.}/data:/app/data"]
     depends_on:
       ollama-system-embeddings-init: {condition: service_completed_successfully}
+      timescaledb: {condition: service_healthy}
+      vector-db: {condition: service_healthy}
+    cpus: ${SYSTEM_KNOWLEDGE_WORKER_CPUS:-6.0}
+    mem_limit: ${SYSTEM_KNOWLEDGE_WORKER_MEMORY_LIMIT:-8g}
     networks: [machining-network]
+    logging: *default-logging
 
   # Runtime interactivo. El overlay GPU reserva la GPU únicamente para este
   # servicio; embeddings e ingestión usan el runtime CPU independiente.
   ollama-chat:
-    image: ollama/ollama:latest
+    # 0.33.2 fue validada en este servidor con CUDA 12 y compute capability 5.2.
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
     container_name: machining_ollama_chat
     hostname: ollama-chat
     restart: always
-    user: root  # Añadir esta línea
-    ports:
-      - 11434:11434
+    user: root
+    expose:
+      - "11434"
     volumes:
       # Este volumen guarda los modelos descargados localmente:
-      - ./ollama_storage:/root/.ollama
+      - ${SERVER_DATA_ROOT:-.}/ollama_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
       # El compose base funciona también sin GPU. Con CPU se limita la
@@ -223,10 +266,17 @@ services:
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-4096}
-      - OLLAMA_FLASH_ATTENTION=1
+      # Maxwell no dispone de los tensor cores usados por Flash Attention.
+      - OLLAMA_FLASH_ATTENTION=0
       - OLLAMA_KV_CACHE_TYPE=f16
+      - OLLAMA_SCHED_SPREAD=false
+      - OLLAMA_LOAD_TIMEOUT=${OLLAMA_LOAD_TIMEOUT:-10m}
       - LLAMA_ARG_FIT_TARGET=512
       - OLLAMA_KEEP_ALIVE=${OLLAMA_CHAT_KEEP_ALIVE:-24h}
+    cpus: ${OLLAMA_CHAT_CPUS:-24.0}
+    mem_limit: ${OLLAMA_CHAT_MEMORY_LIMIT:-32g}
+    shm_size: ${OLLAMA_CHAT_SHM_SIZE:-2g}
+    stop_grace_period: 2m
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -237,17 +287,18 @@ services:
       machining-network:
         aliases:
           - ollama-llm
+    logging: *default-logging
 
   ollama-embeddings:
-    image: ollama/ollama:latest
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
     container_name: machining_ollama_embeddings
     hostname: ollama-embeddings
     restart: always
     user: root
-    ports:
-      - 11435:11434
+    expose:
+      - "11434"
     volumes:
-      - ./ollama_embedding_storage:/root/.ollama
+      - ${SERVER_DATA_ROOT:-.}/ollama_embedding_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
       - OLLAMA_NUM_PARALLEL=${OLLAMA_EMBEDDING_NUM_PARALLEL:-2}
@@ -255,8 +306,8 @@ services:
       - OLLAMA_MAX_QUEUE=${OLLAMA_EMBEDDING_MAX_QUEUE:-64}
       - OLLAMA_CONTEXT_LENGTH=2048
       - OLLAMA_KEEP_ALIVE=${OLLAMA_EMBEDDING_KEEP_ALIVE:-24h}
-    cpus: ${OLLAMA_EMBEDDING_CPUS:-2.0}
-    mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-3g}
+    cpus: ${OLLAMA_EMBEDDING_CPUS:-4.0}
+    mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-6g}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -265,17 +316,18 @@ services:
       start_period: 15s
     networks:
       - machining-network
+    logging: *default-logging
 
   ollama-system-embeddings:
-    image: ollama/ollama:latest
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
     container_name: machining_ollama_system_embeddings
     hostname: ollama-system-embeddings
     restart: always
     user: root
-    ports:
-      - 11436:11434
+    expose:
+      - "11434"
     volumes:
-      - ./ollama_system_embedding_storage:/root/.ollama
+      - ${SERVER_DATA_ROOT:-.}/ollama_system_embedding_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
       - OLLAMA_NUM_PARALLEL=${OLLAMA_SYSTEM_EMBEDDING_NUM_PARALLEL:-2}
@@ -284,7 +336,7 @@ services:
       - OLLAMA_CONTEXT_LENGTH=2048
       - OLLAMA_KEEP_ALIVE=${OLLAMA_SYSTEM_EMBEDDING_KEEP_ALIVE:-24h}
     cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-4.0}
-    mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-3g}
+    mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-6g}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -293,9 +345,10 @@ services:
       start_period: 15s
     networks:
       - machining-network
+    logging: *default-logging
 
   ollama-chat-init:
-    image: ollama/ollama:latest
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
     restart: "no"
     environment:
       OLLAMA_HOST: http://ollama-chat:11434
@@ -308,7 +361,7 @@ services:
       - machining-network
 
   ollama-embeddings-init:
-    image: ollama/ollama:latest
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
     restart: "no"
     environment:
       OLLAMA_HOST: http://ollama-embeddings:11434
@@ -321,7 +374,7 @@ services:
       - machining-network
 
   ollama-system-embeddings-init:
-    image: ollama/ollama:latest
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
     restart: "no"
     environment:
       OLLAMA_HOST: http://ollama-system-embeddings:11434
@@ -335,14 +388,15 @@ services:
 
   # 2. Base de Datos Vectorial (Para RAG)
   vector-db:
-    image: qdrant/qdrant:latest # Opción robusta y ligera (o chromadb / pgvector)
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:latest}
     container_name: machining_vector_db
     hostname: vector-db
     restart: always
-    ports:
-      - 6333:6333
+    expose:
+      - "6333"
     volumes:
-      - ./qdrant_data:/qdrant/storage
+      - ${SERVER_DATA_ROOT:-.}/qdrant_data:/qdrant/storage
+    mem_limit: ${QDRANT_MEMORY_LIMIT:-16g}
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
       interval: 5s
@@ -354,30 +408,33 @@ services:
       start_period: 120s
     networks:
       - machining-network
+    logging: *default-logging
 
   # 3. Base de Datos de Producción y Sensores (TimescaleDB / PostgreSQL)
   timescaledb:
-    image: timescale/timescaledb:latest-pg15
+    image: ${TIMESCALEDB_IMAGE:-timescale/timescaledb:latest-pg15}
     container_name: machining_db
     hostname: timescaledb
     restart: always
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=pass
-      - POSTGRES_DB=machining_db
-    ports:
-      - 5432:5432
+      POSTGRES_USER: ${POSTGRES_USER:-robotea}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD debe estar definida}
+      POSTGRES_DB: ${POSTGRES_DB:-machining_db}
+    expose:
+      - "5432"
     volumes:
-      - ./postgres_data:/var/lib/postgresql/data
+      - ${SERVER_DATA_ROOT:-.}/postgres_data:/var/lib/postgresql/data
       - ./database/init:/docker-entrypoint-initdb.d:ro
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-16g}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d machining_db"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 10s
     networks:
       - machining-network
+    logging: *default-logging
 
   # 4. Cache y Gestión de Estado/Colas
   redis-cache:
@@ -386,10 +443,11 @@ services:
     hostname: redis-cache
     restart: always
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
-    ports:
-      - 6379:6379
+    expose:
+      - "6379"
     volumes:
-      - redis_data:/data
+      - ${SERVER_DATA_ROOT:-.}/redis_data:/data
+    mem_limit: ${REDIS_MEMORY_LIMIT:-4g}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -397,6 +455,7 @@ services:
       retries: 10
     networks:
       - machining-network
+    logging: *default-logging
 
   n8n:
     image: n8nio/n8n:latest
@@ -404,7 +463,7 @@ services:
     hostname: n8n
     restart: always
     ports:
-      - 5678:5678
+      - "${N8N_BIND_ADDRESS:-127.0.0.1}:5678:5678"
     environment:
       - N8N_HOST=${N8N_HOST:-localhost}
       - N8N_PORT=5678
@@ -412,22 +471,22 @@ services:
       - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678/}
       - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Lisbon}
       - TZ=${TZ:-Europe/Lisbon}
-      - N8N_SECURE_COOKIE=false
+      - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE:-true}
       - N8N_DIAGNOSTICS_ENABLED=false
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-admin123}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:?N8N_BASIC_AUTH_USER debe estar definido}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:?N8N_BASIC_AUTH_PASSWORD debe estar definido}
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=timescaledb
       - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=n8n
-      - DB_POSTGRESDB_USER=user
-      - DB_POSTGRESDB_PASSWORD=pass
+      - DB_POSTGRESDB_DATABASE=${N8N_POSTGRES_DB:-machining_db}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-robotea}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD debe estar definida}
       - AGENT_API_URL=http://agent-service:8000
     extra_hosts:
       - host.docker.internal:host-gateway
     volumes:
-      - ./n8n_data:/home/node/.n8n
+      - ${SERVER_DATA_ROOT:-.}/n8n_data:/home/node/.n8n
     depends_on:
       agent-service:
         condition: service_started
@@ -435,10 +494,8 @@ services:
         condition: service_healthy
     networks:
       - machining-network
+    logging: *default-logging
 
 networks:
   machining-network:
     driver: bridge
-
-volumes:
-  redis_data:
