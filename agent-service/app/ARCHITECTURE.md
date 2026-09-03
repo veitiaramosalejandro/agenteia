@@ -49,3 +49,10 @@ plantillas versionadas.
 
 Cada extracción debe conservar rutas, añadir pruebas del contrato OpenAPI y
 evitar dependencias circulares con `main.py`.
+
+## Dominios extraídos
+
+- `agent_prompts`: generación individual, generación masiva y publicación.
+- `ingestion`: ingesta histórica y conocimiento estructurado del sistema.
+- `synchronization`: recursos, logins, canales y ámbitos SolidSET.
+- `llm_configuration`: proveedores LLM y modelos asignados a agentes.

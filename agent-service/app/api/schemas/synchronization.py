@@ -1,0 +1,32 @@
+from pydantic import BaseModel
+
+
+class _BaseSyncResponse(BaseModel):
+    status: str
+    sourceRows: int
+    synchronized: int
+    skipped: int
+
+
+class SysResourceIAIngestResponse(_BaseSyncResponse):
+    inserted: int
+    updated: int
+
+
+class SysChatIAResourceIngestResponse(_BaseSyncResponse):
+    inserted: int
+    existing: int
+
+
+class SysAgentIAScopeIngestResponse(_BaseSyncResponse):
+    pass
+
+
+class SysWorkRoomIngestResponse(_BaseSyncResponse):
+    inserted: int
+    updated: int
+
+
+class SysLoginIngestResponse(_BaseSyncResponse):
+    inserted: int
+    updated: int

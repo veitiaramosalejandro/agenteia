@@ -13,7 +13,6 @@ import psycopg
 import pymssql
 import redis
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointIdsList
 from contextlib import suppress
 from collections import OrderedDict
 from datetime import datetime
@@ -43,10 +42,12 @@ from app.agent.speech import text_to_speech
 from app.agent.tools import google_web_search, query_sql_server, solidset_send_chat_message
 from app.agent.schema_query_planner import plan_related_record_query
 from app.api.controllers.agent_prompts import router as agent_prompts_router
+from app.api.controllers.ingestion import router as ingestion_router
+from app.api.controllers.synchronization import router as synchronization_router
+from app.api.controllers.llm_configuration import router as llm_configuration_router
 from app.connectors.db_client import (
     configure_agent_workroom,
     agent_learning_enabled,
-    deactivate_llm_provider_configuration,
     ensure_llm_provider_schema,
     ensure_agent_model_schema,
     ensure_agent_response_audit_schema,
@@ -58,14 +59,10 @@ from app.connectors.db_client import (
     quarantine_legacy_generated_knowledge,
     get_llm_provider_configuration,
     get_agent_model_configuration,
-    get_agent_model_configurations,
     get_solidset_instance,
     get_solidset_schema_snapshot,
     list_active_solidset_instances,
-    list_llm_provider_configurations,
     save_agent_knowledge,
-    save_llm_provider_configuration,
-    save_agent_model_configuration,
     save_agent_response_audit,
     save_solidset_instance,
     save_solidset_schema_snapshot,
@@ -76,11 +73,6 @@ from app.connectors.solidset_data_api import read_schema_catalog
 from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
 from app.system.resource_ingest import (
-    ingest_solidset_chat_resources,
-    ingest_solidset_agent_scopes,
-    ingest_solidset_logins,
-    ingest_solidset_resources,
-    ingest_solidset_workrooms,
     verify_and_sync_solidset_agent_mapping,
 )
 from app.connectors.solidset_sql import (
@@ -95,22 +87,10 @@ from app.system.reaction_capture import (
     save_agent_reaction,
 )
 from app.system.schema import Actividad
-from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
 from app.response_queue import AgentResponseQueue
 from app.suggestion_queue import SuggestionQueue
-from app.historical.producer import enqueue_next_batch
-from app.historical.queue import HistoricalQueue
 from app.historical.store import (
-    approve_dry_run_cursors,
     ensure_schema as ensure_historical_schema,
-    historical_points,
-    list_audits as list_historical_audits,
-    list_cursors as list_historical_cursors,
-    mark_historical_deleted,
-)
-from app.system.system_knowledge_ingest import (
-    create_run as create_system_knowledge_run,
-    get_run_status as get_system_knowledge_run_status,
 )
 
 # ============================================================
@@ -297,11 +277,13 @@ async def prioritize_interactive_requests(request: Request, call_next):
 agent = MachiningAgent()
 app.state.agent = agent
 app.include_router(agent_prompts_router)
+app.include_router(ingestion_router)
+app.include_router(synchronization_router)
+app.include_router(llm_configuration_router)
 orchestrator = SolidSETOrchestrator(agent)
 notification_listener = NotificationApiListener()
 response_queue = AgentResponseQueue()
 suggestion_queue = SuggestionQueue()
-historical_queue = HistoricalQueue()
 
 _active_dialogues = 0
 _active_dialogues_lock = threading.Lock()
@@ -2750,121 +2732,6 @@ class SolidSETDataAPIConnectionTestResponse(BaseModel):
     hasSysResource2Agent: bool
 
 
-class LLMProviderConfiguration(BaseModel):
-    Code: str = Field(..., min_length=1, max_length=80)
-    Name: str = Field(..., min_length=1, max_length=255)
-    Provider: str = Field(..., min_length=1, max_length=40)
-    Model: str = Field(..., min_length=1, max_length=255)
-    BaseUrl: Optional[str] = Field(None, max_length=500)
-    APIKey: Optional[str] = Field(None, max_length=8000)
-    Temperature: float = Field(0.5, ge=0, le=2)
-    MaxOutputTokens: int = Field(1024, gt=0, le=131072)
-    TimeoutSeconds: int = Field(60, gt=0, le=3600)
-    AzureEndpoint: Optional[str] = Field(None, max_length=500)
-    AzureApiVersion: Optional[str] = Field(None, max_length=80)
-    AzureDeployment: Optional[str] = Field(None, max_length=255)
-    IDResource: Optional[uuid.UUID] = None
-    IsDefault: bool = False
-    active: bool = True
-
-    class Config:
-        extra = "forbid"
-
-
-class LLMProviderConfigurationStored(BaseModel):
-    ID: uuid.UUID
-    Code: str
-    Name: str
-    Provider: str
-    Model: str
-    BaseUrl: Optional[str] = None
-    HasAPIKey: bool
-    Temperature: float
-    MaxOutputTokens: int
-    TimeoutSeconds: int
-    AzureEndpoint: Optional[str] = None
-    AzureApiVersion: Optional[str] = None
-    AzureDeployment: Optional[str] = None
-    IDResource: Optional[uuid.UUID] = None
-    IsDefault: bool
-    active: bool
-    CreatedAt: datetime
-    UpdatedAt: datetime
-
-
-class LLMProviderConfigurationResponse(BaseModel):
-    status: str
-    configuration: LLMProviderConfigurationStored
-
-
-class AgentIAModelConfiguration(BaseModel):
-    ProviderCode: str = Field(..., min_length=1, max_length=80)
-    Role: str = Field("general", min_length=1, max_length=80)
-    LocalExecution: bool = True
-    TrainingMode: str = Field("rag_reinforcement", pattern="^(rag_reinforcement|rag_only|disabled)$")
-    LearnFromOwner: bool = True
-    LearnFromSystem: bool = True
-    LearnFromReactions: bool = True
-    Capabilities: list[str] = Field(default_factory=lambda: ["general"], min_length=1)
-    Priority: int = Field(100, ge=0, le=10000)
-    IsDefault: bool = False
-    active: bool = True
-
-    class Config:
-        extra = "forbid"
-
-
-class AgentIAModelStored(AgentIAModelConfiguration):
-    ID: uuid.UUID
-    IDResource: uuid.UUID
-    IDProviderConfiguration: uuid.UUID
-    CreatedAt: datetime
-    UpdatedAt: datetime
-
-
-class SysResourceIAIngestResponse(BaseModel):
-    status: str
-    sourceRows: int
-    synchronized: int
-    inserted: int
-    updated: int
-    skipped: int
-
-
-class SysChatIAResourceIngestResponse(BaseModel):
-    status: str
-    sourceRows: int
-    synchronized: int
-    inserted: int
-    existing: int
-    skipped: int
-
-
-class SysAgentIAScopeIngestResponse(BaseModel):
-    status: str
-    sourceRows: int
-    synchronized: int
-    skipped: int
-
-
-class SysWorkRoomIngestResponse(BaseModel):
-    status: str
-    sourceRows: int
-    synchronized: int
-    inserted: int
-    updated: int
-    skipped: int
-
-
-class SysLoginIngestResponse(BaseModel):
-    status: str
-    sourceRows: int
-    synchronized: int
-    inserted: int
-    updated: int
-    skipped: int
-
-
 class MultiAgentDialogueRequest(BaseModel):
     IDWorkRoom: uuid.UUID
     IDSession: Optional[uuid.UUID] = None
@@ -3665,49 +3532,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 
 @app.post(
-    "/api/v1/agent/solidset/workrooms/sync",
-    response_model=SysWorkRoomIngestResponse,
-    tags=["SolidSET synchronization"],
-    summary="Synchronize workrooms from one SolidSET instance",
-)
-def sync_solidset_workrooms(instanceCode: str = Query(...)) -> SysWorkRoomIngestResponse:
-    """Synchronizes dbo.SysWorkRoom using the SQL Server connection selected by instanceCode."""
-    try:
-        instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("DataAPI"):
-            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
-        result = ingest_solidset_workrooms(instance)
-    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
-        print(f"❌ No se pudo sincronizar SysWorkRoom: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Não foi possível sincronizar os canais do SolidSET.",
-        ) from exc
-    return SysWorkRoomIngestResponse(status="synchronized", **result)
-
-
-@app.post(
-    "/api/v1/agent/solidset/logins/sync",
-    response_model=SysLoginIngestResponse,
-    tags=["SolidSET synchronization"],
-    summary="Synchronize logins from one SolidSET instance",
-)
-def sync_solidset_logins(instanceCode: str = Query(...)) -> SysLoginIngestResponse:
-    """Synchronizes dbo.SysLogin without exposing credentials in the response."""
-    try:
-        instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("DataAPI"):
-            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
-        result = ingest_solidset_logins(instance)
-    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
-        print(f"❌ No se pudo sincronizar SysLogin: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Não foi possível sincronizar as contas do SolidSET.",
-        ) from exc
-    return SysLoginIngestResponse(status="synchronized", **result)
-
-@app.post(
     "/api/v1/agent/solidset/agents/{agent_resource_id}/knowledge",
     response_model=AgentKnowledgeResponse,
     status_code=status.HTTP_201_CREATED,
@@ -3881,71 +3705,6 @@ async def handle_multi_agent_dialogue(
         IDWorkRoom=request.IDWorkRoom,
         responses=list(responses),
     )
-
-@app.post(
-    "/api/v1/agent/solidset/chat-workroom/sync",
-    response_model=SysChatIAResourceIngestResponse,
-    tags=["SolidSET synchronization"],
-    summary="Synchronize resource and workroom assignments from one instance",
-)
-def sync_solidset_chat_resources(instanceCode: str = Query(...)) -> SysChatIAResourceIngestResponse:
-    """Synchronizes resource-to-workroom assignments for the selected instance."""
-    try:
-        instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("DataAPI"):
-            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
-        result = ingest_solidset_chat_resources(instance)
-    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
-        print(f"❌ No se pudo sincronizar SysChatIAResource: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Não foi possível sincronizar as relações de chat.",
-        ) from exc
-    return SysChatIAResourceIngestResponse(status="synchronized", **result)
-
-
-@app.post(
-    "/api/v1/agent/solidset/agent-scopes/sync",
-    response_model=SysAgentIAScopeIngestResponse,
-    tags=["SolidSET synchronization"],
-    summary="Synchronize agent identity, organization, channel and access scopes",
-)
-def sync_solidset_agent_scopes(instanceCode: str = Query(...)) -> SysAgentIAScopeIngestResponse:
-    """Materializa el alcance de agentes; no publica ni modifica sus plantillas."""
-    try:
-        instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("DataAPI"):
-            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
-        result = ingest_solidset_agent_scopes(instance)
-    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
-        print(f"❌ No se pudo sincronizar SysAgentIAScope: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Não foi possível sincronizar o alcance dos agentes.",
-        ) from exc
-    return SysAgentIAScopeIngestResponse(status="synchronized", **result)
-
-
-@app.post(
-    "/api/v1/agent/solidset/resources/sync",
-    response_model=SysResourceIAIngestResponse,
-    tags=["SolidSET synchronization"],
-    summary="Synchronize resources from one SolidSET instance",
-)
-def sync_solidset_resources(instanceCode: str = Query(...)) -> SysResourceIAIngestResponse:
-    """Synchronizes SysResources using the SQL Server connection selected by instanceCode."""
-    try:
-        instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance or not instance.get("DataAPI"):
-            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
-        result = ingest_solidset_resources(instance)
-    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
-        print(f"❌ No se pudo sincronizar SysResourceIA: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Não foi possível sincronizar os recursos entre o SQL Server e o PostgreSQL.",
-        ) from exc
-    return SysResourceIAIngestResponse(status="synchronized", **result)
 
 @app.post(
     "/api/v1/agent/solidset/chat-configuration",
@@ -4205,132 +3964,6 @@ def get_solidset_instance_schema(code: str) -> dict[str, Any]:
         "capturedAt": snapshot.get("CapturedAt"),
         "catalog": snapshot.get("Catalog"),
     }
-
-
-@app.put(
-    "/api/v1/agent/llm/providers/{code}",
-    response_model=LLMProviderConfigurationResponse,
-)
-def save_llm_provider(
-    code: str,
-    configuration: LLMProviderConfiguration,
-) -> LLMProviderConfigurationResponse:
-    """Registra/actualiza un proveedor global o específico de un agente."""
-    payload = configuration.model_dump()
-    if code.strip().lower() != payload["Code"].strip().lower():
-        raise HTTPException(status_code=422, detail="O Code da rota e do corpo devem coincidir.")
-    provider = payload["Provider"].strip().lower().replace("-", "_")
-    if provider not in ProviderRegistry.names():
-        raise HTTPException(status_code=422, detail={
-            "message": "Fornecedor LLM não suportado.",
-            "available": list(ProviderRegistry.names()),
-        })
-    payload["Code"] = payload["Code"].strip()
-    payload["Name"] = payload["Name"].strip()
-    payload["Provider"] = provider
-    payload["Model"] = payload["Model"].strip()
-    for field in ("BaseUrl", "AzureEndpoint"):
-        value = str(payload.get(field) or "").strip().rstrip("/")
-        if value:
-            parsed = urlparse(value)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise HTTPException(status_code=422, detail=f"{field} deve ser um URL HTTP(S) absoluto.")
-        payload[field] = value or None
-    if provider == "ollama" and not payload.get("BaseUrl"):
-        payload["BaseUrl"] = settings.OLLAMA_BASE_URL.rstrip("/")
-    if provider in {"openai_compatible", "local_openai"} and not payload.get("BaseUrl"):
-        raise HTTPException(status_code=422, detail="BaseUrl é obrigatório para um fornecedor compatível com OpenAI.")
-    if provider == "azure_openai" and not (payload.get("AzureEndpoint") or payload.get("BaseUrl")):
-        raise HTTPException(status_code=422, detail="AzureEndpoint ou BaseUrl é obrigatório para Azure OpenAI.")
-    if payload.get("IDResource") is not None:
-        payload["IsDefault"] = False
-
-    # Construir el adaptador detecta dependencias o parámetros incompatibles antes de persistir.
-    try:
-        create_chat_model(LLMProviderConfig(
-            provider=provider, model=payload["Model"], base_url=payload.get("BaseUrl") or "",
-            api_key=payload.get("APIKey") or "", temperature=payload["Temperature"],
-            max_output_tokens=payload["MaxOutputTokens"], timeout_seconds=payload["TimeoutSeconds"],
-            azure_endpoint=payload.get("AzureEndpoint") or "",
-            azure_api_version=payload.get("AzureApiVersion") or "",
-            azure_deployment=payload.get("AzureDeployment") or "",
-        ))
-        saved = save_llm_provider_configuration(payload)
-    except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="O IDResource indicado não existe.") from exc
-    except (ValueError, RuntimeError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail="A configuração do fornecedor não é válida.") from exc
-    except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="Não foi possível guardar o fornecedor no PostgreSQL.") from exc
-    agent.clear_llm_configuration_cache()
-    return LLMProviderConfigurationResponse(
-        status="saved", configuration=LLMProviderConfigurationStored(**saved)
-    )
-
-
-@app.get(
-    "/api/v1/agent/llm/providers",
-    response_model=list[LLMProviderConfigurationStored],
-)
-def get_llm_providers() -> list[LLMProviderConfigurationStored]:
-    """Lista configuraciones sin exponer sus claves API."""
-    try:
-        return [LLMProviderConfigurationStored(**row) for row in list_llm_provider_configurations()]
-    except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="Não foi possível consultar os fornecedores.") from exc
-
-
-@app.delete("/api/v1/agent/llm/providers/{code}")
-def deactivate_llm_provider(code: str) -> dict[str, str]:
-    """Desactiva una configuración conservando su historial."""
-    try:
-        changed = deactivate_llm_provider_configuration(code.strip())
-    except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="Não foi possível desativar o fornecedor.") from exc
-    if not changed:
-        raise HTTPException(status_code=404, detail="A configuração não existe.")
-    agent.clear_llm_configuration_cache()
-    return {"status": "deactivated", "code": code.strip()}
-
-
-@app.put(
-    "/api/v1/agent/solidset/agents/{agent_resource_id}/model",
-    response_model=AgentIAModelStored,
-)
-def configure_agent_model(
-    agent_resource_id: uuid.UUID,
-    configuration: AgentIAModelConfiguration,
-) -> AgentIAModelStored:
-    """Asigna a un agente el modelo y su política de mejora continua."""
-    payload = configuration.model_dump()
-    payload["ProviderCode"] = payload["ProviderCode"].strip()
-    payload["Role"] = payload["Role"].strip()
-    try:
-        saved = save_agent_model_configuration(agent_resource_id, payload)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail="A configuração solicitada não foi encontrada.") from exc
-    except psycopg.errors.ForeignKeyViolation as exc:
-        raise HTTPException(status_code=404, detail="O agente indicado não existe.") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="A configuração do modelo não é válida.") from exc
-    except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="Não foi possível atribuir o modelo ao agente.") from exc
-    agent.clear_llm_configuration_cache()
-    return AgentIAModelStored(**saved)
-
-
-@app.get(
-    "/api/v1/agent/solidset/agents/{agent_resource_id}/model",
-)
-def read_agent_model(agent_resource_id: uuid.UUID) -> dict[str, Any]:
-    """Consulta todos los modelos que el router puede usar para el agente."""
-    try:
-        saved = get_agent_model_configurations(agent_resource_id)
-    except psycopg.Error as exc:
-        raise HTTPException(status_code=503, detail="Não foi possível consultar o modelo do agente.") from exc
-    if not saved:
-        raise HTTPException(status_code=404, detail="O agente não tem nenhum SysAgentIAModel ativo.")
-    return {"IDResource": agent_resource_id, "models": saved}
 
 
 @app.post(
@@ -6088,197 +5721,6 @@ def read_suggestion_queue_status() -> dict[str, Any]:
         return suggestion_queue.stats()
     except redis.RedisError as exc:
         raise HTTPException(status_code=503, detail="A fila de sugestões não está disponível.") from exc
-
-
-class HistoricalIngestionStartRequest(BaseModel):
-    instanceCode: Optional[str] = None
-    dryRun: bool = True
-
-
-class SystemKnowledgeIngestionStartRequest(BaseModel):
-    instanceCode: str = Field(..., min_length=1, max_length=100)
-    tables: Optional[list[str]] = Field(None, max_length=50)
-
-    class Config:
-        extra = "forbid"
-
-
-def _require_historical_admin(
-    x_agent_admin_key: str = Header(
-        ...,
-        alias="X-Agent-Admin-Key",
-        description="Administrative key configured in HISTORICAL_INGESTION_ADMIN_KEY.",
-    ),
-) -> None:
-    configured = settings.HISTORICAL_INGESTION_ADMIN_KEY.strip()
-    if not configured:
-        raise HTTPException(status_code=503, detail="Configure HISTORICAL_INGESTION_ADMIN_KEY.")
-    if x_agent_admin_key != configured:
-        raise HTTPException(status_code=401, detail="Credencial administrativa inválida.")
-
-
-@app.post(
-    "/api/v1/agent/system-knowledge-ingestion/start",
-    status_code=202,
-    tags=["Historical Ingestion"],
-    dependencies=[Depends(_require_historical_admin)],
-)
-async def start_system_knowledge_ingestion(
-    configuration: SystemKnowledgeIngestionStartRequest,
-) -> dict[str, Any]:
-    """Inicia la materialización semántica de entidades SQL Server."""
-    instance = get_solidset_instance(code=configuration.instanceCode, source_ip=None)
-    if not instance:
-        raise HTTPException(status_code=404, detail="Instância SolidSET não encontrada.")
-    if not instance.get("DataAPI"):
-        raise HTTPException(status_code=409, detail="A instância não possui Data API ativa.")
-    try:
-        run_id = await asyncio.to_thread(
-            create_system_knowledge_run, instance, configuration.tables
-        )
-    except (psycopg.Error, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail="Não foi possível criar a execução.") from exc
-    return {
-        "status": "queued", "runId": run_id,
-        "statusUrl": f"/api/v1/agent/system-knowledge-ingestion/status?runId={run_id}",
-    }
-
-
-@app.get(
-    "/api/v1/agent/system-knowledge-ingestion/status",
-    tags=["Historical Ingestion"],
-    dependencies=[Depends(_require_historical_admin)],
-)
-def system_knowledge_ingestion_status(
-    runId: Optional[uuid.UUID] = Query(None),
-    instanceCode: Optional[str] = Query(None, min_length=1, max_length=100),
-) -> dict[str, Any]:
-    """Devuelve progreso persistente y confirma si la carga terminó."""
-    if not runId and not instanceCode:
-        raise HTTPException(status_code=422, detail="Informe runId ou instanceCode.")
-    instance_id = None
-    if instanceCode:
-        instance = get_solidset_instance(code=instanceCode, source_ip=None)
-        if not instance:
-            raise HTTPException(status_code=404, detail="Instância SolidSET não encontrada.")
-        instance_id = str(instance["ID"])
-    try:
-        result = get_system_knowledge_run_status(
-            run_id=str(runId) if runId else None, instance_id=instance_id,
-        )
-    except (psycopg.Error, ValueError) as exc:
-        raise HTTPException(status_code=503, detail="Estado da ingestão indisponível.") from exc
-    if not result:
-        raise HTTPException(status_code=404, detail="Execução de ingestão não encontrada.")
-    return result
-
-
-@app.post(
-    "/api/v1/agent/historical-ingestion/start",
-    status_code=202,
-    dependencies=[Depends(_require_historical_admin)],
-)
-async def start_historical_ingestion(
-    configuration: HistoricalIngestionStartRequest,
-) -> dict[str, Any]:
-    try:
-        instances = (
-            [get_solidset_instance(code=configuration.instanceCode, source_ip=None)]
-            if configuration.instanceCode else list_active_solidset_instances()
-        )
-        instances = [instance for instance in instances if instance]
-        if not instances:
-            raise HTTPException(status_code=404, detail="Não existem instâncias SolidSET ativas.")
-        historical_queue.set_paused(False)
-        results = [
-            await asyncio.to_thread(enqueue_next_batch, instance, configuration.dryRun)
-            for instance in instances
-        ]
-        return {"status":"accepted", "dryRun":configuration.dryRun, "instances":results}
-    except (pymssql.Error, psycopg.Error, redis.RedisError, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail="Não foi possível iniciar o lote de ingestão histórica.") from exc
-
-
-@app.post(
-    "/api/v1/agent/historical-ingestion/pause",
-    dependencies=[Depends(_require_historical_admin)],
-)
-def pause_historical_ingestion() -> dict[str, Any]:
-    historical_queue.set_paused(True)
-    return {"status":"paused"}
-
-
-@app.post(
-    "/api/v1/agent/historical-ingestion/resume",
-    dependencies=[Depends(_require_historical_admin)],
-)
-def resume_historical_ingestion() -> dict[str, Any]:
-    historical_queue.set_paused(False)
-    return {"status":"running"}
-
-
-@app.post(
-    "/api/v1/agent/historical-ingestion/approve-dry-run",
-    dependencies=[Depends(_require_historical_admin)],
-)
-def approve_historical_dry_run(
-    instanceCode: str = Query(...)
-) -> dict[str, Any]:
-    instance = get_solidset_instance(code=instanceCode, source_ip=None)
-    if not instance:
-        raise HTTPException(status_code=404, detail="Instância não encontrada.")
-    approved = approve_dry_run_cursors(str(instance["ID"]))
-    return {"status":"approved", "approvedCursors":approved}
-
-
-@app.get(
-    "/api/v1/agent/historical-ingestion/status",
-    dependencies=[Depends(_require_historical_admin)],
-)
-def historical_ingestion_status(
-    resourceId: Optional[uuid.UUID] = Query(None),
-) -> dict[str, Any]:
-    return {
-        "queue":historical_queue.stats(),
-        "cursors":list_historical_cursors(str(resourceId) if resourceId else None),
-    }
-
-
-@app.get(
-    "/api/v1/agent/historical-ingestion/batches",
-    dependencies=[Depends(_require_historical_admin)],
-)
-def historical_ingestion_batches(
-    limit: int = Query(50, ge=1, le=500),
-    resourceId: Optional[uuid.UUID] = Query(None),
-) -> dict[str, Any]:
-    return {
-        "items":list_historical_audits(limit, str(resourceId) if resourceId else None)
-    }
-
-
-@app.delete(
-    "/api/v1/agent/historical-ingestion/messages/{id_chat2}",
-    dependencies=[Depends(_require_historical_admin)],
-)
-def delete_historical_message(
-    id_chat2: int,
-    instanceCode: str = Query(...),
-    sourceType: str = Query("chat", pattern="^(chat|task)$"),
-) -> dict[str, Any]:
-    instance = get_solidset_instance(code=instanceCode, source_ip=None)
-    if not instance: raise HTTPException(status_code=404, detail="Instância não encontrada.")
-    points = historical_points(str(instance["ID"]), id_chat2, sourceType)
-    if points:
-        QdrantClient(url=settings.VECTOR_DB_URL).delete(
-            collection_name=settings.VECTOR_COLLECTION_NAME,
-            points_selector=PointIdsList(points=points), wait=True,
-        )
-    deleted = mark_historical_deleted(str(instance["ID"]), id_chat2, sourceType)
-    return {
-        "status":"deleted", "idChat2":id_chat2,
-        "sourceType":sourceType, "documents":deleted,
-    }
 
 
 @app.get("/api/v1/agent/responses/{request_id}/status")
