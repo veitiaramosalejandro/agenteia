@@ -37,6 +37,7 @@ from app.config import settings
 from app.interactive_priority import interactive_work
 
 from app.agent.core import MachiningAgent
+from app.agent.authorization import resolve_resource_table
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.speech import text_to_speech
 from app.agent.tools import google_web_search, query_sql_server, solidset_send_chat_message
@@ -75,6 +76,7 @@ from app.system.ingest import ingestar_sistema_completo
 from app.system.notification_listener import NotificationApiListener
 from app.system.resource_ingest import (
     ingest_solidset_chat_resources,
+    ingest_solidset_agent_scopes,
     ingest_solidset_logins,
     ingest_solidset_resources,
     ingest_solidset_workrooms,
@@ -1083,58 +1085,13 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
 
 def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-    rows = []
-    destiny = _get_payload_value(chat, "destiny", "Destiny")
     resource_table = _get_payload_value(chat, "resourceTable", "ResourceTable")
-    if isinstance(destiny, list):
-        rows.extend(destiny)
-    if isinstance(resource_table, list):
-        rows.extend(resource_table)
-    if not rows:
-        return False
-    for destination in rows:
-        if not isinstance(destination, dict):
-            continue
-        lowered = {str(key).lower(): value for key, value in destination.items()}
-        try:
-            destination_type = int(lowered.get("type"))
-        except (TypeError, ValueError):
-            continue
-        flag = lowered.get("talkwithagent")
-        enabled = (
-            flag is True
-            or (isinstance(flag, int) and flag == 1)
-            or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
-        )
-        # type=2 autoriza conversación. type=3 es contenido de aprendizaje y
-        # nunca puede abrir la barrera de respuesta.
-        if destination_type == 2 and enabled:
-            return True
-    return False
+    participants = resolve_resource_table(resource_table)
+    return bool(participants.agent_recipient_ids)
 
 
 def _payload_has_learning_only_destination(payload: dict[str, Any]) -> bool:
-    """Reconoce el destino type=3, que nunca autoriza una respuesta."""
-    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
-    destinations = _get_payload_value(chat, "resourceTable", "ResourceTable")
-    if not isinstance(destinations, list):
-        return False
-    for destination in destinations:
-        if not isinstance(destination, dict):
-            continue
-        lowered = {str(key).lower(): value for key, value in destination.items()}
-        try:
-            destination_type = int(lowered.get("type"))
-        except (TypeError, ValueError):
-            continue
-        flag = lowered.get("talkwithagent")
-        enabled = (
-            flag is True
-            or (isinstance(flag, int) and flag == 1)
-            or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
-        )
-        if destination_type == 3 and enabled:
-            return True
+    """El tipo no define el rol; resourceTable.sequence/talkWithAgent es autoritativo."""
     return False
 
 
@@ -1172,97 +1129,36 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
-    chat_destinations = chat_lower.get("destiny")
     resource_table = chat_lower.get("resourcetable")
-
-    # Nueva señal explícita de SolidSET. Cuando Chat.destiny / resourceTable
-    # incluyen talkWithAgent, esas colecciones son autoritativas tanto en
-    # canales como en meetings: solo los recursos IA (type=2) marcados con true
-    # responden. La mera presencia del campo también impide caer en reglas
-    # antiguas y activar por accidente otro agente del canal.
-    selected_by_flag: list[tuple[int, str]] = []
-
-    def _collect_from_rows(rows: Any) -> None:
-        if not isinstance(rows, list):
-            return
-        for destination in rows:
-            if not isinstance(destination, dict):
-                continue
-            lowered = {str(key).lower(): value for key, value in destination.items()}
-            if "talkwithagent" not in lowered:
-                continue
-            flag = lowered.get("talkwithagent")
-            talks_with_agent = (
-                flag is True
-                or (isinstance(flag, int) and flag == 1)
-                or str(flag).strip().lower() in {"true", "1", "yes", "si", "sí"}
-            )
-            try:
-                destination_type = int(lowered.get("type"))
-            except (TypeError, ValueError):
-                continue
-            if not talks_with_agent or destination_type != 2:
-                continue
-            resource = str(
-                lowered.get("idresource") or lowered.get("resource") or ""
-            ).strip()
-            if not resource or resource == str(uuid.UUID(int=0)):
-                continue
-            try:
-                sequence = int(lowered.get("sequence") or 0)
-            except (TypeError, ValueError):
-                sequence = 0
-            selected_by_flag.append((sequence, resource))
-
-    _collect_from_rows(chat_destinations)
-    _collect_from_rows(resource_table)
-    # Mandatory authorization gate: normal chat/channel/meeting traffic may
-    # activate only destinations explicitly marked talkWithAgent=true. The
-    # absence of the property is a denial, never a legacy fallback.
-    selected_by_flag.sort(key=lambda item: item[0])
-    return list(dict.fromkeys(resource for _, resource in selected_by_flag))
+    participants = resolve_resource_table(resource_table)
+    return list(participants.agent_recipient_ids) if participants.valid else []
 
 
 def _human_reply_destination(candidate: dict) -> dict[str, str]:
-    """Resuelve el humano type=1 desde Chat.resourceTable para invertir la respuesta."""
+    """Resuelve el emisor canónico (sequence=0/talkWithAgent=false)."""
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
     resource_table = chat_lower.get("resourcetable")
     sender_resource = str(candidate.get("sender_resource") or "").strip()
-    humans: list[tuple[int, dict[str, str]]] = []
+    participants = resolve_resource_table(resource_table)
+    canonical_sender = participants.sender_resource_id if participants.valid else sender_resource
     if isinstance(resource_table, list):
         for destination in resource_table:
             if not isinstance(destination, dict):
                 continue
             lowered = {str(key).lower(): value for key, value in destination.items()}
-            try:
-                destination_type = int(lowered.get("type"))
-            except (TypeError, ValueError):
-                continue
-            if destination_type != 1:
-                continue
             resource = str(lowered.get("idresource") or lowered.get("resource") or "").strip()
             login = str(lowered.get("idlogin") or lowered.get("login") or "").strip()
-            if not resource:
+            if not resource or resource.casefold() != canonical_sender.casefold():
                 continue
-            try:
-                sequence = int(lowered.get("sequence") or 0)
-            except (TypeError, ValueError):
-                sequence = 0
-            # Si existe más de un humano, el autor del mensaje tiene prioridad.
-            priority = -1 if sender_resource and resource.lower() == sender_resource.lower() else sequence
-            humans.append((priority, {
+            return {
                 "resource": resource,
                 "login": login,
                 "resource_name": str(lowered.get("username") or lowered.get("resourcename") or "").strip(),
-            }))
-    if humans:
-        humans.sort(key=lambda item: item[0])
-        selected_human = humans[0][1]
-        return selected_human
+            }
     return {
-        "resource": sender_resource,
+        "resource": canonical_sender,
         "login": str(candidate.get("sender_login") or "").strip(),
         "resource_name": str(candidate.get("sender_name") or "").strip(),
     }
@@ -2941,6 +2837,13 @@ class SysChatIAResourceIngestResponse(BaseModel):
     skipped: int
 
 
+class SysAgentIAScopeIngestResponse(BaseModel):
+    status: str
+    sourceRows: int
+    synchronized: int
+    skipped: int
+
+
 class SysWorkRoomIngestResponse(BaseModel):
     status: str
     sourceRows: int
@@ -3996,6 +3899,28 @@ def sync_solidset_chat_resources(instanceCode: str = Query(...)) -> SysChatIARes
             detail="Não foi possível sincronizar as relações de chat.",
         ) from exc
     return SysChatIAResourceIngestResponse(status="synchronized", **result)
+
+
+@app.post(
+    "/api/v1/agent/solidset/agent-scopes/sync",
+    response_model=SysAgentIAScopeIngestResponse,
+    tags=["SolidSET synchronization"],
+    summary="Synchronize agent identity, organization, channel and access scopes",
+)
+def sync_solidset_agent_scopes(instanceCode: str = Query(...)) -> SysAgentIAScopeIngestResponse:
+    """Materializa el alcance de agentes; no publica ni modifica sus plantillas."""
+    try:
+        instance = get_solidset_instance(code=instanceCode, source_ip=None)
+        if not instance or not instance.get("DataAPI"):
+            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
+        result = ingest_solidset_agent_scopes(instance)
+    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
+        print(f"❌ No se pudo sincronizar SysAgentIAScope: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Não foi possível sincronizar o alcance dos agentes.",
+        ) from exc
+    return SysAgentIAScopeIngestResponse(status="synchronized", **result)
 
 @app.post(
     "/api/v1/agent/solidset/resources/sync",

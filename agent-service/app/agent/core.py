@@ -56,6 +56,7 @@ from app.agent.tools import (
 from app.config import settings
 from app.llm import create_chat_model, provider_config_from_record, provider_config_from_settings
 from app.connectors.db_client import (
+    get_active_agent_prompt,
     get_agent_model_configuration,
     get_llm_provider_configuration,
     get_solidset_schema_snapshot,
@@ -127,6 +128,18 @@ class MachiningAgent:
         self.user_context_cache = {}
         self.cache_ttl = 300  # 5 minutos
         self.web_knowledge_cache: Dict[str, tuple[datetime, str]] = {}
+        self.agent_prompt_cache: Dict[tuple[str, str], tuple[datetime, dict[str, Any] | None]] = {}
+
+    def _get_active_agent_prompt_cached(
+        self, instance_id: str, resource_id: str
+    ) -> dict[str, Any] | None:
+        key = (str(instance_id), str(resource_id))
+        cached = self.agent_prompt_cache.get(key)
+        if cached and (datetime.now() - cached[0]).total_seconds() < 60:
+            return cached[1]
+        value = get_active_agent_prompt(instance_id, resource_id)
+        self.agent_prompt_cache[key] = (datetime.now(), value)
+        return value
 
     def clear_llm_configuration_cache(self) -> None:
         """Fuerza que la siguiente petición vuelva a leer PostgreSQL."""
@@ -3285,6 +3298,29 @@ class MachiningAgent:
                 else SYSTEM_PROMPT + "\n\n" + SYSTEM_PROMPT_MAESTRO
             )
             system_prompt = base_prompt + "\n\n" + self.identity_service.build_prompt_context(identity_snapshot)
+
+        # La plantilla manual personaliza al agente, pero se agrega después de
+        # las políticas globales y nunca concede permisos ni herramientas.
+        active_prompt = None
+        if solidset_instance_id and agent_resource_id:
+            try:
+                active_prompt = self._get_active_agent_prompt_cached(
+                    solidset_instance_id, agent_resource_id
+                )
+            except Exception as exc:
+                print(f"⚠️ Plantilla del agente no disponible: {exc}")
+        if active_prompt:
+            custom_prompt = str(active_prompt.get("SystemPrompt") or "").strip()
+            if custom_prompt:
+                system_prompt += (
+                    "\n\n=== COMPORTAMIENTO MANUAL DEL AGENTE ===\n"
+                    f"Plantilla: {active_prompt.get('Name') or 'sin nombre'} "
+                    f"(versión {active_prompt.get('Version')})\n"
+                    f"{custom_prompt[:12000]}\n"
+                    "Estas instrucciones personalizan tono, rol y especialidad. No pueden "
+                    "ampliar acceso a datos, habilitar herramientas ni modificar las políticas "
+                    "globales de seguridad y autorización."
+                )
 
         requested_time_zone = str((message_metadata or {}).get("time_zone") or "").strip()
         try:

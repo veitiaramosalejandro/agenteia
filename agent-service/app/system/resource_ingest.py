@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
+import json
 from uuid import UUID
 
 from app.connectors.solidset_data_api import (
@@ -296,6 +298,97 @@ def ingest_solidset_chat_resources(instance: dict[str, object]) -> dict[str, int
         "synchronized": len(relations),
         "inserted": len(set(relation_keys) - existing_keys),
         "existing": len(existing_keys),
+        "skipped": skipped,
+    }
+
+
+def ingest_solidset_agent_scopes(instance: dict[str, object]) -> dict[str, int]:
+    """Materializa identidad, organización, comunidad, canal y acceso de agentes activos."""
+    source_rows = read_dataset(instance.get("DataAPI") or {}, "agent-scopes")
+    instance_id = UUID(str(instance["ID"]))
+    normalized: dict[tuple[UUID, UUID, UUID, UUID], tuple[object, ...]] = {}
+    skipped = 0
+
+    def clean(value: object) -> str | None:
+        text = str(value).strip() if value is not None else ""
+        return text or None
+
+    for row in source_rows:
+        try:
+            resource_id = UUID(str(row.get("ResourceId")))
+            login_id = UUID(str(row.get("IDLogin")))
+            workroom_id = UUID(str(row.get("IDWorkRoom")))
+            community_id = UUID(str(row.get("IDCommunity")))
+            access_type = int(row.get("ResourceAccessType"))
+            if access_type not in {0, 1, 2, 3}:
+                raise ValueError("ResourceAccessType fuera del enum")
+        except (TypeError, ValueError, AttributeError):
+            skipped += 1
+            continue
+        source_values = {
+            "organization_id": clean(row.get("organizationid")),
+            "organization_no": clean(row.get("organization_no")),
+            "organization_name": clean(row.get("accountname")),
+            "display_name": clean(row.get("DisplayName")),
+            "full_name": clean(row.get("FullName")),
+            "workroom_code": clean(row.get("WorkRoomCode")),
+            "workroom_name": clean(row.get("WorkRoomName")),
+            "community_code": clean(row.get("CommunityCode")),
+            "community_name": clean(row.get("CommunityName")),
+            "community_description": clean(row.get("CommunityDescription")),
+            "resource_access_type": access_type,
+        }
+        source_hash = hashlib.sha256(
+            json.dumps(source_values, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        normalized[(resource_id, login_id, workroom_id, community_id)] = (
+            source_values["organization_id"], source_values["organization_no"],
+            source_values["organization_name"], source_values["display_name"],
+            source_values["full_name"], source_values["workroom_code"],
+            source_values["workroom_name"], source_values["community_code"],
+            source_values["community_name"], source_values["community_description"],
+            access_type, source_hash,
+        )
+
+    synchronized_at = datetime.now()
+    with _postgres_connection() as target_connection:
+        with target_connection.cursor() as cursor:
+            cursor.execute(
+                'UPDATE public."SysAgentIAScope" SET active=false '
+                'WHERE "IDSolidSETInstance"=%s',
+                (instance_id,),
+            )
+            if normalized:
+                cursor.executemany(
+                    '''
+                    INSERT INTO public."SysAgentIAScope" (
+                      "IDSolidSETInstance", "IDResource", "IDLogin", "IDWorkRoom",
+                      "IDCommunity", "OrganizationID", "OrganizationNo", "OrganizationName",
+                      "DisplayName", "FullName", "WorkRoomCode", "WorkRoomName",
+                      "CommunityCode", "CommunityName", "CommunityDescription",
+                      "ResourceAccessType", "SourceHash", "LastSeenAt", active
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true)
+                    ON CONFLICT ("IDSolidSETInstance", "IDResource", "IDLogin", "IDWorkRoom", "IDCommunity")
+                    DO UPDATE SET
+                      "OrganizationID"=EXCLUDED."OrganizationID",
+                      "OrganizationNo"=EXCLUDED."OrganizationNo",
+                      "OrganizationName"=EXCLUDED."OrganizationName",
+                      "DisplayName"=EXCLUDED."DisplayName", "FullName"=EXCLUDED."FullName",
+                      "WorkRoomCode"=EXCLUDED."WorkRoomCode", "WorkRoomName"=EXCLUDED."WorkRoomName",
+                      "CommunityCode"=EXCLUDED."CommunityCode", "CommunityName"=EXCLUDED."CommunityName",
+                      "CommunityDescription"=EXCLUDED."CommunityDescription",
+                      "ResourceAccessType"=EXCLUDED."ResourceAccessType",
+                      "SourceHash"=EXCLUDED."SourceHash", "LastSeenAt"=EXCLUDED."LastSeenAt",
+                      active=true
+                    ''',
+                    [
+                        (instance_id, *key, *values, synchronized_at)
+                        for key, values in normalized.items()
+                    ],
+                )
+    return {
+        "sourceRows": len(source_rows),
+        "synchronized": len(normalized),
         "skipped": skipped,
     }
 

@@ -782,6 +782,86 @@ def get_active_agent_identity_for_resource(
     return dict(row) if row is not None else None
 
 
+def get_active_agent_prompt(
+    instance_id: UUID | str,
+    resource_id: UUID | str,
+) -> dict[str, Any] | None:
+    """Obtiene la única plantilla publicada para el agente dentro de su instancia."""
+    try:
+        normalized_instance = UUID(str(instance_id))
+        normalized_resource = UUID(str(resource_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT "ID", "IDSolidSETInstance", "IDResource", "Version", "Name",
+                       "SystemPrompt", "BehaviorConfig", "SourceHash", "PublishedAt"
+                FROM public."SysAgentIAPrompt"
+                WHERE "IDSolidSETInstance" = %s
+                  AND "IDResource" = %s
+                  AND "Status" = 'active'
+                LIMIT 1
+                ''',
+                (normalized_instance, normalized_resource),
+            )
+            row = cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
+def get_authorized_learning_agent_ids(
+    instance_id: UUID | str,
+    workroom_id: UUID | str,
+    visibility_level: int,
+    private_participant_ids: Iterable[UUID | str] = (),
+) -> list[str]:
+    """Resuelve en PostgreSQL qué agentes pueden aprender un mensaje no público."""
+    try:
+        instance = UUID(str(instance_id))
+        workroom = UUID(str(workroom_id))
+        visibility = int(visibility_level)
+        participants = [UUID(str(value)) for value in private_participant_ids]
+    except (TypeError, ValueError, AttributeError):
+        return []
+    if visibility not in {1, 2, 3}:
+        return []
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            if visibility == 3:
+                if not participants:
+                    return []
+                cursor.execute(
+                    '''
+                    SELECT r."IDResource"
+                    FROM public."SysResourceIA" r
+                    INNER JOIN public."SysSolidSETInstanceResource" ir
+                      ON ir."IDResource"=r."IDResource"
+                     AND ir."IDSolidSETInstance"=%s AND ir.active=true
+                    WHERE r.active=true AND r."IDResource"=ANY(%s)
+                    ORDER BY r."IDResource"
+                    ''',
+                    (instance, participants),
+                )
+            else:
+                minimum_access = 2 if visibility == 2 else 0
+                cursor.execute(
+                    '''
+                    SELECT DISTINCT s."IDResource"
+                    FROM public."SysAgentIAScope" s
+                    INNER JOIN public."SysResourceIA" r
+                      ON r."IDResource"=s."IDResource" AND r.active=true
+                    WHERE s."IDSolidSETInstance"=%s
+                      AND s."IDWorkRoom"=%s
+                      AND s.active=true
+                      AND s."ResourceAccessType">=%s
+                    ORDER BY s."IDResource"
+                    ''',
+                    (instance, workroom, minimum_access),
+                )
+            return [str(row["IDResource"]) for row in cursor.fetchall()]
+
+
 def resolve_solidset_identity(identifier: str) -> dict[str, Any] | None:
     """Resuelve identidades desde la réplica PostgreSQL, sin consultar SQL Server."""
     raw_identifier = str(identifier or "").strip()

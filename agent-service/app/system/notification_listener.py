@@ -12,7 +12,12 @@ from typing import Any, DefaultDict, Dict, List, Optional
 import httpx
 
 from app.config import settings
-from app.connectors.db_client import agent_learning_enabled, get_active_agent_identity_for_resource
+from app.agent.authorization import resolve_resource_table
+from app.connectors.db_client import (
+    agent_learning_enabled,
+    get_active_agent_identity_for_resource,
+    get_authorized_learning_agent_ids,
+)
 from app.system.learning import SistemaAprendizaje
 from app.system.schema import Actividad
 
@@ -1171,7 +1176,16 @@ class NotificationApiListener:
         channel_name = payload.get("ChannelName") or payload.get("OriginChannelName") if payload else None
         channel_kind = payload.get("ChannelKind") or payload.get("OriginChannelKind") if payload else None
         is_public = payload.get("IsPublic") if payload else None
-        resource_table = payload.get("ResourceTable") if payload else None
+        chat_for_participants = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+        chat_for_participants_lower = {
+            str(key).casefold(): value for key, value in chat_for_participants.items()
+        }
+        resource_table = (
+            chat_for_participants_lower.get("resourcetable")
+            or payload.get("ResourceTable")
+            if payload else None
+        )
+        participants = resolve_resource_table(resource_table)
         destiny = payload.get("Destiny") if payload else None
         meeting = self._extract_meeting_context(
             payload.get("Info") if payload else None,
@@ -1235,6 +1249,10 @@ class NotificationApiListener:
                 "sender_name": sender_name,
                 "is_public": is_public,
                 "resource_table": resource_table,
+                "participant_contract_valid": participants.valid,
+                "participant_contract_reason": participants.reason,
+                "canonical_sender_resource_id": participants.sender_resource_id,
+                "agent_recipient_ids": list(participants.agent_recipient_ids),
                 "destiny": destiny,
                 "framework_kind": payload.get("FrameworkKind") or payload.get("Kind"),
                 "framework_stamp": framework_stamp,
@@ -1254,7 +1272,11 @@ class NotificationApiListener:
                 ).strip(),
                 "mask_message": payload.get("MaskMessage"),
                 "fingerprint": fingerprint,
-                "knowledge_scope": "global_shared",
+                "knowledge_scope": (
+                    "global_shared"
+                    if self._normalize_visibility_level(payload.get("VisibilityLevel")) == 0
+                    else "authorization_required"
+                ),
                 "human_authored": not generated_by_ia,
                 "solidset_instance_id": str(payload.get("_SolidSETInstanceID") or ""),
                 "captured_at": datetime.utcnow().isoformat(),
@@ -1262,12 +1284,43 @@ class NotificationApiListener:
                 "structured_activity": structured_activity,
             },
         )
-        # Las respuestas generadas nunca vuelven a entrar como conocimiento.
-        # Los mensajes humanos sí alimentan el ámbito factual compartido.
-        learned_global = (
-            self.sistema.aprender_actividad(actividad)
-            if not generated_by_ia else True
-        )
+        # Sólo Public puede entrar al espacio compartido de la instancia. Los
+        # demás niveles generan copias aisladas por agente autorizado.
+        visibility_level = self._normalize_visibility_level(payload.get("VisibilityLevel"))
+        instance_id = str(payload.get("_SolidSETInstanceID") or "").strip()
+        learned_global = bool(generated_by_ia)
+        if not generated_by_ia and visibility_level == 0 and instance_id:
+            learned_global = self.sistema.aprender_actividad(actividad)
+        elif not generated_by_ia and visibility_level in {1, 2, 3} and instance_id and channel_id:
+            private_ids = (
+                [participants.sender_resource_id, *participants.agent_recipient_ids]
+                if visibility_level == 3 and participants.valid else []
+            )
+            try:
+                authorized_agents = get_authorized_learning_agent_ids(
+                    instance_id, channel_id, visibility_level, private_ids
+                )
+            except Exception as exc:
+                authorized_agents = []
+                print(f"⚠️ No se pudo resolver autorización de aprendizaje: {exc}")
+            learned_global = bool(authorized_agents)
+            for authorized_agent_id in authorized_agents:
+                authorized_metadata = dict(actividad.metadatos or {})
+                authorized_metadata.update({
+                    "knowledge_scope": "agent_authorized",
+                    "agent_resource_id": authorized_agent_id,
+                    "authorization_visibility_level": visibility_level,
+                })
+                authorized_activity = Actividad(
+                    id=f"agent_acl_{authorized_agent_id}_{fingerprint[:20]}",
+                    recurso_humano_id=actividad.recurso_humano_id,
+                    canal_id=actividad.canal_id,
+                    tipo=actividad.tipo,
+                    descripcion=actividad.descripcion,
+                    timestamp=actividad.timestamp,
+                    metadatos=authorized_metadata,
+                )
+                learned_global = self.sistema.aprender_actividad(authorized_activity) and learned_global
 
         # Cada mensaje permanece en el aprendizaje global. Además, cuando el
         # remitente es el recurso humano propietario de un agente activo, se
