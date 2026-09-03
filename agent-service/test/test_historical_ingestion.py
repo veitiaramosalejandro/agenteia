@@ -5,7 +5,9 @@ from unittest.mock import Mock, patch
 
 from app.historical.normalizer import normalize_historical_message, normalize_historical_task
 from app.historical.producer import enqueue_next_batch
-from app.historical.extractor import extract_agent_chat_batch, extract_agent_task_batch
+from app.historical.extractor import (
+    extract_agent_activity_batch, extract_agent_chat_batch, extract_agent_task_batch,
+)
 from app.historical.store import set_cursor
 from app.historical.worker import _document, process_batch
 
@@ -28,6 +30,15 @@ class HistoricalIngestionTests(unittest.TestCase):
         self.assertIsNone(reason)
         self.assertEqual(normalized["NormalizedText"], "La entrega del proyecto será el viernes.")
         self.assertEqual(len(normalized["ContentHash"]), 64)
+
+    def test_document_marks_owner_messages_as_behavior(self):
+        resource_id = str(uuid4())
+        agent = {"IDResource": resource_id, "IDAgentResource": str(uuid4())}
+        row, _ = normalize_historical_message(self._row(IDSenderResource=resource_id))
+        row["SourceType"] = "chat"
+        document = _document(row, str(uuid4()), "owner_behavior", agent)
+        self.assertEqual(document["payload"]["knowledge_role"], "owner_behavior")
+        self.assertEqual(document["payload"]["ingestion_policy_version"], 3)
 
     def test_rejects_generated_ai_and_secrets(self):
         self.assertEqual(
@@ -75,6 +86,7 @@ class HistoricalIngestionTests(unittest.TestCase):
             "IDResource": str(uuid4()),
             "IDAgentResource": str(uuid4()),
             "WorkRooms": [],
+            "WorkRoomAccess": {},
         }
         result = enqueue_next_batch(
             {"ID": instance_id, "Code": "pt"}, False, agent,
@@ -182,10 +194,46 @@ class HistoricalIngestionTests(unittest.TestCase):
             yield Connection()
 
         with patch("app.historical.extractor.connect_solidset_sql", fake_connection):
-            extract_agent_chat_batch(0, 10, str(uuid4()), [], {"ID": str(uuid4())})
+            extract_agent_chat_batch(0, 10, str(uuid4()), [], {}, {"ID": str(uuid4())})
 
         self.assertIn("NULL AS IDMeeting", executed[1][0])
         self.assertNotIn("c.IDMeeting AS IDMeeting", executed[1][0])
+
+    def test_chat_query_applies_visibility_and_confidential_access(self):
+        executed = []
+        normal_room = str(uuid4())
+        confidential_room = str(uuid4())
+        resource = str(uuid4())
+
+        class Cursor:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def execute(self, sql, params=()): executed.append((sql, params))
+            def fetchone(self): return None
+            def fetchall(self): return []
+
+        class Connection:
+            def cursor(self, **_kwargs): return Cursor()
+
+        @contextmanager
+        def fake_connection(*_args, **_kwargs):
+            yield Connection()
+
+        with patch("app.historical.extractor.connect_solidset_sql", fake_connection):
+            extract_agent_chat_batch(
+                0, 10, resource, [normal_room, confidential_room],
+                {normal_room: 1, confidential_room: 2}, {"ID": str(uuid4())},
+            )
+
+        query, params = executed[1]
+        self.assertIn("c.isPublic=2", query)
+        self.assertIn("cw.IDWorkRoom IN", query)
+        self.assertIn("c.isPublic=3", query)
+        self.assertIn("target_ui.IsOnDestiny=1", query)
+        self.assertEqual(
+            (10, resource, 0, resource, normal_room, confidential_room, confidential_room),
+            params,
+        )
 
     def test_task_ignores_non_uuid_resource_columns(self):
         executed = []

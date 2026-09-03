@@ -40,7 +40,11 @@ def _document(row: dict[str, Any], instance_id: str, scope: str, agent: dict[str
         "text": f"{sender_name}: {row['NormalizedText']}",
         "payload": {
             "page_content": f"{sender_name}: {row['NormalizedText']}",
-            "document_type": "historical_task" if source_type == "task" else "historical_message",
+            "document_type": (
+                "historical_task" if source_type == "task" else
+                "historical_activity" if source_type == "activity" else
+                "historical_message"
+            ),
             "source": "solidset_sql_history", "source_type": source_type,
             "source_id": source_id, "solidset_instance_id": instance_id,
             "id_chat2": int(row["IDChat2"]),
@@ -48,8 +52,13 @@ def _document(row: dict[str, Any], instance_id: str, scope: str, agent: dict[str
             "agent_resource_id": resource_id, "agent_identity_id": str(agent.get("IDAgentResource") or ""),
             "canal_id": room_id,
             "metadatos": {"agent_resource_id": resource_id, "historical": True},
-            "scope": scope, "stamp": str(row.get("Stamp") or ""),
+            "scope": scope, "knowledge_role": scope,
+            "visibility_level": int(
+                1 if row.get("VisibilityLevel") is None else row.get("VisibilityLevel")
+            ),
+            "stamp": str(row.get("Stamp") or ""),
             "content_hash": row["ContentHash"], "generated_by_ia": False,
+            "ingestion_policy_version": 3,
         },
     }
 
@@ -75,22 +84,18 @@ def process_batch(batch: dict[str, Any]) -> dict[str, int]:
     documents: list[dict[str, Any]] = []
     selected_agent = {"IDResource": resource_id, "IDAgentResource": agent_resource_id}
     for raw in batch.get("messages") or []:
-        if batch.get("sourceType") == "task":
+        if batch.get("sourceType") in {"task", "activity"}:
             row, reason = normalize_historical_task(raw, resource_id)
         else:
             row, reason = normalize_historical_message(raw)
         if reason:
             rejected += 1; continue
-        if batch.get("sourceType") == "task":
-            scope = "task"
+        if batch.get("sourceType") in {"task", "activity"}:
+            scope = str(batch.get("sourceType"))
         elif str(row["IDSenderResource"]).lower() == resource_id.lower():
-            scope = "owner"
-        elif row.get("IDMeeting"):
-            scope = "meeting"
-        elif int(row.get("WorkRoomKind") or 0) == 1:
-            scope = "private"
+            scope = "owner_behavior"
         else:
-            scope = "workroom"
+            scope = "received_knowledge"
         row["SourceType"] = str(batch.get("sourceType") or "chat")
         documents.append(_document(row, batch["instanceId"], scope, selected_agent))
         accepted += 1

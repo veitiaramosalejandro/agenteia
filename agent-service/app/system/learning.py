@@ -1651,7 +1651,23 @@ class SistemaAprendizaje:
                         key="metadatos.solidset_instance_id",
                         match=models.MatchValue(value=str(solidset_instance_id)),
                     ))
-            filtro = models.Filter(must=conditions)
+            # Earlier historical policies did not use SysChat.isPublic as the
+            # canonical visibility. Keep non-historical/live knowledge, but
+            # never return those legacy historical points to an agent.
+            policy_filter = None
+            if agent_resource_id:
+                policy_filter = models.Filter(
+                    should=[
+                        models.IsEmptyCondition(
+                            is_empty=models.PayloadField(key="metadatos.historical")
+                        ),
+                        models.FieldCondition(
+                            key="ingestion_policy_version",
+                            match=models.MatchValue(value=3),
+                        ),
+                    ]
+                )
+            filtro = models.Filter(must=conditions + ([policy_filter] if policy_filter else []))
             resultados.extend(
                 self._search_aprendizaje(
                     query_vector, 
@@ -1677,8 +1693,16 @@ class SistemaAprendizaje:
         formatted_results = []
         for hit in resultados:
             if hit['id'] not in seen_ids:
-                content = hit['payload'].get('page_content', '')
-                formatted_results.append(f"• {content[:300]}...")
+                payload = hit.get('payload') or {}
+                content = payload.get('page_content', '')
+                knowledge_role = payload.get('knowledge_role') or payload.get('scope')
+                role_label = {
+                    "owner_behavior": "CONDUCTA PROPIA DEL GEMELO",
+                    "received_knowledge": "CONOCIMIENTO RECIBIDO",
+                    "task": "TAREA DEL AGENTE",
+                    "activity": "ACTIVIDAD DEL AGENTE",
+                }.get(knowledge_role, "CONOCIMIENTO")
+                formatted_results.append(f"• [{role_label}] {content[:300]}...")
                 seen_ids.add(hit['id'])
             if len(formatted_results) >= limit:
                 break

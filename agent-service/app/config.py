@@ -126,7 +126,7 @@ class Settings(BaseSettings):
     HISTORICAL_INGESTION_ENABLED: bool = _env_bool("HISTORICAL_INGESTION_ENABLED", "false")
     HISTORICAL_INGESTION_DRY_RUN: bool = _env_bool("HISTORICAL_INGESTION_DRY_RUN", "true")
     HISTORICAL_INGESTION_BATCH_SIZE: int = max(
-        10, min(2000, int(os.getenv("HISTORICAL_INGESTION_BATCH_SIZE", "500")))
+        10, min(2000, int(os.getenv("HISTORICAL_INGESTION_BATCH_SIZE", "100")))
     )
     HISTORICAL_INGESTION_STREAM: str = os.getenv(
         "HISTORICAL_INGESTION_STREAM", "machining:historical-ingestion:v1"

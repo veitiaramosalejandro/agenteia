@@ -88,18 +88,13 @@ def get_cursor(
     with connection() as conn, conn.cursor() as cur:
         cur.execute('''INSERT INTO public."SysAgentIAIngestionCursor"
           ("IDSolidSETInstance", "Source", "IDResource", "IDAgentResource", "SourceType", "LastIDChat2")
-          VALUES (%s, %s, %s, %s, %s, COALESCE((
-            SELECT MAX(d."IDChat2") FROM public."SysAgentIAHistoricalDocument" d
-            WHERE d."IDSolidSETInstance"=%s AND d."IDResource"=%s
-              AND d."SourceType"=%s AND d."DeletedAt" IS NULL
-          ), 0))
+          VALUES (%s, %s, %s, %s, %s, 0)
           ON CONFLICT ("IDSolidSETInstance", "Source") DO UPDATE SET
             "IDResource"=COALESCE(EXCLUDED."IDResource", public."SysAgentIAIngestionCursor"."IDResource"),
             "IDAgentResource"=COALESCE(EXCLUDED."IDAgentResource", public."SysAgentIAIngestionCursor"."IDAgentResource"),
             "SourceType"=EXCLUDED."SourceType"''',
           (UUID(instance_id), source, UUID(resource_id) if resource_id else None,
-           UUID(agent_resource_id) if agent_resource_id else None, source_type,
-           UUID(instance_id), UUID(resource_id) if resource_id else None, source_type))
+           UUID(agent_resource_id) if agent_resource_id else None, source_type))
         cur.execute('''SELECT * FROM public."SysAgentIAIngestionCursor"
           WHERE "IDSolidSETInstance"=%s AND "Source"=%s''', (UUID(instance_id), source))
         return dict(cur.fetchone())
@@ -158,16 +153,21 @@ def list_active_ingestion_agents(instance_id: str | None = None) -> list[dict[st
     """Returns only verified local agents and their currently authorized rooms."""
     with connection() as conn, conn.cursor() as cur:
         cur.execute('''SELECT r."IDResource", r."IDAgentResource", r."Name",
-          COALESCE(array_agg(c."IDWorkRoom") FILTER (WHERE c.active=true), ARRAY[]::uuid[]) AS "WorkRooms"
+          COALESCE(array_agg(DISTINCT s."IDWorkRoom") FILTER (WHERE s.active=true), ARRAY[]::uuid[]) AS "WorkRooms",
+          COALESCE(jsonb_object_agg(s."IDWorkRoom"::text, s."ResourceAccessType")
+            FILTER (WHERE s.active=true), '{}'::jsonb) AS "WorkRoomAccess"
           FROM public."SysResourceIA" r
-          LEFT JOIN public."SysChatIAResource" c ON c."IDResource"=r."IDResource"
+          INNER JOIN public."SysAgentIAScope" s
+            ON s."IDResource"=r."IDResource"
+           AND (%s::uuid IS NULL OR s."IDSolidSETInstance"=%s::uuid)
+           AND s.active=true
           WHERE r.active=true AND r."IDAgentResource" IS NOT NULL
             AND (%s::uuid IS NULL OR EXISTS (
               SELECT 1 FROM public."SysSolidSETInstanceResource" ir
               WHERE ir."IDSolidSETInstance"=%s::uuid AND ir."IDResource"=r."IDResource" AND ir.active=true
             ))
           GROUP BY r."IDResource", r."IDAgentResource", r."Name"
-          ORDER BY r."IDResource"''', (instance_id, instance_id))
+          ORDER BY r."IDResource"''', (instance_id, instance_id, instance_id, instance_id))
         return [dict(row) for row in cur.fetchall()]
 
 
@@ -180,8 +180,14 @@ def historical_agent_is_active(
             AND (%s::uuid IS NULL OR EXISTS (
               SELECT 1 FROM public."SysSolidSETInstanceResource" ir
               WHERE ir."IDSolidSETInstance"=%s::uuid AND ir."IDResource"=r."IDResource" AND ir.active=true
-            ))) AS active''',
-          (UUID(resource_id), UUID(agent_resource_id), instance_id, instance_id))
+            ))
+            AND EXISTS (
+              SELECT 1 FROM public."SysAgentIAScope" s
+              WHERE s."IDResource"=r."IDResource" AND s.active=true
+                AND (%s::uuid IS NULL OR s."IDSolidSETInstance"=%s::uuid)
+            )) AS active''',
+          (UUID(resource_id), UUID(agent_resource_id), instance_id, instance_id,
+           instance_id, instance_id))
         row = cur.fetchone()
         return bool(row and row["active"])
 
