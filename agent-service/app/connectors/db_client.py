@@ -903,6 +903,45 @@ def get_agent_scope_profile(
     return dict(row) if row is not None else None
 
 
+def list_active_agent_resource_ids(instance_id: UUID | str) -> list[UUID]:
+    """Lista recursos IA activos con pertenencia y alcance vigentes en la instancia."""
+    instance = UUID(str(instance_id))
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT DISTINCT r."IDResource"
+                   FROM public."SysResourceIA" r
+                   INNER JOIN public."SysSolidSETInstanceResource" ir
+                     ON ir."IDResource"=r."IDResource"
+                    AND ir."IDSolidSETInstance"=%s AND ir.active=true
+                   INNER JOIN public."SysAgentIAScope" s
+                     ON s."IDResource"=r."IDResource"
+                    AND s."IDSolidSETInstance"=ir."IDSolidSETInstance" AND s.active=true
+                   WHERE r.active=true AND r."IDAgentResource" IS NOT NULL
+                   ORDER BY r."IDResource"''',
+                (instance,),
+            )
+            return [row["IDResource"] for row in cursor.fetchall()]
+
+
+def get_latest_agent_prompt(
+    instance_id: UUID | str, resource_id: UUID | str
+) -> dict[str, Any] | None:
+    """Devuelve la versión más reciente, independientemente de su estado."""
+    instance = UUID(str(instance_id))
+    resource = UUID(str(resource_id))
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT * FROM public."SysAgentIAPrompt"
+                   WHERE "IDSolidSETInstance"=%s AND "IDResource"=%s
+                   ORDER BY "Version" DESC LIMIT 1''',
+                (instance, resource),
+            )
+            row = cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
 def publish_agent_prompt(
     instance_id: UUID | str,
     resource_id: UUID | str,
