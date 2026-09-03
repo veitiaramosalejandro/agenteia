@@ -42,6 +42,7 @@ from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.speech import text_to_speech
 from app.agent.tools import google_web_search, query_sql_server, solidset_send_chat_message
 from app.agent.schema_query_planner import plan_related_record_query
+from app.agent.prompt_generator import generate_agent_system_prompt
 from app.connectors.db_client import (
     configure_agent_workroom,
     agent_learning_enabled,
@@ -53,6 +54,9 @@ from app.connectors.db_client import (
     ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
     get_active_agent_identity_for_resource,
+    get_agent_scope_profile,
+    create_agent_prompt_draft,
+    publish_agent_prompt,
     get_agent_knowledge,
     quarantine_legacy_generated_knowledge,
     get_llm_provider_configuration,
@@ -2844,6 +2848,39 @@ class SysAgentIAScopeIngestResponse(BaseModel):
     skipped: int
 
 
+class AgentPromptGenerateRequest(BaseModel):
+    name: str = Field("Plantilla del agente", min_length=1, max_length=255)
+    role: str = Field("asistente general", min_length=1, max_length=200)
+    objective: str = Field(
+        "Ayudar a los usuarios autorizados de SolidSET.", min_length=1, max_length=2000
+    )
+    specialties: list[str] = Field(default_factory=list, max_length=20)
+    tone: str = Field("profesional y cercano", min_length=1, max_length=200)
+    response_style: str = Field(
+        "directo, claro y basado en evidencias", min_length=1, max_length=300
+    )
+    default_language: str = Field("pt", pattern=r"^[a-z]{2}(?:-[A-Z]{2})?$")
+    created_by: str = Field("manual", min_length=1, max_length=255)
+
+    class Config:
+        extra = "forbid"
+
+
+class AgentPromptStoredResponse(BaseModel):
+    ID: uuid.UUID
+    IDSolidSETInstance: uuid.UUID
+    IDResource: uuid.UUID
+    Version: int
+    Name: str
+    SystemPrompt: str
+    BehaviorConfig: dict[str, Any]
+    Status: str
+    CreatedBy: Optional[str] = None
+    CreatedAt: datetime
+    PublishedAt: Optional[datetime] = None
+    RetiredAt: Optional[datetime] = None
+
+
 class SysWorkRoomIngestResponse(BaseModel):
     status: str
     sourceRows: int
@@ -3921,6 +3958,73 @@ def sync_solidset_agent_scopes(instanceCode: str = Query(...)) -> SysAgentIAScop
             detail="Não foi possível sincronizar o alcance dos agentes.",
         ) from exc
     return SysAgentIAScopeIngestResponse(status="synchronized", **result)
+
+
+@app.post(
+    "/api/v1/agent/solidset/agents/{agent_resource_id}/prompt/generate",
+    response_model=AgentPromptStoredResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Agent prompts"],
+    summary="Generate a versioned prompt draft from the synchronized SolidSET profile",
+)
+def generate_agent_prompt(
+    agent_resource_id: uuid.UUID,
+    request: AgentPromptGenerateRequest,
+    instanceCode: str = Query(..., min_length=1),
+) -> AgentPromptStoredResponse:
+    """Genera un draft determinista; nunca cambia el agente hasta su publicación."""
+    instance = get_solidset_instance(code=instanceCode.strip(), source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instância SolidSET desconhecida.")
+    try:
+        profile = get_agent_scope_profile(instance["ID"], agent_resource_id)
+        if profile is None:
+            raise HTTPException(
+                status_code=404,
+                detail="O agente não tem um perfil SolidSET sincronizado.",
+            )
+        behavior = request.model_dump(exclude={"name", "created_by"})
+        system_prompt = generate_agent_system_prompt(profile, behavior)
+        saved = create_agent_prompt_draft(
+            instance["ID"], agent_resource_id,
+            name=request.name.strip(),
+            system_prompt=system_prompt,
+            behavior_config=behavior,
+            created_by=request.created_by.strip(),
+        )
+    except (ValueError, LookupError, psycopg.Error) as exc:
+        if isinstance(exc, LookupError):
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503, detail="Não foi possível gerar a plantilla do agente."
+        ) from exc
+    return AgentPromptStoredResponse(**saved)
+
+
+@app.post(
+    "/api/v1/agent/solidset/agents/{agent_resource_id}/prompt/{prompt_id}/publish",
+    response_model=AgentPromptStoredResponse,
+    tags=["Agent prompts"],
+    summary="Publish one prompt draft and retire the previous active version",
+)
+def publish_generated_agent_prompt(
+    agent_resource_id: uuid.UUID,
+    prompt_id: uuid.UUID,
+    instanceCode: str = Query(..., min_length=1),
+) -> AgentPromptStoredResponse:
+    instance = get_solidset_instance(code=instanceCode.strip(), source_ip=None)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instância SolidSET desconhecida.")
+    try:
+        saved = publish_agent_prompt(instance["ID"], agent_resource_id, prompt_id)
+        agent.agent_prompt_cache.pop((str(instance["ID"]), str(agent_resource_id)), None)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, psycopg.Error) as exc:
+        raise HTTPException(
+            status_code=503, detail="Não foi possível publicar a plantilla do agente."
+        ) from exc
+    return AgentPromptStoredResponse(**saved)
 
 @app.post(
     "/api/v1/agent/solidset/resources/sync",

@@ -810,6 +810,135 @@ def get_active_agent_prompt(
     return dict(row) if row is not None else None
 
 
+def create_agent_prompt_draft(
+    instance_id: UUID | str,
+    resource_id: UUID | str,
+    *,
+    name: str,
+    system_prompt: str,
+    behavior_config: dict[str, Any],
+    created_by: str,
+) -> dict[str, Any]:
+    """Crea de forma transaccional la siguiente versión draft del agente."""
+    instance = UUID(str(instance_id))
+    resource = UUID(str(resource_id))
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT 1 FROM public."SysSolidSETInstanceResource"
+                   WHERE "IDSolidSETInstance"=%s AND "IDResource"=%s AND active=true
+                   FOR UPDATE''',
+                (instance, resource),
+            )
+            if cursor.fetchone() is None:
+                raise LookupError("El recurso no pertenece a la instancia SolidSET activa.")
+            cursor.execute(
+                '''
+                SELECT "DisplayName", "FullName", "OrganizationID", "OrganizationNo",
+                       "OrganizationName", "IDLogin",
+                       jsonb_agg(DISTINCT jsonb_build_object(
+                         'idWorkRoom', "IDWorkRoom", 'workRoomCode', "WorkRoomCode",
+                         'workRoomName', "WorkRoomName", 'idCommunity', "IDCommunity",
+                         'communityCode', "CommunityCode", 'communityName', "CommunityName",
+                         'resourceAccessType', "ResourceAccessType"
+                       )) AS "Scopes"
+                FROM public."SysAgentIAScope"
+                WHERE "IDSolidSETInstance"=%s AND "IDResource"=%s AND active=true
+                GROUP BY "DisplayName", "FullName", "OrganizationID", "OrganizationNo",
+                         "OrganizationName", "IDLogin"
+                ORDER BY "IDLogin" LIMIT 1
+                ''',
+                (instance, resource),
+            )
+            snapshot = cursor.fetchone()
+            if snapshot is None:
+                raise LookupError("El recurso no tiene un alcance SolidSET sincronizado.")
+            cursor.execute(
+                '''SELECT COALESCE(MAX("Version"), 0) + 1 AS version
+                   FROM public."SysAgentIAPrompt"
+                   WHERE "IDSolidSETInstance"=%s AND "IDResource"=%s''',
+                (instance, resource),
+            )
+            version = int(cursor.fetchone()["version"])
+            source_snapshot = dict(snapshot)
+            cursor.execute(
+                '''
+                INSERT INTO public."SysAgentIAPrompt" (
+                  "IDSolidSETInstance", "IDResource", "Version", "Name",
+                  "SystemPrompt", "BehaviorConfig", "SourceSnapshot", "SourceHash",
+                  "Status", "CreatedBy"
+                ) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,'draft',%s)
+                RETURNING *
+                ''',
+                (
+                    instance, resource, version, name, system_prompt,
+                    json.dumps(behavior_config, ensure_ascii=False, default=str),
+                    json.dumps(source_snapshot, ensure_ascii=False, default=str),
+                    hashlib.sha256(json.dumps(source_snapshot, sort_keys=True, default=str).encode()).hexdigest(),
+                    created_by,
+                ),
+            )
+            return dict(cursor.fetchone())
+
+
+def get_agent_scope_profile(
+    instance_id: UUID | str, resource_id: UUID | str
+) -> dict[str, Any] | None:
+    """Devuelve un perfil resumido para generar una plantilla manual."""
+    instance = UUID(str(instance_id))
+    resource = UUID(str(resource_id))
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT "DisplayName", "FullName", "OrganizationID", "OrganizationNo",
+                          "OrganizationName", "IDLogin", count(*) AS "ScopeCount"
+                   FROM public."SysAgentIAScope"
+                   WHERE "IDSolidSETInstance"=%s AND "IDResource"=%s AND active=true
+                   GROUP BY "DisplayName", "FullName", "OrganizationID", "OrganizationNo",
+                            "OrganizationName", "IDLogin"
+                   ORDER BY "IDLogin" LIMIT 1''',
+                (instance, resource),
+            )
+            row = cursor.fetchone()
+    return dict(row) if row is not None else None
+
+
+def publish_agent_prompt(
+    instance_id: UUID | str,
+    resource_id: UUID | str,
+    prompt_id: UUID | str,
+) -> dict[str, Any]:
+    """Publica un draft y retira la versión activa anterior atómicamente."""
+    instance = UUID(str(instance_id))
+    resource = UUID(str(resource_id))
+    prompt = UUID(str(prompt_id))
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT "ID" FROM public."SysAgentIAPrompt"
+                   WHERE "ID"=%s AND "IDSolidSETInstance"=%s AND "IDResource"=%s
+                     AND "Status"='draft' FOR UPDATE''',
+                (prompt, instance, resource),
+            )
+            if cursor.fetchone() is None:
+                raise LookupError("La plantilla draft no existe para este agente e instancia.")
+            cursor.execute(
+                '''UPDATE public."SysAgentIAPrompt"
+                   SET "Status"='retired', "RetiredAt"=CURRENT_TIMESTAMP
+                   WHERE "IDSolidSETInstance"=%s AND "IDResource"=%s
+                     AND "Status"='active' ''',
+                (instance, resource),
+            )
+            cursor.execute(
+                '''UPDATE public."SysAgentIAPrompt"
+                   SET "Status"='active', "PublishedAt"=CURRENT_TIMESTAMP,
+                       "RetiredAt"=NULL
+                   WHERE "ID"=%s RETURNING *''',
+                (prompt,),
+            )
+            return dict(cursor.fetchone())
+
+
 def get_authorized_learning_agent_ids(
     instance_id: UUID | str,
     workroom_id: UUID | str,
