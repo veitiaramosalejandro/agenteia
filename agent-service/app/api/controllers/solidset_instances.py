@@ -30,12 +30,14 @@ from app.connectors.solidset_sql import test_connection as test_solidset_sql_con
 from app.services.instance_resolution import clear_instance_cache
 
 
-router = APIRouter()
+router = APIRouter(tags=["SolidSET Configuration"])
 
 
 @router.post(
     "/api/v1/agent/solidset/chat-configuration",
     response_model=SysResourceIAConfigurationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register an AI resource configuration",
 )
 def save_solidset_chat_configuration(
     configuration: SysResourceIAConfiguration,
@@ -64,6 +66,8 @@ def save_solidset_chat_configuration(
 @router.post(
     "/api/v1/agent/solidset/instances",
     response_model=SolidSETInstanceConfigurationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register or update a SolidSET instance and its Data API",
 )
 def register_solidset_instance(
     configuration: SolidSETInstanceConfiguration,
@@ -172,7 +176,9 @@ def _public_solidset_instance(instance: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get(
-    "/api/v1/agent/solidset/instances", response_model=SolidSETInstanceListResponse
+    "/api/v1/agent/solidset/instances",
+    response_model=SolidSETInstanceListResponse,
+    summary="List SolidSET instances",
 )
 def read_solidset_instances(
     activeOnly: bool = Query(False, description="Return only active instances."),
@@ -189,7 +195,9 @@ def read_solidset_instances(
 
 
 @router.get(
-    "/api/v1/agent/solidset/instances/{code}", response_model=SolidSETInstanceStored
+    "/api/v1/agent/solidset/instances/{code}",
+    response_model=SolidSETInstanceStored,
+    summary="Get one SolidSET instance",
 )
 def read_solidset_instance(code: str) -> SolidSETInstanceStored:
     """Returns one configured instance by code, including inactive instances."""
@@ -214,6 +222,7 @@ def read_solidset_instance(code: str) -> SolidSETInstanceStored:
 @router.post(
     "/api/v1/agent/solidset/instances/{code}/test-connection",
     response_model=SolidSETDataAPIConnectionTestResponse,
+    summary="Test the configured SolidSET data provider",
 )
 def test_solidset_instance_database(code: str) -> SolidSETDataAPIConnectionTestResponse:
     """Tests connectivity and basic schema capabilities without exposing credentials."""
@@ -250,7 +259,10 @@ def test_solidset_instance_database(code: str) -> SolidSETDataAPIConnectionTestR
     )
 
 
-@router.post("/api/v1/agent/solidset/instances/{code}/schema/refresh")
+@router.post(
+    "/api/v1/agent/solidset/instances/{code}/schema/refresh",
+    summary="Refresh the SQL schema snapshot for a SolidSET instance",
+)
 def refresh_solidset_instance_schema(code: str) -> dict[str, Any]:
     """Reads the schema through Data API and stores the snapshot in PostgreSQL."""
     instance = get_solidset_instance(code=code.strip(), source_ip=None)
@@ -281,7 +293,10 @@ def refresh_solidset_instance_schema(code: str) -> dict[str, Any]:
     }
 
 
-@router.get("/api/v1/agent/solidset/instances/{code}/schema")
+@router.get(
+    "/api/v1/agent/solidset/instances/{code}/schema",
+    summary="Get the cached SQL schema snapshot for a SolidSET instance",
+)
 def get_solidset_instance_schema(code: str) -> dict[str, Any]:
     """Returns the PostgreSQL snapshot without opening a SQL Server connection."""
     instance = get_solidset_instance(code=code.strip(), source_ip=None)

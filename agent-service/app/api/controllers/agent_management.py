@@ -33,7 +33,7 @@ from app.services.auto_reply import (
 from app.system.reaction_capture import get_agent_reinforcement_context
 
 
-router = APIRouter()
+router = APIRouter(tags=["SolidSET Agents"])
 agent = None
 
 

@@ -16,7 +16,7 @@ from app.services.agent_prompt_service import (
 )
 
 
-router = APIRouter(prefix="/api/v1/agent/solidset/agents", tags=["Agent prompts"])
+router = APIRouter(prefix="/api/v1/agent/solidset/agents", tags=["SolidSET Agents"])
 
 
 def _http_error(exc: Exception) -> HTTPException:

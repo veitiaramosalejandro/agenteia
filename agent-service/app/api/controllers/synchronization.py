@@ -21,7 +21,7 @@ from app.system.resource_ingest import (
 )
 
 
-router = APIRouter(prefix="/api/v1/agent/solidset", tags=["SolidSET synchronization"])
+router = APIRouter(prefix="/api/v1/agent/solidset", tags=["SolidSET Configuration"])
 
 
 def _synchronize(instance_code: str, operation: Callable, entity: str) -> dict:

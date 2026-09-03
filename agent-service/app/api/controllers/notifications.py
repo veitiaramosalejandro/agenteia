@@ -28,7 +28,7 @@ from app.services.response_status import create as _create_response_status
 from app.services.response_status import update as _update_response_status
 
 
-router = APIRouter()
+router = APIRouter(tags=["SolidSET Notifications"])
 notification_listener = None
 
 

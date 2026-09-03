@@ -9,7 +9,7 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 from app.config import settings
 
 
-router = APIRouter()
+router = APIRouter(tags=["Audio, History and Context"])
 
 
 @router.get("/api/v1/agent/audio-response")

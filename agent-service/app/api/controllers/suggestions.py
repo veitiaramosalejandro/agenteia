@@ -20,7 +20,7 @@ from app.services.response_status import update as _update_response_status
 from app.services.suggestions import _chat_question_suggestion_context
 
 
-router = APIRouter()
+router = APIRouter(tags=["SolidSET Notifications"])
 suggestion_queue = None
 
 
@@ -33,6 +33,13 @@ def configure(runtime_suggestion_queue: Any) -> None:
     "/api/v1/agent/notification/chat-question/suggest-response",
     response_model=ChatQuestionSuggestionResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    summary="Suggest a response to a quoted SolidSET chat message",
+    responses={
+        202: {"description": "Suggestion accepted into the durable processing queue."},
+        404: {"description": "The requester's own AI agent is not active."},
+        422: {"description": "The FrameworkMessage lacks required chat context."},
+        503: {"description": "A database or model dependency is unavailable."},
+    },
 )
 async def suggest_chat_question_response(
     message: Annotated[

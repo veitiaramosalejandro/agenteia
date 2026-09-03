@@ -6,7 +6,6 @@ from time import perf_counter
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -26,6 +25,7 @@ from app.api.controllers import notifications
 from app.api.controllers import suggestions as suggestions_controller
 from app.api.controllers import agent_management
 from app.api.controllers.solidset_instances import router as solidset_instances_router
+from app.api.openapi import configure_openapi
 from app.connectors.db_client import (
     ensure_llm_provider_schema,
     ensure_agent_model_schema,
@@ -186,6 +186,7 @@ conversation.configure(app, orchestrator)
 diagnostics.configure(app, agent, notification_listener)
 notifications.configure(notification_listener)
 suggestions_controller.configure(suggestion_queue)
+configure_openapi(app, OPENAPI_TAGS)
 
 _dialogue_slots = dialogue_runtime.slots
 
@@ -496,42 +497,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # PUNTO DE ENTRADA PARA EJECUCIÓN DIRECTA
 # ============================================================
 
-
-def _swagger_tag_for_path(path: str) -> str:
-    """Classify each operation into a stable Swagger UI section."""
-    if "/historical-ingestion" in path:
-        return "Historical Ingestion"
-    if "/responses" in path:
-        return "Asynchronous Responses"
-    if "/notification" in path:
-        return "SolidSET Notifications"
-    if "/llm/providers" in path:
-        return "LLM Providers"
-    if "/solidset/agents" in path or "/solidset/multi-agent" in path:
-        return "SolidSET Agents"
-    if "/solidset/" in path:
-        return "SolidSET Configuration"
-    if path.endswith("/feedback") or "/reactions/" in path or "/evaluation/" in path:
-        return "Learning and Feedback"
-    if "/audio-response" in path or "/history/" in path or "/context/" in path:
-        return "Audio, History and Context"
-    if path.endswith("/dialogue"):
-        return "Conversation"
-    if "/connectivity/" in path:
-        return "Connectivity"
-    return "Observability"
-
-
-for route in app.routes:
-    if isinstance(route, APIRoute):
-        tag = _swagger_tag_for_path(route.path)
-        route.tags = [tag]
-        route.summary = (
-            route.name.replace("_", " ").title().replace("Solidset", "SolidSET")
-        )
-        route.description = next(
-            item["description"] for item in OPENAPI_TAGS if item["name"] == tag
-        )
 
 if __name__ == "__main__":
     import uvicorn

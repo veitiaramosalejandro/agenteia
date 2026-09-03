@@ -26,7 +26,7 @@ from app.system.reaction_capture import (
 from app.system.schema import Actividad
 
 
-router = APIRouter()
+router = APIRouter(tags=["Learning and Feedback"])
 agent = None
 
 

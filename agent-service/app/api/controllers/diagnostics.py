@@ -35,7 +35,7 @@ def configure(
     notification_listener = runtime_notification_listener
 
 
-@router.get("/api/v1/agent/health")
+@router.get("/api/v1/agent/health", tags=["Observability"])
 def health_check():
     """
     Endpoint de salud para verificar que el servicio está funcionando.
@@ -105,7 +105,10 @@ def health_check():
     }
 
 
-@router.get("/api/v1/agent/evaluation/summary")
+@router.get(
+    "/api/v1/agent/evaluation/summary",
+    tags=["Learning and Feedback"],
+)
 def get_agent_evaluation_summary():
     """
     Resumen operacional para evaluar:
@@ -146,7 +149,10 @@ def get_agent_evaluation_summary():
         )
 
 
-@router.get("/api/v1/agent/notification/recent-messages")
+@router.get(
+    "/api/v1/agent/notification/recent-messages",
+    tags=["SolidSET Notifications"],
+)
 def get_recent_notification_messages(limit: int = Query(30, ge=1, le=200)):
     """
     Devuelve los últimos mensajes de canal/chat capturados por el listener.
@@ -166,7 +172,10 @@ def get_recent_notification_messages(limit: int = Query(30, ge=1, le=200)):
         )
 
 
-@router.get("/api/v1/agent/context/{user_id}")
+@router.get(
+    "/api/v1/agent/context/{user_id}",
+    tags=["Audio, History and Context"],
+)
 def get_user_context(user_id: str):
     """
     Devuelve el contexto completo de un usuario (para debugging y validación).
@@ -199,7 +208,7 @@ def get_user_context(user_id: str):
         )
 
 
-@router.get("/api/v1/agent/sql-retry-stats")
+@router.get("/api/v1/agent/sql-retry-stats", tags=["Observability"])
 def get_sql_retry_stats():
     """
     Devuelve métricas acumuladas de reintentos SQL del sistema de aprendizaje.
@@ -215,7 +224,7 @@ def get_sql_retry_stats():
         )
 
 
-@router.post("/api/v1/agent/sql-retry-stats/reset")
+@router.post("/api/v1/agent/sql-retry-stats/reset", tags=["Observability"])
 def reset_sql_retry_stats():
     """
     Reinicia métricas de reintentos SQL del sistema de aprendizaje.
@@ -235,7 +244,7 @@ def reset_sql_retry_stats():
         )
 
 
-@router.get("/api/v1/connectivity/solidset")
+@router.get("/api/v1/connectivity/solidset", tags=["Connectivity"])
 def test_solidset_connectivity():
     """
     Prueba de conectividad con la API SolidSET.
@@ -317,7 +326,7 @@ def test_solidset_connectivity():
     return results
 
 
-@router.get("/api/v1/connectivity/all")
+@router.get("/api/v1/connectivity/all", tags=["Connectivity"])
 def test_all_connectivity():
     """
     Prueba de conectividad con todos los servicios externos configurados.
