@@ -26,7 +26,8 @@ def _http_error(exc: Exception) -> HTTPException:
 
 
 @router.post(
-    "/prompts/generate", response_model=AgentPromptBulkResponse,
+    "/prompts/generate",
+    response_model=AgentPromptBulkResponse,
     summary="Generate prompt drafts for every active agent in one SolidSET instance",
 )
 def generate_active_agent_prompts(
@@ -51,9 +52,9 @@ def generate_agent_prompt(
     instanceCode: str = Query(..., min_length=1),
 ) -> AgentPromptStoredResponse:
     try:
-        return AgentPromptStoredResponse(**generate_prompt_draft(
-            instanceCode, agent_resource_id, request
-        ))
+        return AgentPromptStoredResponse(
+            **generate_prompt_draft(instanceCode, agent_resource_id, request)
+        )
     except (AgentPromptNotFound, AgentPromptPersistenceError) as exc:
         raise _http_error(exc) from exc
 
@@ -70,10 +71,14 @@ def publish_generated_agent_prompt(
     instanceCode: str = Query(..., min_length=1),
 ) -> AgentPromptStoredResponse:
     try:
-        saved, instance_id = publish_prompt_draft(instanceCode, agent_resource_id, prompt_id)
+        saved, instance_id = publish_prompt_draft(
+            instanceCode, agent_resource_id, prompt_id
+        )
         runtime_agent = getattr(request.app.state, "agent", None)
         if runtime_agent is not None:
-            runtime_agent.agent_prompt_cache.pop((instance_id, str(agent_resource_id)), None)
+            runtime_agent.agent_prompt_cache.pop(
+                (instance_id, str(agent_resource_id)), None
+            )
         return AgentPromptStoredResponse(**saved)
     except (AgentPromptNotFound, AgentPromptPersistenceError) as exc:
         raise _http_error(exc) from exc

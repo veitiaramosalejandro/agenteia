@@ -4,7 +4,8 @@ import unittest
 
 from fastapi import HTTPException
 
-from app.main import FrameworkMessageDTO, _framework_message_to_dialogue, handle_dialogue
+from app.api.schemas.common import FrameworkMessageDTO
+from app.api.controllers.conversation import _framework_message_to_dialogue, handle_dialogue
 
 
 class TestDialogueFrameworkPayload(unittest.TestCase):

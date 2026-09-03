@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from unittest.mock import patch
 
-from app.main import (
+from app.services.instance_resolution import (
     _attach_solidset_instance,
     _request_ip_details,
     _resolve_request_solidset_instance,
@@ -33,7 +33,7 @@ class RequestIpLoggingTests(unittest.TestCase):
         self.assertEqual(direct, "127.0.0.1")
         self.assertEqual(forwarded, "-")
 
-    @patch("app.main.get_solidset_instance")
+    @patch("app.services.instance_resolution.get_solidset_instance")
     def test_explicit_instance_header_has_precedence_over_source_ip(self, lookup):
         lookup.return_value = {"Code": "plant-a"}
         request = SimpleNamespace(

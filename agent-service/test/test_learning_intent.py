@@ -1,6 +1,6 @@
 import unittest
 
-from app.main import (
+from app.services.auto_reply import (
     _is_external_information_query,
     _is_informational_learning_message,
     _learning_acknowledgement,

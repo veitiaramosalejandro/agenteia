@@ -2,7 +2,8 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from app.main import SolidSETReactionCaptureRequest, capture_solidset_agent_reaction
+from app.api.schemas.common import SolidSETReactionCaptureRequest
+from app.api.controllers.feedback import capture_solidset_agent_reaction
 from app.system.reaction_capture import classify_reaction, reaction_reward
 
 
@@ -16,9 +17,12 @@ class ReactionCaptureTests(unittest.TestCase):
         self.assertEqual(1.0, reaction_reward("positive", 1))
         self.assertEqual(-2.0, reaction_reward("negative", 2))
 
-    @patch("app.main.agent.sistema_aprendizaje.aprender_actividad", return_value=True)
-    @patch("app.main.save_agent_reaction")
-    @patch("app.main.resolve_agent_message")
+    @patch(
+        "app.api.controllers.feedback.agent.sistema_aprendizaje.aprender_actividad",
+        return_value=True,
+    )
+    @patch("app.api.controllers.feedback.save_agent_reaction")
+    @patch("app.api.controllers.feedback.resolve_agent_message")
     def test_captures_reaction_for_agent_that_emitted_response(
         self, resolve_message, save_reaction, learn
     ):
@@ -36,13 +40,15 @@ class ReactionCaptureTests(unittest.TestCase):
         }
         save_reaction.return_value = ({"ID": uuid4()}, True)
 
-        response = capture_solidset_agent_reaction(SolidSETReactionCaptureRequest(
-            IDChat=1822812,
-            IDUser=user,
-            IDChannel=channel,
-            IDEmoji="U+1F64F",
-            Counter=1,
-        ))
+        response = capture_solidset_agent_reaction(
+            SolidSETReactionCaptureRequest(
+                IDChat=1822812,
+                IDUser=user,
+                IDChannel=channel,
+                IDEmoji="U+1F64F",
+                Counter=1,
+            )
+        )
 
         self.assertTrue(response.learned)
         self.assertTrue(response.changed)

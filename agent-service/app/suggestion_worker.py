@@ -8,12 +8,11 @@ import redis
 from fastapi import HTTPException
 
 from app.config import settings
-from app.main import (
-    FrameworkMessageDTO,
-    _load_response_status,
-    _process_chat_question_response_suggestion,
-    _update_response_status,
-)
+from app.container import agent as _configured_agent  # noqa: F401 - configures shared runtime
+from app.api.schemas.common import FrameworkMessageDTO
+from app.services.response_status import load as _load_response_status
+from app.services.response_status import update as _update_response_status
+from app.services.suggestions import _process_chat_question_response_suggestion
 from app.suggestion_queue import SuggestionQueue
 
 
@@ -25,7 +24,9 @@ async def run_worker() -> None:
         try:
             messages = await asyncio.to_thread(queue.read, consumer)
         except redis.RedisError as exc:
-            print(f"⚠️ Redis de sugerencias temporalmente no disponible: {exc}", flush=True)
+            print(
+                f"⚠️ Redis de sugerencias temporalmente no disponible: {exc}", flush=True
+            )
             await asyncio.sleep(2)
             queue = SuggestionQueue()
             continue

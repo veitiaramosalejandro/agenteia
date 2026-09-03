@@ -28,7 +28,9 @@ def _synchronize(instance_code: str, operation: Callable, entity: str) -> dict:
     try:
         instance = get_solidset_instance(code=instance_code, source_ip=None)
         if not instance or not instance.get("DataAPI"):
-            raise HTTPException(status_code=404, detail="A instância ou a SolidSET Data API não existe.")
+            raise HTTPException(
+                status_code=404, detail="A instância ou a SolidSET Data API não existe."
+            )
         return operation(instance)
     except HTTPException:
         raise
@@ -41,37 +43,51 @@ def _synchronize(instance_code: str, operation: Callable, entity: str) -> dict:
 
 
 @router.post("/workrooms/sync", response_model=SysWorkRoomIngestResponse)
-def sync_solidset_workrooms(instanceCode: str = Query(...)) -> SysWorkRoomIngestResponse:
+def sync_solidset_workrooms(
+    instanceCode: str = Query(...),
+) -> SysWorkRoomIngestResponse:
     return SysWorkRoomIngestResponse(
-        status="synchronized", **_synchronize(instanceCode, ingest_solidset_workrooms, "os canais")
+        status="synchronized",
+        **_synchronize(instanceCode, ingest_solidset_workrooms, "os canais"),
     )
 
 
 @router.post("/logins/sync", response_model=SysLoginIngestResponse)
 def sync_solidset_logins(instanceCode: str = Query(...)) -> SysLoginIngestResponse:
     return SysLoginIngestResponse(
-        status="synchronized", **_synchronize(instanceCode, ingest_solidset_logins, "as contas")
+        status="synchronized",
+        **_synchronize(instanceCode, ingest_solidset_logins, "as contas"),
     )
 
 
 @router.post("/chat-workroom/sync", response_model=SysChatIAResourceIngestResponse)
-def sync_solidset_chat_resources(instanceCode: str = Query(...)) -> SysChatIAResourceIngestResponse:
+def sync_solidset_chat_resources(
+    instanceCode: str = Query(...),
+) -> SysChatIAResourceIngestResponse:
     return SysChatIAResourceIngestResponse(
         status="synchronized",
-        **_synchronize(instanceCode, ingest_solidset_chat_resources, "as relações de chat"),
+        **_synchronize(
+            instanceCode, ingest_solidset_chat_resources, "as relações de chat"
+        ),
     )
 
 
 @router.post("/agent-scopes/sync", response_model=SysAgentIAScopeIngestResponse)
-def sync_solidset_agent_scopes(instanceCode: str = Query(...)) -> SysAgentIAScopeIngestResponse:
+def sync_solidset_agent_scopes(
+    instanceCode: str = Query(...),
+) -> SysAgentIAScopeIngestResponse:
     return SysAgentIAScopeIngestResponse(
         status="synchronized",
-        **_synchronize(instanceCode, ingest_solidset_agent_scopes, "o alcance dos agentes"),
+        **_synchronize(
+            instanceCode, ingest_solidset_agent_scopes, "o alcance dos agentes"
+        ),
     )
 
 
 @router.post("/resources/sync", response_model=SysResourceIAIngestResponse)
-def sync_solidset_resources(instanceCode: str = Query(...)) -> SysResourceIAIngestResponse:
+def sync_solidset_resources(
+    instanceCode: str = Query(...),
+) -> SysResourceIAIngestResponse:
     return SysResourceIAIngestResponse(
         status="synchronized",
         **_synchronize(instanceCode, ingest_solidset_resources, "os recursos"),

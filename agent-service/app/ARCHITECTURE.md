@@ -1,7 +1,8 @@
 # Arquitectura modular del Agent Service
 
-La migración desde `main.py` es incremental para conservar las rutas públicas y
-reducir el riesgo de regresiones.
+`main.py` es únicamente la raíz de composición ASGI: crea FastAPI, registra
+middleware, lifecycle, manejadores de error y routers. No contiene contratos ni
+lógica de endpoints.
 
 ## Capas
 
@@ -37,22 +38,35 @@ código HTTP.
 Gestiona generación individual, generación masiva idempotente y publicación de
 plantillas versionadas.
 
-## Próximas extracciones
-
-1. `solidset_configuration`: instancias, recursos, canales y sincronización de
-   ámbitos.
-2. `historical_ingestion`: ejecución, cursores, auditoría y eliminación.
-3. `agent_execution`: conversación síncrona y asíncrona.
-4. `learning_feedback`: reacciones, refuerzo y conocimiento privado.
-5. `llm_providers`: proveedores y modelos asignados.
-6. `observability`: salud, métricas y diagnósticos.
-
-Cada extracción debe conservar rutas, añadir pruebas del contrato OpenAPI y
-evitar dependencias circulares con `main.py`.
-
 ## Dominios extraídos
 
 - `agent_prompts`: generación individual, generación masiva y publicación.
 - `ingestion`: ingesta histórica y conocimiento estructurado del sistema.
 - `synchronization`: recursos, logins, canales y ámbitos SolidSET.
 - `llm_configuration`: proveedores LLM y modelos asignados a agentes.
+- `solidset_instances`: configuración, conexión y catálogo SQL por instancia.
+- `agent_management`: conocimiento privado, asignación a canales y diálogo
+  multiagente.
+- `conversation`: diálogo directo y validaciones de entrada.
+- `notifications`: recepción, vista previa y proxy de FrameworkMessage.
+- `suggestions`: aceptación asíncrona del pedido de sugerencias.
+- `responses`: estado y métricas de las colas asíncronas.
+- `feedback`: feedback explícito y reacciones SolidSET.
+- `history`: audio e historial conversacional.
+- `diagnostics`: salud, observabilidad y conectividad.
+
+## Servicios de ejecución
+
+- `container.py`: crea una sola vez agente, orquestador, listener y colas para
+  HTTP y workers; los workers ya no importan `main.py`.
+- `services/auto_reply.py`: autorización, selección y respuesta automática por
+  agente.
+- `services/suggestions.py`: contexto acotado, verificación, búsqueda y
+  generación de sugerencias.
+- `services/response_status.py`: estado durable/fallback de respuestas.
+- `services/dialogue_runtime.py`: admisión, concurrencia, caché y métricas.
+- `services/instance_resolution.py`: resolución tenant-safe de la instancia.
+- `services/connectivity.py`: pruebas de dependencias externas.
+
+El contrato HTTP se verifica mediante OpenAPI: deben existir exactamente las
+50 rutas históricas, sin duplicados.

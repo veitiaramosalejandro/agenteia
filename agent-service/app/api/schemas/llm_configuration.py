@@ -56,7 +56,9 @@ class AgentIAModelConfiguration(BaseModel):
     ProviderCode: str = Field(..., min_length=1, max_length=80)
     Role: str = Field("general", min_length=1, max_length=80)
     LocalExecution: bool = True
-    TrainingMode: str = Field("rag_reinforcement", pattern="^(rag_reinforcement|rag_only|disabled)$")
+    TrainingMode: str = Field(
+        "rag_reinforcement", pattern="^(rag_reinforcement|rag_only|disabled)$"
+    )
     LearnFromOwner: bool = True
     LearnFromSystem: bool = True
     LearnFromReactions: bool = True

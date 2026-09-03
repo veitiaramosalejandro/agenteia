@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 from app.agent.core import MachiningAgent
 from app.agent.orchestrator import SolidSETOrchestrator
-from app.main import _direct_courtesy_response
+from app.services.auto_reply import _direct_courtesy_response
 
 
 class LanguageDetectionTests(unittest.TestCase):

@@ -1,9 +1,9 @@
 import unittest
 from unittest.mock import patch
 
-from app.main import (
-    app,
-    _attach_solidset_instance,
+from app.main import app
+from app.services.instance_resolution import _attach_solidset_instance
+from app.services.suggestions import (
     _chat_question_suggestion_context,
     _format_suggestion_scope_context,
     _format_related_records_context,
@@ -16,8 +16,6 @@ from app.main import (
     _suggestion_tool_allowlist,
     _verified_suggestion_business_context,
     _suggestion_request_text,
-    _local_arithmetic_response,
-    _local_temporal_response,
     _parse_chat_question_suggestions,
     _suggestion_language_is_consistent,
     _is_business_recommendation_request,
@@ -31,9 +29,13 @@ from app.main import (
     _reason_about_related_record,
     _sanitize_related_record_value,
     _extract_learnable_suggestion_fact,
+)
+from app.services.auto_reply import (
     _is_relative_temporal_assertion,
     _is_safe_auto_reply_output,
     _learn_direct_agent_assertion,
+    _local_arithmetic_response,
+    _local_temporal_response,
 )
 from app.agent.orchestrator import SolidSETOrchestrator
 from app.agent.core import MachiningAgent
@@ -48,22 +50,26 @@ class TestChatQuestionSuggestion(unittest.TestCase):
     def test_product_version_anchor_rejects_unrelated_rag_context(self):
         machining_agent = MachiningAgent.__new__(MachiningAgent)
 
-        self.assertFalse(machining_agent._rag_context_matches_query(
-            "Que sabes de kimi-k3?",
-            "La actividad mas reciente trata sobre Real Madrid FC.",
-        ))
-        self.assertTrue(machining_agent._rag_context_matches_query(
-            "Que sabes de kimi-k3?",
-            "Kimi-k3 es el producto consultado por el usuario.",
-        ))
+        self.assertFalse(
+            machining_agent._rag_context_matches_query(
+                "Que sabes de kimi-k3?",
+                "La actividad mas reciente trata sobre Real Madrid FC.",
+            )
+        )
+        self.assertTrue(
+            machining_agent._rag_context_matches_query(
+                "Que sabes de kimi-k3?",
+                "Kimi-k3 es el producto consultado por el usuario.",
+            )
+        )
 
     def test_concrete_answer_never_triggers_format_repair(self):
-        self.assertFalse(_should_repair_suggestions(
-            [], expected_count=1, concrete_answer_mode=True
-        ))
-        self.assertTrue(_should_repair_suggestions(
-            [], expected_count=3, concrete_answer_mode=False
-        ))
+        self.assertFalse(
+            _should_repair_suggestions([], expected_count=1, concrete_answer_mode=True)
+        )
+        self.assertTrue(
+            _should_repair_suggestions([], expected_count=3, concrete_answer_mode=False)
+        )
 
     def test_product_version_question_is_routed_to_web_once(self):
         self.assertEqual(
@@ -86,18 +92,25 @@ class TestChatQuestionSuggestion(unittest.TestCase):
     def test_relative_date_assertion_is_not_durable_knowledge(self):
         self.assertTrue(_is_relative_temporal_assertion("Hoy es 28 de agosto."))
         self.assertTrue(_is_relative_temporal_assertion("Hoje é 28 de agosto."))
-        self.assertFalse(_is_relative_temporal_assertion("La máquina usa aceite ISO 46."))
+        self.assertFalse(
+            _is_relative_temporal_assertion("La máquina usa aceite ISO 46.")
+        )
 
-    @patch("app.main.agent.sistema_aprendizaje.aprender_conocimiento_agente", return_value=True)
-    @patch("app.main.save_agent_knowledge")
+    @patch(
+        "app.services.auto_reply.agent.sistema_aprendizaje.aprender_conocimiento_agente",
+        return_value=True,
+    )
+    @patch("app.services.auto_reply.save_agent_knowledge")
     def test_direct_assertion_is_persisted_for_selected_agent(self, save, index):
         save.return_value = {"ID": "knowledge-1", "WasExisting": False}
 
-        learned = _learn_direct_agent_assertion({
-            "message": "La máquina usa aceite ISO 46.",
-            "agent_resource_id": "agent-1",
-            "channel_id": "room-1",
-        })
+        learned = _learn_direct_agent_assertion(
+            {
+                "message": "La máquina usa aceite ISO 46.",
+                "agent_resource_id": "agent-1",
+                "channel_id": "room-1",
+            }
+        )
 
         self.assertTrue(learned)
         payload = save.call_args.args[0]
@@ -161,7 +174,13 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertEqual("33333333-3333-4333-8333-333333333333", context["workroom_id"])
         self.assertEqual("1", context["advice_mode"])
         rendered = _format_suggestion_scope_context(
-            [{"message": "Tema pendiente", "sender_full_name": "Ana", "timestamp": None}]
+            [
+                {
+                    "message": "Tema pendiente",
+                    "sender_full_name": "Ana",
+                    "timestamp": None,
+                }
+            ]
         )
         self.assertEqual("Ana: Tema pendiente", rendered)
 
@@ -171,7 +190,11 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "workroom_id": "d8e82821-d52f-44bf-9b70-682651a6196e",
         }
         initial = {**common, "request_id": "1757618085", "quoted_chat_id": ""}
-        continuous = {**common, "request_id": "1757618087", "quoted_chat_id": "1757618088"}
+        continuous = {
+            **common,
+            "request_id": "1757618087",
+            "quoted_chat_id": "1757618088",
+        }
 
         self.assertNotEqual(
             _chat_question_session_id(initial),
@@ -179,24 +202,26 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
 
     def test_zero_quoted_chat_id_is_a_new_advice_request_not_a_refinement(self):
-        context = _chat_question_suggestion_context({
-            "Sender": {
-                "resource": "11111111-1111-4111-8111-111111111111",
-            },
-            "Chat": {
-                "idChat2": 123,
-                "idSenderResource": "11111111-1111-4111-8111-111111111111",
-                "idWorkRoom": "33333333-3333-4333-8333-333333333333",
-                "chatQuestion": {
-                    "idChat2": 0,
-                    "rawMessage": (
-                        "Pedido do utilizador:\nQue tareas tiene asignado "
-                        "el recurso Alejandro Veitia"
-                    ),
+        context = _chat_question_suggestion_context(
+            {
+                "Sender": {
+                    "resource": "11111111-1111-4111-8111-111111111111",
                 },
-            },
-            "Info": {"advice_mode": "1"},
-        })
+                "Chat": {
+                    "idChat2": 123,
+                    "idSenderResource": "11111111-1111-4111-8111-111111111111",
+                    "idWorkRoom": "33333333-3333-4333-8333-333333333333",
+                    "chatQuestion": {
+                        "idChat2": 0,
+                        "rawMessage": (
+                            "Pedido do utilizador:\nQue tareas tiene asignado "
+                            "el recurso Alejandro Veitia"
+                        ),
+                    },
+                },
+                "Info": {"advice_mode": "1"},
+            }
+        )
 
         self.assertEqual("", context["quoted_chat_id"])
         self.assertTrue(context["quoted_message"].startswith("Pedido do utilizador"))
@@ -206,21 +231,28 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
 
     def test_related_task_is_preserved_as_authoritative_turn_context(self):
-        context = _chat_question_suggestion_context({
-            "Sender": {"resource": "11111111-1111-4111-8111-111111111111"},
-            "Chat": {
-                "idChat2": 81046402,
-                "idWorkRoom": "33333333-3333-4333-8333-333333333333",
-                "chatQuestion": {"idChat2": 0, "rawMessage": "Que debo hacer para hacer esta tarea?"},
-            },
-            "Info": {"advice_mode": "1"},
-            "RelatedRecordsData": [{
-                "gidRecord": "60debe73-2ba2-f111-87af-ac162d7b04d3",
-                "recordCode": "T-26-11369",
-                "recordShortName": "Implementação de formação melhorada.",
-                "recordTypeName": "Task",
-            }],
-        })
+        context = _chat_question_suggestion_context(
+            {
+                "Sender": {"resource": "11111111-1111-4111-8111-111111111111"},
+                "Chat": {
+                    "idChat2": 81046402,
+                    "idWorkRoom": "33333333-3333-4333-8333-333333333333",
+                    "chatQuestion": {
+                        "idChat2": 0,
+                        "rawMessage": "Que debo hacer para hacer esta tarea?",
+                    },
+                },
+                "Info": {"advice_mode": "1"},
+                "RelatedRecordsData": [
+                    {
+                        "gidRecord": "60debe73-2ba2-f111-87af-ac162d7b04d3",
+                        "recordCode": "T-26-11369",
+                        "recordShortName": "Implementação de formação melhorada.",
+                        "recordTypeName": "Task",
+                    }
+                ],
+            }
+        )
         self.assertEqual("T-26-11369", context["related_records"][0]["recordCode"])
         rendered = _format_related_records_context(context["related_records"])
         self.assertIn("T-26-11369", rendered)
@@ -249,33 +281,47 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "Investiga como poder resolver esta tarea",
             _suggestion_request_text(wrapped),
         )
-        self.assertTrue(_is_research_suggestion_request(_suggestion_request_text(wrapped)))
+        self.assertTrue(
+            _is_research_suggestion_request(_suggestion_request_text(wrapped))
+        )
 
     def test_related_record_sessions_are_isolated_by_record(self):
         base = {
             "requester_resource": "resource-1",
             "workroom_id": "room-1",
         }
-        first = _chat_question_session_id({
-            **base, "related_records": [{"recordCode": "T-26-11369"}],
-        })
-        second = _chat_question_session_id({
-            **base, "related_records": [{"recordCode": "T-26-11245"}],
-        })
+        first = _chat_question_session_id(
+            {
+                **base,
+                "related_records": [{"recordCode": "T-26-11369"}],
+            }
+        )
+        second = _chat_question_session_id(
+            {
+                **base,
+                "related_records": [{"recordCode": "T-26-11245"}],
+            }
+        )
         self.assertNotEqual(first, second)
 
     def test_related_record_gate_rejects_another_task(self):
-        records = [{
-            "recordCode": "T-26-11245",
-            "recordShortName": "Automação N8N integrar Sistema SolidSET",
-            "recordTypeName": "Task",
-        }]
-        self.assertFalse(_suggestion_matches_related_records(
-            "Para a tarefa T-26-11369 devemos melhorar a formação.", records
-        ))
-        self.assertTrue(_suggestion_matches_related_records(
-            "Para T-26-11245, analisa a integração N8N com SolidSET.", records
-        ))
+        records = [
+            {
+                "recordCode": "T-26-11245",
+                "recordShortName": "Automação N8N integrar Sistema SolidSET",
+                "recordTypeName": "Task",
+            }
+        ]
+        self.assertFalse(
+            _suggestion_matches_related_records(
+                "Para a tarefa T-26-11369 devemos melhorar a formação.", records
+            )
+        )
+        self.assertTrue(
+            _suggestion_matches_related_records(
+                "Para T-26-11245, analisa a integração N8N com SolidSET.", records
+            )
+        )
 
     def test_related_record_fallback_does_not_invent_an_architecture(self):
         answer = _related_record_direct_answer(
@@ -321,29 +367,44 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "Task: T-26-2448 — colocar meeting na Grid\n"
             "Description: Mostrar o meeting associado no histórico da tarefa."
         )
-        self.assertFalse(_related_guidance_is_useful(
-            "Tarefa relacionada: T-26-2448. Descrição verificada: Mostrar o meeting.",
-            "Dê-me sugestões de estudo", context,
-        ))
-        self.assertFalse(_related_guidance_is_useful(
-            "Analisa o anexo solidset://file/5f90f567-699f-4cf2-ad8e-dc4758f99759.",
-            "Analisa esta tarefa", context,
-        ))
-        self.assertTrue(_related_guidance_is_useful(
-            "Sugiro primeiro confirmar a origem do meeting e depois validar o que a Grid "
-            "deve mostrar quando não existe associação.",
-            "Dê-me sugestões de estudo", context,
-        ))
-        self.assertFalse(_related_guidance_is_useful(
-            "Recomendo a criação de um guia ou manual interno detalhado. Primeiro, qual é "
-            "a plataforma utilizada, por exemplo SolidSET?",
-            "Dê-me sugestões de estudo", context + " Sistema: SolidSET.",
-        ))
-        self.assertFalse(_related_guidance_is_useful(
-            "Para analisar esta tarefa, é necessário ter informações adicionais sobre as "
-            "colunas disponíveis na Grid. Preciso saber quais são as responsabilidades atuais.",
-            "Porquê é que não pode realizar uma análise desta tarefa para mim?", context,
-        ))
+        self.assertFalse(
+            _related_guidance_is_useful(
+                "Tarefa relacionada: T-26-2448. Descrição verificada: Mostrar o meeting.",
+                "Dê-me sugestões de estudo",
+                context,
+            )
+        )
+        self.assertFalse(
+            _related_guidance_is_useful(
+                "Analisa o anexo solidset://file/5f90f567-699f-4cf2-ad8e-dc4758f99759.",
+                "Analisa esta tarefa",
+                context,
+            )
+        )
+        self.assertTrue(
+            _related_guidance_is_useful(
+                "Sugiro primeiro confirmar a origem do meeting e depois validar o que a Grid "
+                "deve mostrar quando não existe associação.",
+                "Dê-me sugestões de estudo",
+                context,
+            )
+        )
+        self.assertFalse(
+            _related_guidance_is_useful(
+                "Recomendo a criação de um guia ou manual interno detalhado. Primeiro, qual é "
+                "a plataforma utilizada, por exemplo SolidSET?",
+                "Dê-me sugestões de estudo",
+                context + " Sistema: SolidSET.",
+            )
+        )
+        self.assertFalse(
+            _related_guidance_is_useful(
+                "Para analisar esta tarefa, é necessário ter informações adicionais sobre as "
+                "colunas disponíveis na Grid. Preciso saber quais são as responsabilidades atuais.",
+                "Porquê é que não pode realizar uma análise desta tarefa para mim?",
+                context,
+            )
+        )
 
     def test_related_record_reasoner_uses_only_the_requested_language(self):
         captured = []
@@ -363,13 +424,20 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "en": ("You are an isolated", "CURRENT REQUEST", "PEDIDO ATUAL"),
         }
         with patch(
-            "app.main.agent.get_llm_for_metadata",
+            "app.services.suggestions.agent.get_llm_for_metadata",
             return_value=(FakeLLM(), None, FakeProvider()),
         ):
-            for language, (system_marker, prompt_marker, forbidden_marker) in expectations.items():
+            for language, (
+                system_marker,
+                prompt_marker,
+                forbidden_marker,
+            ) in expectations.items():
                 _reason_about_related_record(
-                    request_text="request", record_context="record",
-                    research_context="", language=language, metadata={},
+                    request_text="request",
+                    record_context="record",
+                    research_context="",
+                    language=language,
+                    metadata={},
                 )
                 messages = captured[-1]
                 self.assertIn(system_marker, messages[0].content)
@@ -399,20 +467,24 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
     def test_user_request_language_overrides_portuguese_record_context(self):
         self.assertEqual(
-            "es", _suggestion_request_language(
+            "es",
+            _suggestion_request_language(
                 "Investiga como poder resolver esta tarea", "pt"
-            )
+            ),
         )
 
     def test_research_command_is_not_learned_as_a_fact(self):
         self.assertEqual(
-            "", _extract_learnable_suggestion_fact(
+            "",
+            _extract_learnable_suggestion_fact(
                 "Investiga como poder resolver esta tarea"
+            ),
+        )
+        self.assertFalse(
+            usable_agent_knowledge(
+                "Investiga como poder resolver esta tarea", USER_ASSERTION_SOURCE
             )
         )
-        self.assertFalse(usable_agent_knowledge(
-            "Investiga como poder resolver esta tarea", USER_ASSERTION_SOURCE
-        ))
 
     def test_task_advice_preloads_verified_operational_context(self):
         with patch.object(
@@ -540,7 +612,7 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
     def test_related_guidance_unwraps_small_model_string_object(self):
         result = _parse_chat_question_suggestions(
-            '''["{'String': 'Define responsables, permisos y recursos del meeting.'}"]''',
+            """["{'String': 'Define responsables, permisos y recursos del meeting.'}"]""",
             limit=1,
             allow_internal_list=True,
         )
@@ -556,7 +628,8 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
     def test_safe_fallback_uses_concrete_same_resource_channel_context(self):
         result = _safe_chat_question_fallback(
-            "pt", 2,
+            "pt",
+            2,
             "[2026-09-01 10:00] Victor: Rever o controlo dimensional da célula.\n"
             "[2026-09-01 10:05] Alejandro: Validar a integração do robô.",
         )
@@ -566,29 +639,41 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertNotIn("qual dos temas", " ".join(result).casefold())
 
     def test_distinguishes_task_proposal_from_task_listing(self):
-        self.assertTrue(_is_business_recommendation_request(
-            "¿Qué tarea debería ponerle al recurso Alejandro Veitia?"
-        ))
-        self.assertTrue(_is_business_recommendation_request(
-            "¿Qué me propones para ponerle como nueva tarea?"
-        ))
-        self.assertFalse(_is_business_recommendation_request(
-            "¿Qué tareas tiene asignadas Alejandro Veitia?"
-        ))
+        self.assertTrue(
+            _is_business_recommendation_request(
+                "¿Qué tarea debería ponerle al recurso Alejandro Veitia?"
+            )
+        )
+        self.assertTrue(
+            _is_business_recommendation_request(
+                "¿Qué me propones para ponerle como nueva tarea?"
+            )
+        )
+        self.assertFalse(
+            _is_business_recommendation_request(
+                "¿Qué tareas tiene asignadas Alejandro Veitia?"
+            )
+        )
 
     def test_concrete_answers_are_separated_from_recommendations(self):
-        self.assertTrue(_is_concrete_suggestion_answer_request(
-            "Qual é a temperatura atual em Leiria?"
-        ))
-        self.assertTrue(_is_concrete_suggestion_answer_request(
-            "¿Qué tareas tiene asignadas Alejandro Veitia?"
-        ))
-        self.assertFalse(_is_concrete_suggestion_answer_request(
-            "¿Qué tarea debería ponerle a Alejandro Veitia?"
-        ))
-        self.assertTrue(_is_concrete_suggestion_answer_request(
-            "¿Cuál es la capital de Francia?"
-        ))
+        self.assertTrue(
+            _is_concrete_suggestion_answer_request(
+                "Qual é a temperatura atual em Leiria?"
+            )
+        )
+        self.assertTrue(
+            _is_concrete_suggestion_answer_request(
+                "¿Qué tareas tiene asignadas Alejandro Veitia?"
+            )
+        )
+        self.assertFalse(
+            _is_concrete_suggestion_answer_request(
+                "¿Qué tarea debería ponerle a Alejandro Veitia?"
+            )
+        )
+        self.assertTrue(
+            _is_concrete_suggestion_answer_request("¿Cuál es la capital de Francia?")
+        )
 
     def test_parser_accepts_single_string_object(self):
         self.assertEqual(
@@ -618,43 +703,61 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
 
     def test_legacy_generated_drafts_are_not_usable_as_agent_facts(self):
-        self.assertFalse(usable_agent_knowledge(
-            "Desculpe-me, não tenho informações específicas sobre quando chegou.",
-            LEGACY_SUGGESTION_SOURCE,
-        ))
-        self.assertFalse(usable_agent_knowledge(
-            "2- Poderíamos procurar mais informações em fontes oficiais.",
-            LEGACY_SUGGESTION_SOURCE,
-        ))
-        self.assertTrue(usable_agent_knowledge(
-            "Alejandro Veitia chegou a Leiria a 17 de julho de 2026.",
-            LEGACY_SUGGESTION_SOURCE,
-        ))
-        self.assertTrue(usable_agent_knowledge(
-            "Alejandro Veitia é cubano, tem 36 anos, é casado e tem dois filhos.",
-            USER_ASSERTION_SOURCE,
-        ))
+        self.assertFalse(
+            usable_agent_knowledge(
+                "Desculpe-me, não tenho informações específicas sobre quando chegou.",
+                LEGACY_SUGGESTION_SOURCE,
+            )
+        )
+        self.assertFalse(
+            usable_agent_knowledge(
+                "2- Poderíamos procurar mais informações em fontes oficiais.",
+                LEGACY_SUGGESTION_SOURCE,
+            )
+        )
+        self.assertTrue(
+            usable_agent_knowledge(
+                "Alejandro Veitia chegou a Leiria a 17 de julho de 2026.",
+                LEGACY_SUGGESTION_SOURCE,
+            )
+        )
+        self.assertTrue(
+            usable_agent_knowledge(
+                "Alejandro Veitia é cubano, tem 36 anos, é casado e tem dois filhos.",
+                USER_ASSERTION_SOURCE,
+            )
+        )
 
     def test_generic_concrete_answer_rejects_redirects(self):
-        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
-            "Puede consultar un sitio especializado para obtener el dato."
-        ))
-        self.assertFalse(MachiningAgent._is_deflecting_concrete_answer(
-            "El valor verificado es 42, actualizado a las 12:00."
-        ))
-        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
-            "Não tenho informações específicas sobre quando chegou."
-        ))
-        self.assertTrue(MachiningAgent._is_deflecting_concrete_answer(
-            "No encontré información sobre Robotea; proporcione más detalles."
-        ))
+        self.assertTrue(
+            MachiningAgent._is_deflecting_concrete_answer(
+                "Puede consultar un sitio especializado para obtener el dato."
+            )
+        )
+        self.assertFalse(
+            MachiningAgent._is_deflecting_concrete_answer(
+                "El valor verificado es 42, actualizado a las 12:00."
+            )
+        )
+        self.assertTrue(
+            MachiningAgent._is_deflecting_concrete_answer(
+                "Não tenho informações específicas sobre quando chegou."
+            )
+        )
+        self.assertTrue(
+            MachiningAgent._is_deflecting_concrete_answer(
+                "No encontré información sobre Robotea; proporcione más detalles."
+            )
+        )
         self.assertEqual(
             "El valor es 42.",
             MachiningAgent._extract_concrete_answer('{"answer":"El valor es 42."}'),
         )
 
     def test_detects_and_cleans_incomplete_markdown_response(self):
-        incomplete = "Há previsão para os próximos dias. Para consultar o detalhe no site ["
+        incomplete = (
+            "Há previsão para os próximos dias. Para consultar o detalhe no site ["
+        )
 
         self.assertTrue(MachiningAgent._has_incomplete_response_markup(incomplete))
         self.assertEqual(
@@ -733,7 +836,9 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             "2dcf6097-a582-4dc3-b4be-d53bb0897461",
             result["quoted_resource"],
         )
-        self.assertEqual("He entendido la propuesta. ¿Confirmas el plazo?", result["quoted_message"])
+        self.assertEqual(
+            "He entendido la propuesta. ¿Confirmas el plazo?", result["quoted_message"]
+        )
         self.assertEqual("M11", result["meeting_code"])
 
     def test_suggestion_is_forced_to_private_work_route(self):
@@ -753,11 +858,13 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         orchestrator = SolidSETOrchestrator.__new__(SolidSETOrchestrator)
         orchestrator.agent = ExternalTopicAgent()
 
-        result = orchestrator._classify({
-            "session_id": "suggestion-test",
-            "user_text": "¿Cuál fue el último resultado deportivo?",
-            "message_metadata": {"response_suggestion_mode": True},
-        })
+        result = orchestrator._classify(
+            {
+                "session_id": "suggestion-test",
+                "user_text": "¿Cuál fue el último resultado deportivo?",
+                "message_metadata": {"response_suggestion_mode": True},
+            }
+        )
 
         self.assertEqual("work_sql_rag", result["route"])
 
@@ -781,15 +888,17 @@ class TestChatQuestionSuggestion(unittest.TestCase):
 
         orchestrator = SolidSETOrchestrator.__new__(SolidSETOrchestrator)
         orchestrator.agent = ExternalTopicAgent()
-        result = orchestrator._classify({
-            "session_id": "private-fact-test",
-            "user_text": "Quando chegou Alejandro a Leiria?",
-            "message_metadata": {
-                "agent_relevant_knowledge": (
-                    "Alejandro chegou a Leiria a 17 de julho de 2026."
-                )
-            },
-        })
+        result = orchestrator._classify(
+            {
+                "session_id": "private-fact-test",
+                "user_text": "Quando chegou Alejandro a Leiria?",
+                "message_metadata": {
+                    "agent_relevant_knowledge": (
+                        "Alejandro chegou a Leiria a 17 de julho de 2026."
+                    )
+                },
+            }
+        )
 
         self.assertEqual("work_sql_rag", result["route"])
 
@@ -804,15 +913,11 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
         self.assertEqual(
             {"query_sql_server", "get_db_schema"},
-            _suggestion_tool_allowlist(
-                quoted, ambient_mode=False, advice_refine=False
-            ),
+            _suggestion_tool_allowlist(quoted, ambient_mode=False, advice_refine=False),
         )
         self.assertEqual(
             set(),
-            _suggestion_tool_allowlist(
-                quoted, ambient_mode=True, advice_refine=False
-            ),
+            _suggestion_tool_allowlist(quoted, ambient_mode=True, advice_refine=False),
         )
         self.assertEqual(
             {"google_web_search"},
@@ -881,21 +986,29 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         self.assertNotIn("A hora local", response)
 
     def test_payload_region_overrides_instance_default(self):
-        candidates = [{"fingerprint": "message-1", "payload": {
-            "Info": {
-                "country_code": "ES",
-                "locale": "es-ES",
-                "time_zone": "Europe/Madrid",
+        candidates = [
+            {
+                "fingerprint": "message-1",
+                "payload": {
+                    "Info": {
+                        "country_code": "ES",
+                        "locale": "es-ES",
+                        "time_zone": "Europe/Madrid",
+                    }
+                },
             }
-        }}]
-        _attach_solidset_instance(candidates, {
-            "ID": "instance-1",
-            "Code": "solidset-pt",
-            "BaseUrl": "http://solidset.local",
-            "CountryCode": "PT",
-            "Locale": "pt-PT",
-            "TimeZone": "Europe/Lisbon",
-        })
+        ]
+        _attach_solidset_instance(
+            candidates,
+            {
+                "ID": "instance-1",
+                "Code": "solidset-pt",
+                "BaseUrl": "http://solidset.local",
+                "CountryCode": "PT",
+                "Locale": "pt-PT",
+                "TimeZone": "Europe/Lisbon",
+            },
+        )
 
         self.assertEqual("ES", candidates[0]["country_code"])
         self.assertEqual("es-ES", candidates[0]["locale"])

@@ -6,7 +6,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
-from app.main import SolidSETInstanceConfiguration
+from app.api.schemas.common import SolidSETInstanceConfiguration
 from app.connectors.solidset_sql import (
     connection_options,
     decrypt_sql_password,

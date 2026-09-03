@@ -37,16 +37,21 @@ def _instance(instance_code: str) -> dict[str, Any]:
 
 
 def generate_prompt_draft(
-    instance_code: str, resource_id: UUID, request: AgentPromptGenerateRequest,
+    instance_code: str,
+    resource_id: UUID,
+    request: AgentPromptGenerateRequest,
 ) -> dict[str, Any]:
     instance = _instance(instance_code)
     try:
         profile = get_agent_scope_profile(instance["ID"], resource_id)
         if profile is None:
-            raise AgentPromptNotFound("O agente não tem um perfil SolidSET sincronizado.")
+            raise AgentPromptNotFound(
+                "O agente não tem um perfil SolidSET sincronizado."
+            )
         behavior = request.model_dump(exclude={"name", "created_by"})
         return create_agent_prompt_draft(
-            instance["ID"], resource_id,
+            instance["ID"],
+            resource_id,
             name=request.name.strip(),
             system_prompt=generate_agent_system_prompt(profile, behavior),
             behavior_config=behavior,
@@ -57,11 +62,14 @@ def generate_prompt_draft(
     except LookupError as exc:
         raise AgentPromptNotFound(str(exc)) from exc
     except (ValueError, psycopg.Error) as exc:
-        raise AgentPromptPersistenceError("Não foi possível gerar a plantilla do agente.") from exc
+        raise AgentPromptPersistenceError(
+            "Não foi possível gerar a plantilla do agente."
+        ) from exc
 
 
 def generate_active_prompt_drafts(
-    instance_code: str, request: AgentPromptGenerateRequest,
+    instance_code: str,
+    request: AgentPromptGenerateRequest,
 ) -> AgentPromptBulkResponse:
     instance = _instance(instance_code)
     behavior = request.model_dump(exclude={"name", "created_by"})
@@ -73,7 +81,9 @@ def generate_active_prompt_drafts(
         try:
             profile = get_agent_scope_profile(instance["ID"], resource_id)
             if profile is None:
-                raise LookupError("El agente no tiene un alcance SolidSET sincronizado.")
+                raise LookupError(
+                    "El agente no tiene un alcance SolidSET sincronizado."
+                )
             system_prompt = generate_agent_system_prompt(profile, behavior)
             latest = get_latest_agent_prompt(instance["ID"], resource_id)
             if (
@@ -82,38 +92,59 @@ def generate_active_prompt_drafts(
                 and dict(latest.get("BehaviorConfig") or {}) == behavior
             ):
                 unchanged += 1
-                items.append(AgentPromptBulkItem(
-                    IDResource=resource_id, result="unchanged",
-                    promptID=latest["ID"], version=int(latest["Version"]),
-                ))
+                items.append(
+                    AgentPromptBulkItem(
+                        IDResource=resource_id,
+                        result="unchanged",
+                        promptID=latest["ID"],
+                        version=int(latest["Version"]),
+                    )
+                )
                 continue
             saved = create_agent_prompt_draft(
-                instance["ID"], resource_id,
-                name=request.name.strip(), system_prompt=system_prompt,
-                behavior_config=behavior, created_by=request.created_by.strip(),
+                instance["ID"],
+                resource_id,
+                name=request.name.strip(),
+                system_prompt=system_prompt,
+                behavior_config=behavior,
+                created_by=request.created_by.strip(),
             )
             generated += 1
-            items.append(AgentPromptBulkItem(
-                IDResource=resource_id, result="generated",
-                promptID=saved["ID"], version=int(saved["Version"]),
-            ))
+            items.append(
+                AgentPromptBulkItem(
+                    IDResource=resource_id,
+                    result="generated",
+                    promptID=saved["ID"],
+                    version=int(saved["Version"]),
+                )
+            )
         except (ValueError, LookupError, psycopg.Error) as exc:
             failed += 1
-            print(f"❌ No se pudo generar prompt para recurso {resource_id}: {type(exc).__name__}")
-            items.append(AgentPromptBulkItem(
-                IDResource=resource_id, result="failed",
-                error="No fue posible generar la plantilla para este agente.",
-            ))
+            print(
+                f"❌ No se pudo generar prompt para recurso {resource_id}: {type(exc).__name__}"
+            )
+            items.append(
+                AgentPromptBulkItem(
+                    IDResource=resource_id,
+                    result="failed",
+                    error="No fue posible generar la plantilla para este agente.",
+                )
+            )
 
     return AgentPromptBulkResponse(
         status="completed" if failed == 0 else "partial",
-        activeAgents=len(resource_ids), generated=generated,
-        unchanged=unchanged, failed=failed, items=items,
+        activeAgents=len(resource_ids),
+        generated=generated,
+        unchanged=unchanged,
+        failed=failed,
+        items=items,
     )
 
 
 def publish_prompt_draft(
-    instance_code: str, resource_id: UUID, prompt_id: UUID,
+    instance_code: str,
+    resource_id: UUID,
+    prompt_id: UUID,
 ) -> tuple[dict[str, Any], str]:
     instance = _instance(instance_code)
     try:
@@ -122,4 +153,6 @@ def publish_prompt_draft(
     except LookupError as exc:
         raise AgentPromptNotFound(str(exc)) from exc
     except (ValueError, psycopg.Error) as exc:
-        raise AgentPromptPersistenceError("Não foi possível publicar a plantilla do agente.") from exc
+        raise AgentPromptPersistenceError(
+            "Não foi possível publicar a plantilla do agente."
+        ) from exc

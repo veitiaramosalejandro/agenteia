@@ -10,12 +10,10 @@ from app.connectors.db_client import (
     ensure_agent_response_audit_schema,
     save_agent_response_audit,
 )
-from app.main import (
-    _attach_solidset_instance,
-    _process_auto_replies,
-    _update_response_status,
-    notification_listener,
-)
+from app.container import notification_listener
+from app.services.auto_reply import _process_auto_replies
+from app.services.instance_resolution import _attach_solidset_instance
+from app.services.response_status import update as _update_response_status
 from app.response_queue import AgentResponseQueue
 from app.interactive_priority import interactive_work
 
@@ -23,7 +21,9 @@ from app.interactive_priority import interactive_work
 async def run_worker() -> None:
     queue = AgentResponseQueue()
     await asyncio.to_thread(ensure_agent_response_audit_schema)
-    consumer = os.getenv("AGENT_RESPONSE_CONSUMER_NAME") or queue.default_consumer_name()
+    consumer = (
+        os.getenv("AGENT_RESPONSE_CONSUMER_NAME") or queue.default_consumer_name()
+    )
     print(f"🛠️ Agent response worker activo consumer={consumer}", flush=True)
     while True:
         try:

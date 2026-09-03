@@ -1,6 +1,6 @@
 import unittest
 
-from app.main import _quoted_reply_is_learning_only
+from app.services.auto_reply import _quoted_reply_is_learning_only
 
 
 class QuotedReplyIntentTests(unittest.TestCase):
