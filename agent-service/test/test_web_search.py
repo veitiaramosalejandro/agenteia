@@ -102,6 +102,27 @@ class TestWebSearch(unittest.TestCase):
             "Quem é o responsável desta tarefa interna?"
         ))
 
+    def test_natural_current_date_requests_are_deterministic(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        for question in (
+            "Dime el día de hoy en portugués",
+            "Dime qué día es hoy en portugués",
+            "Qual é a data de hoje?",
+            "Tell me today's date",
+        ):
+            with self.subTest(question=question):
+                self.assertTrue(agent._is_current_datetime_query(question))
+
+    def test_numeric_web_claims_must_exist_in_evidence(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        evidence = '{"snippet":"Temperatura actual: 20 °C, máxima: 25 °C"}'
+        self.assertTrue(agent._numeric_claims_supported(
+            "La temperatura actual es de 20 °C.", evidence
+        ))
+        self.assertFalse(agent._numeric_claims_supported(
+            "La temperatura actual es de 39 °C.", evidence
+        ))
+
     def test_domain_only_turn_is_external_and_keeps_previous_topic(self):
         agent = MachiningAgent.__new__(MachiningAgent)
         self.assertTrue(agent._is_external_information_query("www.marca.com"))

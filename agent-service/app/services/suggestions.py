@@ -45,7 +45,7 @@ from app.services.response_status import update as _update_response_status
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.agent.schema_query_planner import plan_related_record_query
-from app.agent.semantic_text import language_signal
+from app.agent.semantic_text import language_signal, requested_output_language
 from app.agent.tools import google_web_search, query_sql_server
 
 
@@ -510,6 +510,9 @@ def _is_related_record_guidance_request(text: str) -> bool:
 
 def _suggestion_request_language(text: str, detected: str) -> str:
     """Prefer unambiguous grammar in the current request over old session state."""
+    requested = requested_output_language(text)
+    if requested:
+        return requested
     signaled, _score = language_signal(text)
     return signaled or detected
 
@@ -802,6 +805,16 @@ def _parse_chat_question_suggestions(
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.I | re.S)
     if fenced:
         text = fenced.group(1).strip()
+    # Some small models describe the requested serialization before emitting
+    # it (for example ``Array JSON: ["..."]``).  Decode the structured payload
+    # instead of leaking that transport envelope into the user interface.
+    labeled = re.fullmatch(
+        r"(?:array|lista|list|objeto|object)?\s*json\s*:\s*([\[{].*[\]}])",
+        text,
+        flags=re.I | re.S,
+    )
+    if labeled:
+        text = labeled.group(1).strip()
     values: list[Any] = []
     try:
         decoded = json.loads(text)

@@ -487,6 +487,20 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             _suggestion_request_language("who is the prime minister?", "pt"),
         )
 
+    def test_explicit_output_language_has_priority(self):
+        self.assertEqual(
+            "pt",
+            _suggestion_request_language("Dime el día de hoy en portugués", "es"),
+        )
+
+    def test_parser_removes_labeled_json_transport_envelope(self):
+        self.assertEqual(
+            ["La temperatura actual es de 20 °C."],
+            _parse_chat_question_suggestions(
+                'Array JSON: ["La temperatura actual es de 20 °C."]', limit=1
+            ),
+        )
+
     def test_research_command_is_not_learned_as_a_fact(self):
         self.assertEqual(
             "",

@@ -55,6 +55,26 @@ def language_signal(value: object) -> tuple[str, int]:
     return winners[0], best_score
 
 
+_LANGUAGE_NAMES = {
+    "es": ("espanol", "español", "castellano", "spanish"),
+    "pt": ("portugues", "portuguese", "portugués"),
+    "en": ("ingles", "english", "inglés"),
+}
+
+
+def requested_output_language(value: object) -> str:
+    """Extract an explicit output-language instruction from a request."""
+    text = normalized_text(value)
+    for language, names in _LANGUAGE_NAMES.items():
+        alternatives = "|".join(re.escape(name) for name in names)
+        if re.search(
+            rf"\b(?:en|em|in|a|para|into)\s+(?:el|o|the\s+)?(?:{alternatives})\b",
+            text,
+        ):
+            return language
+    return ""
+
+
 _QUESTION_START = re.compile(
     r"^(?:quem|quien|qual|cual|what|which|who)\b"
 )

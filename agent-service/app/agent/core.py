@@ -1204,6 +1204,12 @@ class MachiningAgent:
             r"\b(?:hoy|hoje|today)\s+(?:que|qué|qual|what)\s+(?:dia|día|date)\b",
             r"\b(?:que|qué|qual|what)\s+(?:hora|horas|time)\s+(?:es|é|son|são|is)\b",
             r"\b(?:hora|horas|time)\s+(?:actual|atual|current)\b",
+            r"\b(?:dia|día|fecha|data|day|date)\s+(?:de\s+)?(?:hoy|hoje|today)\b",
+            r"\b(?:tell\s+me|dime|diga|diz(?:-me)?)\b.{0,20}"
+            r"\b(?:today'?s\s+date|fecha\s+de\s+hoy|data\s+de\s+hoje)\b",
+            r"\b(?:que|qué|qual|what|dime|diga|diz|tell\s+me)\b.{0,35}"
+            r"\b(?:dia|día|fecha|data|day|date)\b.{0,20}"
+            r"\b(?:hoy|hoje|today)\b",
         )
         return any(re.search(pattern, text) for pattern in patterns)
 
@@ -2339,6 +2345,24 @@ class MachiningAgent:
         text = re.sub(r"[ \t]+\n", "\n", text)
         text = re.sub(r" {2,}", " ", text)
         return text.strip()
+
+    @staticmethod
+    def _numeric_claims_supported(response: str, evidence: Any) -> bool:
+        """Reject numeric claims absent from retrieved evidence.
+
+        This is intentionally provider-agnostic: it protects weather, prices,
+        scores and other changing facts without encoding an expected value.
+        """
+        claims = set(re.findall(r"(?<![\w])[-+]?\d+(?:[.,]\d+)?", str(response or "")))
+        if not claims:
+            return True
+        evidence_numbers = set(
+            re.findall(r"(?<![\w])[-+]?\d+(?:[.,]\d+)?", str(evidence or ""))
+        )
+        normalize = lambda value: value.replace(",", ".").lstrip("+")
+        return {normalize(value) for value in claims}.issubset(
+            {normalize(value) for value in evidence_numbers}
+        )
 
     def _looks_like_raw_tool_response(self, response_text: str) -> bool:
         text = " ".join((response_text or "").lower().split())
@@ -4153,6 +4177,15 @@ class MachiningAgent:
         # por el modelo como al respaldo web automático.
         if {"google_web_search", "web_memory"}.intersection(herramientas_usadas):
             response_text = self._clean_web_answer(response_text)
+            if (
+                message_metadata.get("concrete_answer_mode")
+                and last_tool_result
+                and not self._numeric_claims_supported(response_text, last_tool_result)
+            ):
+                print("⚠️ Respuesta web rechazada: contiene cifras sin respaldo")
+                response_text = self._unverified_concrete_answer(
+                    str(message_metadata.get("response_language") or "es")
+                )
 
         # Última barrera semántica: un modelo pequeño no puede publicar SQL no
         # solicitado ni continuar respondiendo el tema de un turno anterior.
