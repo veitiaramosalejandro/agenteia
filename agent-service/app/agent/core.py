@@ -19,6 +19,7 @@ from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
 from app.agent.language import LanguageResolver
+from app.agent.semantic_text import is_current_officeholder_question
 from app.agent.schema_query_planner import (
     plan_identity_relationship_queries,
     plan_identity_record_query,
@@ -1275,15 +1276,7 @@ class MachiningAgent:
     @staticmethod
     def _is_current_officeholder_query(user_text: str) -> bool:
         """Detecta titulares públicos/corporativos que requieren verificación actual."""
-        text = " ".join((user_text or "").strip().lower().split())
-        return bool(re.search(
-            r"\b(?:quem|qui[eé]n|who|qual)\s+(?:[eé]|es|is|ser[aá])\s+(?:o |a |el |la |the )?"
-            r"(?:presidente|president|primeiro[- ]ministro|primer ministro|prime minister|"
-            r"governador|gobernador|governor|prefeito|alcalde|mayor|ceo|diretor executivo|"
-            r"director ejecutivo)\b",
-            text,
-            flags=re.IGNORECASE,
-        ))
+        return is_current_officeholder_question(user_text)
 
     def _is_internal_domain_query(self, user_text: str) -> bool:
         """Reconoce el dominio de trabajo; lo informativo restante puede resolverse en web."""

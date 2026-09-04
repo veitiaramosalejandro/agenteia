@@ -83,6 +83,25 @@ class TestWebSearch(unittest.TestCase):
             "Who is the prime minister of Portugal?"
         ))
 
+    def test_current_officeholder_tolerates_missing_separators_and_accents(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        variants = (
+            "quem é o primeiroministro de portugal?",
+            "Quem e o PRIMEIRO-MINISTRO de Portugal",
+            "quien es el primerministro de portugal",
+            "who is the primeminister of portugal",
+        )
+        for question in variants:
+            with self.subTest(question=question):
+                self.assertTrue(agent._is_current_officeholder_query(question))
+                self.assertTrue(agent._is_external_information_query(question))
+
+    def test_unrelated_internal_question_is_not_current_officeholder(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertFalse(agent._is_current_officeholder_query(
+            "Quem é o responsável desta tarefa interna?"
+        ))
+
     def test_domain_only_turn_is_external_and_keeps_previous_topic(self):
         agent = MachiningAgent.__new__(MachiningAgent)
         self.assertTrue(agent._is_external_information_query("www.marca.com"))

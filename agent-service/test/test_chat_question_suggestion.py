@@ -473,6 +473,20 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             ),
         )
 
+    def test_current_portuguese_question_overrides_spanish_conversation(self):
+        self.assertEqual(
+            "pt",
+            _suggestion_request_language(
+                "quem é o primeiroministro de portugal?", "es"
+            ),
+        )
+
+    def test_current_english_question_overrides_portuguese_conversation(self):
+        self.assertEqual(
+            "en",
+            _suggestion_request_language("who is the prime minister?", "pt"),
+        )
+
     def test_research_command_is_not_learned_as_a_fact(self):
         self.assertEqual(
             "",
