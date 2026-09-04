@@ -16,3 +16,4 @@ certbot/www/
 solidset-data-api/.env
 ollama_embedding_storage/
 ollama_system_embedding_storage/
+redis_data/
