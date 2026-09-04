@@ -8,6 +8,7 @@ from uuid import UUID
 from app.connectors.solidset_data_api import (
     read_active_resource_agent,
     read_dataset,
+    read_resource_identity,
 )
 from app.connectors.db_client import _postgres_connection
 
@@ -35,6 +36,24 @@ def verify_and_sync_solidset_agent_mapping(
         if source_row and source_row.get("IDAgentResource")
         else None
     )
+    # Un recurso de software puede actuar como agente autónomo sin una fila en
+    # SysResource2Agent. Esta modalidad sólo se acepta cuando fue configurada
+    # explícitamente (IDResource == IDAgentResource), posee un modelo activo y
+    # la identidad/login todavía existe en la instancia SolidSET consultada.
+    if verified_agent_id is None and expected_id == human_id:
+        identity = read_resource_identity(
+            instance.get("DataAPI") or {}, str(human_id)
+        )
+        if identity and UUID(str(identity.get("ResourceId"))) == human_id:
+            with _postgres_connection() as target_connection:
+                with target_connection.cursor() as target_cursor:
+                    target_cursor.execute(
+                        '''SELECT 1 FROM public."SysAgentIAModel"
+                           WHERE "IDResource"=%s AND active=true LIMIT 1''',
+                        (human_id,),
+                    )
+                    if target_cursor.fetchone() is not None:
+                        verified_agent_id = human_id
     with _postgres_connection() as target_connection:
         with target_connection.cursor() as target_cursor:
             target_cursor.execute(
@@ -209,7 +228,17 @@ def ingest_solidset_resources(instance: dict[str, object]) -> dict[str, int]:
                         "Name" = EXCLUDED."Name",
                         "Stamp" = EXCLUDED."Stamp",
                         "ActiveIDLogin2Resource" = EXCLUDED."ActiveIDLogin2Resource",
-                        "IDAgentResource" = EXCLUDED."IDAgentResource"
+                        "IDAgentResource" = CASE
+                          WHEN public."SysResourceIA"."IDAgentResource" =
+                               public."SysResourceIA"."IDResource"
+                           AND EXISTS (
+                             SELECT 1 FROM public."SysAgentIAModel" m
+                             WHERE m."IDResource"=public."SysResourceIA"."IDResource"
+                               AND m.active=true
+                           )
+                          THEN public."SysResourceIA"."IDAgentResource"
+                          ELSE EXCLUDED."IDAgentResource"
+                        END
                     ''',
                     [
                         (display_name, synchronized_at, resource_id, active_link_id, agent_resource_id)

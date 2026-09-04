@@ -207,6 +207,28 @@ def read_active_resource_agent(
         return dict(rows[0]) if rows else None
 
 
+def read_resource_identity(
+    configuration: dict[str, Any], resource_id: str
+) -> dict[str, Any] | None:
+    """Verifica un recurso autónomo y su vínculo de login directamente en SolidSET."""
+    with DataAPIConnection(configuration, as_dict=True) as connection:
+        with connection.cursor(as_dict=True) as cursor:
+            cursor.execute(
+                """
+                SELECT TOP 1 r.ResourceId, r.DisplayName,
+                       r.ActiveIDLogin2Resource, l.IDLogin, l.FullName
+                FROM dbo.SysResources r WITH (NOLOCK)
+                INNER JOIN dbo.SysLogin l WITH (NOLOCK)
+                  ON l.ActiveIDLogin2Resource = r.ActiveIDLogin2Resource
+                WHERE r.ResourceId = %s
+                ORDER BY l.IDLogin
+                """,
+                (resource_id,),
+            )
+            row = cursor.fetchone()
+    return dict(row) if row else None
+
+
 def read_schema_catalog(
     configuration: dict[str, Any], tables: list[str] | None = None
 ) -> dict[str, Any]:
