@@ -11,15 +11,13 @@ class FakeResponses:
         self.kwargs = kwargs
         return SimpleNamespace(
             output_text="Síntesis sustentada.",
-            model_dump=lambda **_: {
-                "output": [{
+            output=[{
                     "type": "web_search_call",
                     "action": {"sources": [
                         {"title": "Fuente A", "url": "https://example.com/a"},
                         {"title": "Duplicada", "url": "https://example.com/a"},
                     ]},
-                }]
-            },
+                }],
         )
 
 

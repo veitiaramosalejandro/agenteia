@@ -1284,6 +1284,31 @@ class MachiningAgent:
         """Detecta titulares públicos/corporativos que requieren verificación actual."""
         return is_current_officeholder_question(user_text)
 
+    def _requires_fresh_web_search(self, user_text: str) -> bool:
+        """Datos volátiles nunca deben responderse desde una captura web anterior."""
+        text = self._normalize_context_query(user_text).casefold()
+        volatile_patterns = (
+            r"\b(?:tiempo|tempo|temperatura|temperature|clima|weather|forecast|"
+            r"pron[oó]stico|previs[aã]o|meteorolog(?:ía|ia))\b",
+            r"\b(?:precio|preço|price|cotizaci[oó]n|cotaç[aã]o|quote|exchange rate|"
+            r"tipo de cambio|taxa de câmbio|stock|acciones?|aç[oõ]es|crypto|bitcoin)\b",
+            r"\b(?:noticias?|not[ií]cias?|news|actualidad|breaking)\b",
+            r"\b(?:resultado|resultado deportivo|score|marcador|classificaç[aã]o|"
+            r"clasificaci[oó]n|partido|jogo|fixture|calendario|schedule)\b",
+            r"\b(?:tr[aá]fico|traffic|disponibilidad|disponibilidade|availability|"
+            r"estado del servicio|service status)\b",
+        )
+        freshness_words = bool(re.search(
+            r"\b(?:actual|ahora|agora|hoy|hoje|today|now|latest|reciente|"
+            r"recent|esta semana|this week)\b",
+            text,
+        ))
+        return (
+            any(re.search(pattern, text) for pattern in volatile_patterns)
+            or freshness_words
+            or is_current_officeholder_question(text)
+        )
+
     def _is_internal_domain_query(self, user_text: str) -> bool:
         """Reconoce el dominio de trabajo; lo informativo restante puede resolverse en web."""
         if self._is_resource_consumption_query(user_text):
@@ -2364,6 +2389,29 @@ class MachiningAgent:
             {normalize(value) for value in evidence_numbers}
         )
 
+    def _grounded_web_answer(self, evidence: Any) -> str:
+        """Extrae la síntesis citada del proveedor sin una segunda inferencia."""
+        try:
+            payload = json.loads(str(evidence or ""))
+            results = payload.get("results") or []
+            summary = next(
+                (
+                    str(item.get("snippet") or "").strip()
+                    for item in results
+                    if isinstance(item, dict) and str(item.get("snippet") or "").strip()
+                ),
+                "",
+            )
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            return ""
+        cleaned = self._clean_web_answer(summary)
+        paragraphs = [
+            part.strip()
+            for part in re.split(r"\n\s*\n", cleaned)
+            if part.strip() and not part.lstrip().startswith("#")
+        ]
+        return paragraphs[0] if paragraphs else cleaned
+
     def _looks_like_raw_tool_response(self, response_text: str) -> bool:
         text = " ".join((response_text or "").lower().split())
         markers = (
@@ -2439,6 +2487,7 @@ class MachiningAgent:
             r"\b(?:n[aã]o sei|no s[eé]|i do not know|i don't know)\b",
             r"\b(?:falta de contexto|mais contexto|m[aá]s contexto|more context)\b",
             r"\b(?:pode|puede|can you)\s+(?:fornecer|proporcionar|provide)\s+(?:mais|m[aá]s|more)\s+(?:detalhes|detalles|details)\b",
+            r"\b(?:no pude|no consegu[ií]|n[aã]o consegui|could not|couldn't)\s+verificar\b",
         )
         return not text or any(re.search(pattern, text) for pattern in redirect_patterns)
 
@@ -3275,7 +3324,7 @@ class MachiningAgent:
                 user_text,
                 previous_user_texts or previous_user_text,
             )
-            force_fresh_web = self._is_current_officeholder_query(user_text)
+            force_fresh_web = self._requires_fresh_web_search(user_text)
             memoria_web_reciente = (
                 "" if force_fresh_web else self._get_cached_web_knowledge(memoria_query)
             )
@@ -3810,13 +3859,30 @@ class MachiningAgent:
                         llm_for_request = request_llm
                 except Exception as exc:
                     print(f"⚠️ Falló la búsqueda web previa: {exc}")
+
+        # La búsqueda hospedada ya devuelve una síntesis citada. Para preguntas
+        # externas concretas, volver a pedir a Ollama que copie ese dato añade
+        # latencia y puede alterar cifras correctas. Conservamos Ollama para
+        # razonamiento abierto, pero publicamos directamente la evidencia aquí.
+        if (
+            external_query_mode
+            and message_metadata.get("concrete_answer_mode")
+            and "google_web_search" in herramientas_usadas
+            and last_tool_result
+        ):
+            grounded_answer = self._grounded_web_answer(last_tool_result)
+            if grounded_answer and self._numeric_claims_supported(
+                grounded_answer, last_tool_result
+            ):
+                response_text = json.dumps([grounded_answer], ensure_ascii=False)
+                print("✅ Respuesta externa concreta resuelta desde síntesis citada", flush=True)
         
         dynamic_sql_attempts = 0
         successful_sql_query = False
         schema_inspected = bool(business_schema_context)
         inspected_table_names: set[str] = set()
         schema_only_retries = 0
-        while iteration < self.max_iterations:
+        while iteration < self.max_iterations and not response_text:
             try:
                 llm_started_at = perf_counter()
                 response = llm_for_request.invoke(messages)
@@ -4180,12 +4246,26 @@ class MachiningAgent:
             if (
                 message_metadata.get("concrete_answer_mode")
                 and last_tool_result
-                and not self._numeric_claims_supported(response_text, last_tool_result)
-            ):
-                print("⚠️ Respuesta web rechazada: contiene cifras sin respaldo")
-                response_text = self._unverified_concrete_answer(
-                    str(message_metadata.get("response_language") or "es")
+                and (
+                    self._is_deflecting_concrete_answer(response_text)
+                    or not self._numeric_claims_supported(response_text, last_tool_result)
                 )
+            ):
+                grounded_answer = (
+                    self._grounded_web_answer(last_tool_result)
+                    if "google_web_search" in herramientas_usadas
+                    else ""
+                )
+                if grounded_answer and self._numeric_claims_supported(
+                    grounded_answer, last_tool_result
+                ):
+                    print("✅ Respuesta web sustituida por síntesis citada del proveedor")
+                    response_text = grounded_answer
+                else:
+                    print("⚠️ Respuesta web rechazada: evidencia insuficiente o cifras sin respaldo")
+                    response_text = self._unverified_concrete_answer(
+                        str(message_metadata.get("response_language") or "es")
+                    )
 
         # Última barrera semántica: un modelo pequeño no puede publicar SQL no
         # solicitado ni continuar respondiendo el tema de un turno anterior.

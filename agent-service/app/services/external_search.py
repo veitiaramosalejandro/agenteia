@@ -16,11 +16,8 @@ class ExternalSearchResult:
     url: str
 
 
-def _as_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    dump = getattr(value, "model_dump", None)
-    return dump(exclude_none=True) if callable(dump) else {}
+def _value(item: Any, key: str, default: Any = None) -> Any:
+    return item.get(key, default) if isinstance(item, dict) else getattr(item, key, default)
 
 
 def _source_title(url: str, title: str = "") -> str:
@@ -31,7 +28,6 @@ def _source_title(url: str, title: str = "") -> str:
 
 def _extract_sources(response: Any) -> list[tuple[str, str]]:
     """Extrae fuentes tanto del web_search_call como de citas del texto."""
-    payload = _as_dict(response)
     sources: list[tuple[str, str]] = []
     seen: set[str] = set()
 
@@ -42,19 +38,17 @@ def _extract_sources(response: Any) -> list[tuple[str, str]]:
         seen.add(clean_url)
         sources.append((_source_title(clean_url, str(title or "")), clean_url[:2000]))
 
-    for item in payload.get("output") or []:
-        if not isinstance(item, dict):
-            continue
-        action = item.get("action") or {}
-        for source in action.get("sources") or []:
-            if isinstance(source, dict):
-                add(source.get("url"), source.get("title") or source.get("name"))
-        for content in item.get("content") or []:
-            if not isinstance(content, dict):
-                continue
-            for annotation in content.get("annotations") or []:
-                if isinstance(annotation, dict) and annotation.get("type") == "url_citation":
-                    add(annotation.get("url"), annotation.get("title"))
+    for item in _value(response, "output", []) or []:
+        action = _value(item, "action", {}) or {}
+        for source in _value(action, "sources", []) or []:
+            add(
+                _value(source, "url"),
+                _value(source, "title") or _value(source, "name"),
+            )
+        for content in _value(item, "content", []) or []:
+            for annotation in _value(content, "annotations", []) or []:
+                if _value(annotation, "type") == "url_citation":
+                    add(_value(annotation, "url"), _value(annotation, "title"))
     return sources
 
 

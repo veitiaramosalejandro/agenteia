@@ -119,6 +119,26 @@ class TestWebSearch(unittest.TestCase):
                 self.assertTrue(agent._is_current_officeholder_query(question))
                 self.assertTrue(agent._is_external_information_query(question))
 
+    def test_volatile_queries_always_require_fresh_search(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        queries = (
+            "Dime temperatura actual de Leiria",
+            "Qual é o tempo em Lisboa?",
+            "Precio del bitcoin",
+            "Últimas noticias de Portugal",
+            "Resultado del partido del Real Madrid",
+            "Estado actual del servicio",
+        )
+        for query in queries:
+            with self.subTest(query=query):
+                self.assertTrue(agent._requires_fresh_web_search(query))
+
+    def test_stable_external_query_can_reuse_recent_knowledge(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertFalse(agent._requires_fresh_web_search(
+            "Historia del lenguaje de programación Python"
+        ))
+
     def test_unrelated_internal_question_is_not_current_officeholder(self):
         agent = MachiningAgent.__new__(MachiningAgent)
         self.assertFalse(agent._is_current_officeholder_query(
@@ -144,6 +164,25 @@ class TestWebSearch(unittest.TestCase):
         ))
         self.assertFalse(agent._numeric_claims_supported(
             "La temperatura actual es de 39 °C.", evidence
+        ))
+
+    def test_provider_summary_is_available_when_local_model_changes_a_number(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        evidence = json.dumps({
+            "results": [{
+                "title": "Meteorología",
+                "snippet": "La temperatura actual en Leiria es 20 °C.",
+                "url": "https://example.com/weather",
+            }]
+        })
+        grounded = agent._grounded_web_answer(evidence)
+        self.assertEqual(grounded, "La temperatura actual en Leiria es 20 °C.")
+        self.assertTrue(agent._numeric_claims_supported(grounded, evidence))
+
+    def test_unverified_guard_message_is_treated_as_deflection(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        self.assertTrue(agent._is_deflecting_concrete_answer(
+            "No pude verificar el dato solicitado con la evidencia disponible."
         ))
 
     def test_domain_only_turn_is_external_and_keeps_previous_topic(self):
