@@ -65,6 +65,12 @@ class Settings(BaseSettings):
 
     # Web search and persistent learning
     WEB_SEARCH_ENABLED: bool = _env_bool("WEB_SEARCH_ENABLED", "true")
+    EXTERNAL_SEARCH_PROVIDER: str = os.getenv("EXTERNAL_SEARCH_PROVIDER", "openai").strip().lower()
+    OPENAI_SEARCH_MODEL: str = os.getenv("OPENAI_SEARCH_MODEL", "gpt-4.1-mini").strip()
+    OPENAI_SEARCH_CONTEXT_SIZE: str = os.getenv("OPENAI_SEARCH_CONTEXT_SIZE", "medium").strip().lower()
+    OPENAI_SEARCH_MAX_OUTPUT_TOKENS: int = max(
+        128, min(int(os.getenv("OPENAI_SEARCH_MAX_OUTPUT_TOKENS", "700")), 4000)
+    )
     WEB_SEARCH_MAX_RESULTS: int = max(1, min(int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")), 10))
     WEB_SEARCH_TIMEOUT_SECONDS: int = max(3, int(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "15")))
     WEB_SEARCH_REGION: str = os.getenv("WEB_SEARCH_REGION", "wt-wt")

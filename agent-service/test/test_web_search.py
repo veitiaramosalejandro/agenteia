@@ -26,18 +26,41 @@ class FakeDDGS:
 
 
 class TestWebSearch(unittest.TestCase):
-    @patch("app.agent.tools._store_web_search_knowledge", return_value=True)
-    def test_search_returns_sources_and_learns(self, store):
+    @patch("app.agent.tools._schedule_web_search_learning")
+    def test_search_returns_sources_and_schedules_learning(self, schedule):
         fake_module = SimpleNamespace(DDGS=FakeDDGS)
-        with patch.dict(sys.modules, {"ddgs": fake_module}):
+        with patch.dict(sys.modules, {"ddgs": fake_module}), patch(
+            "app.agent.tools.settings.EXTERNAL_SEARCH_PROVIDER", "ddgs"
+        ):
             response = google_web_search.invoke({"query": "alarma CNC"})
         payload = json.loads(response)
 
-        self.assertTrue(payload["learned"])
+        self.assertFalse(payload["learned"])
+        self.assertTrue(payload["learning_scheduled"])
         self.assertTrue(payload["external_unverified"])
+        self.assertEqual(payload["source_type"], "ddgs_web_search")
         self.assertEqual(payload["results"][0]["url"], "https://example.com/manual")
         self.assertEqual(len(payload["results"]), 1)
-        store.assert_called_once()
+        schedule.assert_called_once()
+
+    @patch("app.agent.tools._schedule_web_search_learning")
+    @patch("app.services.external_search.search_with_openai")
+    def test_openai_search_preserves_sources_and_schedules_learning(self, search, schedule):
+        from app.services.external_search import ExternalSearchResult
+
+        search.return_value = [ExternalSearchResult(
+            title="Fuente oficial",
+            snippet="Hecho actualizado con evidencia.",
+            url="https://example.com/current",
+        )]
+        with patch("app.agent.tools.settings.EXTERNAL_SEARCH_PROVIDER", "openai"):
+            response = google_web_search.invoke({"query": "dato actual"})
+        payload = json.loads(response)
+
+        self.assertEqual(payload["source_type"], "openai_web_search")
+        self.assertEqual(payload["results"][0]["title"], "Fuente oficial")
+        search.assert_called_once_with("dato actual")
+        schedule.assert_called_once()
 
     def test_empty_query_is_rejected(self):
         response = google_web_search.invoke({"query": "   "})

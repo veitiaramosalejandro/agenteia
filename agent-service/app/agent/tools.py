@@ -742,7 +742,7 @@ def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bo
             payload={
                 "page_content": content,
                 "category": "web_research",
-                "source": "web_search",
+                "source": str(result.get("provider") or "web_search"),
                 "source_url": result["url"],
                 "source_title": result["title"],
                 "search_query": query,
@@ -779,15 +779,26 @@ def google_web_search(query: str) -> str:
         if not settings.WEB_SEARCH_ENABLED:
             return "La búsqueda web está desactivada por configuración."
 
-        from ddgs import DDGS
+        provider = settings.EXTERNAL_SEARCH_PROVIDER
+        if provider == "openai":
+            from app.services.external_search import search_with_openai
 
-        with DDGS(timeout=settings.WEB_SEARCH_TIMEOUT_SECONDS) as client:
-            raw_results = list(client.text(
-                clean_query,
-                region=settings.WEB_SEARCH_REGION,
-                safesearch=settings.WEB_SEARCH_SAFESEARCH,
-                max_results=settings.WEB_SEARCH_MAX_RESULTS,
-            ))
+            raw_results = [
+                {"title": item.title, "body": item.snippet, "href": item.url}
+                for item in search_with_openai(clean_query)
+            ]
+        elif provider == "ddgs":
+            from ddgs import DDGS
+
+            with DDGS(timeout=settings.WEB_SEARCH_TIMEOUT_SECONDS) as client:
+                raw_results = list(client.text(
+                    clean_query,
+                    region=settings.WEB_SEARCH_REGION,
+                    safesearch=settings.WEB_SEARCH_SAFESEARCH,
+                    max_results=settings.WEB_SEARCH_MAX_RESULTS,
+                ))
+        else:
+            return f"Error: proveedor de búsqueda externa no soportado: {provider!r}."
 
         results = []
         seen_urls = set()
@@ -800,6 +811,7 @@ def google_web_search(query: str) -> str:
                 "title": str(item.get("title") or "Sin título").strip()[:300],
                 "snippet": str(item.get("body") or item.get("snippet") or "").strip()[:1200],
                 "url": url[:2000],
+                "provider": provider,
             })
         if not results:
             return f"No se encontraron resultados web para '{clean_query}'."
@@ -814,7 +826,7 @@ def google_web_search(query: str) -> str:
 
         payload = {
             "query": clean_query,
-            "source_type": "web_search",
+            "source_type": f"{provider}_web_search",
             "external_unverified": True,
             "learned": learned,
             "learning_scheduled": learning_scheduled,
