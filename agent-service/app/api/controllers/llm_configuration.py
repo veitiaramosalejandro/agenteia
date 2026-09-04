@@ -99,6 +99,12 @@ def save_llm_provider(
                 azure_endpoint=payload.get("AzureEndpoint") or "",
                 azure_api_version=payload.get("AzureApiVersion") or "",
                 azure_deployment=payload.get("AzureDeployment") or "",
+                organization=payload.get("OpenAIOrganization") or "",
+                project=payload.get("OpenAIProject") or "",
+                use_responses_api=payload.get("UseResponsesAPI", True),
+                store_responses=payload.get("StoreResponses", False),
+                max_retries=payload.get("MaxRetries", 2),
+                service_tier=payload.get("ServiceTier", "auto"),
             )
         )
         saved = save_llm_provider_configuration(payload)

@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_ORGANIZATION: str = os.getenv("OPENAI_ORGANIZATION", "")
+    OPENAI_PROJECT: str = os.getenv("OPENAI_PROJECT", "")
+    OPENAI_USE_RESPONSES_API: bool = _env_bool("OPENAI_USE_RESPONSES_API", "true")
+    OPENAI_STORE_RESPONSES: bool = _env_bool("OPENAI_STORE_RESPONSES", "false")
+    OPENAI_MAX_RETRIES: int = max(0, min(5, int(os.getenv("OPENAI_MAX_RETRIES", "2"))))
+    OPENAI_SERVICE_TIER: str = os.getenv("OPENAI_SERVICE_TIER", "auto")
     LLM_CREDENTIAL_ENCRYPTION_KEY: str = os.getenv("LLM_CREDENTIAL_ENCRYPTION_KEY", "")
     CREDENTIAL_ENCRYPTION_KEY_FILE: str = os.getenv(
         "CREDENTIAL_ENCRYPTION_KEY_FILE", "./data/credential.key"

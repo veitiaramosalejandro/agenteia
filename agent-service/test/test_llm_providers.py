@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.llm.providers import (
     ChatProvider,
@@ -56,6 +57,43 @@ class LLMProviderTests(unittest.TestCase):
         self.assertEqual(config.provider, "anthropic")
         self.assertEqual(config.api_key, "secret")
         self.assertEqual(config.max_output_tokens, 700)
+
+    def test_openai_uses_responses_api_without_remote_storage(self):
+        captured = {}
+
+        class FakeChatOpenAI:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        with patch("app.llm.providers._optional_class", return_value=FakeChatOpenAI):
+            create_chat_model(LLMProviderConfig(
+                provider="openai",
+                model="company-approved-model",
+                api_key="test-only",
+                project="proj_test",
+                organization="org_test",
+                max_output_tokens=384,
+                timeout_seconds=30,
+                max_retries=2,
+            ))
+
+        self.assertTrue(captured["use_responses_api"])
+        self.assertFalse(captured["store"])
+        self.assertEqual(captured["max_completion_tokens"], 384)
+        self.assertEqual(captured["max_retries"], 2)
+        self.assertEqual(captured["organization"], "org_test")
+        self.assertEqual(captured["default_headers"]["OpenAI-Project"], "proj_test")
+
+    def test_standard_openai_key_environment_is_supported(self):
+        config = provider_config_from_settings(SimpleNamespace(
+            LLM_PROVIDER="openai", LLM_BASE_URL="", MODEL_NAME="approved-model",
+            LLM_API_KEY="", OPENAI_API_KEY="secret-from-environment",
+            LLM_TEMPERATURE=0.2, LLM_MAX_OUTPUT_TOKENS=500,
+            LLM_REQUEST_TIMEOUT_SECONDS=30,
+        ))
+        self.assertEqual(config.api_key, "secret-from-environment")
+        self.assertTrue(config.use_responses_api)
+        self.assertFalse(config.store_responses)
 
 
 if __name__ == "__main__":

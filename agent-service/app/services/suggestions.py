@@ -36,6 +36,7 @@ from app.services.auto_reply import (
     _get_payload_value,
     _invoke_orchestrator_for_instance,
     _is_safe_auto_reply_output,
+    _local_arithmetic_response,
     _learn_global_user_fact,
 )
 from app.services.response_status import CODES as _RESPONSE_STATUS_CODES
@@ -1562,7 +1563,19 @@ async def _process_chat_question_response_suggestion(
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
-        if related_records_context and concrete_answer_mode:
+        arithmetic_started = perf_counter()
+        arithmetic_answer = (
+            _local_arithmetic_response(effective_request_text)
+            if advice_request
+            else None
+        )
+        if arithmetic_answer:
+            # Safe AST evaluation is authoritative for pure arithmetic and
+            # avoids an expensive, probabilistic LLM round trip.
+            raw_suggestions = json.dumps([arithmetic_answer], ensure_ascii=False)
+            suggestions = [arithmetic_answer]
+            log_stage("deterministic_arithmetic", arithmetic_started)
+        elif related_records_context and concrete_answer_mode:
             # El vínculo del payload pertenece exactamente al turno actual y
             # prevalece sobre memoria/RAG de conversaciones anteriores.
             related_answer = _related_record_direct_answer(

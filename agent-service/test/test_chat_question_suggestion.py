@@ -82,6 +82,10 @@ class TestChatQuestionSuggestion(unittest.TestCase):
     def test_pure_arithmetic_is_resolved_locally_and_safely(self):
         self.assertEqual("8*8 = **64**.", _local_arithmetic_response("8*8 ?"))
         self.assertEqual("(12+4)/2 = **8**.", _local_arithmetic_response("(12+4)/2"))
+        self.assertEqual(
+            "11+11+50*79-65 = **3907**.",
+            _local_arithmetic_response("11+11+50*79-65?"),
+        )
         self.assertIsNone(_local_arithmetic_response("__import__('os')"))
         self.assertIsNone(_local_arithmetic_response("8/0"))
 

@@ -435,6 +435,13 @@ def ensure_llm_provider_schema() -> None:
         CONSTRAINT "CK_SysLLMProviderConfiguration_TimeoutSeconds"
           CHECK ("TimeoutSeconds" > 0)
     );
+    ALTER TABLE public."SysLLMProviderConfiguration"
+      ADD COLUMN IF NOT EXISTS "OpenAIOrganization" varchar(255),
+      ADD COLUMN IF NOT EXISTS "OpenAIProject" varchar(255),
+      ADD COLUMN IF NOT EXISTS "UseResponsesAPI" boolean NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS "StoreResponses" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "MaxRetries" integer NOT NULL DEFAULT 2,
+      ADD COLUMN IF NOT EXISTS "ServiceTier" varchar(20) NOT NULL DEFAULT 'auto';
     CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysLLMProviderConfiguration_Default"
       ON public."SysLLMProviderConfiguration" ("IsDefault")
       WHERE "IsDefault" = true AND active = true AND "IDResource" IS NULL;
@@ -601,8 +608,10 @@ def save_llm_provider_configuration(configuration: dict[str, Any]) -> dict[str, 
                 INSERT INTO public."SysLLMProviderConfiguration" (
                   "Code", "Name", "Provider", "Model", "BaseUrl", "APIKey",
                   "Temperature", "MaxOutputTokens", "TimeoutSeconds", "AzureEndpoint",
-                  "AzureApiVersion", "AzureDeployment", "IDResource", "IsDefault", active
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  "AzureApiVersion", "AzureDeployment", "OpenAIOrganization", "OpenAIProject",
+                  "UseResponsesAPI", "StoreResponses", "MaxRetries", "ServiceTier",
+                  "IDResource", "IsDefault", active
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT ("Code") DO UPDATE SET
                   "Name"=EXCLUDED."Name", "Provider"=EXCLUDED."Provider",
                   "Model"=EXCLUDED."Model", "BaseUrl"=EXCLUDED."BaseUrl",
@@ -613,6 +622,12 @@ def save_llm_provider_configuration(configuration: dict[str, Any]) -> dict[str, 
                   "AzureEndpoint"=EXCLUDED."AzureEndpoint",
                   "AzureApiVersion"=EXCLUDED."AzureApiVersion",
                   "AzureDeployment"=EXCLUDED."AzureDeployment",
+                  "OpenAIOrganization"=EXCLUDED."OpenAIOrganization",
+                  "OpenAIProject"=EXCLUDED."OpenAIProject",
+                  "UseResponsesAPI"=EXCLUDED."UseResponsesAPI",
+                  "StoreResponses"=EXCLUDED."StoreResponses",
+                  "MaxRetries"=EXCLUDED."MaxRetries",
+                  "ServiceTier"=EXCLUDED."ServiceTier",
                   "IDResource"=EXCLUDED."IDResource", "IsDefault"=EXCLUDED."IsDefault",
                   active=EXCLUDED.active, "UpdatedAt"=CURRENT_TIMESTAMP
                 RETURNING *
@@ -624,6 +639,10 @@ def save_llm_provider_configuration(configuration: dict[str, Any]) -> dict[str, 
                     configuration.get("MaxOutputTokens", 1024),
                     configuration.get("TimeoutSeconds", 60), configuration.get("AzureEndpoint"),
                     configuration.get("AzureApiVersion"), configuration.get("AzureDeployment"),
+                    configuration.get("OpenAIOrganization"), configuration.get("OpenAIProject"),
+                    configuration.get("UseResponsesAPI", True),
+                    configuration.get("StoreResponses", False),
+                    configuration.get("MaxRetries", 2), configuration.get("ServiceTier", "auto"),
                     resource_id, is_default, active,
                 ),
             )

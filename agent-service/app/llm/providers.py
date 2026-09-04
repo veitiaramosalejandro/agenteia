@@ -24,6 +24,12 @@ class LLMProviderConfig:
     azure_endpoint: str = ""
     azure_api_version: str = ""
     azure_deployment: str = ""
+    organization: str = ""
+    project: str = ""
+    use_responses_api: bool = True
+    store_responses: bool = False
+    max_retries: int = 2
+    service_tier: str = "auto"
 
 
 class ChatProvider(ABC):
@@ -72,9 +78,19 @@ class OpenAIProvider(ChatProvider):
             "model": config.model,
             "api_key": config.api_key or None,
             "temperature": config.temperature,
-            "max_tokens": config.max_output_tokens,
+            "max_completion_tokens": config.max_output_tokens,
             "timeout": config.timeout_seconds,
+            "max_retries": config.max_retries,
+            "use_responses_api": config.use_responses_api,
+            "store": config.store_responses,
+            "stream_usage": True,
         }
+        if config.organization:
+            kwargs["organization"] = config.organization
+        if config.project:
+            kwargs["default_headers"] = {"OpenAI-Project": config.project}
+        if config.service_tier:
+            kwargs["service_tier"] = config.service_tier
         if config.base_url:
             kwargs["base_url"] = config.base_url
         return ChatOpenAI(**kwargs)
@@ -187,13 +203,23 @@ def provider_config_from_settings(settings: Any) -> LLMProviderConfig:
         provider=provider,
         model=str(getattr(settings, "MODEL_NAME", "") or "").strip(),
         base_url=configured_base,
-        api_key=str(getattr(settings, "LLM_API_KEY", "") or ""),
+        api_key=str(
+            getattr(settings, "LLM_API_KEY", "")
+            or getattr(settings, "OPENAI_API_KEY", "")
+            or ""
+        ),
         temperature=float(getattr(settings, "LLM_TEMPERATURE", 0.5)),
         max_output_tokens=int(getattr(settings, "LLM_MAX_OUTPUT_TOKENS", 1024)),
         timeout_seconds=int(getattr(settings, "LLM_REQUEST_TIMEOUT_SECONDS", 60)),
         azure_endpoint=str(getattr(settings, "AZURE_OPENAI_ENDPOINT", "") or ""),
         azure_api_version=str(getattr(settings, "AZURE_OPENAI_API_VERSION", "") or ""),
         azure_deployment=str(getattr(settings, "AZURE_OPENAI_DEPLOYMENT", "") or ""),
+        organization=str(getattr(settings, "OPENAI_ORGANIZATION", "") or ""),
+        project=str(getattr(settings, "OPENAI_PROJECT", "") or ""),
+        use_responses_api=bool(getattr(settings, "OPENAI_USE_RESPONSES_API", True)),
+        store_responses=bool(getattr(settings, "OPENAI_STORE_RESPONSES", False)),
+        max_retries=int(getattr(settings, "OPENAI_MAX_RETRIES", 2)),
+        service_tier=str(getattr(settings, "OPENAI_SERVICE_TIER", "auto") or "auto"),
     )
 
 
@@ -210,6 +236,12 @@ def provider_config_from_record(record: dict[str, Any]) -> LLMProviderConfig:
         azure_endpoint=str(record.get("AzureEndpoint") or ""),
         azure_api_version=str(record.get("AzureApiVersion") or ""),
         azure_deployment=str(record.get("AzureDeployment") or ""),
+        organization=str(record.get("OpenAIOrganization") or ""),
+        project=str(record.get("OpenAIProject") or ""),
+        use_responses_api=bool(record.get("UseResponsesAPI", True)),
+        store_responses=bool(record.get("StoreResponses", False)),
+        max_retries=int(record.get("MaxRetries", 2)),
+        service_tier=str(record.get("ServiceTier") or "auto"),
     )
 
 

@@ -18,6 +18,12 @@ class LLMProviderConfiguration(BaseModel):
     AzureEndpoint: Optional[str] = Field(None, max_length=500)
     AzureApiVersion: Optional[str] = Field(None, max_length=80)
     AzureDeployment: Optional[str] = Field(None, max_length=255)
+    OpenAIOrganization: Optional[str] = Field(None, max_length=255)
+    OpenAIProject: Optional[str] = Field(None, max_length=255)
+    UseResponsesAPI: bool = True
+    StoreResponses: bool = False
+    MaxRetries: int = Field(2, ge=0, le=5)
+    ServiceTier: str = Field("auto", pattern="^(auto|default|flex|priority|fast)$")
     IDResource: Optional[UUID] = None
     IsDefault: bool = False
     active: bool = True
@@ -40,6 +46,12 @@ class LLMProviderConfigurationStored(BaseModel):
     AzureEndpoint: Optional[str] = None
     AzureApiVersion: Optional[str] = None
     AzureDeployment: Optional[str] = None
+    OpenAIOrganization: Optional[str] = None
+    OpenAIProject: Optional[str] = None
+    UseResponsesAPI: bool = True
+    StoreResponses: bool = False
+    MaxRetries: int = 2
+    ServiceTier: str = "auto"
     IDResource: Optional[UUID] = None
     IsDefault: bool
     active: bool
