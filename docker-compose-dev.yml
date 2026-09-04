@@ -131,6 +131,53 @@ services:
     networks:
       - machining-network
 
+  # El API puede mantener cientos de solicitudes esperando sin bloquearse;
+  # estos consumidores limitan la inferencia a los slots reales de Ollama.
+  suggestion-worker:
+    image: agent-service:0.0.1
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "app.suggestion_worker"]
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: development
+      RUNNING_IN_DOCKER: "1"
+      PYTHONUNBUFFERED: "1"
+      OLLAMA_BASE_URL: http://ollama-chat:11434
+      EMBEDDING_BASE_URL: http://ollama-embeddings:11434
+      VECTOR_DB_URL: http://vector-db:6333
+      POSTGRES_HOST: timescaledb
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis-cache:6379
+      LLM_COMPACT_RUNTIME_PROMPT: ${LLM_COMPACT_RUNTIME_PROMPT:-true}
+      LLM_SUGGESTION_MAX_OUTPUT_TOKENS: ${LLM_SUGGESTION_MAX_OUTPUT_TOKENS:-384}
+      INTERACTIVE_PRIORITY_ENABLED: ${INTERACTIVE_PRIORITY_ENABLED:-true}
+      INGESTION_PAUSE_DURING_INTERACTIVE: ${INGESTION_PAUSE_DURING_INTERACTIVE:-true}
+      SOLIDSET_LOGIN_USERNAME: ""
+      SOLIDSET_LOGIN_PASSWORD: ""
+      SOLIDSET_LOGIN_HASHPASS: ""
+      SOLIDSET_LOGIN_RESOURCE_ID: ""
+      SOLIDSET_RESOURCE_ID: ""
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./agent-service:/app
+      - ./data:/app/data
+      - ./audio:/app/audio
+    depends_on:
+      ollama-chat-init: {condition: service_completed_successfully}
+      ollama-embeddings-init: {condition: service_completed_successfully}
+      timescaledb: {condition: service_healthy}
+      redis-cache: {condition: service_healthy}
+      vector-db: {condition: service_healthy}
+    deploy:
+      replicas: ${SUGGESTION_WORKER_REPLICAS:-2}
+    networks:
+      - machining-network
+
   solidset-retry-worker:
     image: agent-service:0.0.1
     container_name: solidset-retry-worker

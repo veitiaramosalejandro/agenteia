@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     SUGGESTION_CLAIM_IDLE_MS: int = max(
         30000, int(os.getenv("SUGGESTION_CLAIM_IDLE_MS", "180000"))
     )
+    SUGGESTION_RESPONSE_WAIT_TIMEOUT_SECONDS: int = max(
+        30, int(os.getenv("SUGGESTION_RESPONSE_WAIT_TIMEOUT_SECONDS", "840"))
+    )
+    SUGGESTION_RESPONSE_POLL_INTERVAL_SECONDS: float = max(
+        0.1, float(os.getenv("SUGGESTION_RESPONSE_POLL_INTERVAL_SECONDS", "0.5"))
+    )
     SOLIDSET_RETRY_QUEUE_ENABLED: bool = _env_bool("SOLIDSET_RETRY_QUEUE_ENABLED", "true")
     SOLIDSET_RETRY_QUEUE_KEY: str = os.getenv(
         "SOLIDSET_RETRY_QUEUE_KEY", "machining:solidset-deliveries:v1"
