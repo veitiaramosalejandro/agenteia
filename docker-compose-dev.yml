@@ -31,7 +31,8 @@ services:
     container_name: machining_agent
     hostname: agent-service
     restart: unless-stopped
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Sin el observador --reload: recorrer /app consumía CPU durante las peticiones.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - 8000:8000
     env_file:
@@ -42,14 +43,14 @@ services:
       OLLAMA_BASE_URL: http://ollama-chat:11434
       EMBEDDING_BASE_URL: http://ollama-embeddings:11434
       MODEL_NAME: qwen2.5:3b
-      OLLAMA_CONTEXT_LENGTH: 2048
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-2048}
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
       POSTGRES_PORT: 5432
       DB_URL: postgresql://user:pass@timescaledb:5432/machining_db
       REDIS_URL: redis://redis-cache:6379
       # Una sola inferencia interactiva evita colas internas en una única GPU.
-      DIALOGUE_MAX_CONCURRENT: 1
+      DIALOGUE_MAX_CONCURRENT: ${DIALOGUE_MAX_CONCURRENT:-1}
       LLM_COMPACT_RUNTIME_PROMPT: ${LLM_COMPACT_RUNTIME_PROMPT:-true}
       LLM_DIALOGUE_MAX_OUTPUT_TOKENS: ${LLM_DIALOGUE_MAX_OUTPUT_TOKENS:-640}
       LLM_SUGGESTION_MAX_OUTPUT_TOKENS: ${LLM_SUGGESTION_MAX_OUTPUT_TOKENS:-384}
@@ -89,8 +90,6 @@ services:
   # docker compose -f docker-compose-dev.yml up -d --scale agent-worker=4
   agent-worker:
     image: agent-service:0.0.1
-    container_name: agent-worker
-    hostname: agent-worker
     build:
       context: ./agent-service
       dockerfile: Dockerfile
@@ -107,6 +106,10 @@ services:
       POSTGRES_HOST: timescaledb
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis-cache:6379
+      LLM_COMPACT_RUNTIME_PROMPT: ${LLM_COMPACT_RUNTIME_PROMPT:-true}
+      LLM_DIALOGUE_MAX_OUTPUT_TOKENS: ${LLM_DIALOGUE_MAX_OUTPUT_TOKENS:-512}
+      INTERACTIVE_PRIORITY_ENABLED: ${INTERACTIVE_PRIORITY_ENABLED:-true}
+      INGESTION_PAUSE_DURING_INTERACTIVE: ${INGESTION_PAUSE_DURING_INTERACTIVE:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -130,6 +133,8 @@ services:
         condition: service_healthy
     networks:
       - machining-network
+    deploy:
+      replicas: ${AGENT_WORKER_REPLICAS:-2}
 
   # El API puede mantener cientos de solicitudes esperando sin bloquearse;
   # estos consumidores limitan la inferencia a los slots reales de Ollama.
@@ -270,10 +275,11 @@ services:
       - ./ollama_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_NUM_PARALLEL=2
+      # Un slot reduce la latencia individual y el KV cache en la GPU de 6 GB.
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-1}
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
-      - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-2048}
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_KV_CACHE_TYPE=q8_0
       - LLAMA_ARG_FIT_TARGET=512
@@ -296,7 +302,7 @@ services:
         aliases:
           - ollama-llm
 
-  # Embeddings de RAG en CPU: en un host con una sola GPU evita competir con chat.
+  # Nomic ocupa ~376 MB: se mantiene en GPU para liberar CPU a SQL y FastAPI.
   ollama-embeddings:
     image: ollama/ollama:latest
     container_name: machining_ollama_embeddings
@@ -313,9 +319,16 @@ services:
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_EMBEDDING_MAX_QUEUE:-64}
       - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+      - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_EMBEDDING_KEEP_ALIVE:-24h}
-    #cpus: ${OLLAMA_EMBEDDING_CPUS:-2.0}
-    #mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-3g}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -325,7 +338,7 @@ services:
     networks:
       - machining-network
 
-  # Runtime CPU para ingesta masiva; cede entre lotes mientras responde el chat.
+  # Ingesta masiva en GPU; sigue cediendo prioridad al tráfico interactivo.
   ollama-system-embeddings:
     image: ollama/ollama:latest
     container_name: machining_ollama_system_embeddings
@@ -342,9 +355,16 @@ services:
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_SYSTEM_EMBEDDING_MAX_QUEUE:-128}
       - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+      - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_SYSTEM_EMBEDDING_KEEP_ALIVE:-24h}
-    #mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-2g}
-    #cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-2.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
