@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 import httpx
 import pandas as pd
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 from langchain_ollama import OllamaEmbeddings
 import pymssql
 import redis
@@ -769,7 +770,7 @@ def _schedule_web_search_learning(query: str, results: list[dict[str, str]]) -> 
 
 
 @tool
-def google_web_search(query: str) -> str:
+def google_web_search(query: str, config: RunnableConfig) -> str:
     """Search the public web and persist results with source provenance for later retrieval."""
     started_at = perf_counter()
     try:
@@ -785,7 +786,10 @@ def google_web_search(query: str) -> str:
 
             raw_results = [
                 {"title": item.title, "body": item.snippet, "href": item.url}
-                for item in search_with_openai(clean_query)
+                for item in search_with_openai(
+                    clean_query,
+                    resource_id=(config.get("configurable") or {}).get("agent_resource_id"),
+                )
             ]
         elif provider == "ddgs":
             from ddgs import DDGS
@@ -839,7 +843,8 @@ def google_web_search(query: str) -> str:
         )
         return json.dumps(payload, ensure_ascii=False)
     except Exception as exc:
-        return f"Error durante la búsqueda web: {str(exc)[:300]}"
+        print(f"Búsqueda externa fallida: {type(exc).__name__}")
+        return "Error durante la búsqueda web: no se pudo completar la consulta al proveedor externo."
 
 
 @tool

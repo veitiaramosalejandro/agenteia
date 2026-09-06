@@ -2294,12 +2294,13 @@ class MachiningAgent:
         user_text: str,
         messages: list,
         search_query: Optional[str] = None,
+        agent_resource_id: Optional[str] = None,
     ) -> Optional[str]:
         """Busca en la web y pide al LLM una respuesta basada únicamente en esos resultados."""
         try:
             web_result = google_web_search.invoke({
                 "query": search_query or self._normalize_context_query(user_text)
-            })
+            }, config={"configurable": {"agent_resource_id": agent_resource_id}})
             if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
                 return None
             web_messages = list(messages)
@@ -3839,7 +3840,10 @@ class MachiningAgent:
             else:
                 try:
                     web_started_at = perf_counter()
-                    prefetched_web_result = google_web_search.invoke({"query": search_query})
+                    prefetched_web_result = google_web_search.invoke(
+                        {"query": search_query},
+                        config={"configurable": {"agent_resource_id": agent_resource_id}},
+                    )
                     print(
                         "AGENT_TOOL_STAGE tool=google_web_search "
                         f"elapsed={perf_counter() - web_started_at:.3f}s",
@@ -4024,7 +4028,15 @@ class MachiningAgent:
                     # Otras herramientas
                     elif tool_name in self.tools_map:
                         try:
-                            tool_result = argument_error or self.tools_map[tool_name].invoke(tool_args)
+                            if argument_error:
+                                tool_result = argument_error
+                            elif tool_name == "google_web_search":
+                                tool_result = self.tools_map[tool_name].invoke(
+                                    tool_args,
+                                    config={"configurable": {"agent_resource_id": agent_resource_id}},
+                                )
+                            else:
+                                tool_result = self.tools_map[tool_name].invoke(tool_args)
                             messages.append(
                                 ToolMessage(
                                     content=str(tool_result),
@@ -4226,6 +4238,7 @@ class MachiningAgent:
                 user_text,
                 messages,
                 search_query=search_query,
+                agent_resource_id=agent_resource_id,
             )
             if web_answer:
                 response_text = web_answer

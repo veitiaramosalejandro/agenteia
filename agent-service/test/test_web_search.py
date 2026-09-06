@@ -59,12 +59,29 @@ class TestWebSearch(unittest.TestCase):
 
         self.assertEqual(payload["source_type"], "openai_web_search")
         self.assertEqual(payload["results"][0]["title"], "Fuente oficial")
-        search.assert_called_once_with("dato actual")
+        search.assert_called_once_with("dato actual", resource_id=None)
         schedule.assert_called_once()
 
     def test_empty_query_is_rejected(self):
         response = google_web_search.invoke({"query": "   "})
         self.assertIn("no puede estar vacía", response)
+
+    @patch("app.services.external_search.search_with_openai", return_value=[])
+    def test_agent_identity_is_injected_by_backend_not_tool_schema(self, search):
+        with patch("app.agent.tools.settings.EXTERNAL_SEARCH_PROVIDER", "openai"):
+            google_web_search.invoke(
+                {"query": "consulta pública"},
+                config={"configurable": {"agent_resource_id": "agent-a"}},
+            )
+        search.assert_called_once_with("consulta pública", resource_id="agent-a")
+        self.assertEqual(set(google_web_search.tool_call_schema.model_fields), {"query"})
+
+    @patch("app.services.external_search.search_with_openai", side_effect=RuntimeError("secret-key-private"))
+    def test_provider_errors_do_not_expose_credentials(self, search):
+        with patch("app.agent.tools.settings.EXTERNAL_SEARCH_PROVIDER", "openai"):
+            response = google_web_search.invoke({"query": "consulta pública"})
+        self.assertTrue(response.startswith("Error"))
+        self.assertNotIn("secret-key-private", response)
 
 
     def test_missing_knowledge_response_triggers_fallback(self):

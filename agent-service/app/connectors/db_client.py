@@ -661,6 +661,7 @@ def list_llm_provider_configurations() -> list[dict[str, Any]]:
 def get_llm_provider_configuration(
     resource_id: UUID | str | None = None,
     capability: str | None = None,
+    provider: str | None = None,
 ) -> dict[str, Any] | None:
     """Resuelve primero la configuración del agente y después la global."""
     ensure_llm_provider_schema()
@@ -673,14 +674,15 @@ def get_llm_provider_configuration(
                    LEFT JOIN public."SysAgentIAModel" m
                      ON m."IDProviderConfiguration"=p."ID" AND m.active=true
                         AND m."IDResource"=%s::uuid
-                   WHERE p.active=true AND (m."ID" IS NOT NULL
+                   WHERE p.active=true AND (%s::text IS NULL OR lower(p."Provider")=%s)
+                     AND (m."ID" IS NOT NULL
                      OR (p."IDResource"=%s::uuid)
                      OR (p."IDResource" IS NULL AND p."IsDefault"=true))
                    ORDER BY CASE WHEN m."ID" IS NOT NULL AND m."Capabilities" ? %s THEN 0
                                  WHEN m."ID" IS NOT NULL AND m."IsDefault" THEN 1
                                  WHEN p."IDResource" IS NOT NULL THEN 2 ELSE 3 END,
                             m."Priority" NULLS LAST LIMIT 1''',
-                (normalized, normalized, requested_capability),
+                (normalized, provider, provider, normalized, requested_capability),
             )
             row = cursor.fetchone()
     if not row:

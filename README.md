@@ -168,6 +168,34 @@ docker exec machining_ollama_chat ollama list
 docker exec machining_ollama_embeddings ollama list
 ```
 
+## Búsqueda externa con OpenAI
+
+Con `WEB_SEARCH_ENABLED=true` y `EXTERNAL_SEARCH_PROVIDER=openai`, la herramienta
+`google_web_search` usa Responses API con `web_search`. El backend inyecta la
+identidad del agente; el modelo solo proporciona la consulta pública.
+
+La búsqueda resuelve una conexión OpenAI activa asignada al recurso, priorizando
+la capacidad `external_web`, o una conexión OpenAI global predeterminada. Si no
+existe ninguna, utiliza `OPENAI_API_KEY` y `OPENAI_SEARCH_MODEL` del entorno.
+Las conexiones de otros recursos no se utilizan. Una conexión seleccionada con
+credencial ausente o inválida produce un error, sin cambiar de cuenta.
+
+Las conexiones específicas usan su modelo, URL, proyecto y organización; las
+consultas de búsqueda mantienen los límites globales de tiempo, reintentos y
+tokens (`WEB_SEARCH_TIMEOUT_SECONDS`, `OPENAI_MAX_RETRIES`,
+`OPENAI_SEARCH_MAX_OUTPUT_TOKENS`). El historial y el perfil del recurso no se
+incluyen en la petición a OpenAI. La consulta se limita a 2000 caracteres y se
+exige una respuesta completada, con texto y fuentes HTTP(S). Se usa `store=false`
+y los errores presentados al usuario no incluyen mensajes del SDK ni claves.
+
+Pruebas locales, sin llamadas externas reales:
+
+```powershell
+docker exec machining_agent python -m unittest test.test_external_search test.test_web_search test.test_llm_providers test.test_orchestrator test.test_orchestrator_routing
+```
+
+Contrato oficial: [OpenAI Web search](https://developers.openai.com/api/docs/guides/tools-web-search).
+
 ## Datos y persistencia
 
 | Directorio/volumen | Contenido |
