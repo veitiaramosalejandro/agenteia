@@ -11,6 +11,7 @@ from app.api.schemas.llm_configuration import (
     LLMProviderConfiguration,
     LLMProviderConfigurationResponse,
     LLMProviderConfigurationStored,
+    LLMProviderFromEnvironment,
 )
 from app.config import settings
 from app.connectors.db_client import (
@@ -21,6 +22,7 @@ from app.connectors.db_client import (
     save_llm_provider_configuration,
 )
 from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
+from app.llm.providers import provider_config_from_settings
 
 
 router = APIRouter(tags=["LLM Providers"])
@@ -41,6 +43,11 @@ def save_llm_provider(
     code: str,
     configuration: LLMProviderConfiguration,
 ) -> LLMProviderConfigurationResponse:
+    return _save_llm_provider(request, code, configuration)
+
+
+def _save_llm_provider(request: Request, code: str, configuration: LLMProviderConfiguration,
+                       *, create_only: bool = False) -> LLMProviderConfigurationResponse:
     payload = configuration.model_dump()
     if code.strip().lower() != payload["Code"].strip().lower():
         raise HTTPException(
@@ -84,8 +91,6 @@ def save_llm_provider(
             status_code=422,
             detail="AzureEndpoint ou BaseUrl é obrigatório para Azure OpenAI.",
         )
-    if payload.get("IDResource") is not None:
-        payload["IsDefault"] = False
     try:
         create_chat_model(
             LLMProviderConfig(
@@ -107,7 +112,9 @@ def save_llm_provider(
                 service_tier=payload.get("ServiceTier", "auto"),
             )
         )
-        saved = save_llm_provider_configuration(payload)
+        saved = save_llm_provider_configuration(payload, create_only=True) if create_only else save_llm_provider_configuration(payload)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail="Ya existe una conexión con ese Code. Usa PUT para actualizarla.") from exc
     except psycopg.errors.ForeignKeyViolation as exc:
         raise HTTPException(
             status_code=404, detail="O IDResource indicado não existe."
@@ -123,8 +130,47 @@ def save_llm_provider(
         ) from exc
     _clear_cache(request)
     return LLMProviderConfigurationResponse(
-        status="saved", configuration=LLMProviderConfigurationStored(**saved)
+        status="created" if create_only else "saved", configuration=LLMProviderConfigurationStored(**saved)
     )
+
+
+@router.post(
+    "/api/v1/agent/llm/providers/from-env",
+    response_model=LLMProviderConfigurationResponse,
+    status_code=201,
+    summary="Crear una conexión LLM con los valores del .env",
+    description="Crea una conexión general con los valores cargados del entorno. No acepta IDResource: asígnala después a un recurso mediante PUT /api/v1/agent/solidset/agents/{IDResource}/model. Las claves se cifran y no se devuelven. Un código existente devuelve 409. Crear no comprueba acceso al proveedor. Recrea el contenedor para aplicar cambios del .env.",
+)
+def create_llm_provider_from_environment(request: Request, configuration: LLMProviderFromEnvironment):
+    cfg = provider_config_from_settings(settings)
+    if configuration.Source == "openai_search":
+        cfg = LLMProviderConfig(
+            provider="openai", model=settings.OPENAI_SEARCH_MODEL,
+            api_key=settings.OPENAI_API_KEY, base_url="https://api.openai.com/v1",
+            max_output_tokens=settings.OPENAI_SEARCH_MAX_OUTPUT_TOKENS,
+            timeout_seconds=settings.WEB_SEARCH_TIMEOUT_SECONDS,
+            organization=settings.OPENAI_ORGANIZATION, project=settings.OPENAI_PROJECT,
+            max_retries=settings.OPENAI_MAX_RETRIES, service_tier=settings.OPENAI_SERVICE_TIER,
+            use_responses_api=True, store_responses=False,
+        )
+    # Never copy the OpenAI environment credential into a different provider.
+    if configuration.Source == "runtime" and cfg.provider not in {"openai", "azure_openai"}:
+        from dataclasses import replace
+        cfg = replace(cfg, api_key=settings.LLM_API_KEY)
+    if cfg.provider in {"openai", "azure_openai", "anthropic", "gemini"} and not cfg.api_key:
+        raise HTTPException(status_code=422, detail="Falta la clave API del proveedor en el entorno del servicio.")
+    payload = LLMProviderConfiguration(
+        Code=configuration.Code, Name=configuration.Name, Provider=cfg.provider,
+        Model=cfg.model, BaseUrl=cfg.base_url or None, APIKey=cfg.api_key or None,
+        Temperature=cfg.temperature, MaxOutputTokens=cfg.max_output_tokens,
+        TimeoutSeconds=cfg.timeout_seconds, AzureEndpoint=cfg.azure_endpoint or None,
+        AzureApiVersion=cfg.azure_api_version or None, AzureDeployment=cfg.azure_deployment or None,
+        OpenAIOrganization=cfg.organization or None, OpenAIProject=cfg.project or None,
+        UseResponsesAPI=cfg.use_responses_api, StoreResponses=cfg.store_responses,
+        MaxRetries=cfg.max_retries, ServiceTier=cfg.service_tier,
+        IsDefault=configuration.IsDefault, active=True,
+    )
+    return _save_llm_provider(request, configuration.Code, payload, create_only=True)
 
 
 @router.get(

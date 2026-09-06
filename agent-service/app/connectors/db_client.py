@@ -407,84 +407,15 @@ def list_active_solidset_instances(*, active_only: bool = True) -> list[dict[str
 
 
 def ensure_llm_provider_schema() -> None:
-    """Crea el esquema LLM también en volúmenes PostgreSQL ya existentes."""
-    migration = '''
-    CREATE TABLE IF NOT EXISTS public."SysLLMProviderConfiguration" (
-        "ID" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        "Code" varchar(80) NOT NULL UNIQUE,
-        "Name" varchar(255) NOT NULL,
-        "Provider" varchar(40) NOT NULL,
-        "Model" varchar(255) NOT NULL,
-        "BaseUrl" varchar(500), "APIKey" text,
-        "Temperature" double precision NOT NULL DEFAULT 0.5,
-        "MaxOutputTokens" integer NOT NULL DEFAULT 1024,
-        "TimeoutSeconds" integer NOT NULL DEFAULT 60,
-        "AzureEndpoint" varchar(500), "AzureApiVersion" varchar(80),
-        "AzureDeployment" varchar(255), "IDResource" uuid,
-        "IsDefault" boolean NOT NULL DEFAULT false,
-        active boolean NOT NULL DEFAULT true,
-        "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT "FK_SysLLMProviderConfiguration_SysResourceIA"
-          FOREIGN KEY ("IDResource") REFERENCES public."SysResourceIA" ("IDResource")
-          ON DELETE CASCADE,
-        CONSTRAINT "CK_SysLLMProviderConfiguration_Temperature"
-          CHECK ("Temperature" >= 0 AND "Temperature" <= 2),
-        CONSTRAINT "CK_SysLLMProviderConfiguration_MaxOutputTokens"
-          CHECK ("MaxOutputTokens" > 0),
-        CONSTRAINT "CK_SysLLMProviderConfiguration_TimeoutSeconds"
-          CHECK ("TimeoutSeconds" > 0)
-    );
-    ALTER TABLE public."SysLLMProviderConfiguration"
-      ADD COLUMN IF NOT EXISTS "OpenAIOrganization" varchar(255),
-      ADD COLUMN IF NOT EXISTS "OpenAIProject" varchar(255),
-      ADD COLUMN IF NOT EXISTS "UseResponsesAPI" boolean NOT NULL DEFAULT true,
-      ADD COLUMN IF NOT EXISTS "StoreResponses" boolean NOT NULL DEFAULT false,
-      ADD COLUMN IF NOT EXISTS "MaxRetries" integer NOT NULL DEFAULT 2,
-      ADD COLUMN IF NOT EXISTS "ServiceTier" varchar(20) NOT NULL DEFAULT 'auto';
-    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysLLMProviderConfiguration_Default"
-      ON public."SysLLMProviderConfiguration" ("IsDefault")
-      WHERE "IsDefault" = true AND active = true AND "IDResource" IS NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysLLMProviderConfiguration_ActiveResource"
-      ON public."SysLLMProviderConfiguration" ("IDResource")
-      WHERE active = true AND "IDResource" IS NOT NULL;
-    '''
+    """Create the LLM schema and migrate legacy resource links atomically."""
+    from pathlib import Path
+    migration = Path(__file__).with_name("llm_schema.sql").read_text(encoding="utf-8")
     with _postgres_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(migration)
+        connection.execute(migration)
 
 
 def ensure_agent_model_schema() -> None:
-    """Crea la asignación agente-modelo en bases persistentes existentes."""
     ensure_llm_provider_schema()
-    with _postgres_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS public."SysAgentIAModel" (
-              "ID" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-              "IDResource" uuid NOT NULL REFERENCES public."SysResourceIA"("IDResource") ON DELETE CASCADE,
-              "IDProviderConfiguration" uuid NOT NULL REFERENCES public."SysLLMProviderConfiguration"("ID") ON DELETE RESTRICT,
-              "Role" varchar(80) NOT NULL DEFAULT 'general',
-              "LocalExecution" boolean NOT NULL DEFAULT true,
-              "TrainingMode" varchar(40) NOT NULL DEFAULT 'rag_reinforcement'
-                CHECK ("TrainingMode" IN ('rag_reinforcement','rag_only','disabled')),
-              "LearnFromOwner" boolean NOT NULL DEFAULT true,
-              "LearnFromSystem" boolean NOT NULL DEFAULT true,
-              "LearnFromReactions" boolean NOT NULL DEFAULT true,
-              active boolean NOT NULL DEFAULT true,
-              "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            DROP INDEX IF EXISTS public."UQ_SysAgentIAModel_ActiveResource";
-            ALTER TABLE public."SysAgentIAModel"
-              ADD COLUMN IF NOT EXISTS "Capabilities" jsonb NOT NULL DEFAULT '["general"]'::jsonb,
-              ADD COLUMN IF NOT EXISTS "Priority" integer NOT NULL DEFAULT 100,
-              ADD COLUMN IF NOT EXISTS "IsDefault" boolean NOT NULL DEFAULT false;
-            CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysAgentIAModel_ResourceProvider"
-              ON public."SysAgentIAModel" ("IDResource", "IDProviderConfiguration") WHERE active=true;
-            CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysAgentIAModel_DefaultResource"
-              ON public."SysAgentIAModel" ("IDResource") WHERE active=true AND "IsDefault"=true;
-            ''')
 
 
 def save_agent_model_configuration(resource_id: UUID | str, data: dict[str, Any]) -> dict[str, Any]:
@@ -581,26 +512,23 @@ def _public_llm_configuration(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def save_llm_provider_configuration(configuration: dict[str, Any]) -> dict[str, Any]:
+def save_llm_provider_configuration(configuration: dict[str, Any], *, create_only: bool = False) -> dict[str, Any]:
     """UPSERT por Code y garantiza una sola configuración activa por ámbito."""
     ensure_llm_provider_schema()
-    resource_id = configuration.get("IDResource")
     active = bool(configuration.get("active", True))
-    is_default = bool(configuration.get("IsDefault", False)) and resource_id is None
+    is_default = bool(configuration.get("IsDefault", False))
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
-            if active and resource_id is not None:
-                cursor.execute(
-                    'UPDATE public."SysLLMProviderConfiguration" SET active=false, '
-                    '"UpdatedAt"=CURRENT_TIMESTAMP WHERE "IDResource"=%s AND active=true '
-                    'AND LOWER("Code")<>LOWER(%s)',
-                    (resource_id, configuration["Code"]),
-                )
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtext(lower(%s)))", (configuration["Code"],))
+            if create_only:
+                cursor.execute('SELECT 1 FROM public."SysLLMProviderConfiguration" WHERE lower("Code")=lower(%s)', (configuration["Code"],))
+                if cursor.fetchone():
+                    raise FileExistsError("Ya existe una conexión con ese código.")
             if active and is_default:
                 cursor.execute(
                     'UPDATE public."SysLLMProviderConfiguration" SET "IsDefault"=false, '
                     '"UpdatedAt"=CURRENT_TIMESTAMP WHERE "IsDefault"=true AND active=true '
-                    'AND "IDResource" IS NULL AND LOWER("Code")<>LOWER(%s)',
+                    'AND LOWER("Code")<>LOWER(%s)',
                     (configuration["Code"],),
                 )
             cursor.execute(
@@ -610,8 +538,8 @@ def save_llm_provider_configuration(configuration: dict[str, Any]) -> dict[str, 
                   "Temperature", "MaxOutputTokens", "TimeoutSeconds", "AzureEndpoint",
                   "AzureApiVersion", "AzureDeployment", "OpenAIOrganization", "OpenAIProject",
                   "UseResponsesAPI", "StoreResponses", "MaxRetries", "ServiceTier",
-                  "IDResource", "IsDefault", active
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  "IsDefault", active
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT ("Code") DO UPDATE SET
                   "Name"=EXCLUDED."Name", "Provider"=EXCLUDED."Provider",
                   "Model"=EXCLUDED."Model", "BaseUrl"=EXCLUDED."BaseUrl",
@@ -628,7 +556,7 @@ def save_llm_provider_configuration(configuration: dict[str, Any]) -> dict[str, 
                   "StoreResponses"=EXCLUDED."StoreResponses",
                   "MaxRetries"=EXCLUDED."MaxRetries",
                   "ServiceTier"=EXCLUDED."ServiceTier",
-                  "IDResource"=EXCLUDED."IDResource", "IsDefault"=EXCLUDED."IsDefault",
+                  "IsDefault"=EXCLUDED."IsDefault",
                   active=EXCLUDED.active, "UpdatedAt"=CURRENT_TIMESTAMP
                 RETURNING *
                 ''',
@@ -643,7 +571,7 @@ def save_llm_provider_configuration(configuration: dict[str, Any]) -> dict[str, 
                     configuration.get("UseResponsesAPI", True),
                     configuration.get("StoreResponses", False),
                     configuration.get("MaxRetries", 2), configuration.get("ServiceTier", "auto"),
-                    resource_id, is_default, active,
+                    is_default, active,
                 ),
             )
             row = cursor.fetchone()
@@ -675,14 +603,13 @@ def get_llm_provider_configuration(
                      ON m."IDProviderConfiguration"=p."ID" AND m.active=true
                         AND m."IDResource"=%s::uuid
                    WHERE p.active=true AND (%s::text IS NULL OR lower(p."Provider")=%s)
-                     AND (m."ID" IS NOT NULL
-                     OR (p."IDResource"=%s::uuid)
-                     OR (p."IDResource" IS NULL AND p."IsDefault"=true))
+                     AND ((m."ID" IS NOT NULL AND (m."Capabilities" ? %s OR m."IsDefault"))
+                     OR p."IsDefault"=true)
                    ORDER BY CASE WHEN m."ID" IS NOT NULL AND m."Capabilities" ? %s THEN 0
                                  WHEN m."ID" IS NOT NULL AND m."IsDefault" THEN 1
-                                 WHEN p."IDResource" IS NOT NULL THEN 2 ELSE 3 END,
-                            m."Priority" NULLS LAST LIMIT 1''',
-                (normalized, provider, provider, normalized, requested_capability),
+                                 ELSE 2 END,
+                            m."Priority" NULLS LAST, p."Code" LIMIT 1''',
+                (normalized, provider, provider, requested_capability, requested_capability),
             )
             row = cursor.fetchone()
     if not row:

@@ -170,6 +170,31 @@ docker exec machining_ollama_embeddings ollama list
 
 ## Búsqueda externa con OpenAI
 
+Para crear una conexión desde el entorno sin copiar secretos, utiliza en Swagger
+**LLM Providers → POST /api/v1/agent/llm/providers/from-env**:
+
+```json
+{
+  "Source": "openai_search",
+  "Code": "openai-search",
+  "Name": "OpenAI para búsquedas externas",
+  "IsDefault": false
+}
+```
+
+`Source=runtime` copia el proveedor y modelo conversacional de `LLM_PROVIDER` y
+`MODEL_NAME`; `openai_search` copia `OPENAI_SEARCH_MODEL`, `OPENAI_API_KEY` y sus
+límites de búsqueda. Se usan los valores cargados al arrancar el servicio,
+incluidos los predeterminados cuando una variable no está definida. Tras editar
+`.env`, recrea el contenedor para que reciba las variables nuevas.
+La creación devuelve 201; si el código ya existe, devuelve 409 sin modificarlo.
+Las claves se cifran y la respuesta solo indica `HasAPIKey`. Crear no realiza
+una llamada de prueba al proveedor. Las conexiones son generales y no aceptan
+`IDResource`. Para asignar una conexión existente usa
+`PUT /api/v1/agent/solidset/agents/{IDResource}/model` con su `ProviderCode`,
+capacidades, prioridad y comportamiento. La relación se guarda exclusivamente
+en `SysAgentIAModel`. Para editar una conexión existente sigue disponible PUT.
+
 Con `WEB_SEARCH_ENABLED=true` y `EXTERNAL_SEARCH_PROVIDER=openai`, la herramienta
 `google_web_search` usa Responses API con `web_search`. El backend inyecta la
 identidad del agente; el modelo solo proporciona la consulta pública.
@@ -468,3 +493,21 @@ Problemas habituales:
 - [Compose de producción](docker-compose-prod.yml)
 - [Configuración de Nginx](nginx/)
 - [Scripts operativos](scripts/)
+
+### Separación entre proveedores y asignaciones
+
+`SysLLMProviderConfiguration` conserva proveedor, modelo, endpoint y credencial
+cifrada, sin vínculo directo a un recurso. `SysAgentIAModel` relaciona cada recurso
+humano con esas conexiones reutilizables. El router prioriza una asignación activa
+compatible con la capacidad solicitada, después la predeterminada del recurso y
+finalmente la conexión global predeterminada. Una asignación especializada no
+sustituye el modelo de conversación general.
+
+La migración `023_separate_llm_provider_assignments.sql` traslada los antiguos
+vínculos directos y elimina la columna `IDResource` de proveedores en una
+transacción. Conserva las asignaciones existentes y los secretos cifrados; puede
+repetirse. También se aplica al inicializar el esquema desde el servicio. Actualiza
+y reinicia todos los procesos del agente juntos: versiones anteriores del código
+no son compatibles con la columna eliminada. Antes de migrar una instalación,
+guarda una copia de las dos tablas; revertir requiere restaurar esquema y datos,
+además del código anterior.
