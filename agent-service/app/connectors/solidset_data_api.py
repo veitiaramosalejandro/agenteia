@@ -11,6 +11,7 @@ from uuid import UUID
 import httpx
 
 from app.config import settings
+from app.connectors.agent_scope_query import AGENT_SCOPES_QUERY
 from app.llm.secrets import decrypt_api_key
 
 
@@ -162,6 +163,39 @@ def connect(configuration: dict[str, Any], *, as_dict: bool = False) -> DataAPIC
     return DataAPIConnection(configuration, as_dict=as_dict)
 
 
+def _read_legacy_agent_scopes(connection: DataAPIConnection) -> list[dict[str, Any]]:
+    """Read the fixed dataset through the authenticated gateway on older APIs.
+
+    Never return a partial snapshot: the caller replaces active scope records.
+    No model-generated SQL or direct SQL Server connection is involved.
+    """
+    with connection.cursor(as_dict=True) as cursor:
+        count_query = f"SELECT COUNT_BIG(*) AS total FROM ({AGENT_SCOPES_QUERY}) AS scopes"
+        cursor.execute(count_query)
+        total = int(cursor.fetchone()["total"])
+        if total < 0 or total > 1000000:
+            raise SolidSETDataAPIError("Quantidade de alcances fora do limite de sincronização.")
+        page_size = max(1, min(connection.max_rows, 1000))
+        rows: list[dict[str, Any]] = []
+        for offset in range(0, total, page_size):
+            expected = min(page_size, total - offset)
+            cursor.execute(
+                AGENT_SCOPES_QUERY
+                + " ORDER BY ResourceId, IDLogin, IDWorkRoom, IDCommunity,"
+                " organizationid, organization_no, accountname"
+                " OFFSET %s ROWS FETCH NEXT %s ROWS ONLY",
+                (offset, expected),
+            )
+            page = cursor.fetchall()
+            if len(page) != expected:
+                raise SolidSETDataAPIError("Leitura incompleta dos alcances; sincronização cancelada.")
+            rows.extend(page)
+        cursor.execute(count_query)
+        if int(cursor.fetchone()["total"]) != total:
+            raise SolidSETDataAPIError("Os alcances mudaram durante a leitura; tente novamente.")
+        return rows
+
+
 def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, Any]]:
     with DataAPIConnection(configuration, as_dict=True) as connection:
         rows: list[dict[str, Any]] = []
@@ -174,6 +208,13 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                 )
             except httpx.HTTPError as exc:
                 raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+            if response.status_code == 404 and dataset == "agent-scopes" and offset == 0:
+                try:
+                    missing_dataset = response.json().get("detail") == "O conjunto de dados não existe."
+                except (ValueError, AttributeError):
+                    missing_dataset = False
+                if missing_dataset:
+                    return _read_legacy_agent_scopes(connection)
             if response.status_code >= 400:
                 raise SolidSETDataAPIError(
                     f"Falha ao obter dataset {dataset} (HTTP {response.status_code})."

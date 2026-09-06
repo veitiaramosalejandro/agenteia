@@ -466,7 +466,7 @@ services:
     ports:
       - 6379:6379
     volumes:
-      - redis_data:/data
+      - ./redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -518,5 +518,3 @@ networks:
     driver: bridge
     name: machining-network
 
-volumes:
-  redis_data:

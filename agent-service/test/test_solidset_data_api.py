@@ -1,8 +1,10 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from app.connectors.solidset_data_api import (
     DataAPIConnection,
+    SolidSETDataAPIError,
+    _read_legacy_agent_scopes,
     _runtime_base_url,
     _strip_sql_comments,
     read_dataset,
@@ -12,6 +14,63 @@ from app.connectors.solidset_sql import connect as connect_solidset_data
 
 
 class SolidSETDataAPIConnectorTests(unittest.TestCase):
+    @patch("app.connectors.solidset_data_api.DataAPIConnection")
+    @patch("app.connectors.solidset_data_api._read_legacy_agent_scopes")
+    def test_only_missing_scope_dataset_uses_compatibility(self, fallback, connection_type):
+        connection = connection_type.return_value.__enter__.return_value
+        connection.max_rows = 1000
+        response = connection.client.get.return_value
+        response.status_code = 404
+        response.json.return_value = {"detail": "O conjunto de dados não existe."}
+        fallback.return_value = [{"ResourceId": "resource"}]
+        self.assertEqual(read_dataset({}, "agent-scopes"), fallback.return_value)
+        fallback.assert_called_once_with(connection)
+        for dataset, status, detail in [
+            ("resources", 404, "O conjunto de dados não existe."),
+            ("agent-scopes", 403, "Forbidden"),
+            ("agent-scopes", 503, "Unavailable"),
+            ("agent-scopes", 404, "Not Found"),
+        ]:
+            with self.subTest(dataset=dataset, status=status, detail=detail):
+                fallback.reset_mock()
+                response.status_code = status
+                response.json.return_value = {"detail": detail}
+                with self.assertRaises(SolidSETDataAPIError):
+                    read_dataset({}, dataset)
+                fallback.assert_not_called()
+
+    def test_legacy_scope_pages_are_parameterized_and_complete(self):
+        connection = MagicMock(max_rows=2)
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.side_effect = [{"total": 3}, {"total": 3}]
+        cursor.fetchall.side_effect = [[{"id": 1}, {"id": 2}], [{"id": 3}]]
+        self.assertEqual(_read_legacy_agent_scopes(connection), [{"id": 1}, {"id": 2}, {"id": 3}])
+        self.assertEqual(cursor.execute.call_args_list[1].args[1], (0, 2))
+        self.assertEqual(cursor.execute.call_args_list[2].args[1], (2, 1))
+
+    def test_legacy_scope_partial_read_is_rejected(self):
+        connection = MagicMock(max_rows=2)
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = {"total": 2}
+        cursor.fetchall.return_value = [{"id": 1}]
+        with self.assertRaisesRegex(SolidSETDataAPIError, "incompleta"):
+            _read_legacy_agent_scopes(connection)
+
+    def test_legacy_scope_changed_count_is_rejected(self):
+        connection = MagicMock(max_rows=2)
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.side_effect = [{"total": 1}, {"total": 2}]
+        cursor.fetchall.return_value = [{"id": 1}]
+        with self.assertRaisesRegex(SolidSETDataAPIError, "mudaram"):
+            _read_legacy_agent_scopes(connection)
+
+    def test_legacy_query_matches_data_api_definition(self):
+        import runpy
+        from pathlib import Path
+        from app.connectors.agent_scope_query import AGENT_SCOPES_QUERY
+        path = Path(__file__).resolve().parents[2] / "solidset-data-api" / "app" / "queries.py"
+        self.assertEqual(AGENT_SCOPES_QUERY.strip(), runpy.run_path(str(path))["DATASETS"]["agent-scopes"].strip())
+
     def test_legacy_sql_comments_are_removed_before_gateway(self):
         query = """SELECT TOP 1 ID -- legacy note
         FROM dbo.SysChat /* read only */
