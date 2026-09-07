@@ -33,3 +33,6 @@ class ToolPolicy:
     """Declarative execution policy for a registered tool."""
 
     requires_agent_context: bool = False
+    source: str = "tool"
+    verified: bool = False
+    learn_result: bool = False

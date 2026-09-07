@@ -40,6 +40,22 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(web.calls[0][1]["configurable"]["agent_resource_id"], "agent-a")
         self.assertIsNone(regular.calls[0][1])
 
+    def test_invoke_result_keeps_content_and_adds_provenance(self):
+        tool = FakeTool()
+        registry = ToolRegistry({"web": tool})
+        registry.set_policy(
+            "web",
+            ToolPolicy(source="external_web", learn_result=True),
+        )
+
+        result = registry.invoke_result("web", {"query": "x"})
+
+        self.assertEqual(result.content, "ok")
+        self.assertEqual(result.source, "external_web")
+        self.assertFalse(result.verified)
+        self.assertTrue(result.metadata["learn_result"])
+        self.assertEqual(result.metadata["tool_name"], "web")
+
 
 if __name__ == "__main__":
     unittest.main()

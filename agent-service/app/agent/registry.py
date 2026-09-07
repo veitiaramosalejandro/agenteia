@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from app.agent.contracts import AgentContext, ToolPolicy
+from app.agent.contracts import AgentContext, ToolPolicy, ToolResult
 
 
 class ToolRegistry(dict[str, Any]):
@@ -56,3 +56,20 @@ class ToolRegistry(dict[str, Any]):
                 },
             )
         return tool.invoke(payload)
+
+    def invoke_result(
+        self,
+        name: str,
+        arguments: Mapping[str, Any] | None = None,
+        *,
+        context: AgentContext | None = None,
+    ) -> ToolResult:
+        """Invoke a tool and attach its declarative provenance metadata."""
+        raw = self.invoke(name, arguments, context=context)
+        policy = self._policies.get(name, ToolPolicy())
+        return ToolResult(
+            content=str(raw),
+            source=policy.source,
+            verified=policy.verified,
+            metadata={"learn_result": policy.learn_result, "tool_name": name},
+        )

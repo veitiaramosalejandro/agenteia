@@ -119,7 +119,18 @@ class MachiningAgent:
             #"solidset_vehicle_info": solidset_vehicle_info,
         })
         self.tools_map.set_policy(
-            "google_web_search", ToolPolicy(requires_agent_context=True)
+            "google_web_search",
+            ToolPolicy(
+                requires_agent_context=True,
+                source="external_web",
+                learn_result=True,
+            ),
+        )
+        self.tools_map.set_policy(
+            "query_sql_server", ToolPolicy(source="solidset_sql", verified=True)
+        )
+        self.tools_map.set_policy(
+            "get_db_schema", ToolPolicy(source="solidset_schema", verified=True)
         )
         self.web = AgentWeb(self.tools_map["google_web_search"])
         self.sql = AgentSql(
@@ -4081,7 +4092,7 @@ class MachiningAgent:
                             if argument_error:
                                 tool_result = argument_error
                             else:
-                                tool_result = self.tools_map.invoke(
+                                normalized_result = self.tools_map.invoke_result(
                                     tool_name,
                                     tool_args,
                                     context=AgentContext(
@@ -4092,6 +4103,7 @@ class MachiningAgent:
                                         metadata=message_metadata or {},
                                     ),
                                 )
+                                tool_result = normalized_result.content
                             messages.append(
                                 ToolMessage(
                                     content=str(tool_result),
