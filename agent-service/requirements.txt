@@ -27,6 +27,7 @@ pyodbc
 pymssql
 psycopg[binary]>=3.2,<4.0
 cryptography>=42,<46
+pytest>=8,<9
 
 pandas 
 openpyxl
