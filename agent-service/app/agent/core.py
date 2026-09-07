@@ -21,6 +21,8 @@ from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
 from app.agent.knowledge import AgentKnowledge
 from app.agent.language import LanguageResolver
+from app.agent.sql import AgentSql
+from app.agent.web import AgentWeb
 from app.agent.contracts import AgentContext, ToolPolicy
 from app.agent.registry import ToolRegistry
 from app.agent.semantic_text import is_current_officeholder_question
@@ -118,6 +120,11 @@ class MachiningAgent:
         })
         self.tools_map.set_policy(
             "google_web_search", ToolPolicy(requires_agent_context=True)
+        )
+        self.web = AgentWeb(self.tools_map["google_web_search"])
+        self.sql = AgentSql(
+            self.tools_map["query_sql_server"],
+            self.tools_map["get_db_schema"],
         )
         
         # Vincular herramientas al LLM
@@ -1534,7 +1541,7 @@ class MachiningAgent:
                     f"columns={list(plan.selected_columns)}",
                     flush=True,
                 )
-                raw_result = str(query_sql_server.invoke({
+                raw_result = str(self.sql.query({
                     "query": plan.query,
                     "parameters_json": json.dumps(plan.parameters),
                 }))
@@ -1586,7 +1593,7 @@ class MachiningAgent:
                 f"columns={list(plan.selected_columns)}",
                 flush=True,
             )
-            raw_result = str(query_sql_server.invoke({
+            raw_result = str(self.sql.query({
                 "query": plan.query,
                 "parameters_json": json.dumps(plan.parameters),
             }))
@@ -1870,7 +1877,7 @@ class MachiningAgent:
             f"{where_clause} AND ISNULL(t.Archived, 0) = 0 "
             "ORDER BY t.CreatedTime DESC"
         )
-        result = str(query_sql_server.invoke({
+        result = str(self.sql.query({
             "query": sql,
             "parameters_json": json.dumps(parameters),
         }))
@@ -1959,7 +1966,7 @@ class MachiningAgent:
             "LIKE UPPER(%s) "
             "ORDER BY a.CreatedTime DESC"
         )
-        result = str(query_sql_server.invoke({
+        result = str(self.sql.query({
             "query": sql,
             "parameters_json": json.dumps([f"%{resource_term}%"]),
         }))
@@ -2066,7 +2073,7 @@ class MachiningAgent:
             f"{where_clause};"
         )
         print(f"🗄️ Resolviendo conteo de recursos desde SQL Server; filtro={term!r}")
-        result = str(query_sql_server.invoke({"query": sql}))
+        result = str(self.sql.query({"query": sql}))
         try:
             rows = json.loads(result)
             total = int(rows[0]["Total"])
@@ -2146,7 +2153,7 @@ class MachiningAgent:
             "ORDER BY r.DisplayName ASC"
         )
         print(f"🗄️ Consultando recursos activos do meeting IDMeeting={meeting_id}")
-        result = str(query_sql_server.invoke({
+        result = str(self.sql.query({
             "query": sql.replace("%s", f"'{str(meeting_id)}'", 1)
         }))
         try:
@@ -2310,9 +2317,10 @@ class MachiningAgent:
     ) -> Optional[str]:
         """Busca en la web y pide al LLM una respuesta basada únicamente en esos resultados."""
         try:
-            web_result = google_web_search.invoke({
-                "query": search_query or self._normalize_context_query(user_text)
-            }, config={"configurable": {"agent_resource_id": agent_resource_id}})
+            web_result = self.web.search(
+                search_query or self._normalize_context_query(user_text),
+                agent_resource_id=agent_resource_id,
+            )
             if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
                 return None
             web_messages = list(messages)
@@ -3238,7 +3246,7 @@ class MachiningAgent:
         if business_knowledge_query and not vector_answers_business_query:
             table_hints = self._business_schema_table_hints(business_query_text)
             if table_hints:
-                business_schema_context = str(get_db_schema.invoke({
+                business_schema_context = str(self.sql.schema({
                     "table_name": ",".join(table_hints)
                 }))
                 if business_schema_context.lower().startswith("error"):
@@ -3866,9 +3874,9 @@ class MachiningAgent:
             else:
                 try:
                     web_started_at = perf_counter()
-                    prefetched_web_result = google_web_search.invoke(
-                        {"query": search_query},
-                        config={"configurable": {"agent_resource_id": agent_resource_id}},
+                    prefetched_web_result = self.web.search(
+                        search_query,
+                        agent_resource_id=agent_resource_id,
                     )
                     print(
                         "AGENT_TOOL_STAGE tool=google_web_search "
