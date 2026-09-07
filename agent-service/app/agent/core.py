@@ -19,6 +19,7 @@ from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
+from app.agent.audit import PostgresToolAudit
 from app.agent.knowledge import AgentKnowledge
 from app.agent.learning import AgentLearning
 from app.agent.language import LanguageResolver
@@ -138,6 +139,8 @@ class MachiningAgent:
                 source="solidset_schema", verified=True, confidence=1.0
             )
         )
+        if settings.TOOL_AUDIT_ENABLED:
+            self.tools_map.set_auditor(PostgresToolAudit())
         self.learning = AgentLearning()
         self.tools_map.set_learner(self.learning)
         self.web = AgentWeb(self.tools_map["google_web_search"], self.learning)

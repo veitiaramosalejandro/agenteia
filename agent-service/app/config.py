@@ -92,6 +92,7 @@ class Settings(BaseSettings):
         600, int(os.getenv("AGENT_RESPONSE_STATUS_TTL_SECONDS", "86400"))
     )
     AGENT_RESPONSE_QUEUE_ENABLED: bool = _env_bool("AGENT_RESPONSE_QUEUE_ENABLED", "true")
+    TOOL_AUDIT_ENABLED: bool = _env_bool("TOOL_AUDIT_ENABLED", "false")
     AGENT_RESPONSE_STREAM: str = os.getenv(
         "AGENT_RESPONSE_STREAM", "machining:agent-responses:v1"
     )

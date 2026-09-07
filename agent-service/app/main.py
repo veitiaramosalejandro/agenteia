@@ -30,6 +30,7 @@ from app.connectors.db_client import (
     ensure_llm_provider_schema,
     ensure_agent_model_schema,
     ensure_agent_response_audit_schema,
+    ensure_agent_tool_audit_schema,
     ensure_solidset_agent_resource_schema,
     quarantine_legacy_generated_knowledge,
     list_active_solidset_instances,
@@ -361,6 +362,8 @@ async def startup_db_learning() -> None:
             await asyncio.to_thread(ensure_solidset_agent_resource_schema)
             await asyncio.to_thread(ensure_agent_model_schema)
             await asyncio.to_thread(ensure_agent_response_audit_schema)
+            if settings.TOOL_AUDIT_ENABLED:
+                await asyncio.to_thread(ensure_agent_tool_audit_schema)
             await asyncio.to_thread(ensure_historical_schema)
             quarantined = await asyncio.to_thread(quarantine_legacy_generated_knowledge)
             if quarantined:

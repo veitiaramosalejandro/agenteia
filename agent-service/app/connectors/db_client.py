@@ -201,6 +201,43 @@ def ensure_agent_response_audit_schema() -> None:
             ''')
 
 
+def ensure_agent_tool_audit_schema() -> None:
+    """Creates durable audit storage for optional tool execution tracing."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS public."SysAgentIAToolAudit" (
+                    "ID" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    "ToolName" varchar(120) NOT NULL,
+                    "Source" varchar(120) NOT NULL,
+                    "Success" boolean NOT NULL,
+                    "ElapsedSeconds" double precision NOT NULL DEFAULT 0,
+                    "IDResource" uuid,
+                    "SessionID" varchar(255),
+                    "ErrorType" varchar(120),
+                    "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS "IX_SysAgentIAToolAudit_Resource"
+                  ON public."SysAgentIAToolAudit" ("IDResource", "CreatedAt");
+            ''')
+
+
+def save_agent_tool_audit(event: Any) -> None:
+    """Persists a ToolAuditEvent without exposing tool arguments or content."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''INSERT INTO public."SysAgentIAToolAudit"
+                   ("ToolName","Source","Success","ElapsedSeconds","IDResource","SessionID","ErrorType")
+                   VALUES (%s,%s,%s,%s,%s::uuid,NULLIF(%s,''),%s)''',
+                (
+                    event.tool_name, event.source, event.success,
+                    event.elapsed_seconds, event.agent_resource_id,
+                    event.session_id, event.error_type,
+                ),
+            )
+
+
 def save_agent_response_audit(
     request_id: str,
     chat_id: str,
