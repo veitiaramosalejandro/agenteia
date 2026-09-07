@@ -23,6 +23,11 @@ class AgentWebTests(unittest.TestCase):
             },
         )
 
+    def test_search_rejects_agent_without_external_web_permission(self):
+        web = AgentWeb(Mock())
+        with self.assertRaises(PermissionError):
+            web.search("consulta", agent_resource_id="agent-a", tool_permissions=[])
+
 
 if __name__ == "__main__":
     unittest.main()

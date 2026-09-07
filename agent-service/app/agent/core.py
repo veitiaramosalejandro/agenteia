@@ -2337,6 +2337,7 @@ class MachiningAgent:
         messages: list,
         search_query: Optional[str] = None,
         agent_resource_id: Optional[str] = None,
+        tool_permissions: Any = None,
         *,
         request_llm: Any,
     ) -> Optional[str]:
@@ -2348,6 +2349,7 @@ class MachiningAgent:
                 web_result = web_adapter.search(
                     query,
                     agent_resource_id=agent_resource_id,
+                    tool_permissions=tool_permissions,
                 )
             else:
                 # Compatibility for lightweight/test instances built without __init__.
@@ -3923,6 +3925,8 @@ class MachiningAgent:
                     prefetched_web_result = self.web.search(
                         search_query,
                         agent_resource_id=agent_resource_id,
+                        tool_permissions=message_metadata.get("tool_permissions")
+                        if message_metadata else None,
                     )
                     print(
                         "AGENT_TOOL_STAGE tool=google_web_search "
@@ -4337,6 +4341,8 @@ class MachiningAgent:
                 messages,
                 search_query=search_query,
                 agent_resource_id=agent_resource_id,
+                tool_permissions=message_metadata.get("tool_permissions")
+                if message_metadata else None,
                 request_llm=request_llm,
             )
             if web_answer:

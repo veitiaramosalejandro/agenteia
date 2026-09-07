@@ -14,8 +14,20 @@ class AgentWeb:
         self.tool = tool
         self.learner = learner
 
-    def search(self, query: str, *, agent_resource_id: Optional[str] = None) -> Any:
-        context = AgentContext(agent_resource_id=agent_resource_id)
+    def search(
+        self,
+        query: str,
+        *,
+        agent_resource_id: Optional[str] = None,
+        tool_permissions: Any = None,
+    ) -> Any:
+        permissions = None if tool_permissions is None else set(tool_permissions)
+        if permissions is not None and "external_web" not in permissions:
+            raise PermissionError("Permission required for tool google_web_search: external_web")
+        context = AgentContext(
+            agent_resource_id=agent_resource_id,
+            metadata={"tool_permissions": permissions} if permissions is not None else {},
+        )
         result = self.tool.invoke(
             {"query": query},
             config={
