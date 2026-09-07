@@ -26,3 +26,19 @@ class AgentLearning:
 
         _schedule_web_search_learning(query, results, context.agent_resource_id)
         return True
+
+    def learn_manual(self, content: str, category: str = "general") -> bool:
+        """Persist an explicit operator teaching event through the existing tool."""
+        return self.learn_manual_result(content, category).startswith("✅")
+
+    def learn_manual_result(self, content: str, category: str = "general") -> str:
+        """Persist manual teaching and preserve the tool's user-facing result."""
+        text = str(content or "").strip()
+        if not text:
+            return "Error: el aprendizaje no puede estar vacío"
+        from app.agent.tools import learn_new_fact
+
+        return str(learn_new_fact.invoke({
+            "fact_description": text,
+            "category": str(category or "general").strip() or "general",
+        }))

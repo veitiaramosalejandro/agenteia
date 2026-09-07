@@ -61,6 +61,23 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(result.metadata["learning_scope"], "agent")
         self.assertEqual(result.metadata["tool_name"], "web")
 
+    def test_required_permission_is_enforced_when_declared(self):
+        tool = FakeTool()
+        registry = ToolRegistry({"protected": tool})
+        registry.set_policy(
+            "protected", ToolPolicy(required_permission="read:protected")
+        )
+
+        with self.assertRaises(PermissionError):
+            registry.invoke("protected", context=AgentContext())
+        self.assertEqual(
+            registry.invoke(
+                "protected",
+                context=AgentContext(metadata={"tool_permissions": ["read:protected"]}),
+            ),
+            "ok",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

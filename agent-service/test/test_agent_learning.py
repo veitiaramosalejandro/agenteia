@@ -28,6 +28,16 @@ class AgentLearningTests(unittest.TestCase):
         self.assertFalse(learner.learn("google_web_search", "not-json", context))
         self.assertFalse(learner.learn("google_web_search", "{}", None))
 
+    @patch("app.agent.tools.learn_new_fact")
+    def test_manual_learning_uses_existing_learning_tool(self, learn_new_fact):
+        learn_new_fact.invoke.return_value = "✅ Aprendizaje registrado correctamente"
+
+        self.assertTrue(AgentLearning().learn_manual("Hecho", "operacion"))
+        learn_new_fact.invoke.assert_called_once_with({
+            "fact_description": "Hecho",
+            "category": "operacion",
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

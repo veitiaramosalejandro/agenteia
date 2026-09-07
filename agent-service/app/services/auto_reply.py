@@ -318,7 +318,14 @@ def _is_informational_learning_message(raw_text: str) -> bool:
 
 
 def _learning_acknowledgement(raw_text: str) -> str:
-    language = agent._detect_user_language(raw_text)
+    if agent is not None:
+        language = agent._detect_user_language(raw_text)
+    else:
+        normalized = " ".join(str(raw_text or "").lower().split())
+        language = "pt" if re.search(
+            r"\b(?:é|são|tem|têm|empresa|informação|representante|oficial)\b",
+            normalized,
+        ) else "en"
     messages = {
         "pt": "Agradeço a informação. Vou tê-la em conta.",
         "en": "Thank you for the information. I will take it into account.",

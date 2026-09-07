@@ -50,6 +50,10 @@ class ToolRegistry(dict[str, Any]):
         tool = self[name]
         payload = dict(arguments or {})
         policy = self._policies.get(name, ToolPolicy())
+        if policy.required_permission and not self._has_permission(policy, context):
+            raise PermissionError(
+                f"Permission required for tool {name}: {policy.required_permission}"
+            )
         if policy.requires_agent_context and context is not None:
             return tool.invoke(
                 payload,
@@ -61,6 +65,13 @@ class ToolRegistry(dict[str, Any]):
                 },
             )
         return tool.invoke(payload)
+
+    @staticmethod
+    def _has_permission(policy: ToolPolicy, context: AgentContext | None) -> bool:
+        if context is None:
+            return False
+        permissions = context.metadata.get("tool_permissions", ())
+        return policy.required_permission in set(permissions or ())
 
     def invoke_result(
         self,
