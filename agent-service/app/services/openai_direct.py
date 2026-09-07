@@ -8,6 +8,7 @@ import time
 from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from app.config import settings
 from app.connectors.db_client import _postgres_connection
 from app.llm import create_chat_model, provider_config_from_record
 from app.llm.secrets import decrypt_api_key
@@ -69,6 +70,23 @@ def enqueue_learning(record, question, answer, metadata, session_id):
              record['ID'], record['Model'], question, answer))
 
 
+def _learned_answer(user_text, metadata):
+    """Return a matching OpenAI exchange before making another remote call."""
+    if not metadata.get('agent_resource_id'):
+        return None
+    try:
+        from app.system.learning import SistemaAprendizaje
+
+        return SistemaAprendizaje().consultar_respuesta_openai(
+            user_text,
+            agent_resource_id=str(metadata['agent_resource_id']),
+            min_score=settings.BUSINESS_RAG_MIN_SCORE,
+        ) or None
+    except Exception as exc:
+        print(f'OPENAI_LOCAL_LEARNING lookup_failed type={type(exc).__name__}', flush=True)
+        return None
+
+
 def answer_direct(user_text, metadata, session_id):
     """None means no explicit OpenAI assignment; failures never fall back to Ollama."""
     record = assigned_openai(metadata.get('agent_resource_id'))
@@ -76,6 +94,11 @@ def answer_direct(user_text, metadata, session_id):
         return None
     if not isinstance(user_text, str) or not user_text.strip() or len(user_text) > 32000:
         raise ValueError('Invalid direct message length')
+    if record.get('TrainingMode') != 'disabled' and record.get('LearnFromSystem', True):
+        learned = _learned_answer(user_text, metadata)
+        if learned:
+            print(f'OPENAI_LOCAL_LEARNING hit agent={metadata.get("agent_resource_id")}', flush=True)
+            return learned
     language = metadata.get('response_language') or metadata.get('resolved_language') or metadata.get('locale') or 'the language of the user'
     instructions = (
         f'Reply in {language}. Answer the user directly. Do not claim access to internal '
@@ -127,6 +150,7 @@ def process_one(learning):
                 descripcion='CONTENIDO GENERADO POR IA, NO VERIFICADO.\n' + summary,
                 metadatos={'source':'openai_local_learning', 'knowledge_scope':'agent',
                     'agent_resource_id':str(job['resource_id']),
+                    'question':job['question'], 'answer':job['answer'],
                     'solidset_instance_id':str(job['instance_id']), 'origin_agent_resource_id':str(job['resource_id']),
                     'model':job['model'], 'verified':False, 'learning_id':job['id']},
             )

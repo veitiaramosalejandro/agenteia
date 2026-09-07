@@ -1325,6 +1325,38 @@ class SistemaAprendizaje:
                 break
         return "\n---\n".join(useful)
 
+    def consultar_respuesta_openai(
+        self,
+        query: str,
+        *,
+        agent_resource_id: str,
+        min_score: float = 0.0,
+    ) -> str:
+        """Return a prior OpenAI answer for a matching question, if available."""
+        query_vector = self._embed_query_safe(query, context="consultar_respuesta_openai")
+        if query_vector is None or not agent_resource_id:
+            return ""
+        results = self._search_aprendizaje(
+            query_vector,
+            query_filter={
+                "agent_resource_id": str(agent_resource_id),
+                "scope": "agent",
+                "source": "openai_local_learning",
+            },
+            limit=8,
+        )
+        for hit in results:
+            if float(hit.get("score") or 0.0) < max(0.0, min(float(min_score), 1.0)):
+                continue
+            payload = hit.get("payload") or {}
+            metadata = payload.get("metadatos")
+            if not isinstance(metadata, dict):
+                continue
+            answer = str(metadata.get("answer") or "").strip()
+            if answer:
+                return answer
+        return ""
+
     def consultar_conocimiento_sistema(
         self,
         query: str,

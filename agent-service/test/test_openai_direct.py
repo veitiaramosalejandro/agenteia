@@ -23,6 +23,18 @@ class DirectRoutingTests(unittest.TestCase):
         orchestrator.graph.invoke.assert_not_called()
         runtime.language_resolver.resolve.assert_not_called()
 
+    @patch.object(service, '_learned_answer', return_value='Respuesta aprendida.')
+    @patch.object(service, 'assigned_openai')
+    @patch.object(service, 'create_chat_model')
+    def test_learned_openai_answer_bypasses_remote_model(self, create, assigned, learned):
+        assigned.return_value = {'TrainingMode': 'rag_reinforcement', 'LearnFromSystem': True}
+        result = service.answer_direct(
+            'Pregunta repetida.', {'agent_resource_id': str(uuid4())}, 's'
+        )
+        self.assertEqual(result, 'Respuesta aprendida.')
+        learned.assert_called_once()
+        create.assert_not_called()
+
     @patch.object(service, 'assigned_openai', return_value=None)
     @patch.object(service, 'create_chat_model')
     def test_local_only_agent_keeps_existing_route(self, create, assigned):
