@@ -58,6 +58,7 @@ class TestWebSearch(unittest.TestCase):
         payload = json.loads(response)
 
         self.assertEqual(payload["source_type"], "openai_web_search")
+        self.assertEqual(payload["answer"], "Hecho actualizado con evidencia.")
         self.assertEqual(payload["results"][0]["title"], "Fuente oficial")
         search.assert_called_once_with("dato actual", resource_id=None)
         schedule.assert_called_once()

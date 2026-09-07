@@ -1247,14 +1247,23 @@ class SistemaAprendizaje:
         
         return "\n---\n".join(formatted_results)
 
-    def consultar_investigacion_web_reciente(self, query: str, limit: int = 5) -> str:
+    def consultar_investigacion_web_reciente(
+        self,
+        query: str,
+        *,
+        agent_resource_id: Optional[str] = None,
+        limit: int = 5,
+    ) -> str:
         """Recupera únicamente búsquedas web aprendidas, relevantes y aún vigentes."""
         query_vector = self._embed_query_safe(query, context="consultar_memoria_web")
         if query_vector is None:
             return ""
         resultados = self._search_aprendizaje(
             query_vector,
-            query_filter={"category": "web_research"},
+            query_filter={
+                "category": "web_research",
+                "agent_resource_id": str(agent_resource_id or ""),
+            },
             limit=limit,
         )
         now = datetime.now().astimezone()

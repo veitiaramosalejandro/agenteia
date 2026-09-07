@@ -1760,8 +1760,8 @@ class MachiningAgent:
             return f"{previous} {current}".strip()
         return current
 
-    def _get_cached_web_knowledge(self, query: str) -> str:
-        key = " ".join((query or "").lower().split())
+    def _get_cached_web_knowledge(self, query: str, agent_resource_id: str | None = None) -> str:
+        key = f"{agent_resource_id or 'unscoped'}:" + " ".join((query or "").lower().split())
         cached = self.web_knowledge_cache.get(key)
         if not cached:
             return ""
@@ -1772,8 +1772,10 @@ class MachiningAgent:
             return ""
         return content
 
-    def _cache_web_knowledge(self, query: str, content: Any) -> None:
-        key = " ".join((query or "").lower().split())
+    def _cache_web_knowledge(
+        self, query: str, content: Any, agent_resource_id: str | None = None
+    ) -> None:
+        key = f"{agent_resource_id or 'unscoped'}:" + " ".join((query or "").lower().split())
         value = str(content or "").strip()
         if key and value:
             self.web_knowledge_cache[key] = (datetime.now().astimezone(), value)
@@ -3344,12 +3346,15 @@ class MachiningAgent:
             )
             force_fresh_web = self._requires_fresh_web_search(user_text)
             memoria_web_reciente = (
-                "" if force_fresh_web else self._get_cached_web_knowledge(memoria_query)
+                "" if force_fresh_web else self._get_cached_web_knowledge(
+                    memoria_query, agent_resource_id
+                )
             )
             try:
                 if not memoria_web_reciente and not force_fresh_web:
                     memoria_web_reciente = self.sistema_aprendizaje.consultar_investigacion_web_reciente(
                         memoria_query,
+                        agent_resource_id=agent_resource_id,
                         limit=settings.WEB_SEARCH_MAX_RESULTS,
                     )
             except Exception as exc:
@@ -3871,13 +3876,29 @@ class MachiningAgent:
                     ):
                         last_tool_result = prefetched_web_result
                         herramientas_usadas.append("google_web_search")
-                        self._cache_web_knowledge(search_query, prefetched_web_result)
+                        self._cache_web_knowledge(
+                            search_query, prefetched_web_result, agent_resource_id
+                        )
                         messages.append(SystemMessage(content=(
                             "RESULTADOS WEB PARA RESPONDER EL TURNO ACTUAL:\n"
                             f"{prefetched_web_result}\n\n"
                             "Sintetiza ahora la respuesta. No solicites otra búsqueda."
                         )))
                         llm_for_request = request_llm
+                        try:
+                            web_payload = json.loads(str(prefetched_web_result))
+                            openai_answer = str(web_payload.get("answer") or "").strip()
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            openai_answer = ""
+                        if (
+                            openai_answer
+                            and str(web_payload.get("source_type") or "").startswith("openai_")
+                        ):
+                            response_text = self._clean_web_answer(openai_answer)
+                            print(
+                                "✅ Respuesta externa entregada desde la síntesis de OpenAI",
+                                flush=True,
+                            )
                 except Exception as exc:
                     print(f"⚠️ Falló la búsqueda web previa: {exc}")
 

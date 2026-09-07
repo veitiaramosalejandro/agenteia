@@ -715,7 +715,11 @@ def _legacy_google_web_search(query: str) -> str:
         return f"Error durante la búsqueda web: {e}"
 
 
-def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bool:
+def _store_web_search_knowledge(
+    query: str,
+    results: list[dict[str, str]],
+    agent_resource_id: str | None = None,
+) -> bool:
     """Index web results with deterministic IDs and full provenance."""
     client = QdrantClient(url=settings.VECTOR_DB_URL)
     embeddings = OllamaEmbeddings(base_url=settings.EMBEDDING_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
@@ -736,7 +740,9 @@ def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bo
             f"Resumen: {result['snippet']}\nFuente: {result['url']}"
         )
         vector = probe_vector if index == 0 and probe_vector is not None else embeddings.embed_query(content)
-        digest = hashlib.md5(f"web:{result['url']}:{content}".encode("utf-8")).hexdigest()
+        digest = hashlib.md5(
+            f"web:{agent_resource_id or 'unscoped'}:{result['url']}:{content}".encode("utf-8")
+        ).hexdigest()
         points.append(PointStruct(
             id=str(uuid.UUID(digest)),
             vector=vector,
@@ -747,6 +753,8 @@ def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bo
                 "source_url": result["url"],
                 "source_title": result["title"],
                 "search_query": query,
+                "agent_resource_id": str(agent_resource_id or ""),
+                "answer": str(result.get("answer") or result.get("snippet") or "")[:5000],
                 "external_unverified": True,
                 "learned_at": learned_at,
             },
@@ -755,11 +763,15 @@ def _store_web_search_knowledge(query: str, results: list[dict[str, str]]) -> bo
     return True
 
 
-def _schedule_web_search_learning(query: str, results: list[dict[str, str]]) -> None:
+def _schedule_web_search_learning(
+    query: str,
+    results: list[dict[str, str]],
+    agent_resource_id: str | None = None,
+) -> None:
     """Difiere la indexación para que embeddings y chat no compitan en Ollama."""
     def _learn() -> None:
         try:
-            _store_web_search_knowledge(query, results)
+            _store_web_search_knowledge(query, results, agent_resource_id)
             print(f"🧠 Resultados web indexados en background; query={query[:80]!r}")
         except Exception as exc:
             print(f"⚠️ No se pudieron indexar resultados web en background: {exc}")
@@ -775,12 +787,13 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
     started_at = perf_counter()
     try:
         clean_query = " ".join((query or "").split())
+        agent_resource_id = (config.get("configurable") or {}).get("agent_resource_id")
         if not clean_query:
             return "Error: la consulta de búsqueda no puede estar vacía."
         if not settings.WEB_SEARCH_ENABLED:
             return "La búsqueda web está desactivada por configuración."
 
-        provider = settings.EXTERNAL_SEARCH_PROVIDER
+        provider = "openai" if agent_resource_id else settings.EXTERNAL_SEARCH_PROVIDER
         if provider == "openai":
             from app.services.external_search import search_with_openai
 
@@ -820,18 +833,25 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
         if not results:
             return f"No se encontraron resultados web para '{clean_query}'."
 
+        openai_answer = (
+            str(results[0].get("snippet") or "").strip()
+            if provider == "openai"
+            else ""
+        )
+
         learned = False
         learning_scheduled = False
         if settings.WEB_SEARCH_AUTO_LEARN:
             # Indexar puede requerir varios embeddings de Ollama. Se desacopla de la
             # respuesta para no añadir minutos de espera al usuario.
-            _schedule_web_search_learning(clean_query, results)
+            _schedule_web_search_learning(clean_query, results, agent_resource_id)
             learning_scheduled = True
 
         payload = {
             "query": clean_query,
             "source_type": f"{provider}_web_search",
             "external_unverified": True,
+            "answer": openai_answer,
             "learned": learned,
             "learning_scheduled": learning_scheduled,
             "results": results,
