@@ -289,13 +289,10 @@ def _solidset_login(
         )
         try:
             login_instance = _solidset_instance_for_base(base_url)
-            if not login_instance:
-                return False, "", ""
-            login = get_solidset_login_for_active_agent(
-                agent_resource_id,
-                preferred_login_id=agent_login_id,
-                instance_id=login_instance["ID"],
-            )
+            lookup_kwargs = {"preferred_login_id": agent_login_id}
+            if login_instance and login_instance.get("ID"):
+                lookup_kwargs["instance_id"] = login_instance["ID"]
+            login = get_solidset_login_for_active_agent(agent_resource_id, **lookup_kwargs)
         except Exception as exc:
             print(f"❌ No se pudo leer SysLogin del agente: {exc}", flush=True)
             return False, "", ""
@@ -361,11 +358,10 @@ def _solidset_login(
                         try:
                             from app.system.resource_ingest import ingest_solidset_logins
                             matching_instance = _solidset_instance_for_base(base_url)
-                            if not matching_instance or not matching_instance.get("DataAPI"):
-                                raise RuntimeError(
-                                    "A instância de destino não tem ligação SQL Server configurada."
-                                )
-                            sync_result = ingest_solidset_logins(matching_instance)
+                            if matching_instance and matching_instance.get("DataAPI"):
+                                sync_result = ingest_solidset_logins(matching_instance)
+                            else:
+                                sync_result = ingest_solidset_logins()
                             print(
                                 "🔄 SysLogin resincronizado después del rechazo "
                                 f"updated={sync_result.get('updated', 0)} "
