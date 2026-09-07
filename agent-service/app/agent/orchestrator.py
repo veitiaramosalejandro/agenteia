@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.language import LanguageResolver
+from app.llm.text import response_text
 
 
 class AgentGraphState(TypedDict, total=False):
@@ -285,7 +286,7 @@ class SolidSETOrchestrator:
                     )),
                     HumanMessage(content=candidate),
                 ])
-                text = translated.content if hasattr(translated, "content") else str(translated)
+                text = response_text(translated)
                 candidate = str(text or "").strip() or candidate
                 if self.agent._detect_user_language(candidate) == expected:
                     return candidate

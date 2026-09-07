@@ -3,6 +3,7 @@ import json
 import re
 import uuid
 import threading
+from app.llm.text import response_text as llm_response_text
 from dataclasses import replace
 from urllib import error as urlerror
 from urllib.request import urlopen
@@ -2505,18 +2506,7 @@ class MachiningAgent:
     @staticmethod
     def _llm_response_text(response: Any) -> str:
         """Normaliza texto de chat y bloques de Responses API sin exponer metadatos."""
-        content = getattr(response, "content", response)
-        if isinstance(content, list):
-            return "\n".join(
-                block if isinstance(block, str) else block["text"]
-                for block in content
-                if isinstance(block, str) or (
-                    isinstance(block, dict)
-                    and block.get("type") in {"text", "output_text"}
-                    and isinstance(block.get("text"), str)
-                )
-            )
-        return str(content or "")
+        return llm_response_text(response)
 
     def _synthesize_tool_response(
         self, messages: list, user_text: str, *, request_llm: Any

@@ -14,6 +14,7 @@ import pymssql
 from fastapi import HTTPException
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage
+from app.llm.text import response_text as llm_response_text
 
 from app.api.schemas.common import (
     ChatQuestionSuggestionItem,
@@ -990,7 +991,7 @@ def _repair_chat_question_suggestions(
             HumanMessage(content=repair_prompt),
         ]
     )
-    return str(repaired.content if hasattr(repaired, "content") else repaired).strip()
+    return llm_response_text(repaired).strip()
 
 
 def _reason_about_related_record(
@@ -1120,7 +1121,7 @@ def _reason_about_related_record(
             HumanMessage(content=prompt),
         ]
     )
-    return str(result.content if hasattr(result, "content") else result).strip()
+    return llm_response_text(result).strip()
 
 
 def _safe_chat_question_fallback(
