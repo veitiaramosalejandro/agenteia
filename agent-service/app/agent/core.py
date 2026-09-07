@@ -23,7 +23,7 @@ from app.agent.audit import PostgresToolAudit
 from app.agent.knowledge import AgentKnowledge
 from app.agent.learning import AgentLearning
 from app.agent.language import LanguageResolver
-from app.agent.sql import AgentSql
+from app.agent.sql import AgentSql, reset_tool_permissions, set_tool_permissions
 from app.agent.web import AgentWeb
 from app.agent.contracts import AgentContext, ToolPolicy
 from app.agent.registry import ToolRegistry
@@ -2664,6 +2664,43 @@ class MachiningAgent:
         return answer_direct(user_text, metadata or {}, session_id)
 
     def analyze_event_with_dialogue(
+        self,
+        session_id: str,
+        user_text: str,
+        user_id: Optional[str] = None,
+        canal_id: Optional[str] = None,
+        meeting_id: Optional[str] = None,
+        meeting_code: Optional[str] = None,
+        message_kind: Optional[str] = None,
+        message_category: Optional[str] = None,
+        message_metadata: Optional[dict[str, Any]] = None,
+        tool_allowlist: Optional[set[str]] = None,
+        auto_reply_mode: bool = False,
+        external_query_mode: bool = False,
+        general_conversation_mode: bool = False,
+    ) -> str:
+        permissions = (message_metadata or {}).get("tool_permissions")
+        token = set_tool_permissions(permissions)
+        try:
+            return self._analyze_event_with_dialogue(
+                session_id=session_id,
+                user_text=user_text,
+                user_id=user_id,
+                canal_id=canal_id,
+                meeting_id=meeting_id,
+                meeting_code=meeting_code,
+                message_kind=message_kind,
+                message_category=message_category,
+                message_metadata=message_metadata,
+                tool_allowlist=tool_allowlist,
+                auto_reply_mode=auto_reply_mode,
+                external_query_mode=external_query_mode,
+                general_conversation_mode=general_conversation_mode,
+            )
+        finally:
+            reset_tool_permissions(token)
+
+    def _analyze_event_with_dialogue(
         self, 
         session_id: str, 
         user_text: str, 
