@@ -14,6 +14,8 @@ from app.llm.secrets import decrypt_api_key, encrypt_api_key
 
 _solidset_location_schema_lock = threading.Lock()
 _solidset_location_schema_ready = False
+_agent_default_model_schema_lock = threading.Lock()
+_agent_default_model_schema_ready = False
 
 
 def _postgres_connection() -> psycopg.Connection:
@@ -416,6 +418,17 @@ def ensure_llm_provider_schema() -> None:
 
 def ensure_agent_model_schema() -> None:
     ensure_llm_provider_schema()
+    global _agent_default_model_schema_ready
+    if _agent_default_model_schema_ready:
+        return
+    from pathlib import Path
+    with _agent_default_model_schema_lock:
+        if _agent_default_model_schema_ready:
+            return
+        migration = Path(__file__).with_name("agent_default_model.sql").read_text(encoding="utf-8")
+        with _postgres_connection() as connection:
+            connection.execute(migration)
+        _agent_default_model_schema_ready = True
 
 
 def save_agent_model_configuration(resource_id: UUID | str, data: dict[str, Any]) -> dict[str, Any]:
@@ -423,6 +436,10 @@ def save_agent_model_configuration(resource_id: UUID | str, data: dict[str, Any]
     resource = UUID(str(resource_id))
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT "IDResource" FROM public."SysResourceIA" WHERE "IDResource"=%s FOR UPDATE',
+                (resource,),
+            )
             cursor.execute(
                 'SELECT "ID", "Provider" FROM public."SysLLMProviderConfiguration" '
                 'WHERE LOWER("Code")=LOWER(%s) AND active=true', (data["ProviderCode"],),

@@ -2295,6 +2295,8 @@ class MachiningAgent:
         messages: list,
         search_query: Optional[str] = None,
         agent_resource_id: Optional[str] = None,
+        *,
+        request_llm: Any,
     ) -> Optional[str]:
         """Busca en la web y pide al LLM una respuesta basada únicamente en esos resultados."""
         try:
@@ -2314,8 +2316,8 @@ class MachiningAgent:
                 "fuentes, salvo que exista una incertidumbre concreta y relevante. No inventes datos."
             )))
             web_messages.append(HumanMessage(content=f"Responde de nuevo a mi consulta original: {user_text}"))
-            web_response = self.llm.invoke(web_messages)
-            answer = web_response.content if hasattr(web_response, "content") else str(web_response)
+            web_response = request_llm.invoke(web_messages)
+            answer = self._llm_response_text(web_response)
             return self._clean_web_answer(answer) or None
         except Exception as exc:
             print(f"⚠️ Falló la búsqueda web automática: {exc}")
@@ -2500,7 +2502,25 @@ class MachiningAgent:
             "en": "I could not verify the requested fact with the evidence currently available, so I will not provide an unconfirmed value.",
         }.get(language, "No pude verificar el dato solicitado con la evidencia disponible.")
 
-    def _synthesize_tool_response(self, messages: list, user_text: str) -> Optional[str]:
+    @staticmethod
+    def _llm_response_text(response: Any) -> str:
+        """Normaliza texto de chat y bloques de Responses API sin exponer metadatos."""
+        content = getattr(response, "content", response)
+        if isinstance(content, list):
+            return "\n".join(
+                block if isinstance(block, str) else block["text"]
+                for block in content
+                if isinstance(block, str) or (
+                    isinstance(block, dict)
+                    and block.get("type") in {"text", "output_text"}
+                    and isinstance(block.get("text"), str)
+                )
+            )
+        return str(content or "")
+
+    def _synthesize_tool_response(
+        self, messages: list, user_text: str, *, request_llm: Any
+    ) -> Optional[str]:
         """Convierte resultados técnicos de tools en una respuesta segura de negocio."""
         try:
             synthesis_messages = list(messages)
@@ -2512,8 +2532,8 @@ class MachiningAgent:
                 "indícalo brevemente sin copiar el contenido técnico."
             )))
             synthesis_messages.append(HumanMessage(content=f"Consulta original: {user_text}"))
-            response = self.llm.invoke(synthesis_messages)
-            answer = response.content if hasattr(response, "content") else str(response)
+            response = request_llm.invoke(synthesis_messages)
+            answer = self._llm_response_text(response)
             answer = str(answer or "").strip()
             return answer if answer and not self._looks_like_raw_tool_response(answer) else None
         except Exception as exc:
@@ -4075,7 +4095,7 @@ class MachiningAgent:
                             # Una búsqueda es suficiente. La siguiente llamada debe sintetizar
                             # el resultado sin poder solicitar la misma herramienta otra vez.
                             if tool_name == "google_web_search" and not argument_error:
-                                llm_for_request = self.llm
+                                llm_for_request = request_llm
                                 messages.append(SystemMessage(content=(
                                     "La búsqueda web ya terminó. No vuelvas a buscar. Responde ahora "
                                     "en el idioma del usuario, de forma breve y directa, resumiendo los "
@@ -4103,7 +4123,7 @@ class MachiningAgent:
                 iteration += 1
             else:
                 # Respuesta final del modelo
-                response_text = response.content if hasattr(response, 'content') else str(response)
+                response_text = self._llm_response_text(response)
                 if (
                     business_knowledge_query
                     and not successful_sql_query
@@ -4134,9 +4154,7 @@ class MachiningAgent:
                         )),
                     ])
                     repaired = request_llm.invoke(messages)
-                    repaired_text = (
-                        repaired.content if hasattr(repaired, "content") else str(repaired)
-                    )
+                    repaired_text = self._llm_response_text(repaired)
                     response_text = str(repaired_text or "").strip()
                     if self._has_incomplete_response_markup(response_text):
                         response_text = self._discard_incomplete_response_tail(response_text)
@@ -4157,7 +4175,7 @@ class MachiningAgent:
                         )))
                         retried = request_llm.invoke(retry_messages)
                         concrete_answer = self._extract_concrete_answer(
-                            retried.content if hasattr(retried, "content") else str(retried)
+                            self._llm_response_text(retried)
                         )
                     if self._is_deflecting_concrete_answer(concrete_answer):
                         concrete_answer = self._unverified_concrete_answer(
@@ -4169,7 +4187,7 @@ class MachiningAgent:
         # --- 8. MANEJO DE CASOS LÍMITE ---
         if not response_text or response_text.strip() == "":
             if last_tool_result:
-                response_text = self._synthesize_tool_response(messages, user_text) or (
+                response_text = self._synthesize_tool_response(messages, user_text, request_llm=request_llm) or (
                     "Obtuve datos técnicos, pero no pude convertirlos en una respuesta fiable. "
                     "Inténtalo nuevamente en unos instantes."
                 )
@@ -4177,7 +4195,7 @@ class MachiningAgent:
                 response_text = "Lo siento, no pude generar una respuesta. ¿Podrías reformular tu consulta?"
 
         if self._looks_like_raw_tool_response(response_text):
-            response_text = self._synthesize_tool_response(messages, user_text) or (
+            response_text = self._synthesize_tool_response(messages, user_text, request_llm=request_llm) or (
                 "No pude presentar de forma segura los datos obtenidos. "
                 "Inténtalo nuevamente en unos instantes."
             )
@@ -4212,9 +4230,7 @@ class MachiningAgent:
                 "pidas más contexto y no menciones sistemas internos. Devuelve solo la respuesta."
             )))
             repaired = request_llm.invoke(repair_messages)
-            response_text = str(
-                repaired.content if hasattr(repaired, "content") else repaired
-            ).strip()
+            response_text = self._llm_response_text(repaired).strip()
             if self._is_deflecting_concrete_answer(response_text):
                 # Safe deterministic fallback: the retrieved payload is itself
                 # a scoped user assertion, not an untrusted chat transcript.
@@ -4239,6 +4255,7 @@ class MachiningAgent:
                 messages,
                 search_query=search_query,
                 agent_resource_id=agent_resource_id,
+                request_llm=request_llm,
             )
             if web_answer:
                 response_text = web_answer
@@ -4294,9 +4311,7 @@ class MachiningAgent:
                 HumanMessage(content=user_text),
             ]
             retried = request_llm.invoke(retry_messages)
-            retry_text = str(
-                retried.content if hasattr(retried, "content") else retried
-            ).strip()
+            retry_text = self._llm_response_text(retried).strip()
             if retry_text and not self._response_drifted_from_query(user_text, retry_text):
                 response_text = retry_text
             else:
