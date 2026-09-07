@@ -2339,10 +2339,19 @@ class MachiningAgent:
     ) -> Optional[str]:
         """Busca en la web y pide al LLM una respuesta basada únicamente en esos resultados."""
         try:
-            web_result = self.web.search(
-                search_query or self._normalize_context_query(user_text),
-                agent_resource_id=agent_resource_id,
-            )
+            query = search_query or self._normalize_context_query(user_text)
+            web_adapter = getattr(self, "web", None)
+            if web_adapter is not None:
+                web_result = web_adapter.search(
+                    query,
+                    agent_resource_id=agent_resource_id,
+                )
+            else:
+                # Compatibility for lightweight/test instances built without __init__.
+                web_result = google_web_search.invoke(
+                    {"query": query},
+                    config={"configurable": {"agent_resource_id": agent_resource_id}},
+                )
             if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
                 return None
             web_messages = list(messages)
