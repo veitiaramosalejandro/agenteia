@@ -315,6 +315,11 @@ class SolidSETOrchestrator:
         auto_reply_mode: bool = False,
     ) -> str:
         metadata = dict(message_metadata or {})
+        direct = getattr(self.agent, "answer_with_assigned_openai", None)
+        if callable(direct):
+            answer = direct(user_text, metadata, session_id)
+            if answer is not None:
+                return answer
         decision = self.agent.language_resolver.resolve(
             user_text,
             session_id=session_id,

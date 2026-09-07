@@ -1570,7 +1570,16 @@ async def _process_chat_question_response_suggestion(
             if advice_request
             else None
         )
-        if arithmetic_answer:
+        direct_answer = await asyncio.to_thread(
+            agent.answer_with_assigned_openai, effective_request_text, metadata, scoped_session
+        )
+        if direct_answer is not None:
+            raw_suggestions = direct_answer
+            suggestions = json.loads(raw_suggestions)
+            if (not isinstance(suggestions, list) or len(suggestions) != suggestion_count
+                    or not all(isinstance(item, str) and item.strip() for item in suggestions)):
+                raise ValueError("OpenAI returned an invalid suggestion format")
+        elif arithmetic_answer:
             # Safe AST evaluation is authoritative for pure arithmetic and
             # avoids an expensive, probabilistic LLM round trip.
             raw_suggestions = json.dumps([arithmetic_answer], ensure_ascii=False)
@@ -1644,7 +1653,7 @@ async def _process_chat_question_response_suggestion(
                     item, context["related_records"]
                 )
             ]
-        if (
+        if direct_answer is None and (
             not verified_business_context or business_recommendation
         ) and _should_repair_suggestions(
             suggestions,

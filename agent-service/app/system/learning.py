@@ -1406,6 +1406,8 @@ class SistemaAprendizaje:
             if vector is None: return False
             
             point_id = str(uuid.UUID(hashlib.md5(texto_aprendizaje.encode()).hexdigest()))
+            if source == "openai_local_learning" and metadata.get("learning_id"):
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "openai-local:" + str(metadata["learning_id"])))
             self.qdrant.upsert(
                 collection_name=self.collection,
                 points=[PointStruct(id=point_id, vector=vector, payload={**actividad.dict(), "page_content": texto_aprendizaje})]

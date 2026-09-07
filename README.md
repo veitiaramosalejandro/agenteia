@@ -184,6 +184,35 @@ docker exec machining_ollama_embeddings ollama list
 
 ## Búsqueda externa con OpenAI
 
+### Respuesta directa y aprendizaje local compartido
+
+Si un gemelo tiene cualquier asignación activa de proveedor `openai`, sus
+mensajes se envían directamente a ese modelo, independientemente de las
+capacidades de la asignación. Si hay varias, se prioriza `IsDefault`, después
+`Priority` y el código. Un proveedor global sin asignación explícita no activa
+esta ruta. Los agentes sin OpenAI conservan su flujo local.
+
+La respuesta textual de OpenAI se entrega sin clasificación ni reescritura
+local. En consejos se conserva el contrato de array JSON de la API. Esta ruta
+no ejecuta herramientas SQL o web: OpenAI no recibe acceso automático a datos
+internos ni garantiza información actualizada. Los errores de OpenAI no
+provocan un cambio silencioso a Ollama.
+
+Después de responder OpenAI, la interacción se encola en PostgreSQL
+(`OpenAILocalLearning`). El proceso `system-knowledge-worker` ejecuta Ollama
+en segundo plano para extraer una nota e indexarla con embeddings locales en
+Qdrant. Es aprendizaje RAG compartido entre los agentes de la misma instancia
+SolidSET, no entrenamiento de pesos. Se conserva la procedencia y la marca de
+contenido generado por IA no verificado. `TrainingMode=disabled` o
+`LearnFromSystem=false` desactivan este aprendizaje para la asignación.
+
+La cola evita duplicados de la misma interacción y admite tres intentos con
+espera de 60 segundos. Los trabajos agotados quedan en estado `failed` con el
+tipo de error, sin registrar credenciales ni conversaciones en los logs.
+Si PostgreSQL no permite encolar, se conserva la respuesta y se registra el
+fallo de aprendizaje. Para activar cambios de código deben reiniciarse la API,
+los workers de respuestas/consejos y `system-knowledge-worker`.
+
 Para crear una conexión desde el entorno sin copiar secretos, utiliza en Swagger
 **LLM Providers → POST /api/v1/agent/llm/providers/from-env**:
 

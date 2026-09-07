@@ -2606,6 +2606,10 @@ class MachiningAgent:
     # 5. MÉTODO PRINCIPAL DE PROCESAMIENTO
     # ============================================================
     
+    def answer_with_assigned_openai(self, user_text, metadata, session_id):
+        from app.services.openai_direct import answer_direct
+        return answer_direct(user_text, metadata or {}, session_id)
+
     def analyze_event_with_dialogue(
         self, 
         session_id: str, 
@@ -2638,6 +2642,10 @@ class MachiningAgent:
         is_valid, error_msg = self._validate_user_query(user_text)
         if not is_valid:
             return f"⚠️ {error_msg}"
+
+        direct_answer = self.answer_with_assigned_openai(user_text, message_metadata, session_id)
+        if direct_answer is not None:
+            return direct_answer
         
         if not session_id:
             session_id = f"session_{hashlib.md5(user_text.encode()).hexdigest()[:8]}"
@@ -3299,7 +3307,6 @@ class MachiningAgent:
             and agent_resource_id
             and not suggestion_refine_mode
             and not external_query_mode
-            and not general_conversation_mode
         ):
             aprendizaje_relevante = self.sistema_aprendizaje.consultar_aprendizaje(
                 context_query,

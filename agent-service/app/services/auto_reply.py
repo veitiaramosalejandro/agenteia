@@ -1573,16 +1573,21 @@ async def _process_auto_replies(
             else {},
             incoming_text,
         )
-        response_text = (
-            _learning_acknowledgement(incoming_text)
-            if is_direct and learning_only
-            else _direct_courtesy_response(
-                incoming_text,
-                str(candidate.get("sender_name") or ""),
-            )
-            if is_direct
-            else None
+        from app.services.openai_direct import answer_direct
+        response_text = await asyncio.to_thread(
+            answer_direct, incoming_text, message_metadata, session_id
         )
+        if response_text is None:
+            response_text = (
+                _learning_acknowledgement(incoming_text)
+                if is_direct and learning_only
+                else _direct_courtesy_response(
+                    incoming_text,
+                    str(candidate.get("sender_name") or ""),
+                )
+                if is_direct
+                else None
+            )
         if response_text is None:
             response_text = _local_temporal_response(
                 incoming_text,

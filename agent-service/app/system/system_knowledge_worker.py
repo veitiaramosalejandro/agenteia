@@ -48,6 +48,8 @@ def _retry_delay(error: Exception, attempts: int) -> int:
 
 
 def run_worker() -> None:
+    from app.services.openai_direct import run_learning_worker
+    threading.Thread(target=run_learning_worker, daemon=True, name="openai-local-learning").start()
     worker_id = f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
     print(f"🧠 System knowledge worker activo worker={worker_id}", flush=True)
     while True:
