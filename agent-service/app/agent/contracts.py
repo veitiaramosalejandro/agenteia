@@ -53,3 +53,4 @@ class ToolPolicy:
     learn_result: bool = False
     learning_scope: Optional[str] = None
     required_permission: Optional[str] = None
+    confidence: Optional[float] = None

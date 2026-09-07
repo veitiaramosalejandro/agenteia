@@ -106,6 +106,7 @@ class ToolRegistry(dict[str, Any]):
         return ToolResult(
             content=str(raw),
             source=policy.source,
+            confidence=policy.confidence,
             verified=policy.verified,
             metadata={
                 "learn_result": policy.learn_result,

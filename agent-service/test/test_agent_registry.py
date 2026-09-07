@@ -44,11 +44,9 @@ class ToolRegistryTests(unittest.TestCase):
         tool = FakeTool()
         registry = ToolRegistry({"web": tool})
         registry.set_policy(
-            "web",
-            ToolPolicy(
-                source="external_web",
-                learn_result=True,
-                learning_scope="agent",
+            "web", ToolPolicy(
+                source="external_web", learn_result=True,
+                learning_scope="agent", confidence=0.75,
             ),
         )
 
@@ -56,6 +54,7 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertEqual(result.content, "ok")
         self.assertEqual(result.source, "external_web")
+        self.assertEqual(result.confidence, 0.75)
         self.assertFalse(result.verified)
         self.assertTrue(result.metadata["learn_result"])
         self.assertEqual(result.metadata["learning_scope"], "agent")

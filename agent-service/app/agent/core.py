@@ -129,10 +129,14 @@ class MachiningAgent:
             ),
         )
         self.tools_map.set_policy(
-            "query_sql_server", ToolPolicy(source="solidset_sql", verified=True)
+            "query_sql_server", ToolPolicy(
+                source="solidset_sql", verified=True, confidence=1.0
+            )
         )
         self.tools_map.set_policy(
-            "get_db_schema", ToolPolicy(source="solidset_schema", verified=True)
+            "get_db_schema", ToolPolicy(
+                source="solidset_schema", verified=True, confidence=1.0
+            )
         )
         self.learning = AgentLearning()
         self.tools_map.set_learner(self.learning)
