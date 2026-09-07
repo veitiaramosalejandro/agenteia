@@ -1410,7 +1410,21 @@ class SistemaAprendizaje:
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "openai-local:" + str(metadata["learning_id"])))
             self.qdrant.upsert(
                 collection_name=self.collection,
-                points=[PointStruct(id=point_id, vector=vector, payload={**actividad.dict(), "page_content": texto_aprendizaje})]
+                points=[PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload={
+                        **actividad.dict(),
+                        "page_content": texto_aprendizaje,
+                        "source": source,
+                        "scope": metadata.get("knowledge_scope") or "activity",
+                        "agent_resource_id": str(
+                            metadata.get("agent_resource_id")
+                            or metadata.get("origin_agent_resource_id")
+                            or ""
+                        ),
+                    },
+                )]
             )
             return True
         except Exception as e:

@@ -134,10 +134,11 @@ def process_one(learning):
                     raise RuntimeError('Local model returned no learning note')
             from app.system.schema import Actividad
             activity = Actividad(
-                id=job['id'], recurso_humano_id='sistema', canal_id='global_shared',
+                id=job['id'], recurso_humano_id='sistema', canal_id='',
                 tipo='openai_local_learning', timestamp=job['created_at'],
                 descripcion='CONTENIDO GENERADO POR IA, NO VERIFICADO.\n' + summary,
-                metadatos={'source':'openai_local_learning', 'knowledge_scope':'global_shared',
+                metadatos={'source':'openai_local_learning', 'knowledge_scope':'agent',
+                    'agent_resource_id':str(job['resource_id']),
                     'solidset_instance_id':str(job['instance_id']), 'origin_agent_resource_id':str(job['resource_id']),
                     'model':job['model'], 'verified':False, 'learning_id':job['id']},
             )

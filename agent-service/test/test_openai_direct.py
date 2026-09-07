@@ -95,7 +95,7 @@ class DirectLearningIntegrationTests(unittest.TestCase):
     def enqueue(self):
         service.enqueue_learning(service.assigned_openai(self.resource),'Pregunta','Respuesta',self.metadata,'s')
 
-    def test_worker_uses_local_model_and_indexes_shared_unverified_note(self):
+    def test_worker_uses_local_model_and_indexes_agent_unverified_note(self):
         self.enqueue()
         model=Mock();model.invoke.return_value=AIMessage(content='Nota local.')
         learning=Mock();learning.aprender_actividad.return_value=True
@@ -103,7 +103,8 @@ class DirectLearningIntegrationTests(unittest.TestCase):
             self.assertTrue(service.process_one(learning))
         self.assertEqual(create.call_args.args[0].provider,'ollama')
         note=learning.aprender_actividad.call_args.args[0]
-        self.assertEqual(note.metadatos['knowledge_scope'],'global_shared')
+        self.assertEqual(note.metadatos['knowledge_scope'],'agent')
+        self.assertEqual(note.metadatos['agent_resource_id'],str(self.resource))
         self.assertEqual(note.metadatos['solidset_instance_id'],str(self.instance))
         self.assertFalse(note.metadatos['verified'])
         self.assertEqual(self.rows()[0]['status'],'completed')
