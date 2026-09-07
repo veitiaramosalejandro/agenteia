@@ -124,6 +124,7 @@ class MachiningAgent:
                 requires_agent_context=True,
                 source="external_web",
                 learn_result=True,
+                learning_scope="agent",
             ),
         )
         self.tools_map.set_policy(

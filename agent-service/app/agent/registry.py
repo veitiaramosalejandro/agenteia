@@ -71,5 +71,9 @@ class ToolRegistry(dict[str, Any]):
             content=str(raw),
             source=policy.source,
             verified=policy.verified,
-            metadata={"learn_result": policy.learn_result, "tool_name": name},
+            metadata={
+                "learn_result": policy.learn_result,
+                "learning_scope": policy.learning_scope,
+                "tool_name": name,
+            },
         )

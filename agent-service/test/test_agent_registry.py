@@ -45,7 +45,11 @@ class ToolRegistryTests(unittest.TestCase):
         registry = ToolRegistry({"web": tool})
         registry.set_policy(
             "web",
-            ToolPolicy(source="external_web", learn_result=True),
+            ToolPolicy(
+                source="external_web",
+                learn_result=True,
+                learning_scope="agent",
+            ),
         )
 
         result = registry.invoke_result("web", {"query": "x"})
@@ -54,6 +58,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(result.source, "external_web")
         self.assertFalse(result.verified)
         self.assertTrue(result.metadata["learn_result"])
+        self.assertEqual(result.metadata["learning_scope"], "agent")
         self.assertEqual(result.metadata["tool_name"], "web")
 
 

@@ -36,3 +36,4 @@ class ToolPolicy:
     source: str = "tool"
     verified: bool = False
     learn_result: bool = False
+    learning_scope: Optional[str] = None
