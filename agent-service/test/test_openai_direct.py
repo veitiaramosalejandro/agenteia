@@ -27,13 +27,47 @@ class DirectRoutingTests(unittest.TestCase):
     @patch.object(service, 'assigned_openai')
     @patch.object(service, 'create_chat_model')
     def test_learned_openai_answer_bypasses_remote_model(self, create, assigned, learned):
-        assigned.return_value = {'TrainingMode': 'rag_reinforcement', 'LearnFromSystem': True}
+        assigned.return_value = {
+            'ID': uuid4(),
+            'Model': 'test-model',
+            'TrainingMode': 'rag_reinforcement',
+            'LearnFromSystem': True,
+        }
         result = service.answer_direct(
             'Pregunta repetida.', {'agent_resource_id': str(uuid4())}, 's'
         )
         self.assertEqual(result, 'Respuesta aprendida.')
         learned.assert_called_once()
         create.assert_not_called()
+
+    @patch.object(service, '_learned_answer', return_value='Respuesta previa.')
+    @patch.object(service, 'assigned_openai')
+    @patch.object(service, 'create_chat_model')
+    def test_plain_learned_answer_does_not_break_suggestion_format(
+        self, create, assigned, learned
+    ):
+        assigned.return_value = {
+            'ID': uuid4(),
+            'Model': 'test-model',
+            'TrainingMode': 'rag_reinforcement',
+            'LearnFromSystem': True,
+        }
+        model = Mock()
+        model.invoke.return_value = AIMessage(content='["Sugerencia válida."]')
+        create.return_value = model
+
+        result = service.answer_direct(
+            'Pregunta repetida.',
+            {
+                'agent_resource_id': str(uuid4()),
+                'response_suggestion_mode': True,
+                'response_suggestion_count': 1,
+            },
+            's',
+        )
+
+        self.assertEqual(result, '["Sugerencia válida."]')
+        create.assert_called_once()
 
     @patch.object(service, 'assigned_openai', return_value=None)
     @patch.object(service, 'create_chat_model')

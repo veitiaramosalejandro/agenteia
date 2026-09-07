@@ -97,8 +97,27 @@ def answer_direct(user_text, metadata, session_id):
     if record.get('TrainingMode') != 'disabled' and record.get('LearnFromSystem', True):
         learned = _learned_answer(user_text, metadata)
         if learned:
-            print(f'OPENAI_LOCAL_LEARNING hit agent={metadata.get("agent_resource_id")}', flush=True)
-            return learned
+            if metadata.get('response_suggestion_mode'):
+                expected_count = max(
+                    1, min(6, int(metadata.get('response_suggestion_count') or 1))
+                )
+                try:
+                    learned_values = json.loads(learned)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    learned_values = None
+                if (
+                    isinstance(learned_values, list)
+                    and len(learned_values) == expected_count
+                    and all(isinstance(item, str) and item.strip() for item in learned_values)
+                ):
+                    print(
+                        f'OPENAI_LOCAL_LEARNING suggestion_hit agent={metadata.get("agent_resource_id")}',
+                        flush=True,
+                    )
+                    return json.dumps(learned_values, ensure_ascii=False)
+            else:
+                print(f'OPENAI_LOCAL_LEARNING hit agent={metadata.get("agent_resource_id")}', flush=True)
+                return learned
     language = metadata.get('response_language') or metadata.get('resolved_language') or metadata.get('locale') or 'the language of the user'
     instructions = (
         f'Reply in {language}. Answer the user directly. Do not claim access to internal '
