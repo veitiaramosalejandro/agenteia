@@ -20,7 +20,7 @@ from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
 from app.agent.language import LanguageResolver
-from app.agent.contracts import AgentContext
+from app.agent.contracts import AgentContext, ToolPolicy
 from app.agent.registry import ToolRegistry
 from app.agent.semantic_text import is_current_officeholder_question
 from app.agent.schema_query_planner import (
@@ -115,6 +115,9 @@ class MachiningAgent:
             "solidset_update_reaction": solidset_update_reaction,
             #"solidset_vehicle_info": solidset_vehicle_info,
         })
+        self.tools_map.set_policy(
+            "google_web_search", ToolPolicy(requires_agent_context=True)
+        )
         
         # Vincular herramientas al LLM
         self.llm_with_tools = self.llm.bind_tools(list(self.tools_map.values()))

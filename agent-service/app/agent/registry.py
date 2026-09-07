@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from app.agent.contracts import AgentContext
+from app.agent.contracts import AgentContext, ToolPolicy
 
 
 class ToolRegistry(dict[str, Any]):
@@ -13,6 +13,7 @@ class ToolRegistry(dict[str, Any]):
 
     def __init__(self, tools: Mapping[str, Any] | None = None):
         super().__init__(tools or {})
+        self._policies: dict[str, ToolPolicy] = {}
 
     def register(self, name: str, tool: Any) -> None:
         normalized = str(name or "").strip()
@@ -29,6 +30,11 @@ class ToolRegistry(dict[str, Any]):
     def names(self) -> tuple[str, ...]:
         return tuple(self.keys())
 
+    def set_policy(self, name: str, policy: ToolPolicy) -> None:
+        if name not in self:
+            raise KeyError(name)
+        self._policies[name] = policy
+
     def invoke(
         self,
         name: str,
@@ -39,7 +45,8 @@ class ToolRegistry(dict[str, Any]):
         """Invoke a registered LangChain tool with the scoped agent context."""
         tool = self[name]
         payload = dict(arguments or {})
-        if name == "google_web_search" and context is not None:
+        policy = self._policies.get(name, ToolPolicy())
+        if policy.requires_agent_context and context is not None:
             return tool.invoke(
                 payload,
                 config={

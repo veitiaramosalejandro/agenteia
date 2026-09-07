@@ -26,3 +26,10 @@ class ToolResult:
     confidence: Optional[float] = None
     verified: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ToolPolicy:
+    """Declarative execution policy for a registered tool."""
+
+    requires_agent_context: bool = False

@@ -1,6 +1,6 @@
 import unittest
 
-from app.agent.contracts import AgentContext
+from app.agent.contracts import AgentContext, ToolPolicy
 from app.agent.registry import ToolRegistry
 
 
@@ -31,10 +31,11 @@ class ToolRegistryTests(unittest.TestCase):
     def test_invoke_passes_agent_scope_only_to_external_web(self):
         web = FakeTool()
         regular = FakeTool()
-        registry = ToolRegistry({"google_web_search": web, "regular": regular})
+        registry = ToolRegistry({"contextual": web, "regular": regular})
+        registry.set_policy("contextual", ToolPolicy(requires_agent_context=True))
         context = AgentContext(agent_resource_id="agent-a")
 
-        self.assertEqual(registry.invoke("google_web_search", {"query": "x"}, context=context), "ok")
+        self.assertEqual(registry.invoke("contextual", {"query": "x"}, context=context), "ok")
         self.assertEqual(registry.invoke("regular", {"value": 1}, context=context), "ok")
         self.assertEqual(web.calls[0][1]["configurable"]["agent_resource_id"], "agent-a")
         self.assertIsNone(regular.calls[0][1])
