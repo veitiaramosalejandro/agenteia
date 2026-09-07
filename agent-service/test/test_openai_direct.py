@@ -95,27 +95,28 @@ class DirectLearningIntegrationTests(unittest.TestCase):
     def enqueue(self):
         service.enqueue_learning(service.assigned_openai(self.resource),'Pregunta','Respuesta',self.metadata,'s')
 
-    def test_worker_uses_local_model_and_indexes_agent_unverified_note(self):
+    def test_worker_indexes_openai_exchange_without_local_chat_model(self):
         self.enqueue()
-        model=Mock();model.invoke.return_value=AIMessage(content='Nota local.')
         learning=Mock();learning.aprender_actividad.return_value=True
-        with patch.object(service,'create_chat_model',return_value=model) as create:
+        with patch.object(service,'create_chat_model') as create:
             self.assertTrue(service.process_one(learning))
-        self.assertEqual(create.call_args.args[0].provider,'ollama')
+        create.assert_not_called()
         note=learning.aprender_actividad.call_args.args[0]
         self.assertEqual(note.metadatos['knowledge_scope'],'agent')
         self.assertEqual(note.metadatos['agent_resource_id'],str(self.resource))
         self.assertEqual(note.metadatos['solidset_instance_id'],str(self.instance))
         self.assertFalse(note.metadatos['verified'])
+        self.assertIn('Pregunta recibida:\nPregunta', note.descripcion)
+        self.assertIn('Respuesta de OpenAI:\nRespuesta', note.descripcion)
         self.assertEqual(self.rows()[0]['status'],'completed')
         self.assertFalse(service.process_one(learning))
 
     def test_worker_failures_stop_after_three_attempts(self):
         self.enqueue()
-        with patch.object(service,'create_chat_model',side_effect=TimeoutError()):
-            for _ in range(3):
-                self.db.execute(self.sql('UPDATE public."OpenAILocalLearning" SET available_at=now()'))
-                self.assertTrue(service.process_one(Mock()))
+        learning=Mock();learning.aprender_actividad.side_effect=RuntimeError('embedding failed')
+        for _ in range(3):
+            self.db.execute(self.sql('UPDATE public."OpenAILocalLearning" SET available_at=now()'))
+            self.assertTrue(service.process_one(learning))
         self.assertEqual(self.rows()[0]['status'],'failed')
         self.assertEqual(self.rows()[0]['attempts'],3)
 
