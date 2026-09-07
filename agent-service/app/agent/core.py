@@ -127,16 +127,19 @@ class MachiningAgent:
                 source="external_web",
                 learn_result=True,
                 learning_scope="agent",
+                required_permission="external_web",
             ),
         )
         self.tools_map.set_policy(
             "query_sql_server", ToolPolicy(
-                source="solidset_sql", verified=True, confidence=1.0
+                source="solidset_sql", verified=True, confidence=1.0,
+                required_permission="solidset_sql",
             )
         )
         self.tools_map.set_policy(
             "get_db_schema", ToolPolicy(
-                source="solidset_schema", verified=True, confidence=1.0
+                source="solidset_schema", verified=True, confidence=1.0,
+                required_permission="solidset_schema",
             )
         )
         if settings.TOOL_AUDIT_ENABLED:
@@ -2711,6 +2714,18 @@ class MachiningAgent:
         except Exception as exc:
             agent_model_policy = None
             print(f"⚠️ No se pudo leer la política SysAgentIAModel: {exc}")
+        if agent_model_policy is not None:
+            capabilities = agent_model_policy.get("Capabilities") or []
+            if isinstance(capabilities, str):
+                try:
+                    capabilities = json.loads(capabilities)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    capabilities = [capabilities]
+            metadata_identity["tool_permissions"] = {
+                str(value).strip().lower()
+                for value in capabilities
+                if str(value).strip()
+            }
         training_enabled = not agent_model_policy or agent_model_policy.get("TrainingMode") != "disabled"
         learn_from_system = not agent_model_policy or bool(agent_model_policy.get("LearnFromSystem", True))
         learn_from_reactions = not agent_model_policy or bool(agent_model_policy.get("LearnFromReactions", True))

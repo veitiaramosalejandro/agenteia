@@ -77,6 +77,12 @@ class ToolRegistryTests(unittest.TestCase):
             "ok",
         )
 
+        with self.assertRaises(PermissionError):
+            registry.invoke(
+                "protected",
+                context=AgentContext(metadata={"tool_permissions": ["read:other"]}),
+            )
+
     def test_invoke_result_emits_success_audit_without_changing_content(self):
         tool = FakeTool()
         events = []

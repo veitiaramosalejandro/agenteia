@@ -76,6 +76,9 @@ class ToolRegistry(dict[str, Any]):
     @staticmethod
     def _has_permission(policy: ToolPolicy, context: AgentContext | None) -> bool:
         if context is None:
+            # Legacy callers without an execution context retain old behavior.
+            return True
+        if "tool_permissions" not in context.metadata:
             return False
         permissions = context.metadata.get("tool_permissions", ())
         return policy.required_permission in set(permissions or ())
