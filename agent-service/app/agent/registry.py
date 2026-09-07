@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from app.agent.contracts import AgentContext, ToolPolicy, ToolResult
+from time import perf_counter
+
+from app.agent.contracts import AgentContext, ToolAuditEvent, ToolPolicy, ToolResult
 
 
 class ToolRegistry(dict[str, Any]):
@@ -15,6 +17,7 @@ class ToolRegistry(dict[str, Any]):
         super().__init__(tools or {})
         self._policies: dict[str, ToolPolicy] = {}
         self._learner: Any = None
+        self._auditor: Any = None
 
     def register(self, name: str, tool: Any) -> None:
         normalized = str(name or "").strip()
@@ -38,6 +41,10 @@ class ToolRegistry(dict[str, Any]):
 
     def set_learner(self, learner: Any) -> None:
         self._learner = learner
+
+    def set_auditor(self, auditor: Any) -> None:
+        """Set an optional callback receiving ToolAuditEvent instances."""
+        self._auditor = auditor
 
     def invoke(
         self,
@@ -81,11 +88,21 @@ class ToolRegistry(dict[str, Any]):
         context: AgentContext | None = None,
     ) -> ToolResult:
         """Invoke a tool and attach its declarative provenance metadata."""
-        raw = self.invoke(name, arguments, context=context)
         policy = self._policies.get(name, ToolPolicy())
-        learned = False
-        if policy.learn_result and self._learner is not None:
-            learned = bool(self._learner.learn(name, raw, context))
+        started = perf_counter()
+        try:
+            raw = self.invoke(name, arguments, context=context)
+        except Exception as exc:
+            self._audit(
+                name, policy, context, started, success=False, error_type=type(exc).__name__
+            )
+            raise
+        self._audit(name, policy, context, started, success=True)
+        learned = bool(
+            policy.learn_result
+            and self._learner is not None
+            and self._learner.learn(name, raw, context)
+        )
         return ToolResult(
             content=str(raw),
             source=policy.source,
@@ -96,4 +113,28 @@ class ToolRegistry(dict[str, Any]):
                 "learning_scheduled": learned,
                 "tool_name": name,
             },
+        )
+
+    def _audit(
+        self,
+        name: str,
+        policy: ToolPolicy,
+        context: AgentContext | None,
+        started: float,
+        *,
+        success: bool,
+        error_type: str | None = None,
+    ) -> None:
+        if self._auditor is None:
+            return
+        self._auditor(
+            ToolAuditEvent(
+                tool_name=name,
+                source=policy.source,
+                success=success,
+                elapsed_seconds=perf_counter() - started,
+                agent_resource_id=context.agent_resource_id if context else None,
+                session_id=context.session_id if context else None,
+                error_type=error_type,
+            )
         )

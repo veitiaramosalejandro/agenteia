@@ -1,6 +1,6 @@
 import unittest
 
-from app.agent.contracts import AgentContext, ToolPolicy
+from app.agent.contracts import AgentContext, ToolAuditEvent, ToolPolicy
 from app.agent.registry import ToolRegistry
 
 
@@ -77,6 +77,25 @@ class ToolRegistryTests(unittest.TestCase):
             ),
             "ok",
         )
+
+    def test_invoke_result_emits_success_audit_without_changing_content(self):
+        tool = FakeTool()
+        events = []
+        registry = ToolRegistry({"web": tool})
+        registry.set_policy("web", ToolPolicy(source="external_web"))
+        registry.set_auditor(events.append)
+
+        result = registry.invoke_result(
+            "web", context=AgentContext(agent_resource_id="agent-a", session_id="s1")
+        )
+
+        self.assertEqual(result.content, "ok")
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(events[0], ToolAuditEvent)
+        self.assertTrue(events[0].success)
+        self.assertEqual(events[0].agent_resource_id, "agent-a")
+        self.assertEqual(events[0].session_id, "s1")
+        self.assertGreaterEqual(events[0].elapsed_seconds, 0)
 
 
 if __name__ == "__main__":

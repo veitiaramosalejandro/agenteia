@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
 
@@ -26,6 +27,20 @@ class ToolResult:
     confidence: Optional[float] = None
     verified: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ToolAuditEvent:
+    """Minimal execution trace that can be persisted by a host application."""
+
+    tool_name: str
+    source: str
+    success: bool
+    elapsed_seconds: float
+    agent_resource_id: Optional[str] = None
+    session_id: Optional[str] = None
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    error_type: Optional[str] = None
 
 
 @dataclass(frozen=True)
