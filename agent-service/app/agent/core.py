@@ -19,6 +19,7 @@ from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
+from app.agent.knowledge import AgentKnowledge
 from app.agent.language import LanguageResolver
 from app.agent.contracts import AgentContext, ToolPolicy
 from app.agent.registry import ToolRegistry
@@ -124,6 +125,7 @@ class MachiningAgent:
         
         # Sistema de aprendizaje contextual
         self.sistema_aprendizaje = SistemaAprendizaje()
+        self.knowledge = AgentKnowledge(self.sistema_aprendizaje)
         self.identity_service = AgentIdentityService()
         self.language_resolver = LanguageResolver()
         
@@ -2742,7 +2744,7 @@ class MachiningAgent:
             and not isolated_quoted_request
         ):
             try:
-                agent_rag_context = self.sistema_aprendizaje.consultar_conocimiento_agente(
+                agent_rag_context = self.knowledge.search_agent(
                     user_text,
                     agent_resource_id=agent_resource_id,
                     canal_id=canal_id,
@@ -2766,7 +2768,7 @@ class MachiningAgent:
             and not isolated_quoted_request
         ):
             try:
-                system_snapshot_context = self.sistema_aprendizaje.consultar_conocimiento_sistema(
+                system_snapshot_context = self.knowledge.search_system_snapshot(
                     user_text,
                     solidset_instance_id=solidset_instance_id,
                     agent_resource_id=agent_resource_id or None,
@@ -2920,7 +2922,7 @@ class MachiningAgent:
             and learn_from_system
             and not metadata_identity.get("related_records_context")
         ):
-            business_rag_context = self.sistema_aprendizaje.consultar_documentacion(
+            business_rag_context = self.knowledge.search_documentation(
                 self._normalize_context_query(user_text),
                 agent_resource_id=agent_resource_id or None,
                 canal_id=canal_id,
@@ -3263,7 +3265,7 @@ class MachiningAgent:
             and not external_query_mode
             and not general_conversation_mode
         ):
-            rag_context = self.sistema_aprendizaje.consultar_documentacion(
+            rag_context = self.knowledge.search_documentation(
                 context_query,
                 agent_resource_id=agent_resource_id or None,
                 canal_id=canal_id,
@@ -3357,7 +3359,7 @@ class MachiningAgent:
             )
             try:
                 if not memoria_web_reciente and not force_fresh_web:
-                    memoria_web_reciente = self.sistema_aprendizaje.consultar_investigacion_web_reciente(
+                    memoria_web_reciente = self.knowledge.search_web_memory(
                         memoria_query,
                         agent_resource_id=agent_resource_id,
                         limit=settings.WEB_SEARCH_MAX_RESULTS,
