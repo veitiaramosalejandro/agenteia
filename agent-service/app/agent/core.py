@@ -20,6 +20,7 @@ from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
 from app.agent.language import LanguageResolver
+from app.agent.registry import ToolRegistry
 from app.agent.semantic_text import is_current_officeholder_question
 from app.agent.schema_query_planner import (
     plan_identity_relationship_queries,
@@ -85,7 +86,7 @@ class MachiningAgent:
         self._llm_cache_lock = threading.Lock()
         
         # Mapa de herramientas disponibles
-        self.tools_map = {
+        self.tools_map = ToolRegistry({
             "get_cnc_telemetry": get_cnc_telemetry,
             "recommend_cnc_action": recommend_cnc_action,
             "learn_new_fact": learn_new_fact,
@@ -112,7 +113,7 @@ class MachiningAgent:
             "solidset_send_chat_message": solidset_send_chat_message,
             "solidset_update_reaction": solidset_update_reaction,
             #"solidset_vehicle_info": solidset_vehicle_info,
-        }
+        })
         
         # Vincular herramientas al LLM
         self.llm_with_tools = self.llm.bind_tools(list(self.tools_map.values()))
@@ -3836,10 +3837,7 @@ class MachiningAgent:
             f"model={request_provider_config.model} agent={agent_resource_id or 'default'}"
         )
         if tool_allowlist is not None:
-            allowed_tools = [
-                tool for name, tool in self.tools_map.items()
-                if name in tool_allowlist
-            ]
+            allowed_tools = self.tools_map.allowed(tool_allowlist)
             llm_for_request = request_llm.bind_tools(allowed_tools) if allowed_tools else request_llm
 
         # En consultas externas se busca antes de invocar al LLM. La latencia de
