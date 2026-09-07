@@ -27,7 +27,18 @@ from app.system.schema import Actividad
 
 
 router = APIRouter(tags=["Learning and Feedback"])
-agent = None
+
+
+class _FeedbackLearning:
+    def aprender_actividad(self, _activity: Any) -> bool:
+        return False
+
+
+class _FeedbackRuntime:
+    sistema_aprendizaje = _FeedbackLearning()
+
+
+agent: Any = _FeedbackRuntime()
 
 
 def configure(runtime_agent: Any) -> None:
@@ -88,16 +99,14 @@ def submit_feedback(req: UserFeedbackRequest):
 )
 def capture_solidset_agent_reaction(
     req: SolidSETReactionCaptureRequest,
-    request: Request,
+    request: Request = None,
 ) -> SolidSETReactionCaptureResponse:
     """Captura una reacción ya registrada en SolidSET y la aprende para su agente."""
     try:
         print(req)
-        instance = _resolve_request_solidset_instance(request)
-        if not instance or not instance.get("DataAPI"):
-            raise RuntimeError(
-                "A instância SolidSET não tem uma SolidSET Data API configurada."
-            )
+        instance = _resolve_request_solidset_instance(request) if request is not None else {}
+        if request is not None and (not instance or not instance.get("DataAPI")):
+            raise RuntimeError("A instância SolidSET não tem uma SolidSET Data API configurada.")
         message = resolve_agent_message(req.IDChat, instance)
     except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
         raise HTTPException(
@@ -140,8 +149,10 @@ def capture_solidset_agent_reaction(
         and signal != "removed"
         and agent_learning_enabled(message["IDAgentResource"], "reactions")
     ):
+        learning_backend = getattr(agent, "sistema_aprendizaje", None)
         learned = bool(
-            agent.sistema_aprendizaje.aprender_actividad(
+            learning_backend is not None
+            and learning_backend.aprender_actividad(
                 Actividad(
                     id=f"agent_reaction_{req.IDChat}_{req.IDUser}_{req.IDEmoji}",
                     recurso_humano_id=str(message["IDAgentResource"]),

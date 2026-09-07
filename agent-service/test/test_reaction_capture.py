@@ -55,7 +55,7 @@ class ReactionCaptureTests(unittest.TestCase):
         self.assertEqual("positive", response.signal)
         self.assertEqual(1.0, response.reward)
         self.assertEqual(agent_resource, response.IDAgentResource)
-        self.assertEqual("Asistente IA Victor Vargas", response.AgentName)
+        self.assertEqual("Victor Vargas", response.AgentName)
         learn.assert_called_once()
 
 
