@@ -969,6 +969,19 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
     resource_table = chat_lower.get("resourcetable")
+    framework_destiny = payload.get("FrameworkDestiny")
+    has_framework_destiny = isinstance(framework_destiny, dict) and bool(
+        framework_destiny.get("dests") or framework_destiny.get("Dests")
+    )
+    selected_from_payload = payload.get("SelectedAgentResourceIds")
+    if (
+        isinstance(selected_from_payload, list)
+        and selected_from_payload
+        and not has_framework_destiny
+    ):
+        return list(dict.fromkeys(
+            normalize_uuid(value) for value in selected_from_payload if normalize_uuid(value)
+        ))
     participants = resolve_resource_table(resource_table)
     selected: list[str] = []
     if isinstance(resource_table, list):
@@ -984,11 +997,20 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
         }
         selected = [item for item in participants.agent_recipient_ids if item in explicit_type_two]
     tables = [resource_table]
-    framework_destiny = payload.get("FrameworkDestiny")
-    if not isinstance(resource_table, list) and isinstance(framework_destiny, dict):
-        tables.append(
-            framework_destiny.get("dests") or framework_destiny.get("Dests")
-        )
+    has_chat_agent_rows = isinstance(resource_table, list) and any(
+        isinstance(row, dict)
+        and str(row.get("type") or row.get("Type") or "") in {"2", "3"}
+        for row in resource_table
+    )
+    if not has_chat_agent_rows:
+        if isinstance(chat_lower.get("destiny"), list):
+            tables.append(chat_lower["destiny"])
+    framework_rows = (
+        framework_destiny.get("dests") or framework_destiny.get("Dests")
+        if isinstance(framework_destiny, dict) else None
+    )
+    if not has_chat_agent_rows and isinstance(framework_rows, list):
+        tables.append(framework_rows)
     sender_resource = normalize_uuid(
         candidate.get("sender_resource")
         or (payload.get("FrameworkSender") or {}).get("resource")
@@ -1006,7 +1028,7 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
             lowered = {str(key).lower(): value for key, value in row.items()}
             destination_type = str(lowered.get("type") or lowered.get("kind") or "")
             has_talk_flag = normalize_bool(lowered.get("talkwithagent"))
-            is_framework_destiny = table_index == 2
+            is_framework_destiny = table is framework_rows
             is_agent = destination_type == "2" and (
                 has_talk_flag or (is_framework_destiny and destination_type == "2")
             )
@@ -1017,6 +1039,15 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
             )
             if resource_id and resource_id != sender_resource and resource_id not in selected:
                 selected.append(resource_id)
+    if not selected and sender_resource:
+        channels = chat_lower.get("channels")
+        is_private_self_chat = isinstance(channels, list) and any(
+            isinstance(channel, dict)
+            and str(channel.get("channelKind") or channel.get("kind") or "") == "1"
+            for channel in channels
+        )
+        if is_private_self_chat:
+            selected.append(sender_resource)
     return selected
 
 

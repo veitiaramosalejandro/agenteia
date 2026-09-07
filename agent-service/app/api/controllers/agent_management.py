@@ -19,7 +19,6 @@ from app.api.schemas.common import (
 from app.agent.tools import solidset_send_chat_message
 from app.connectors.db_client import (
     configure_agent_workroom,
-    get_active_agents_for_workroom,
     get_agent_knowledge,
     get_solidset_instance,
     save_agent_knowledge,
@@ -27,9 +26,11 @@ from app.connectors.db_client import (
 )
 from app.services.auto_reply import (
     _agent_visible_name,
+    get_active_agents_for_workroom,
     _invoke_orchestrator_for_instance,
     _learn_agent_interaction,
 )
+from app.services import auto_reply as auto_reply_service
 from app.system.reaction_capture import get_agent_reinforcement_context
 
 
@@ -127,7 +128,9 @@ async def handle_multi_agent_dialogue(
                 detail="A instância SolidSET não existe ou está inativa.",
             )
 
-    configured_agents = get_active_agents_for_workroom(request.IDWorkRoom, selected)
+    configured_agents = auto_reply_service.get_active_agents_for_workroom(
+        request.IDWorkRoom, selected
+    )
     if not configured_agents:
         raise HTTPException(
             status_code=404,
