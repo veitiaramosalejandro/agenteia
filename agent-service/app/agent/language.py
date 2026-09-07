@@ -51,6 +51,17 @@ class LanguageResolver:
         clean = " ".join(str(text or "").split())
         if not clean or self._detector is None:
             return LanguageDecision("", 0.0, "undetermined")
+        greeting_signals = {
+            "hola": "es",
+            "buenas": "es",
+            "olá": "pt",
+            "ola": "pt",
+            "hello": "en",
+            "hi": "en",
+        }
+        greeting_language = greeting_signals.get(clean.casefold().strip("!?.,"))
+        if greeting_language:
+            return LanguageDecision(greeting_language, 1.0, "greeting_signal")
         # Los signos de interrogación/exclamación de apertura son evidencia
         # ortográfica inequívoca y evitan que frases españolas cortas se
         # clasifiquen como francés o portugués.

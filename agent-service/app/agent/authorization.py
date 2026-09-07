@@ -73,14 +73,19 @@ def resolve_resource_table(resource_table: Any) -> MessageParticipants:
         resource_id = normalize_uuid(item.get("idresource") or item.get("resource"))
         if not resource_id:
             continue
+        legacy_type = item.get("type")
         try:
             sequence = int(item.get("sequence"))
         except (ValueError, TypeError):
-            continue
+            sequence = None
         talks_with_agent = normalize_bool(item.get("talkwithagent"))
-        if sequence == 0 and not talks_with_agent:
+        if sequence is None and legacy_type == 2 and talks_with_agent:
+            recipients.append((1, resource_id))
+        elif sequence is None and legacy_type == 3 and talks_with_agent:
+            recipients.append((1, resource_id))
+        elif sequence == 0 and not talks_with_agent:
             senders.append(resource_id)
-        elif sequence != 0 and talks_with_agent:
+        elif sequence is not None and sequence != 0 and talks_with_agent:
             recipients.append((sequence, resource_id))
     unique_senders = tuple(dict.fromkeys(senders))
     recipients.sort(key=lambda pair: pair[0])

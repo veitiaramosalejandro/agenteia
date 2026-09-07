@@ -182,6 +182,18 @@ class MachiningAgent:
         self.agent_prompt_cache[key] = (datetime.now(), value)
         return value
 
+    def _sql_adapter(self) -> AgentSql:
+        """Return the SQL adapter, including for lightweight test instances."""
+        adapter = getattr(self, "sql", None)
+        if adapter is not None:
+            return adapter
+        tools = getattr(self, "tools_map", {})
+        query_tool = tools.get("query_sql_server", query_sql_server)
+        schema_tool = tools.get("get_db_schema", get_db_schema)
+        adapter = AgentSql(query_tool, schema_tool)
+        self.sql = adapter
+        return adapter
+
     def clear_llm_configuration_cache(self) -> None:
         """Fuerza que la siguiente petición vuelva a leer PostgreSQL."""
         with self._llm_cache_lock:
@@ -1566,7 +1578,7 @@ class MachiningAgent:
                     f"columns={list(plan.selected_columns)}",
                     flush=True,
                 )
-                raw_result = str(self.sql.query({
+                raw_result = str(self._sql_adapter().query({
                     "query": plan.query,
                     "parameters_json": json.dumps(plan.parameters),
                 }))
@@ -1618,7 +1630,7 @@ class MachiningAgent:
                 f"columns={list(plan.selected_columns)}",
                 flush=True,
             )
-            raw_result = str(self.sql.query({
+            raw_result = str(self._sql_adapter().query({
                 "query": plan.query,
                 "parameters_json": json.dumps(plan.parameters),
             }))
@@ -1902,7 +1914,7 @@ class MachiningAgent:
             f"{where_clause} AND ISNULL(t.Archived, 0) = 0 "
             "ORDER BY t.CreatedTime DESC"
         )
-        result = str(self.sql.query({
+        result = str(self._sql_adapter().query({
             "query": sql,
             "parameters_json": json.dumps(parameters),
         }))
@@ -1991,7 +2003,7 @@ class MachiningAgent:
             "LIKE UPPER(%s) "
             "ORDER BY a.CreatedTime DESC"
         )
-        result = str(self.sql.query({
+        result = str(self._sql_adapter().query({
             "query": sql,
             "parameters_json": json.dumps([f"%{resource_term}%"]),
         }))
@@ -2098,7 +2110,7 @@ class MachiningAgent:
             f"{where_clause};"
         )
         print(f"🗄️ Resolviendo conteo de recursos desde SQL Server; filtro={term!r}")
-        result = str(self.sql.query({"query": sql}))
+        result = str(self._sql_adapter().query({"query": sql}))
         try:
             rows = json.loads(result)
             total = int(rows[0]["Total"])
@@ -2178,7 +2190,7 @@ class MachiningAgent:
             "ORDER BY r.DisplayName ASC"
         )
         print(f"🗄️ Consultando recursos activos do meeting IDMeeting={meeting_id}")
-        result = str(self.sql.query({
+        result = str(self._sql_adapter().query({
             "query": sql.replace("%s", f"'{str(meeting_id)}'", 1)
         }))
         try:
@@ -3331,7 +3343,7 @@ class MachiningAgent:
         if business_knowledge_query and not vector_answers_business_query:
             table_hints = self._business_schema_table_hints(business_query_text)
             if table_hints:
-                business_schema_context = str(self.sql.schema({
+                business_schema_context = str(self._sql_adapter().schema({
                     "table_name": ",".join(table_hints)
                 }))
                 if business_schema_context.lower().startswith("error"):

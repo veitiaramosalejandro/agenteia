@@ -1,12 +1,10 @@
-from __future__ import annotations
-
 import os
 import threading
 import uuid
 from time import perf_counter
-from typing import Annotated, Any, Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Body, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
 from app.agent.authorization import resolve_resource_table
 from app.agent.speech import text_to_speech
@@ -218,12 +216,19 @@ def detect_offensive_content(text: str) -> bool:
     return False
 
 
-@router.post("/api/v1/agent/dialogue", response_model=ChatConversationResponse)
+@router.post(
+    "/api/v1/agent/dialogue",
+    response_model=ChatConversationResponse,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"examples": _FRAMEWORK_MESSAGE_EXAMPLES}
+            }
+        }
+    },
+)
 def handle_dialogue(
-    message: Annotated[
-        FrameworkMessageDTO,
-        Body(openapi_examples=_FRAMEWORK_MESSAGE_EXAMPLES),
-    ],
+    message: FrameworkMessageDTO,
 ):
 
     print(message.model_dump_json(indent=2))
@@ -238,6 +243,14 @@ def handle_dialogue(
     """
     chat_payload = message.Chat if isinstance(message.Chat, dict) else {}
     dialogue_payload = message.model_dump(mode="json")
+    if (
+        message.RawMessage is None
+        and _get_payload_value(chat_payload, "rawMessage", "RawMessage") is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="RawMessage ou Chat.rawMessage é obrigatório para processar um FrameworkMessage em /dialogue.",
+        )
     if not _payload_has_talk_with_agent(dialogue_payload):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -246,14 +259,6 @@ def handle_dialogue(
                 "de tipo 2 com talkWithAgent=true. O endpoint chat-question/suggest-response "
                 "é a única exceção para conversas internas de sugestões."
             ),
-        )
-    if (
-        message.RawMessage is None
-        and _get_payload_value(chat_payload, "rawMessage", "RawMessage") is None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="RawMessage ou Chat.rawMessage é obrigatório para processar um FrameworkMessage em /dialogue.",
         )
 
     req = _framework_message_to_dialogue(message)

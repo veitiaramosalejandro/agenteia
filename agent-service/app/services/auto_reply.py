@@ -17,7 +17,7 @@ import psycopg
 import pymssql
 import redis
 
-from app.agent.authorization import resolve_resource_table
+from app.agent.authorization import normalize_bool, normalize_uuid, resolve_resource_table
 from app.agent.tools import solidset_send_chat_message
 from app.config import settings
 from app.knowledge_provenance import USER_ASSERTION_SOURCE
@@ -898,12 +898,38 @@ def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
     chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
     resource_table = _get_payload_value(chat, "resourceTable", "ResourceTable")
     participants = resolve_resource_table(resource_table)
-    return bool(participants.agent_recipient_ids)
+    if participants.agent_recipient_ids:
+        return True
+    # Legacy preview payloads may include only the explicit AI destination and
+    # omit the sender row/sequence; that is still an authorization signal.
+    if isinstance(resource_table, list):
+        return any(
+            isinstance(row, dict)
+            and str(row.get("type") or row.get("Type") or "") == "2"
+            and normalize_bool(row.get("talkWithAgent") or row.get("TalkWithAgent"))
+            for row in resource_table
+        )
+    return False
 
 
 def _payload_has_learning_only_destination(payload: dict[str, Any]) -> bool:
-    """El tipo no define el rol; resourceTable.sequence/talkWithAgent es autoritativo."""
-    return False
+    """Support legacy type=3 learning-only destinations."""
+    chat = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    resource_table = _get_payload_value(chat, "resourceTable", "ResourceTable")
+    tables = [resource_table, _get_payload_value(chat, "destiny", "Destiny")]
+    framework_destiny = payload.get("FrameworkDestiny")
+    if isinstance(framework_destiny, dict):
+        tables.append(framework_destiny.get("dests") or framework_destiny.get("Dests"))
+    return any(
+        isinstance(row, dict)
+        and str(row.get("type") or row.get("Type") or "") == "3"
+        and (
+            normalize_bool(row.get("talkWithAgent") or row.get("TalkWithAgent"))
+            or str(row.get("kind") or row.get("Kind") or "") == "3"
+        )
+        for table in tables if isinstance(table, list)
+        for row in table
+    )
 
 
 def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> bool:
@@ -944,7 +970,54 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
     chat_lower = {str(key).lower(): value for key, value in chat.items()}
     resource_table = chat_lower.get("resourcetable")
     participants = resolve_resource_table(resource_table)
-    return list(participants.agent_recipient_ids) if participants.valid else []
+    selected: list[str] = []
+    if isinstance(resource_table, list):
+        explicit_type_two = {
+            normalize_uuid(
+                {str(key).lower(): value for key, value in row.items()}.get("idresource")
+                or {str(key).lower(): value for key, value in row.items()}.get("resource")
+            )
+            for row in resource_table
+            if isinstance(row, dict)
+            and str(row.get("type") or row.get("Type") or "") == "2"
+            and normalize_bool(row.get("talkWithAgent") or row.get("TalkWithAgent"))
+        }
+        selected = [item for item in participants.agent_recipient_ids if item in explicit_type_two]
+    tables = [resource_table]
+    framework_destiny = payload.get("FrameworkDestiny")
+    if not isinstance(resource_table, list) and isinstance(framework_destiny, dict):
+        tables.append(
+            framework_destiny.get("dests") or framework_destiny.get("Dests")
+        )
+    sender_resource = normalize_uuid(
+        candidate.get("sender_resource")
+        or (payload.get("FrameworkSender") or {}).get("resource")
+        if isinstance(payload.get("FrameworkSender"), dict)
+        else candidate.get("sender_resource")
+    )
+    # Legacy payloads may omit sequence and sender rows but still identify
+    # explicit AI destinations with type=2/3 and talkWithAgent, or kind=2.
+    for table_index, table in enumerate(tables):
+        if not isinstance(table, list):
+            continue
+        for row in table:
+            if not isinstance(row, dict):
+                continue
+            lowered = {str(key).lower(): value for key, value in row.items()}
+            destination_type = str(lowered.get("type") or lowered.get("kind") or "")
+            has_talk_flag = normalize_bool(lowered.get("talkwithagent"))
+            is_framework_destiny = table_index == 2
+            is_agent = destination_type == "2" and (
+                has_talk_flag or (is_framework_destiny and destination_type == "2")
+            )
+            if not is_agent:
+                continue
+            resource_id = normalize_uuid(
+                lowered.get("idresource") or lowered.get("resource")
+            )
+            if resource_id and resource_id != sender_resource and resource_id not in selected:
+                selected.append(resource_id)
+    return selected
 
 
 def _human_reply_destination(candidate: dict) -> dict[str, str]:

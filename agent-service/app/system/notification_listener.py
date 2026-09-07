@@ -618,7 +618,9 @@ class NotificationApiListener:
                 value = int(normalized)
         if isinstance(value, int) and not isinstance(value, bool) and value in {0, 1, 2, 3}:
             return value
-        return 1
+        # Legacy framework payloads omitted VisibilityLevel and represented
+        # ordinary public messages; keep them in the shared knowledge scope.
+        return 0 if value is None else 1
 
     @staticmethod
     def _normalize_chat_importance(value: Any) -> int:
@@ -1289,7 +1291,7 @@ class NotificationApiListener:
         visibility_level = self._normalize_visibility_level(payload.get("VisibilityLevel"))
         instance_id = str(payload.get("_SolidSETInstanceID") or "").strip()
         learned_global = bool(generated_by_ia)
-        if not generated_by_ia and visibility_level == 0 and instance_id:
+        if not generated_by_ia and visibility_level == 0:
             learned_global = self.sistema.aprender_actividad(actividad)
         elif not generated_by_ia and visibility_level in {1, 2, 3} and instance_id and channel_id:
             private_ids = (
