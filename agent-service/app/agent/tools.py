@@ -787,7 +787,9 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
     started_at = perf_counter()
     try:
         clean_query = " ".join((query or "").split())
-        agent_resource_id = (config.get("configurable") or {}).get("agent_resource_id")
+        configurable = config.get("configurable") or {}
+        agent_resource_id = configurable.get("agent_resource_id")
+        learning_managed = bool(configurable.get("learning_managed"))
         if not clean_query:
             return "Error: la consulta de búsqueda no puede estar vacía."
         if not settings.WEB_SEARCH_ENABLED:
@@ -841,7 +843,7 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
 
         learned = False
         learning_scheduled = False
-        if settings.WEB_SEARCH_AUTO_LEARN:
+        if settings.WEB_SEARCH_AUTO_LEARN and not learning_managed:
             # Indexar puede requerir varios embeddings de Ollama. Se desacopla de la
             # respuesta para no añadir minutos de espera al usuario.
             _schedule_web_search_learning(clean_query, results, agent_resource_id)

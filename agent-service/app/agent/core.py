@@ -20,6 +20,7 @@ from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
 from app.agent.knowledge import AgentKnowledge
+from app.agent.learning import AgentLearning
 from app.agent.language import LanguageResolver
 from app.agent.sql import AgentSql
 from app.agent.web import AgentWeb
@@ -133,7 +134,9 @@ class MachiningAgent:
         self.tools_map.set_policy(
             "get_db_schema", ToolPolicy(source="solidset_schema", verified=True)
         )
-        self.web = AgentWeb(self.tools_map["google_web_search"])
+        self.learning = AgentLearning()
+        self.tools_map.set_learner(self.learning)
+        self.web = AgentWeb(self.tools_map["google_web_search"], self.learning)
         self.sql = AgentSql(
             self.tools_map["query_sql_server"],
             self.tools_map["get_db_schema"],

@@ -14,6 +14,7 @@ class ToolRegistry(dict[str, Any]):
     def __init__(self, tools: Mapping[str, Any] | None = None):
         super().__init__(tools or {})
         self._policies: dict[str, ToolPolicy] = {}
+        self._learner: Any = None
 
     def register(self, name: str, tool: Any) -> None:
         normalized = str(name or "").strip()
@@ -35,6 +36,9 @@ class ToolRegistry(dict[str, Any]):
             raise KeyError(name)
         self._policies[name] = policy
 
+    def set_learner(self, learner: Any) -> None:
+        self._learner = learner
+
     def invoke(
         self,
         name: str,
@@ -52,6 +56,7 @@ class ToolRegistry(dict[str, Any]):
                 config={
                     "configurable": {
                         "agent_resource_id": context.agent_resource_id,
+                        "learning_managed": policy.learn_result,
                     }
                 },
             )
@@ -67,6 +72,9 @@ class ToolRegistry(dict[str, Any]):
         """Invoke a tool and attach its declarative provenance metadata."""
         raw = self.invoke(name, arguments, context=context)
         policy = self._policies.get(name, ToolPolicy())
+        learned = False
+        if policy.learn_result and self._learner is not None:
+            learned = bool(self._learner.learn(name, raw, context))
         return ToolResult(
             content=str(raw),
             source=policy.source,
@@ -74,6 +82,7 @@ class ToolRegistry(dict[str, Any]):
             metadata={
                 "learn_result": policy.learn_result,
                 "learning_scope": policy.learning_scope,
+                "learning_scheduled": learned,
                 "tool_name": name,
             },
         )

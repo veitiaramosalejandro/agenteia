@@ -15,7 +15,12 @@ class AgentWebTests(unittest.TestCase):
         self.assertEqual(result, '{"answer":"resultado"}')
         tool.invoke.assert_called_once_with(
             {"query": "consulta"},
-            config={"configurable": {"agent_resource_id": "agent-a"}},
+            config={
+                "configurable": {
+                    "agent_resource_id": "agent-a",
+                    "learning_managed": False,
+                }
+            },
         )
 
 
