@@ -20,6 +20,7 @@ from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.identity import AgentIdentityService
 from app.agent.language import LanguageResolver
+from app.agent.contracts import AgentContext
 from app.agent.registry import ToolRegistry
 from app.agent.semantic_text import is_current_officeholder_question
 from app.agent.schema_query_planner import (
@@ -4040,7 +4041,7 @@ class MachiningAgent:
                     # Herramienta de confirmación (Human-in-the-loop)
                     if tool_name == "confirm_large_operation":
                         try:
-                            confirm_msg = self.tools_map[tool_name].invoke(tool_args)
+                            confirm_msg = self.tools_map.invoke(tool_name, tool_args)
                             messages.append(
                                 ToolMessage(
                                     content=str(confirm_msg),
@@ -4066,13 +4067,18 @@ class MachiningAgent:
                         try:
                             if argument_error:
                                 tool_result = argument_error
-                            elif tool_name == "google_web_search":
-                                tool_result = self.tools_map[tool_name].invoke(
-                                    tool_args,
-                                    config={"configurable": {"agent_resource_id": agent_resource_id}},
-                                )
                             else:
-                                tool_result = self.tools_map[tool_name].invoke(tool_args)
+                                tool_result = self.tools_map.invoke(
+                                    tool_name,
+                                    tool_args,
+                                    context=AgentContext(
+                                        agent_resource_id=agent_resource_id,
+                                        solidset_instance_id=solidset_instance_id,
+                                        canal_id=canal_id,
+                                        session_id=session_id,
+                                        metadata=message_metadata or {},
+                                    ),
+                                )
                             messages.append(
                                 ToolMessage(
                                     content=str(tool_result),

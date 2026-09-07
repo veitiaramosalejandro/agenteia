@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from app.agent.contracts import AgentContext
+
 
 class ToolRegistry(dict[str, Any]):
     """Named tool collection preserving the current dict-based public behavior."""
@@ -26,3 +28,24 @@ class ToolRegistry(dict[str, Any]):
 
     def names(self) -> tuple[str, ...]:
         return tuple(self.keys())
+
+    def invoke(
+        self,
+        name: str,
+        arguments: Mapping[str, Any] | None = None,
+        *,
+        context: AgentContext | None = None,
+    ) -> Any:
+        """Invoke a registered LangChain tool with the scoped agent context."""
+        tool = self[name]
+        payload = dict(arguments or {})
+        if name == "google_web_search" and context is not None:
+            return tool.invoke(
+                payload,
+                config={
+                    "configurable": {
+                        "agent_resource_id": context.agent_resource_id,
+                    }
+                },
+            )
+        return tool.invoke(payload)
