@@ -65,11 +65,9 @@ class SolidSETDataAPIConnectorTests(unittest.TestCase):
             _read_legacy_agent_scopes(connection)
 
     def test_legacy_query_matches_data_api_definition(self):
-        import runpy
-        from pathlib import Path
         from app.connectors.agent_scope_query import AGENT_SCOPES_QUERY
-        path = Path(__file__).resolve().parents[2] / "solidset-data-api" / "app" / "queries.py"
-        self.assertEqual(AGENT_SCOPES_QUERY.strip(), runpy.run_path(str(path))["DATASETS"]["agent-scopes"].strip())
+        from app.connectors.queries import DATASETS
+        self.assertEqual(AGENT_SCOPES_QUERY.strip(), DATASETS["agent-scopes"].strip())
 
     def test_legacy_sql_comments_are_removed_before_gateway(self):
         query = """SELECT TOP 1 ID -- legacy note
