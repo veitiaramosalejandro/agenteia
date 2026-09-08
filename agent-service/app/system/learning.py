@@ -1366,7 +1366,7 @@ class SistemaAprendizaje:
         results = self._search_aprendizaje(
             query_vector,
             query_filter={
-                "solidset_instance_id": str(solidset_instance_id),
+                "metadatos.solidset_instance_id": str(solidset_instance_id),
                 "scope": "global_shared",
                 "source": "openai_local_learning",
             },
