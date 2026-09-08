@@ -186,11 +186,12 @@ docker exec machining_ollama_embeddings ollama list
 
 ### Respuesta directa y aprendizaje local compartido
 
-Si un gemelo tiene cualquier asignación activa de proveedor `openai`, sus
-mensajes se envían directamente a ese modelo, independientemente de las
-capacidades de la asignación. Si hay varias, se prioriza `IsDefault`, después
-`Priority` y el código. Un proveedor global sin asignación explícita no activa
-esta ruta. Los agentes sin OpenAI conservan su flujo local.
+Primero se identifica la habilidad de la consulta. Entre las asignaciones activas
+que ofrecen esa habilidad se elige la de menor `Priority`; el código resuelve
+empates. Si ninguna coincide, se utiliza la asignación `IsDefault`. La ruta directa
+OpenAI solo se activa si esa selección corresponde a OpenAI: una asignación
+`external_web` no desplaza al modelo local para consultas generales, código o SQL.
+Un proveedor global sin asignación explícita no activa esta ruta.
 
 La respuesta textual de OpenAI se entrega sin clasificación ni reescritura
 local. En consejos se conserva el contrato de array JSON de la API. Esta ruta

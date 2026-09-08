@@ -117,6 +117,8 @@ class SolidSETOrchestrator:
             capability = "external_web"
         else:
             capability = "general"
+        # Keep the capability already resolved before the direct-provider path.
+        capability = metadata.get("model_capability") or capability
         metadata["model_capability"] = capability
         print(
             f"🧭 LangGraph route={route} capability={capability} "

@@ -18,6 +18,7 @@ from app.connectors.db_client import _postgres_connection
 from app.llm import create_chat_model, provider_config_from_record
 from app.llm.secrets import decrypt_api_key
 from app.llm.text import response_text
+from app.llm.routing import requested_capability
 
 _lock = threading.Lock()
 _ready = False
@@ -125,7 +126,7 @@ def ensure_schema():
         _ready = True
 
 
-def assigned_openai(resource_id):
+def assigned_openai(resource_id, capability='general'):
     if not resource_id:
         return None
     resource_id = UUID(str(resource_id))
@@ -135,10 +136,16 @@ def assigned_openai(resource_id):
             JOIN public."SysLLMProviderConfiguration" p ON p."ID"=m."IDProviderConfiguration"
             JOIN public."SysResourceIA" r ON r."IDResource"=m."IDResource"
             WHERE m."IDResource"=%s AND m.active AND p.active AND r.active
-              AND lower(p."Provider")='openai'
-            ORDER BY m."IsDefault" DESC,m."Priority",p."Code" LIMIT 1''', (resource_id,)).fetchone()
+              AND (m."Capabilities" ? %s OR m."IsDefault")
+            ORDER BY CASE WHEN m."Capabilities" ? %s THEN 0 ELSE 1 END,
+                     m."Priority", p."Code" LIMIT 1''',
+            (resource_id, capability, capability)).fetchone()
     if row:
         row = dict(row)
+        print(f'AGENT_MODEL_ROUTE agent={resource_id} capability={capability} '
+              f'provider={row["Provider"]} model={row["Model"]}', flush=True)
+        if str(row.get('Provider') or '').lower() != 'openai':
+            return None
         row['APIKey'] = decrypt_api_key(row.get('APIKey'))
     return row
 
@@ -204,7 +211,9 @@ def _twin_context(metadata):
 
 def answer_direct(user_text, metadata, session_id):
     """None means no explicit OpenAI assignment; failures never fall back to Ollama."""
-    record = assigned_openai(metadata.get('agent_resource_id'))
+    capability = requested_capability(user_text, metadata)
+    metadata['model_capability'] = capability
+    record = assigned_openai(metadata.get('agent_resource_id'), capability)
     if record is None:
         return None
     if not isinstance(user_text, str) or not user_text.strip() or len(user_text) > 32000:

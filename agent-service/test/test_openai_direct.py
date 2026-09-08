@@ -123,6 +123,9 @@ class DirectRoutingTests(unittest.TestCase):
 
 class DirectLearningIntegrationTests(unittest.TestCase):
     def setUp(self):
+        learned = patch.object(service, '_learned_answer', return_value=None)
+        learned.start()
+        self.addCleanup(learned.stop)
         self.db = _postgres_connection()
         self.addCleanup(self.db.close)
         self.addCleanup(self.db.rollback)
@@ -137,8 +140,8 @@ class DirectLearningIntegrationTests(unittest.TestCase):
         for code, provider in [('remote','openai'),('local','ollama')]:
             self.db.execute(self.sql('''INSERT INTO public."SysLLMProviderConfiguration"
                 ("Code","Name","Provider","Model") VALUES (%s,%s,%s,'test-model')'''), (code,code,provider))
-        self.db.execute(self.sql('''INSERT INTO public."SysAgentIAModel" ("IDResource","IDProviderConfiguration","Capabilities")
-            SELECT %s,"ID",'["external_web"]' FROM public."SysLLMProviderConfiguration" WHERE "Code"='remote' '''), (self.resource,))
+        self.db.execute(self.sql('''INSERT INTO public."SysAgentIAModel" ("IDResource","IDProviderConfiguration","Capabilities","IsDefault")
+            SELECT %s,"ID",'["general"]',true FROM public."SysLLMProviderConfiguration" WHERE "Code"='remote' '''), (self.resource,))
         owner = self
         class Proxy:
             def execute(self, query, params=None):
@@ -157,7 +160,7 @@ class DirectLearningIntegrationTests(unittest.TestCase):
     def rows(self):
         return self.db.execute(self.sql('SELECT * FROM public."OpenAILocalLearning"')).fetchall()
 
-    def test_specialist_assignment_now_routes_all_messages_and_deduplicates_learning(self):
+    def test_default_openai_assignment_deduplicates_learning(self):
         model=Mock()
         model.invoke.return_value=AIMessage(content=[{'type':'text','text':'Respuesta original.'}])
         with patch.object(service,'create_chat_model',return_value=model):
@@ -167,6 +170,26 @@ class DirectLearningIntegrationTests(unittest.TestCase):
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0]['answer'],'Respuesta original.')
         self.assertEqual(rows[0]['status'],'pending')
+
+    def test_specialist_does_not_displace_local_default(self):
+        self.db.execute(self.sql('''UPDATE public."SysAgentIAModel"
+            SET "IsDefault"=false,"Capabilities"='["external_web"]',"Priority"=15'''))
+        self.db.execute(self.sql('''INSERT INTO public."SysAgentIAModel"
+            ("IDResource","IDProviderConfiguration","Capabilities","IsDefault","Priority")
+            SELECT %s,"ID",'["general","external_web","coding","sql"]',true,100
+            FROM public."SysLLMProviderConfiguration" WHERE "Code"='local' '''), (self.resource,))
+        with patch.object(service, 'create_chat_model') as create:
+            for question, capability in [('Olá', 'general'), ('Como criar uma API GraphQL?', 'coding'),
+                                         ('Escribe una consulta SQL', 'sql')]:
+                metadata = dict(self.metadata)
+                self.assertIsNone(service.answer_direct(question, metadata, 's'))
+                self.assertEqual(metadata['model_capability'], capability)
+            create.assert_not_called()
+        selected = service.assigned_openai(self.resource, 'external_web')
+        self.assertEqual(selected['Code'], 'remote')
+        self.db.execute(self.sql('''UPDATE public."SysAgentIAModel" SET active=false
+            WHERE "IDProviderConfiguration"=(SELECT "ID" FROM public."SysLLMProviderConfiguration" WHERE "Code"='remote')'''))
+        self.assertIsNone(service.assigned_openai(self.resource, 'external_web'))
 
     def test_remote_failure_does_not_generate_locally_or_enqueue(self):
         model=Mock();model.invoke.side_effect=TimeoutError()

@@ -32,11 +32,13 @@ class AgentKnowledge:
         *,
         agent_resource_id: Optional[str] = None,
         canal_id: Optional[str] = None,
+        min_score: float = 0.0,
     ) -> str:
         return self.backend.consultar_documentacion(
             query,
             agent_resource_id=agent_resource_id,
             canal_id=canal_id,
+            min_score=min_score,
         )
 
     def search_web_memory(
