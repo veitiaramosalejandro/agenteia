@@ -1,4 +1,15 @@
 from pydantic import BaseModel
+from typing import Any
+
+
+class SolidSETCatalogPage(BaseModel):
+    instanceCode: str
+    rows: list[dict[str, Any]]
+    rowCount: int
+    offset: int
+    limit: int
+    hasMore: bool
+    nextOffset: int | None = None
 
 
 class _BaseSyncResponse(BaseModel):

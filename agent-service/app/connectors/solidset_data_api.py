@@ -196,6 +196,40 @@ def _read_legacy_agent_scopes(connection: DataAPIConnection) -> list[dict[str, A
         return rows
 
 
+def read_catalog_page(configuration: dict[str, Any], dataset: str, *, offset: int, limit: int) -> dict[str, Any]:
+    """Read one bounded page of public catalog fields through the instance gateway."""
+    fields = {
+        "workrooms": ("IDWorkRoom", "Code", "Name", "Description"),
+        "resources": ("ResourceId", "DisplayName", "ActiveIDLogin2Resource", "IDAgentResource", "FullName"),
+    }
+    if dataset not in fields or offset < 0 or not 1 <= limit <= 1000:
+        raise ValueError("Invalid catalog or pagination")
+    try:
+        with DataAPIConnection(configuration, as_dict=True) as connection:
+            page_size = min(limit, max(1, connection.max_rows))
+            response = connection.client.get(
+                f"/api/v1/datasets/{dataset}", params={"offset": offset, "limit": page_size}
+            )
+            response.raise_for_status()
+            payload = response.json()
+        rows = payload["rows"]
+        effective_limit = payload.get("limit", page_size)
+        if (not isinstance(rows, list) or not isinstance(effective_limit, int)
+                or not 1 <= effective_limit <= page_size or len(rows) > effective_limit
+                or not all(isinstance(row, dict) for row in rows)):
+            raise ValueError("Invalid catalog page")
+        has_more = payload.get("hasMore", False)
+        if not isinstance(has_more, bool) or (has_more and not rows):
+            raise ValueError("Invalid catalog pagination")
+        return {
+            "rows": [{field: row.get(field) for field in fields[dataset]} for row in rows],
+            "rowCount": len(rows), "offset": offset, "limit": effective_limit,
+            "hasMore": has_more, "nextOffset": offset + len(rows) if has_more else None,
+        }
+    except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
+        raise SolidSETDataAPIError("Não foi possível ler o catálogo SolidSET.") from exc
+
+
 def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, Any]]:
     with DataAPIConnection(configuration, as_dict=True) as connection:
         rows: list[dict[str, Any]] = []

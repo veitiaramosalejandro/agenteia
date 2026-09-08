@@ -21,6 +21,8 @@ from app.connectors.db_client import (
     configure_agent_workroom,
     get_agent_knowledge,
     get_solidset_instance,
+    get_agent_scope_profile,
+    get_active_agent_prompt,
     save_agent_knowledge,
     touch_agent_session,
 )
@@ -113,14 +115,12 @@ async def handle_multi_agent_dialogue(
         )
 
     solidset_instance = None
-    if request.SendToSolidSET:
-        if not str(request.SolidSETInstanceCode or "").strip():
-            raise HTTPException(
-                status_code=422,
-                detail="SolidSETInstanceCode é obrigatório quando SendToSolidSET=true.",
-            )
+    if request.SendToSolidSET and not str(request.SolidSETInstanceCode or "").strip():
+        raise HTTPException(status_code=422,
+            detail="SolidSETInstanceCode é obrigatório quando SendToSolidSET=true.")
+    if str(request.SolidSETInstanceCode or "").strip():
         solidset_instance = get_solidset_instance(
-            code=str(request.SolidSETInstanceCode).strip()
+            code=str(request.SolidSETInstanceCode).strip(), source_ip=None
         )
         if solidset_instance is None:
             raise HTTPException(
@@ -152,7 +152,8 @@ async def handle_multi_agent_dialogue(
             )
         agent_name = _agent_visible_name(configured_agent)
         isolated_session = (
-            f"solidset:agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
+            f"solidset:{solidset_instance['ID'] if solidset_instance else 'unscoped'}:"
+            f"agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
             f"conversation:{conversation_id}"
         )
         private_knowledge = await asyncio.to_thread(
@@ -171,6 +172,15 @@ async def handle_multi_agent_dialogue(
             agent_resource_id,
             request.IDWorkRoom,
         )
+        profile = None
+        published_prompt = None
+        if solidset_instance:
+            profile = await asyncio.to_thread(
+                get_agent_scope_profile, solidset_instance["ID"], agent_resource_id
+            )
+            published_prompt = await asyncio.to_thread(
+                get_active_agent_prompt, solidset_instance["ID"], agent_resource_id
+            )
         response_text = await asyncio.to_thread(
             _invoke_orchestrator_for_instance,
             str(solidset_instance["Code"]) if solidset_instance else "",
@@ -180,7 +190,14 @@ async def handle_multi_agent_dialogue(
             canal_id=str(request.IDWorkRoom),
             message_metadata={
                 "agent_resource_id": agent_resource_id,
+                "agent_identity_id": agent_identity_id,
                 "agent_name": agent_name,
+                "sender_resource_id": str(request.SenderResourceId or ""),
+                "resource_id": str(request.SenderResourceId or ""),
+                "agent_profile": profile or {},
+                "agent_system_prompt": str((published_prompt or {}).get("SystemPrompt") or ""),
+                "locale": str((solidset_instance or {}).get("Locale") or "pt-PT"),
+                "time_zone": str((solidset_instance or {}).get("TimeZone") or "Europe/Lisbon"),
                 "agent_knowledge": private_knowledge,
                 "agent_reinforcement": reinforcement,
                 "workroom_id": str(request.IDWorkRoom),

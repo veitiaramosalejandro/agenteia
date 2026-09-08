@@ -180,10 +180,15 @@ class MultiAgentDialogueRequest(BaseModel):
     IDWorkRoom: uuid.UUID
     IDSession: Optional[uuid.UUID] = None
     RawMessage: str = Field(..., min_length=1, max_length=5000)
-    SelectedAgentResourceIds: list[uuid.UUID]
-    SenderResourceId: Optional[uuid.UUID] = None
+    SelectedAgentResourceIds: list[uuid.UUID] = Field(
+        ..., description="IDs dos recursos humanos cujos gémeos digitais devem responder; devem estar ativos no canal."
+    )
+    SenderResourceId: Optional[uuid.UUID] = Field(
+        None, description="Recurso do interlocutor que envia a pergunta; não seleciona o gémeo que responde."
+    )
     SendToSolidSET: bool = False
-    SolidSETInstanceCode: Optional[str] = Field(None, max_length=80)
+    SolidSETInstanceCode: Optional[str] = Field(None, max_length=80,
+        description="Instância para contexto, perfil e plantilla do agente, mesmo com SendToSolidSET=false.")
 
     class Config:
         extra = "forbid"

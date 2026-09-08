@@ -55,11 +55,7 @@ def _framework_message_chat_id(
     ).strip()
 
 
-@router.post(
-    "/api/v1/agent/notification/framework-message",
-    response_model=SendMessageResultDTO,
-    status_code=status.HTTP_202_ACCEPTED,
-)
+@router.post("/api/v1/agent/notification/framework-message", response_model=SendMessageResultDTO,  status_code=status.HTTP_202_ACCEPTED)
 async def receive_framework_notification(
     message: Annotated[
         FrameworkMessageDTO,

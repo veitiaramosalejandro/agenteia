@@ -401,11 +401,29 @@ GET  /api/v1/agent/responses/queue/status
 ```http
 POST /api/v1/agent/solidset/instances
 POST /api/v1/agent/solidset/instances/{code}/test-connection
+GET  /api/v1/agent/solidset/resources?instanceCode=beta-solidset&offset=0&limit=100
+GET  /api/v1/agent/solidset/workrooms?instanceCode=beta-solidset&offset=0&limit=100
 POST /api/v1/agent/solidset/resources/sync
 POST /api/v1/agent/solidset/logins/sync
 POST /api/v1/agent/solidset/workrooms/sync
 POST /api/v1/agent/solidset/chat-workroom/sync
 ```
+
+Los GET consultan una página de la Data API de la instancia indicada, sin sincronizar
+ni modificar datos. `instanceCode` es obligatorio; `offset` comienza en 0 y `limit`
+admite de 1 a 1000 (100 por defecto). La respuesta contiene `instanceCode`, `rows`,
+`rowCount`, `offset`, `limit`, `hasMore` y `nextOffset`. Utiliza `nextOffset` para
+leer la siguiente página. Una instancia inexistente devuelve 404; una Data API
+inactiva o no disponible devuelve 503.
+
+El diálogo `POST /api/v1/agent/solidset/multi-agent/dialogue` distingue
+`SenderResourceId` (interlocutor) de `SelectedAgentResourceIds` (recursos humanos
+cuyos gemelos responden). Cada respuesta recibe la identidad y el conocimiento
+privado del gemelo seleccionado en `IDWorkRoom`. Incluye `SolidSETInstanceCode`
+para cargar también su perfil y plantilla publicada; se utiliza incluso con
+`SendToSolidSET=false`. Las sesiones se separan por instancia, gemelo, canal y
+conversación. Las respuestas con contexto personal no se reutilizan ni se guardan
+en la caché global de respuestas; el diálogo conserva su aprendizaje privado.
 
 ### Histórico
 
