@@ -357,22 +357,29 @@ async def _ciclo_notificaciones_api() -> None:
 async def startup_db_learning() -> None:
     """Lanza la tarea de aprendizaje continuo desde la base de datos."""
     if getattr(app.state, "db_study_task", None) is None:
-        try:
-            await asyncio.to_thread(ensure_llm_provider_schema)
-            await asyncio.to_thread(ensure_solidset_agent_resource_schema)
-            await asyncio.to_thread(ensure_agent_model_schema)
-            await asyncio.to_thread(ensure_agent_response_audit_schema)
-            if settings.TOOL_AUDIT_ENABLED:
-                await asyncio.to_thread(ensure_agent_tool_audit_schema)
-            await asyncio.to_thread(ensure_historical_schema)
-            quarantined = await asyncio.to_thread(quarantine_legacy_generated_knowledge)
-            if quarantined:
-                print(
-                    "🧹 Conocimiento legado generado por IA puesto en cuarentena "
-                    f"rows={quarantined}"
-                )
-        except psycopg.Error as exc:
-            print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
+        max_schema_attempts = 10
+        for schema_attempt in range(max_schema_attempts):
+            try:
+                await asyncio.to_thread(ensure_llm_provider_schema)
+                await asyncio.to_thread(ensure_solidset_agent_resource_schema)
+                await asyncio.to_thread(ensure_agent_model_schema)
+                await asyncio.to_thread(ensure_agent_response_audit_schema)
+                if settings.TOOL_AUDIT_ENABLED:
+                    await asyncio.to_thread(ensure_agent_tool_audit_schema)
+                await asyncio.to_thread(ensure_historical_schema)
+                quarantined = await asyncio.to_thread(quarantine_legacy_generated_knowledge)
+                if quarantined:
+                    print(
+                        "🧹 Conocimiento legado generado por IA puesto en cuarentena "
+                        f"rows={quarantined}"
+                    )
+                break
+            except Exception as exc:
+                if schema_attempt < max_schema_attempts - 1:
+                    print(f"⏳ Esperando inicio de PostgreSQL (intento {schema_attempt + 1}/{max_schema_attempts}): {exc}")
+                    await asyncio.sleep(2.0)
+                else:
+                    print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
         app.state.startup_connectivity = _run_startup_connectivity_checks()
         _log_startup_connectivity(app.state.startup_connectivity)
         if app.state.startup_connectivity.get("all_ok"):

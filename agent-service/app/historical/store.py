@@ -5,17 +5,13 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
-from psycopg.rows import dict_row
 
 from app.config import settings
+from app.connectors.db_client import _postgres_connection
 
 
 def connection() -> psycopg.Connection:
-    return psycopg.connect(
-        host=settings.POSTGRES_HOST, port=settings.POSTGRES_PORT,
-        user=settings.POSTGRES_USER, password=settings.POSTGRES_PASSWORD,
-        dbname=settings.POSTGRES_DB, row_factory=dict_row,
-    )
+    return _postgres_connection()
 
 
 def ensure_schema() -> None:

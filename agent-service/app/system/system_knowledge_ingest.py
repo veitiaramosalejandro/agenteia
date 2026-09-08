@@ -134,12 +134,7 @@ TEXT_LABELS = {
 }
 
 
-def _pg_connection() -> psycopg.Connection:
-    return psycopg.connect(
-        host=settings.POSTGRES_HOST, port=settings.POSTGRES_PORT,
-        user=settings.POSTGRES_USER, password=settings.POSTGRES_PASSWORD,
-        dbname=settings.POSTGRES_DB, row_factory=dict_row,
-    )
+from app.connectors.db_client import _postgres_connection as _pg_connection
 
 
 def ensure_system_knowledge_schema() -> None:

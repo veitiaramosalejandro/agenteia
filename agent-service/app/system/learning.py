@@ -33,7 +33,9 @@ class SistemaAprendizaje:
             base_url=settings.EMBEDDING_BASE_URL,
             model=embedding_model
         )
+        self._collection_ready = False
         self._embeddings_enabled = True
+        self._embeddings_disabled_at = 0
         self._embeddings_disabled_reason = None
         self.redis_cache = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
         self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL)
@@ -48,9 +50,19 @@ class SistemaAprendizaje:
         self._ensure_collection()
 
     def _embed_query_safe(self, text: str, context: str) -> Optional[List[float]]:
-        """Genera embedding con protección para evitar bloqueos repetidos si Ollama falla."""
+        """Genera embedding con protección y recuperación automática tras enfriamiento (cooldown)."""
+        now = time.time()
+        disabled_at = getattr(self, "_embeddings_disabled_at", 0)
         if not getattr(self, "_embeddings_enabled", True):
-            return None
+            if now - disabled_at > 30:  # Intenta re-habilitar tras 30s de enfriamiento
+                self._embeddings_enabled = True
+                self._embeddings_disabled_reason = None
+            else:
+                return None
+
+        if not getattr(self, "_collection_ready", False):
+            self._ensure_collection()
+
         normalized = " ".join((text or "").strip().split())
         cache_key = (
             f"{settings.EMBEDDING_REDIS_CACHE_PREFIX}:"
@@ -79,8 +91,9 @@ class SistemaAprendizaje:
             return vector
         except Exception as e:
             self._embeddings_enabled = False
+            self._embeddings_disabled_at = time.time()
             self._embeddings_disabled_reason = str(e)
-            print(f"⚠️ Embeddings deshabilitados temporalmente por error en Ollama ({context}): {e}")
+            print(f"⚠️ Embeddings deshabilitados temporalmente (cooldown 30s) por error en Ollama ({context}): {e}")
             return None
 
     def _increment_retry_metric(self, metric_key: str, context_key: str):
@@ -100,12 +113,17 @@ class SistemaAprendizaje:
         self.sql_retry_stats = {"connect_retries": 0, "query_retries": 0, "connect_by_context": {}, "query_by_context": {}, "last_retry_at": None}
         return previous
 
-    def _ensure_collection(self):
+    def _ensure_collection(self) -> bool:
         """Asegura que la colección de aprendizaje exista en Qdrant."""
+        if getattr(self, "_collection_ready", False):
+            return True
         try:
             ensure_vector_collection(self.qdrant, self.collection, self.embeddings)
+            self._collection_ready = True
+            return True
         except Exception as e:
             print(f"⚠️ Error asegurando colección '{self.collection}': {e}")
+            return False
 
     def _normalize_learning_text(self, text: str) -> str:
         text = (text or "").lower().strip()

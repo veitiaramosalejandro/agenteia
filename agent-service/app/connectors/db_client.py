@@ -5,6 +5,7 @@ from uuid import UUID
 import hashlib
 import json
 import threading
+import time
 import psycopg
 from psycopg.rows import dict_row
 
@@ -18,16 +19,39 @@ _agent_default_model_schema_lock = threading.Lock()
 _agent_default_model_schema_ready = False
 
 
-def _postgres_connection() -> psycopg.Connection:
-    """Abre una conexión corta a la base PostgreSQL de la aplicación."""
-    return psycopg.connect(
-        host=settings.POSTGRES_HOST,
-        port=settings.POSTGRES_PORT,
-        user=settings.POSTGRES_USER,
-        password=settings.POSTGRES_PASSWORD,
-        dbname=settings.POSTGRES_DB,
-        row_factory=dict_row,
-    )
+def _postgres_connection(max_retries: int = 10, retry_delay: float = 1.5) -> psycopg.Connection:
+    """Abre una conexión corta a la base PostgreSQL de la aplicación, reintentando durante el arranque."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            return psycopg.connect(
+                host=settings.POSTGRES_HOST,
+                port=settings.POSTGRES_PORT,
+                user=settings.POSTGRES_USER,
+                password=settings.POSTGRES_PASSWORD,
+                dbname=settings.POSTGRES_DB,
+                row_factory=dict_row,
+            )
+        except psycopg.OperationalError as exc:
+            last_exc = exc
+            msg = str(exc).lower()
+            transient = any(
+                term in msg
+                for term in (
+                    "starting up",
+                    "connection refused",
+                    "could not connect",
+                    "connection failed",
+                    "timeout",
+                    "errno 111",
+                )
+            )
+            if transient and attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                raise exc
+    if last_exc:
+        raise last_exc
 
 
 def ensure_solidset_instance_location_schema() -> None:
