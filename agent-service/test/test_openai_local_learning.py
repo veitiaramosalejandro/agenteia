@@ -26,7 +26,7 @@ class TestOpenAILocalLearning(unittest.TestCase):
 
         result = service.consultar_respuesta_openai(
             "Poderia dar-me uma comparação entre REST e GraphQL?",
-            agent_resource_id="agent-1",
+            solidset_instance_id="instance-1",
             min_score=0.7,
         )
 
@@ -47,7 +47,7 @@ class TestOpenAILocalLearning(unittest.TestCase):
 
         result = service.consultar_respuesta_openai(
             "Poderia dar-me uma comparação entre REST e GraphQL?",
-            agent_resource_id="agent-1",
+            solidset_instance_id="instance-1",
             min_score=0.7,
         )
 
@@ -63,7 +63,7 @@ class TestOpenAILocalLearning(unittest.TestCase):
 
         result = service.consultar_respuesta_openai(
             "Pergunta atual",
-            agent_resource_id="agent-1",
+            solidset_instance_id="instance-1",
         )
 
         self.assertEqual(result, "")
