@@ -144,8 +144,7 @@ def assigned_openai(resource_id):
 
 
 def enqueue_learning(record, question, answer, metadata, session_id):
-    if record.get('TrainingMode') == 'disabled' or not record.get('LearnFromSystem', True):
-        return
+    """Persist every successful OpenAI exchange for instance-global learning."""
     # Shared within the originating SolidSET instance, never across tenants.
     instance = metadata.get('solidset_instance_id')
     if not instance:
@@ -162,15 +161,15 @@ def enqueue_learning(record, question, answer, metadata, session_id):
 
 
 def _learned_answer(user_text, metadata):
-    """Return a matching OpenAI exchange before making another remote call."""
-    if not metadata.get('agent_resource_id'):
+    """Return an exact prior OpenAI exchange shared inside one SolidSET instance."""
+    if not metadata.get('solidset_instance_id'):
         return None
     try:
         from app.system.learning import SistemaAprendizaje
 
         return SistemaAprendizaje().consultar_respuesta_openai(
             user_text,
-            agent_resource_id=str(metadata['agent_resource_id']),
+            solidset_instance_id=str(metadata['solidset_instance_id']),
             min_score=settings.BUSINESS_RAG_MIN_SCORE,
         ) or None
     except Exception as exc:
@@ -185,13 +184,17 @@ def answer_direct(user_text, metadata, session_id):
         return None
     if not isinstance(user_text, str) or not user_text.strip() or len(user_text) > 32000:
         raise ValueError('Invalid direct message length')
-    if record.get('TrainingMode') != 'disabled' and record.get('LearnFromSystem', True):
-        learned = _learned_answer(user_text, metadata)
-        if learned:
-            compatible = _compatible_learned_answer(learned, user_text, metadata)
-            if compatible is not None:
-                print(f'OPENAI_LOCAL_LEARNING hit agent={metadata.get("agent_resource_id")}', flush=True)
-                return compatible
+    learned = _learned_answer(user_text, metadata)
+    if learned:
+        compatible = _compatible_learned_answer(learned, user_text, metadata)
+        if compatible is not None:
+            print(
+                'OPENAI_GLOBAL_LEARNING hit '
+                f'instance={metadata.get("solidset_instance_id")} '
+                f'agent={metadata.get("agent_resource_id")}',
+                flush=True,
+            )
+            return compatible
     language = metadata.get('response_language') or metadata.get('resolved_language') or metadata.get('locale') or 'the language of the user'
     instructions = (
         f'Reply in {language}. Answer the user directly. Do not claim access to internal '
@@ -238,8 +241,7 @@ def process_one(learning):
                 id=job['id'], recurso_humano_id='sistema', canal_id='',
                 tipo='openai_local_learning', timestamp=job['created_at'],
                 descripcion='CONTENIDO GENERADO POR IA, NO VERIFICADO.\n' + summary,
-                metadatos={'source':'openai_local_learning', 'knowledge_scope':'agent',
-                    'agent_resource_id':str(job['resource_id']),
+                metadatos={'source':'openai_local_learning', 'knowledge_scope':'global_shared',
                     'question':job['question'], 'answer':job['answer'],
                     'solidset_instance_id':str(job['instance_id']), 'origin_agent_resource_id':str(job['resource_id']),
                     'model':job['model'], 'verified':False, 'learning_id':job['id']},
