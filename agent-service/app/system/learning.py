@@ -1356,18 +1356,18 @@ class SistemaAprendizaje:
         self,
         query: str,
         *,
-        agent_resource_id: str,
+        solidset_instance_id: str,
         min_score: float = 0.0,
     ) -> str:
-        """Return a prior OpenAI answer for a matching question, if available."""
+        """Return an exact OpenAI answer shared by twins in the same instance."""
         query_vector = self._embed_query_safe(query, context="consultar_respuesta_openai")
-        if query_vector is None or not agent_resource_id:
+        if query_vector is None or not solidset_instance_id:
             return ""
         results = self._search_aprendizaje(
             query_vector,
             query_filter={
-                "agent_resource_id": str(agent_resource_id),
-                "scope": "agent",
+                "solidset_instance_id": str(solidset_instance_id),
+                "scope": "global_shared",
                 "source": "openai_local_learning",
             },
             limit=8,
