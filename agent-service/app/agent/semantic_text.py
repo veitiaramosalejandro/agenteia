@@ -96,7 +96,15 @@ _CURRENT_ROLE_FORMS = tuple(
 def is_current_officeholder_question(value: object) -> bool:
     """Recognize multilingual questions asking who currently holds a role."""
     normalized = normalized_text(value)
-    if not _QUESTION_START.match(normalized):
+    if not (_QUESTION_START.match(normalized) or re.search(
+        r"\b(?:certeza|seguro|segura|sure|confirma|confirmar|verifica|atual|actual|current)\b",
+        normalized,
+    )):
         return False
     compact = compact_text(normalized)
+    return any(role in compact for role in _CURRENT_ROLE_FORMS)
+
+
+def mentions_public_role(value: object) -> bool:
+    compact = compact_text(value)
     return any(role in compact for role in _CURRENT_ROLE_FORMS)

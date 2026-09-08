@@ -696,6 +696,10 @@ def _related_guidance_fallback(context: str, language: str) -> str:
 def _extract_learnable_suggestion_fact(text: str) -> str:
     """Selects declarative, verifiable user facts; excludes drafting commands."""
     candidate = _suggestion_request_text(text)
+    from app.agent.semantic_text import mentions_public_role
+
+    if mentions_public_role(candidate):
+        return ""
     normalized = " ".join(candidate.casefold().split())
     if not 12 <= len(candidate) <= 2000 or "?" in candidate or "¿" in candidate:
         return ""
@@ -1574,6 +1578,7 @@ async def _process_chat_question_response_suggestion(
             agent.answer_with_assigned_openai, effective_request_text, metadata, scoped_session
         )
         if direct_answer is not None:
+            suggestion_count = int(metadata.get("response_suggestion_count") or suggestion_count)
             raw_suggestions = direct_answer
             suggestions = json.loads(raw_suggestions)
             if (not isinstance(suggestions, list) or len(suggestions) != suggestion_count

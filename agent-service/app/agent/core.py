@@ -2900,6 +2900,11 @@ class MachiningAgent:
                 tool_allowlist = set()
         elif general_conversation_mode:
             tool_allowlist = set()
+        elif self._is_current_officeholder_query(user_text):
+            external_query_mode = True
+            agent_rag_context = ""
+            system_snapshot_context = ""
+            tool_allowlist = {"google_web_search"}
         elif agent_rag_context or system_snapshot_context:
             # A relevant durable fact owned by this agent takes precedence over
             # sending an internal/personal question to public web search.
@@ -4012,6 +4017,13 @@ class MachiningAgent:
                             )
                 except Exception as exc:
                     print(f"⚠️ Falló la búsqueda web previa: {exc}")
+
+            if not last_tool_result:
+                response_text = self._unverified_concrete_answer(
+                    str(message_metadata.get("response_language") or "es")
+                )
+                if response_suggestion_mode:
+                    response_text = json.dumps([response_text], ensure_ascii=False)
 
         # La búsqueda hospedada ya devuelve una síntesis citada. Para preguntas
         # externas concretas, volver a pedir a Ollama que copie ese dato añade

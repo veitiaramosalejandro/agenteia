@@ -211,6 +211,85 @@ def _twin_context(metadata):
 
 def answer_direct(user_text, metadata, session_id):
     """None means no explicit OpenAI assignment; failures never fall back to Ollama."""
+    from app.services.auto_reply import _is_external_information_query
+
+    from app.agent.semantic_text import normalized_text
+
+    if normalized_text(user_text) in {
+        'tem a certeza', 'tem certeza', 'tens a certeza', 'tens certeza',
+        'estas seguro', 'estas segura', 'seguro', 'are you sure',
+    }:
+        try:
+            from langchain_community.chat_message_histories import RedisChatMessageHistory
+
+            history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
+            for message in reversed(list(history.messages)):
+                if isinstance(message, HumanMessage) and _is_external_information_query(message.content):
+                    user_text = message.content
+                    break
+        except Exception as exc:
+            print(f'OPENAI_RECHECK_CONTEXT_FAILED type={type(exc).__name__}', flush=True)
+
+    # Resolve live questions before model assignment or historical answer reuse.
+    if _is_external_information_query(user_text) or metadata.get('public_research'):
+        from app.connectors.db_client import get_agent_model_configurations
+        from app.agent.tools import google_web_search
+
+        resource_id = metadata.get('agent_resource_id')
+        permissions = metadata.get('tool_permissions')
+        if permissions is None:
+            permissions = set()
+            for configuration in get_agent_model_configurations(resource_id) if resource_id else []:
+                values = configuration.get('Capabilities') or []
+                if isinstance(values, str):
+                    try:
+                        values = json.loads(values)
+                    except ValueError:
+                        values = [values]
+                if isinstance(values, list):
+                    permissions.update(str(value).strip().lower() for value in values)
+        language = str(metadata.get('response_language') or metadata.get('locale') or 'pt').lower()
+        unavailable = (
+            'No pude verificar este dato en fuentes actuales; no puedo confirmarlo.'
+            if language.startswith('es') else
+            'I could not verify this fact against current sources; I cannot confirm it.'
+            if language.startswith('en') else
+            'Não consegui verificar este dado em fontes atuais; não posso confirmá-lo.'
+        )
+        answer = unavailable
+        if 'external_web' in permissions:
+            try:
+                research = metadata.get('public_research') or {}
+                if research.get('status') == 'completed':
+                    sources = research.get('sources') or []
+                    if sources:
+                        answer = str(sources[0].get('summary') or unavailable)
+                        answer += '\n\n' + '\n'.join(str(row['url']) for row in sources[:3])
+                else:
+                    raw = google_web_search.invoke(
+                        {'query': user_text},
+                        config={'configurable': {'agent_resource_id': resource_id}},
+                    )
+                    payload = json.loads(str(raw))
+                    if payload.get('answer') and payload.get('results'):
+                        answer = payload['answer']
+                        answer += '\n\n' + '\n'.join(row['url'] for row in payload['results'][:3])
+            except Exception as exc:
+                print(f'OPENAI_PUBLIC_RESEARCH_FAILED type={type(exc).__name__}', flush=True)
+        if metadata.get('response_suggestion_mode'):
+            metadata['response_suggestion_count'] = 1
+            result = json.dumps([answer], ensure_ascii=False)
+        else:
+            result = answer
+        try:
+            from langchain_community.chat_message_histories import RedisChatMessageHistory
+
+            history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
+            history.add_user_message(user_text)
+            history.add_ai_message(answer)
+        except Exception as exc:
+            print(f'OPENAI_PUBLIC_HISTORY_FAILED type={type(exc).__name__}', flush=True)
+        return result
     capability = requested_capability(user_text, metadata)
     metadata['model_capability'] = capability
     record = assigned_openai(metadata.get('agent_resource_id'), capability)

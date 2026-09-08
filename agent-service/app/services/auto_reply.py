@@ -798,7 +798,9 @@ def _is_external_information_query(raw_text: str) -> bool:
             flags=re.IGNORECASE,
         )
     )
-    return current_officeholder or any(term in text for term in external_terms)
+    from app.agent.semantic_text import is_current_officeholder_question
+
+    return current_officeholder or is_current_officeholder_question(raw_text) or any(term in text for term in external_terms)
 
 
 def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
@@ -1325,6 +1327,10 @@ def _learn_agent_interaction(
     response_text: str,
 ) -> None:
     """Guarda aprendizaje etiquetado; nunca queda visible para otro agente."""
+    from app.agent.semantic_text import mentions_public_role
+
+    if _is_external_information_query(user_text) or mentions_public_role(user_text):
+        return
     if not agent_learning_enabled(agent_resource_id, "system"):
         return
     digest = hashlib.sha256(
