@@ -176,12 +176,34 @@ class DirectLearningIntegrationTests(unittest.TestCase):
         self.assertEqual(create.call_count,1)
         self.assertEqual(self.rows(),[])
 
-    def test_disabled_learning_still_returns_remote_answer(self):
+    def test_disabled_training_still_persists_global_learning(self):
         self.db.execute(self.sql('UPDATE public."SysAgentIAModel" SET "TrainingMode"=\'disabled\''))
         model=Mock();model.invoke.return_value=AIMessage(content='Respuesta')
         with patch.object(service,'create_chat_model',return_value=model):
             self.assertEqual(service.answer_direct('Pregunta',self.metadata,'s'),'Respuesta')
-        self.assertEqual(self.rows(),[])
+        rows = self.rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['question'], 'Pregunta')
+        self.assertEqual(rows[0]['answer'], 'Respuesta')
+        self.assertEqual(rows[0]['resource_id'], self.resource)
+        self.assertEqual(rows[0]['instance_id'], self.instance)
+        self.assertEqual(rows[0]['status'], 'pending')
+
+    def test_learn_from_system_false_still_persists_global_learning(self):
+        self.db.execute(self.sql(
+            'UPDATE public."SysAgentIAModel" SET "LearnFromSystem"=false'
+        ))
+        model = Mock()
+        model.invoke.return_value = AIMessage(content='Respuesta global')
+        with patch.object(service, 'create_chat_model', return_value=model):
+            self.assertEqual(
+                service.answer_direct('Pregunta global', self.metadata, 's'),
+                'Respuesta global',
+            )
+        rows = self.rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['question'], 'Pregunta global')
+        self.assertEqual(rows[0]['status'], 'pending')
 
     def enqueue(self):
         service.enqueue_learning(service.assigned_openai(self.resource),'Pregunta','Respuesta',self.metadata,'s')
@@ -193,8 +215,9 @@ class DirectLearningIntegrationTests(unittest.TestCase):
             self.assertTrue(service.process_one(learning))
         create.assert_not_called()
         note=learning.aprender_actividad.call_args.args[0]
-        self.assertEqual(note.metadatos['knowledge_scope'],'agent')
-        self.assertEqual(note.metadatos['agent_resource_id'],str(self.resource))
+        self.assertEqual(note.metadatos['knowledge_scope'],'global_shared')
+        self.assertNotIn('agent_resource_id', note.metadatos)
+        self.assertEqual(note.metadatos['origin_agent_resource_id'],str(self.resource))
         self.assertEqual(note.metadatos['solidset_instance_id'],str(self.instance))
         self.assertFalse(note.metadatos['verified'])
         self.assertIn('Pregunta recibida:\nPregunta', note.descripcion)
