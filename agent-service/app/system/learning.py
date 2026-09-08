@@ -1372,12 +1372,23 @@ class SistemaAprendizaje:
             },
             limit=8,
         )
+        # A vector search finds related questions, not necessarily equivalent ones.
+        # Reusing a generated answer for a merely similar prompt can answer an older
+        # question instead of the current one. Keep semantic search for candidate
+        # retrieval, but only treat an exchange as a cache hit when its normalized
+        # original question is exactly the same.
+        normalized_query = " ".join(str(query or "").casefold().split())
         for hit in results:
             if float(hit.get("score") or 0.0) < max(0.0, min(float(min_score), 1.0)):
                 continue
             payload = hit.get("payload") or {}
             metadata = payload.get("metadatos")
             if not isinstance(metadata, dict):
+                continue
+            stored_question = " ".join(
+                str(metadata.get("question") or "").casefold().split()
+            )
+            if not stored_question or stored_question != normalized_query:
                 continue
             answer = str(metadata.get("answer") or "").strip()
             if answer:
