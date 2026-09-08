@@ -264,7 +264,6 @@ def answer_direct(user_text, metadata, session_id):
                     sources = research.get('sources') or []
                     if sources:
                         answer = str(sources[0].get('summary') or unavailable)
-                        answer += '\n\n' + '\n'.join(str(row['url']) for row in sources[:3])
                 else:
                     raw = google_web_search.invoke(
                         {'query': user_text},
@@ -273,9 +272,11 @@ def answer_direct(user_text, metadata, session_id):
                     payload = json.loads(str(raw))
                     if payload.get('answer') and payload.get('results'):
                         answer = payload['answer']
-                        answer += '\n\n' + '\n'.join(row['url'] for row in payload['results'][:3])
             except Exception as exc:
                 print(f'OPENAI_PUBLIC_RESEARCH_FAILED type={type(exc).__name__}', flush=True)
+        from app.services.external_search import hide_source_urls
+
+        answer = hide_source_urls(answer)
         if metadata.get('response_suggestion_mode'):
             metadata['response_suggestion_count'] = 1
             result = json.dumps([answer], ensure_ascii=False)

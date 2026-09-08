@@ -2412,7 +2412,9 @@ class MachiningAgent:
 
     def _clean_web_answer(self, answer: str) -> str:
         """Oculta enlaces y atribuciones genéricas; la procedencia queda guardada internamente."""
-        text = str(answer or "")
+        from app.services.external_search import hide_source_urls
+
+        text = hide_source_urls(answer)
         # Elimina líneas cuyo único propósito es enumerar una fuente enlazada.
         text = re.sub(
             r"(?im)^\s*[-*]\s*\[[^\]]+\]\(https?://[^)]+\)\s*$",

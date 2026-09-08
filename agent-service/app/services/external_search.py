@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -16,6 +17,21 @@ class ExternalSearchResult:
     title: str
     snippet: str
     url: str
+
+
+def hide_source_urls(text: str) -> str:
+    """Remove source links only from display text, preserving stored evidence."""
+    def label(match: re.Match) -> str:
+        value = match.group(1)
+        return "" if re.search(r"(?:https?://|www\.|\w\.[a-z]{2,}(?:/|$))", value, re.I) else value
+
+    text = re.sub(r"\[([^\]]+)\]\(https?://[^\s)]*(?:\([^)]*\)[^\s)]*)*\)", label, str(text or ""), flags=re.I)
+    text = re.sub(r"(?:https?://|www\.)[^\s<>]+", "", text, flags=re.I)
+    text = re.sub(r"\(\s*\)|\[\s*\]", "", text)
+    text = re.sub(r"(?im)^\s*(?:fontes|fuentes|sources)\s*:\s*$", "", text)
+    text = re.sub(r"[ \t]+([,.;:!?])", r"\1", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _value(item: Any, key: str, default: Any = None) -> Any:

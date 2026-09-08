@@ -304,9 +304,9 @@ async def handle_multi_agent_dialogue(
             auto_reply_mode=True,
         )
         if research.get("status") == "completed":
-            urls = list(dict.fromkeys(row["url"] for row in research["sources"]))
-            if not any(url in response_text for url in urls):
-                response_text += "\n\nFontes: " + " · ".join(urls[:3])
+            from app.services.external_search import hide_source_urls
+
+            response_text = hide_source_urls(response_text)
         await asyncio.to_thread(
             _learn_agent_interaction,
             agent_resource_id=agent_resource_id,
