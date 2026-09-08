@@ -432,8 +432,6 @@ def _is_safe_auto_reply_output(response_text: str) -> bool:
         "method=post",
         "body={",
         "body=[",
-        "http://localhost",
-        "https://localhost",
         "traceback (most recent call last)",
         "pydantic.dev",
         "resultado de la busqueda para responder el turno actual",
@@ -1514,6 +1512,14 @@ async def _process_auto_replies(
             unique_candidates.append(candidate)
             if len(unique_candidates) >= max_replies:
                 break
+        # Register every participant before any task can finish, so status
+        # aggregation cannot mistake the first reply for the whole request.
+        for candidate in unique_candidates:
+            _update_response_status(
+                response_request_id, "queued",
+                agent_resource_id=str(candidate.get("agent_identity_id") or candidate.get("agent_resource_id") or ""),
+                agent_name=str(candidate.get("agent_name") or ""),
+            )
         # Cada gemelo genera y envía de forma independiente. ``gather`` no
         # conserva un orden de entrega: responde primero quien termina antes.
         results = await asyncio.gather(
@@ -1529,8 +1535,17 @@ async def _process_auto_replies(
             return_exceptions=True,
         )
         failures = [result for result in results if isinstance(result, Exception)]
-        for failure in failures:
-            print(f"⚠️ Ejecución paralela de agente fallida: {failure}", flush=True)
+        for candidate, result in zip(unique_candidates, results):
+            if isinstance(result, Exception):
+                # Catch failures outside the send path as well. Do not publish
+                # raw exception messages which may contain provider data.
+                _update_response_status(
+                    response_request_id, "failed",
+                    agent_resource_id=str(candidate.get("agent_identity_id") or candidate.get("agent_resource_id") or ""),
+                    agent_name=str(candidate.get("agent_name") or ""),
+                    error=f"La ejecución del agente falló ({type(result).__name__}).",
+                )
+                print(f"⚠️ Ejecución paralela de agente fallida: {type(result).__name__}", flush=True)
         if preview_only:
             flattened = [
                 payload
@@ -1547,9 +1562,9 @@ async def _process_auto_replies(
         if response_request_id:
             _update_response_status(
                 response_request_id,
-                "completed" if completed > 0 or not unique_candidates else "failed",
+                "failed" if failures else "completed" if completed > 0 or not unique_candidates else "failed",
                 error=None
-                if completed > 0 or not unique_candidates
+                if not failures and (completed > 0 or not unique_candidates)
                 else "Ningún agente pudo enviar la respuesta.",
                 response_count=completed,
             )
@@ -1685,9 +1700,17 @@ async def _process_auto_replies(
             incoming_text,
         )
         from app.services.openai_direct import answer_direct
-        response_text = await asyncio.to_thread(
-            answer_direct, incoming_text, message_metadata, session_id
-        )
+        try:
+            response_text = await asyncio.to_thread(
+                answer_direct, incoming_text, message_metadata, session_id
+            )
+        except Exception as exc:
+            _update_response_status(
+                response_request_id, "failed",
+                agent_resource_id=status_agent_id, agent_name=agent_name,
+                error=f"La llamada al modelo falló ({type(exc).__name__}).",
+            )
+            raise
         if response_text is None:
             response_text = (
                 _learning_acknowledgement(incoming_text)

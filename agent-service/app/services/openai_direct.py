@@ -5,6 +5,11 @@ import hashlib
 import json
 import threading
 import time
+import re
+from functools import lru_cache
+import traceback
+from pathlib import Path
+from uuid import uuid4
 from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -16,6 +21,92 @@ from app.llm.text import response_text
 
 _lock = threading.Lock()
 _ready = False
+
+
+def _log_model_failure(exc, metadata, model_name, attempt, incident_id):
+    # Never log exception messages, source lines, locals or provider bodies:
+    # SDK exceptions can contain prompts, headers and credentials.
+    frames = [
+        {'file': Path(frame.filename).name, 'function': frame.name, 'line': frame.lineno}
+        for frame in traceback.extract_tb(exc.__traceback__)[-12:]
+    ]
+    print('OPENAI_DIRECT_FAILURE ' + json.dumps({
+        'incident_id': incident_id,
+        'request_id': str(metadata.get('chat_id') or ''),
+        'agent': str(metadata.get('agent_resource_id') or ''),
+        'model': model_name, 'attempt': attempt,
+        'error_type': type(exc).__name__, 'frames': frames,
+    }), flush=True)
+
+
+def _invoke_direct_model(record, messages, metadata):
+    """One fresh-client retry for a local SDK AttributeError; never switch models.
+
+    Provider HTTP retries remain bounded by the configured SDK policy. This
+    path has no tools or external actions, so a retried generation cannot send
+    a duplicate chat. Persistent programming failures remain visible.
+    """
+    incident_id = uuid4().hex
+    for attempt in (1, 2):
+        try:
+            model = create_chat_model(provider_config_from_record(record))
+            return model.invoke(messages)
+        except Exception as exc:
+            _log_model_failure(exc, metadata, record.get('Model'), attempt, incident_id)
+            if isinstance(exc, AttributeError) and attempt == 1:
+                continue
+            raise RuntimeError(
+                f'No se pudo completar la consulta al modelo '
+                f'({type(exc).__name__}; referencia {incident_id}). '
+                'No se ha usado otro modelo.'
+            ) from None
+
+
+@lru_cache(maxsize=1)
+def _language_resolver():
+    from app.agent.language import LanguageResolver
+    return LanguageResolver()
+
+
+def _compatible_learned_answer(learned, user_text, metadata):
+    """Reuse only text compatible with the requested format and language."""
+    try:
+        decoded = json.loads(learned)
+    except (ValueError, TypeError):
+        decoded = None
+    if metadata.get('response_suggestion_mode'):
+        count = max(1, min(6, int(metadata.get('response_suggestion_count') or 1)))
+        if not (isinstance(decoded, list) and len(decoded) == count
+                and all(isinstance(item, str) and item.strip() for item in decoded)):
+            return None
+        texts = decoded
+        normalized = json.dumps(decoded, ensure_ascii=False)
+    else:
+        if isinstance(decoded, list):
+            if len(decoded) != 1 or not isinstance(decoded[0], str):
+                return None
+            normalized = decoded[0].strip()
+        elif isinstance(decoded, str):
+            normalized = decoded.strip()
+        elif decoded is not None:
+            return None
+        else:
+            normalized = learned.strip()
+        texts = [normalized]
+    resolver = _language_resolver()
+    question_language = resolver.detect(user_text)
+    expected = resolver.normalize_language(
+        metadata.get('response_language') or metadata.get('resolved_language')
+    ) or (question_language.language if question_language.confidence >= 0.8 else '') \
+        or resolver.normalize_language(metadata.get('locale'))
+    for text in texts:
+        # Code samples should not determine the language of a tutorial.
+        prose = re.sub(r'```[\s\S]*?```|`[^`]*`', ' ', text).strip()
+        detected = resolver.detect(prose)
+        if (not text.strip() or not expected or detected.language != expected
+                or detected.confidence < 0.8):
+            return None
+    return normalized
 
 
 def ensure_schema():
@@ -97,27 +188,10 @@ def answer_direct(user_text, metadata, session_id):
     if record.get('TrainingMode') != 'disabled' and record.get('LearnFromSystem', True):
         learned = _learned_answer(user_text, metadata)
         if learned:
-            if metadata.get('response_suggestion_mode'):
-                expected_count = max(
-                    1, min(6, int(metadata.get('response_suggestion_count') or 1))
-                )
-                try:
-                    learned_values = json.loads(learned)
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    learned_values = None
-                if (
-                    isinstance(learned_values, list)
-                    and len(learned_values) == expected_count
-                    and all(isinstance(item, str) and item.strip() for item in learned_values)
-                ):
-                    print(
-                        f'OPENAI_LOCAL_LEARNING suggestion_hit agent={metadata.get("agent_resource_id")}',
-                        flush=True,
-                    )
-                    return json.dumps(learned_values, ensure_ascii=False)
-            else:
+            compatible = _compatible_learned_answer(learned, user_text, metadata)
+            if compatible is not None:
                 print(f'OPENAI_LOCAL_LEARNING hit agent={metadata.get("agent_resource_id")}', flush=True)
-                return learned
+                return compatible
     language = metadata.get('response_language') or metadata.get('resolved_language') or metadata.get('locale') or 'the language of the user'
     instructions = (
         f'Reply in {language}. Answer the user directly. Do not claim access to internal '
@@ -127,12 +201,9 @@ def answer_direct(user_text, metadata, session_id):
     if metadata.get('response_suggestion_mode'):
         count = max(1, min(6, int(metadata.get('response_suggestion_count') or 1)))
         instructions += f' Return only a JSON array of {count} strings, ready to display as suggestions.'
-    model = create_chat_model(provider_config_from_record(record))
-    try:
-        result = model.invoke([SystemMessage(content=instructions), HumanMessage(content=user_text)])
-    except Exception as exc:
-        print(f'OPENAI_DIRECT failed type={type(exc).__name__}', flush=True)
-        raise RuntimeError('OpenAI no pudo completar la consulta; no se ha usado otro modelo.') from None
+    result = _invoke_direct_model(
+        record, [SystemMessage(content=instructions), HumanMessage(content=user_text)], metadata
+    )
     answer = response_text(result).strip()
     if not answer:
         raise RuntimeError('OpenAI returned no text')

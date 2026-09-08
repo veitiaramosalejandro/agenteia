@@ -92,6 +92,20 @@ def utc_timestamp() -> str:
     return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
 
 
+def aggregate_agent_status(agents: list[dict[str, Any]]) -> tuple[str, int, Optional[str]]:
+    """Distinguish accepted delivery jobs from actual delivered responses."""
+    states = [item.get("status") for item in agents]
+    delivered = states.count("completed")
+    for active in ("sending", "thinking", "searching", "processing", "queued"):
+        if active in states:
+            return active, delivered, None
+    if "failed" in states:
+        return "failed", delivered, "Uno o más agentes no pudieron responder."
+    if "cancelled" in states:
+        return "cancelled", delivered, None
+    return "completed", delivered, None
+
+
 def save(data: dict[str, Any]) -> None:
     request_id = str(data["requestId"])
     try:
@@ -195,6 +209,11 @@ def update(
             updatedAt=now,
             error=error,
         )
+    if len(data.get("agents") or []) > 1 and (
+        agent_resource_id or status_name in {"completed", "failed"}
+    ):
+        status_name, response_count, error = aggregate_agent_status(data["agents"])
+        messages = display_messages(status_name)
     completed = status_name in {"completed", "failed", "cancelled"}
     data.update(
         status=status_name,

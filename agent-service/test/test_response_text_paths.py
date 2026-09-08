@@ -9,6 +9,19 @@ from app.agent.orchestrator import SolidSETOrchestrator
 
 
 class ResponseTextPathTests(unittest.TestCase):
+    def test_graphql_tutorial_can_include_localhost(self):
+        from app.services.auto_reply import _is_safe_auto_reply_output
+        self.assertTrue(_is_safe_auto_reply_output(
+            'Testa a API em http://localhost:4000/graphql ou https://localhost:4000/graphql.'
+        ))
+
+    def test_raw_tool_errors_remain_blocked(self):
+        from app.services.auto_reply import _is_safe_auto_reply_output
+        for text in ('Traceback (most recent call last)', 'status=200 method=GET body={}',
+                     'Validation error: pydantic.dev'):
+            with self.subTest(text=text):
+                self.assertFalse(_is_safe_auto_reply_output(text))
+
     def setUp(self):
         runtime = patch.object(suggestions, "agent", Mock())
         runtime.start()

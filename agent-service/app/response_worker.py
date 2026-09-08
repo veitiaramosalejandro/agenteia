@@ -14,6 +14,7 @@ from app.container import notification_listener
 from app.services.auto_reply import _process_auto_replies
 from app.services.instance_resolution import _attach_solidset_instance
 from app.services.response_status import update as _update_response_status
+from app.services.response_status import load as _load_response_status
 from app.response_queue import AgentResponseQueue
 from app.interactive_priority import interactive_work
 
@@ -61,15 +62,17 @@ async def run_worker() -> None:
                 if candidates and int(result) == 0:
                     raise RuntimeError("Ningún agente pudo completar el envío.")
                 try:
+                    final_status = _load_response_status(request_id) or {}
                     await asyncio.to_thread(
                         save_agent_response_audit,
                         request_id,
                         chat_id,
-                        "completed" if int(result) > 0 or not candidates else "failed",
-                        int(result),
+                        final_status.get("status") or ("completed" if int(result) > 0 or not candidates else "failed"),
+                        int(final_status.get("responseCount", int(result))),
+                        final_status.get("error"),
                         None,
-                        None,
-                        {"responseCount": int(result)},
+                        {"responseCount": int(final_status.get("responseCount", int(result))),
+                         "acceptedCount": int(result)},
                     )
                 except Exception as audit_exc:
                     # Una respuesta ya enviada nunca se reintenta por un fallo
