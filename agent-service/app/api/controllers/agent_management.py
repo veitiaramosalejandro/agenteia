@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+import json
+from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
@@ -23,6 +25,7 @@ from app.connectors.db_client import (
     get_solidset_instance,
     get_agent_scope_profile,
     get_active_agent_prompt,
+    get_agent_model_configurations,
     save_agent_knowledge,
     touch_agent_session,
 )
@@ -34,6 +37,40 @@ from app.services.auto_reply import (
 )
 from app.services import auto_reply as auto_reply_service
 from app.system.reaction_capture import get_agent_reinforcement_context
+from app.services.external_search import search_with_openai
+
+
+def _dialogue_public_research(question: str, resource_id: str) -> dict[str, Any]:
+    """Ground current public questions using the selected agent's capability."""
+    if not auto_reply_service._is_external_information_query(question):
+        return {}
+    configurations = get_agent_model_configurations(resource_id)
+    capabilities = set()
+    for configuration in configurations:
+        values = configuration.get("Capabilities") or []
+        if isinstance(values, str):
+            try:
+                values = json.loads(values)
+            except ValueError:
+                values = [values]
+        if isinstance(values, list):
+            capabilities.update(str(value).strip().lower() for value in values)
+    if "external_web" not in capabilities:
+        return {"status": "not_permitted", "detail": "This agent has no external_web capability."}
+    try:
+        # Never append the twin's private profile, knowledge or history to a
+        # public search. Only the incoming question is submitted.
+        results = search_with_openai(question, resource_id=resource_id)
+        if not results:
+            raise RuntimeError("No sources")
+        print(f"DIALOGUE_PUBLIC_RESEARCH agent={resource_id} sources={len(results)}", flush=True)
+        return {
+            "status": "completed", "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+            "sources": [{"title": row.title, "url": row.url, "summary": row.snippet} for row in results],
+        }
+    except Exception as exc:
+        print(f"DIALOGUE_PUBLIC_RESEARCH_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
+        return {"status": "failed", "detail": "The current public search could not be verified."}
 
 
 router = APIRouter(tags=["SolidSET Agents"])
@@ -181,6 +218,9 @@ async def handle_multi_agent_dialogue(
             published_prompt = await asyncio.to_thread(
                 get_active_agent_prompt, solidset_instance["ID"], agent_resource_id
             )
+        research = await asyncio.to_thread(
+            _dialogue_public_research, request.RawMessage.strip(), agent_resource_id
+        )
         response_text = await asyncio.to_thread(
             _invoke_orchestrator_for_instance,
             str(solidset_instance["Code"]) if solidset_instance else "",
@@ -196,6 +236,7 @@ async def handle_multi_agent_dialogue(
                 "resource_id": str(request.SenderResourceId or ""),
                 "agent_profile": profile or {},
                 "agent_system_prompt": str((published_prompt or {}).get("SystemPrompt") or ""),
+                "public_research": research,
                 "locale": str((solidset_instance or {}).get("Locale") or "pt-PT"),
                 "time_zone": str((solidset_instance or {}).get("TimeZone") or "Europe/Lisbon"),
                 "agent_knowledge": private_knowledge,
@@ -211,6 +252,10 @@ async def handle_multi_agent_dialogue(
             },
             auto_reply_mode=True,
         )
+        if research.get("status") == "completed":
+            urls = list(dict.fromkeys(row["url"] for row in research["sources"]))
+            if not any(url in response_text for url in urls):
+                response_text += "\n\nFontes: " + " · ".join(urls[:3])
         await asyncio.to_thread(
             _learn_agent_interaction,
             agent_resource_id=agent_resource_id,

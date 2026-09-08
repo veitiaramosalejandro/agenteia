@@ -57,10 +57,14 @@ class TwinEndpointTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(controller, 'get_active_agent_prompt', return_value={'SystemPrompt': 'Behavior'}) as prompt, \
                 patch.object(controller, 'touch_agent_session'), \
                 patch.object(controller, '_learn_agent_interaction'), \
+                patch.object(controller, '_dialogue_public_research', return_value={
+                    'status': 'completed', 'sources': [{'url': 'https://example.org/source'}]
+                }), \
                 patch.object(controller, '_invoke_orchestrator_for_instance', return_value='Reply') as invoke, \
                 patch.object(controller, 'solidset_send_chat_message') as send:
             result = await controller.handle_multi_agent_dialogue(request)
         self.assertEqual(len(result.responses), 2)
+        self.assertTrue(all('https://example.org/source' in row.response for row in result.responses))
         lookup.assert_called_once_with(code='local', source_ip=None)
         self.assertEqual(profile.call_count, 2)
         self.assertEqual(prompt.call_count, 2)
