@@ -63,6 +63,27 @@ def _dialogue_public_research(question: str, resource_id: str) -> dict[str, Any]
         results = search_with_openai(question, resource_id=resource_id)
         if not results:
             raise RuntimeError("No sources")
+        from app.agent.contracts import AgentContext
+        from app.agent.learning import AgentLearning
+
+        try:
+            AgentLearning().learn(
+                "google_web_search",
+                json.dumps({
+                    "query": question,
+                    "results": [
+                        {
+                            "title": row.title, "url": row.url,
+                            "snippet": row.snippet, "answer": row.snippet,
+                            "provider": "openai",
+                        }
+                        for row in results
+                    ],
+                }),
+                AgentContext(agent_resource_id=resource_id),
+            )
+        except Exception as exc:
+            print(f"DIALOGUE_PUBLIC_LEARNING_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
         print(f"DIALOGUE_PUBLIC_RESEARCH agent={resource_id} sources={len(results)}", flush=True)
         return {
             "status": "completed", "checked_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -211,6 +232,29 @@ async def handle_multi_agent_dialogue(
         )
         profile = None
         published_prompt = None
+        model_configurations = await asyncio.to_thread(
+            get_agent_model_configurations, agent_resource_id
+        )
+        capabilities: set[str] = set()
+        training_mode = "rag_reinforcement"
+        learn_from_system = True
+        for model_configuration in model_configurations:
+            values = model_configuration.get("Capabilities") or []
+            if isinstance(values, str):
+                try:
+                    values = json.loads(values)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    values = [values]
+            capabilities.update(
+                str(value).strip().lower() for value in values if str(value).strip()
+            )
+            if model_configuration.get("IsDefault"):
+                training_mode = str(
+                    model_configuration.get("TrainingMode") or training_mode
+                )
+                learn_from_system = bool(
+                    model_configuration.get("LearnFromSystem", learn_from_system)
+                )
         if solidset_instance:
             profile = await asyncio.to_thread(
                 get_agent_scope_profile, solidset_instance["ID"], agent_resource_id
@@ -245,7 +289,11 @@ async def handle_multi_agent_dialogue(
                 "source": "solidset_multi_agent",
                 "tool_permissions": {
                     "external_web", "solidset_sql", "solidset_schema"
-                },
+                }.intersection(capabilities) or capabilities,
+                "model_capabilities": sorted(capabilities),
+                "training_mode": training_mode,
+                "training_enabled": training_mode != "disabled",
+                "learn_from_system": learn_from_system,
                 "solidset_instance_id": str(solidset_instance["ID"])
                 if solidset_instance
                 else "",

@@ -791,29 +791,16 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
         if not settings.WEB_SEARCH_ENABLED:
             return "La búsqueda web está desactivada por configuración."
 
-        provider = "openai" if agent_resource_id else settings.EXTERNAL_SEARCH_PROVIDER
-        if provider == "openai":
-            from app.services.external_search import search_with_openai
+        provider = "openai"
+        from app.services.external_search import search_with_openai
 
-            raw_results = [
-                {"title": item.title, "body": item.snippet, "href": item.url}
-                for item in search_with_openai(
-                    clean_query,
-                    resource_id=(config.get("configurable") or {}).get("agent_resource_id"),
-                )
-            ]
-        elif provider == "ddgs":
-            from ddgs import DDGS
-
-            with DDGS(timeout=settings.WEB_SEARCH_TIMEOUT_SECONDS) as client:
-                raw_results = list(client.text(
-                    clean_query,
-                    region=settings.WEB_SEARCH_REGION,
-                    safesearch=settings.WEB_SEARCH_SAFESEARCH,
-                    max_results=settings.WEB_SEARCH_MAX_RESULTS,
-                ))
-        else:
-            return f"Error: proveedor de búsqueda externa no soportado: {provider!r}."
+        raw_results = [
+            {"title": item.title, "body": item.snippet, "href": item.url}
+            for item in search_with_openai(
+                clean_query,
+                resource_id=agent_resource_id,
+            )
+        ]
 
         results = []
         seen_urls = set()
@@ -824,7 +811,7 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
             seen_urls.add(url)
             results.append({
                 "title": str(item.get("title") or "Sin título").strip()[:300],
-                "snippet": str(item.get("body") or item.get("snippet") or "").strip()[:1200],
+                "snippet": str(item.get("body") or item.get("snippet") or "").strip()[:5000],
                 "url": url[:2000],
                 "provider": provider,
             })
