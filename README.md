@@ -201,10 +201,13 @@ provocan un cambio silencioso a Ollama.
 Después de responder OpenAI, la interacción se encola en PostgreSQL
 (`OpenAILocalLearning`). El proceso `system-knowledge-worker` ejecuta Ollama
 en segundo plano para extraer una nota e indexarla con embeddings locales en
-Qdrant. Es aprendizaje RAG compartido entre los agentes de la misma instancia
-SolidSET, no entrenamiento de pesos. Se conserva la procedencia y la marca de
-contenido generado por IA no verificado. `TrainingMode=disabled` o
-`LearnFromSystem=false` desactivan este aprendizaje para la asignación.
+Qdrant con alcance `global_shared`. Es aprendizaje RAG compartido entre
+todos los gemelos de la misma instancia SolidSET, nunca entre instancias, y no
+entrenamiento de pesos. Se conserva en PostgreSQL el recurso del gemelo que lo
+originó, junto con proveedor, modelo, pregunta, respuesta y estado. También se
+mantienen la procedencia y la marca de contenido generado por IA no verificado.
+Cada respuesta satisfactoria de un gemelo que use OpenAI se encola siempre,
+incluso con `TrainingMode=disabled` o `LearnFromSystem=false`.
 
 La cola evita duplicados de la misma interacción y admite tres intentos con
 espera de 60 segundos. Los trabajos agotados quedan en estado `failed` con el
