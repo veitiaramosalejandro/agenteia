@@ -1560,7 +1560,7 @@ class SistemaAprendizaje:
     def _search_aprendizaje(self, query_vector: List[float], 
                        query_filter: Optional[Dict[str, Any]] = None, 
                        limit: int = 10,
-                       timeout: int = 30) -> List[Dict]:
+                       timeout: Optional[int] = None) -> List[Dict]:
         """
         Busca en Qdrant utilizando un filtro opcional y con timeout.
         
@@ -1573,6 +1573,7 @@ class SistemaAprendizaje:
         Returns:
             Lista de resultados con payload
         """
+        timeout = int(timeout or settings.VECTOR_QUERY_TIMEOUT_SECONDS)
         try:
             # Construir el filtro correctamente para v1.18.0
             filter_obj = None

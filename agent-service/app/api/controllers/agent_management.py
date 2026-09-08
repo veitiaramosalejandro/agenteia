@@ -243,6 +243,9 @@ async def handle_multi_agent_dialogue(
                 "agent_reinforcement": reinforcement,
                 "workroom_id": str(request.IDWorkRoom),
                 "source": "solidset_multi_agent",
+                "tool_permissions": {
+                    "external_web", "solidset_sql", "solidset_schema"
+                },
                 "solidset_instance_id": str(solidset_instance["ID"])
                 if solidset_instance
                 else "",

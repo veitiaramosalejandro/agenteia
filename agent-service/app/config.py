@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     
     # Vector Database (Qdrant)
     VECTOR_DB_URL: str = os.getenv("VECTOR_DB_URL", "http://vector-db:6333")
+    VECTOR_QUERY_TIMEOUT_SECONDS: int = max(
+        3, int(os.getenv("VECTOR_QUERY_TIMEOUT_SECONDS", "8"))
+    )
     VECTOR_COLLECTION_NAME: str = os.getenv("VECTOR_COLLECTION_NAME", "machining_docs")
     BUSINESS_RAG_MIN_SCORE: float = max(
         0.0, min(float(os.getenv("BUSINESS_RAG_MIN_SCORE", "0.60")), 1.0)
