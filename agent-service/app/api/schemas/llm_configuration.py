@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class LLMProviderFromEnvironment(BaseModel):
     Source: Literal["runtime", "openai_search", "nvidia"] = Field(
-        "runtime", description="runtime: copia LLM_PROVIDER y MODEL_NAME. openai_search: usa OpenAI. nvidia: usa NVIDIA_API_KEY y NVIDIA Nemotron."
+        "runtime", description="runtime: copia LLM_PROVIDER y MODEL_NAME. openai_search: usa OpenAI. nvidia: usa NVIDIA_API_KEY y Kimi K3."
     )
     Code: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9_-]*$",
                       description="Código único de la conexión. Úsalo después como ProviderCode al asignarla a un agente.", examples=["openai-search"])

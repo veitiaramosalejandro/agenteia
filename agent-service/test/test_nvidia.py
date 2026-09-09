@@ -18,7 +18,7 @@ class NvidiaTests(unittest.TestCase):
 
     def test_missing_key_and_invalid_input(self):
         with patch.object(nvidia.settings, "NVIDIA_API_KEY", ""):
-            self.assertEqual(self.client.post('/api/v1/agent/llm/nvidia/test', json={}).status_code, 503)
+            self.assertEqual(self.client.post('/api/v1/agent/llm/nvidia/test', json={'stream': False}).status_code, 503)
         for body in ({"prompt": " "}, {"max_tokens": 16385}, {"base_url": "http://localhost"}):
             self.assertEqual(self.client.post('/api/v1/agent/llm/nvidia/test', json=body).status_code, 422)
 
@@ -33,7 +33,9 @@ class NvidiaTests(unittest.TestCase):
                 payload = json.loads(request.content)
                 self.assertEqual(payload['model'], NVIDIA_MODEL)
                 self.assertEqual(payload['max_tokens'], 256)
-                self.assertFalse(payload['chat_template_kwargs']['enable_thinking'])
+                self.assertEqual(payload['reasoning_effort'], 'max')
+                self.assertEqual(payload['seed'], 0)
+                self.assertNotIn('chat_template_kwargs', payload)
                 if status != 200:
                     return httpx.Response(status, json={"error": {"message": "secret-upstream", "type": "error"}})
                 return httpx.Response(200, json={"id": "test", "object": "chat.completion", "created": 1,
@@ -45,7 +47,7 @@ class NvidiaTests(unittest.TestCase):
                 return AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
             with patch.object(nvidia.settings, 'NVIDIA_API_KEY', 'test-only'), patch.object(nvidia, 'AsyncOpenAI', side_effect=factory):
-                response = self.client.post('/api/v1/agent/llm/nvidia/test', json={})
+                response = self.client.post('/api/v1/agent/llm/nvidia/test', json={'stream': False})
             self.assertEqual(response.status_code, expected, response.text)
             self.assertEqual(len(calls), 1)
             self.assertNotIn('secret-upstream', response.text)
@@ -55,7 +57,8 @@ class NvidiaTests(unittest.TestCase):
         model = create_chat_model(LLMProviderConfig(provider='nvidia', model=NVIDIA_MODEL, api_key='test-only'))
         payload = model._get_request_payload([('human', 'Hola')])
         self.assertFalse(model.use_responses_api)
-        self.assertEqual(payload['extra_body']['chat_template_kwargs'], {'enable_thinking': True})
+        self.assertEqual(payload['reasoning_effort'], 'max')
+        self.assertNotIn('top_p', payload)
         self.assertNotIn('service_tier', payload)
         self.assertNotIn('store', payload)
 
@@ -63,8 +66,47 @@ class NvidiaTests(unittest.TestCase):
         with patch.object(nvidia.settings, 'NVIDIA_API_KEY', 'test-only'), patch.object(nvidia, 'AsyncOpenAI') as factory:
             client = factory.return_value.__aenter__.return_value
             client.chat.completions.create = AsyncMock(side_effect=TimeoutError())
-            response = self.client.post('/api/v1/agent/llm/nvidia/test', json={})
+            response = self.client.post('/api/v1/agent/llm/nvidia/test', json={'stream': False})
         self.assertEqual(response.status_code, 504)
+
+    def test_image_stream_and_upstream_cleanup(self):
+        import json
+        clients = []
+
+        def handler(request):
+            payload = json.loads(request.content)
+            self.assertTrue(payload['stream'])
+            self.assertEqual(payload['messages'][0]['content'], [
+                {'type': 'text', 'text': 'What is in this image?'},
+                {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.jpg'}}])
+            chunk = {'id': 'test', 'object': 'chat.completion.chunk', 'created': 1,
+                     'model': NVIDIA_MODEL, 'choices': [{'index': 0,
+                     'delta': {'content': 'An image'}, 'finish_reason': None}]}
+            return httpx.Response(200, headers={'content-type': 'text/event-stream'},
+                                  text='data: ' + json.dumps(chunk) + '\n\ndata: [DONE]\n\n')
+
+        def factory(**kwargs):
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            clients.append(client)
+            return AsyncOpenAI(**kwargs, http_client=client)
+
+        with patch.object(nvidia.settings, 'NVIDIA_API_KEY', 'test-only'), patch.object(nvidia, 'AsyncOpenAI', side_effect=factory):
+            response = self.client.post('/api/v1/agent/llm/nvidia/test', json={
+                'prompt': 'What is in this image?', 'image_url': 'https://example.com/image.jpg'})
+        self.assertIn('text/event-stream', response.headers['content-type'])
+        self.assertIn('An image', response.text)
+        self.assertTrue(response.text.endswith('data: [DONE]\n\n'))
+        self.assertTrue(clients[0].is_closed)
+
+    def test_stream_failure_is_sanitized_event(self):
+        with patch.object(nvidia.settings, 'NVIDIA_API_KEY', 'test-only'), patch.object(nvidia, 'AsyncOpenAI') as factory:
+            client = factory.return_value.__aenter__.return_value
+            client.chat.completions.create = AsyncMock(side_effect=TimeoutError('secret'))
+            response = self.client.post('/api/v1/agent/llm/nvidia/test', json={'stream': True})
+        self.assertIn('event: error', response.text)
+        self.assertIn('504', response.text)
+        self.assertNotIn('secret', response.text)
+        self.assertNotIn('[DONE]', response.text)
 
 
 if __name__ == '__main__':

@@ -1,45 +1,61 @@
-# NVIDIA Nemotron
+# NVIDIA Kimi K3
 
-Configura `NVIDIA_API_KEY` en el entorno del proceso de agent-service (o en el
-`.env` que carga ese proceso). Nunca incluyas la clave en código ni en ejemplos.
-Los cambios del entorno se cargan al iniciar el proceso; esta implementación no
-reinicia servicios ni despliega contenedores.
+Configura `NVIDIA_API_KEY` en el entorno del proceso de agent-service o en su
+`.env`. La clave no se guarda en código. No se han desplegado ni reiniciado servicios.
 
-Prueba desde Swagger (`/docs`) o con:
+En Swagger (`/docs`) o desde un cliente HTTP:
 
 ```http
 POST /api/v1/agent/llm/nvidia/test
 Content-Type: application/json
 
-{"prompt":"Explica qué es una GPU en una frase.","max_tokens":256,"enable_thinking":false}
+{
+  "prompt": "What is in this image?",
+  "image_url": "https://assets.ngc.nvidia.com/products/api-catalog/phi-3-5-vision/example1b.jpg",
+  "stream": true,
+  "max_tokens": 16384,
+  "seed": 0,
+  "temperature": 1,
+  "reasoning_effort": "max"
+}
 ```
 
-Devuelve `provider`, `model`, `content`, `finish_reason` y `usage`. Usa el modelo
-`nvidia/nemotron-3-ultra-550b-a55b` y la URL fija
-`https://integrate.api.nvidia.com/v1`. No guarda conversaciones ni asigna modelos.
-La prueba devuelve JSON completo, no SSE; no devuelve el razonamiento interno.
-Admite hasta 16384 tokens, 8000 caracteres de entrada y un plazo total de 60 s,
-sin reintentos. `finish_reason: length` indica truncamiento; con razonamiento
-activado puede agotarse el presupuesto antes de producir contenido final.
-Errores: 422 entrada inválida, 503 clave ausente, 429 cuota, 504 timeout y 502
-fallo del proveedor. Sigue el control de acceso existente del servicio.
+`image_url` es opcional y admite HTTP(S). El servicio envía la URL a NVIDIA;
+no descarga la imagen localmente. El modelo fijo es `moonshotai/kimi-k3` y el
+host es `https://integrate.api.nvidia.com/v1`. El endpoint transforma `prompt`
+e `image_url` en `messages` con bloques de texto e imagen.
 
-Para guardar una conexión general cifrada usa el endpoint existente:
+Con `stream: true` (predeterminado) devuelve SSE con los chunks originales del
+proveedor, incluido `reasoning_content` si lo envía, y `data: [DONE]` al finalizar.
+Un fallo después de abrir el stream se comunica mediante `event: error` con un
+código `status` 429, 502 o 504; el HTTP ya será 200. Se cierra la conexión externa
+al terminar, cancelar o agotar el plazo. Con `stream: false` devuelve JSON con
+`provider`, `model`, `content`, `finish_reason` y `usage`, sin razonamiento interno.
+
+Límites: entrada de 8000 caracteres, 1–16384 tokens, temperatura 0–1 y plazo total
+60 s sin reintentos. `reasoning_effort` admite `low`, `high` y `max` (predeterminado).
+Por defecto se usan 256 tokens; pueden agotarse durante el razonamiento antes de
+producir contenido final. Para reproducir el ejemplo usa el cuerpo anterior.
+No se envían `top_p` ni `chat_template_kwargs` a Kimi K3.
+
+Sin streaming: errores 422 entrada inválida, 503 clave ausente, 429 cuota,
+504 timeout y 502 fallo del proveedor. Sigue el control de acceso del servicio.
+No guarda conversaciones ni asigna modelos a recursos.
+
+Para crear una conexión general cifrada:
 
 ```http
 POST /api/v1/agent/llm/providers/from-env
 Content-Type: application/json
 
-{"Source":"nvidia","Code":"nvidia-nemotron","Name":"NVIDIA Nemotron","IsDefault":false}
+{"Source":"nvidia","Code":"nvidia-kimi-k3","Name":"NVIDIA Kimi K3","IsDefault":false}
 ```
 
-La asignación a un recurso sigue usando `SysAgentIAModel` / `ProviderCode`.
-También se admite `Provider: nvidia` en el PUT de proveedores. El adaptador
-LangChain soporta invoke, stream y bind_tools mediante Chat Completions y activa
-`chat_template_kwargs.enable_thinking`; omite opciones exclusivas de OpenAI.
-Para seleccionar NVIDIA como runtime, usa `LLM_PROVIDER=nvidia`,
-`MODEL_NAME=nvidia/nemotron-3-ultra-550b-a55b` y `LLM_API_KEY` con la clave NVIDIA.
+La asignación a recursos sigue usando `SysAgentIAModel` / `ProviderCode`.
+No se modifican conexiones ya guardadas. El adaptador conserva las opciones
+Nemotron para las conexiones anteriores con ese modelo.
+Para seleccionar Kimi K3 como runtime: `LLM_PROVIDER=nvidia`,
+`MODEL_NAME=moonshotai/kimi-k3` y `NVIDIA_API_KEY` (o `LLM_API_KEY`).
 
-Referencia: https://docs.api.nvidia.com/nim/reference/llm-apis
-Validación local con transporte HTTP simulado; disponibilidad y acceso de la
-cuenta al modelo requieren una prueba real posterior.
+Validación local con HTTP simulado; acceso real de la cuenta pendiente.
+Referencia: https://docs.api.nvidia.com/nim/reference/moonshotai-kimi-k3-infer

@@ -106,7 +106,7 @@ class OpenAICompatibleProvider(OpenAIProvider):
 
 
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
-NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+NVIDIA_MODEL = "moonshotai/kimi-k3"
 
 
 class NvidiaProvider(ChatProvider):
@@ -116,18 +116,22 @@ class NvidiaProvider(ChatProvider):
 
     def create_model(self, config: LLMProviderConfig) -> Any:
         ChatOpenAI = _optional_class("langchain_openai", "ChatOpenAI", "langchain-openai")
+        kimi = (config.model or NVIDIA_MODEL) == "moonshotai/kimi-k3"
+        options = ({"reasoning_effort": "max", "seed": 0} if kimi else {
+            "top_p": 0.95,
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": True}},
+        })
         return ChatOpenAI(
             model=config.model or NVIDIA_MODEL,
             api_key=config.api_key or None,
             base_url=config.base_url or NVIDIA_BASE_URL,
             temperature=config.temperature,
             max_tokens=config.max_output_tokens,
-            top_p=0.95,
             timeout=config.timeout_seconds,
             max_retries=config.max_retries,
             use_responses_api=False,
             stream_usage=False,
-            extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+            **options,
         )
 
 
