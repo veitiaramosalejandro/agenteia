@@ -394,7 +394,7 @@ def _suggestion_tool_allowlist(
     quoted_message: str, *, ambient_mode: bool, advice_refine: bool
 ) -> set[str]:
     """Mirror framework-message read routing while preserving suggestion output."""
-    if ambient_mode or advice_refine:
+    if ambient_mode:
         return set()
     if agent._is_business_knowledge_query(quoted_message):
         return {"query_sql_server", "get_db_schema"}
@@ -1558,6 +1558,17 @@ async def _process_chat_question_response_suggestion(
             # El registro ya fue leído y validado mediante el catálogo. No se
             # permite al modelo abrir otra ruta SQL/web durante el razonamiento.
             suggestion_tool_allowlist = set()
+        metadata["general_knowledge_mode"] = bool(
+            not ambient_mode
+            and not related_records_context
+            and not verified_business_context
+            and not suggestion_tool_allowlist
+            and not agent._is_internal_domain_query(effective_request_text)
+        )
+        if metadata["general_knowledge_mode"]:
+            metadata["strict_current_question"] = True
+            metadata["agent_knowledge"] = ""
+            metadata["agent_reinforcement"] = ""
         if suggestion_tool_allowlist:
             # Same read-only knowledge routing as framework-message. The
             # endpoint still only returns drafts and never sends or mutates.
