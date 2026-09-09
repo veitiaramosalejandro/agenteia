@@ -22,7 +22,7 @@ from app.connectors.db_client import (
     save_llm_provider_configuration,
 )
 from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
-from app.llm.providers import provider_config_from_settings, NVIDIA_BASE_URL, NVIDIA_MODEL
+from app.llm.providers import provider_config_from_settings, NVIDIA_BASE_URL
 
 
 router = APIRouter(tags=["LLM Providers"])
@@ -77,6 +77,10 @@ def _save_llm_provider(request: Request, code: str, configuration: LLMProviderCo
                     status_code=422, detail=f"{field} deve ser um URL HTTP(S) absoluto."
                 )
         payload[field] = value or None
+    if provider == "nvidia":
+        payload["BaseUrl"] = payload.get("BaseUrl") or NVIDIA_BASE_URL
+        payload["UseResponsesAPI"] = False
+        payload["StoreResponses"] = False
     if provider == "ollama" and not payload.get("BaseUrl"):
         payload["BaseUrl"] = settings.OLLAMA_BASE_URL.rstrip("/")
     if provider in {"openai_compatible", "local_openai"} and not payload.get("BaseUrl"):
@@ -145,7 +149,7 @@ def create_llm_provider_from_environment(request: Request, configuration: LLMPro
     cfg = provider_config_from_settings(settings)
     if configuration.Source == "nvidia":
         cfg = LLMProviderConfig(
-            provider="nvidia", model=NVIDIA_MODEL, base_url=NVIDIA_BASE_URL,
+            provider="nvidia", model=configuration.Model, base_url=NVIDIA_BASE_URL,
             api_key=settings.NVIDIA_API_KEY, temperature=1,
             use_responses_api=False, max_retries=0,
         )

@@ -2,13 +2,23 @@ from datetime import datetime
 from typing import Optional, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class LLMProviderFromEnvironment(BaseModel):
     Source: Literal["runtime", "openai_search", "nvidia"] = Field(
-        "runtime", description="runtime: copia LLM_PROVIDER y MODEL_NAME. openai_search: usa OpenAI. nvidia: usa NVIDIA_API_KEY y Kimi K3."
+        "runtime", description="runtime: copia LLM_PROVIDER y MODEL_NAME. openai_search: usa OpenAI. nvidia: usa NVIDIA_API_KEY y el Model indicado."
     )
+    Model: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r"^\S+$",
+                                description="Obligatorio con Source=nvidia: identificador del modelo en NVIDIA. Registra cada modelo con un Code diferente.")
+    @model_validator(mode="after")
+    def validate_model_source(self):
+        if self.Source == "nvidia" and not self.Model:
+            raise ValueError("Model es obligatorio para Source=nvidia.")
+        if self.Source != "nvidia" and self.Model is not None:
+            raise ValueError("Model solo se admite con Source=nvidia.")
+        return self
+
     Code: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9_-]*$",
                       description="Código único de la conexión. Úsalo después como ProviderCode al asignarla a un agente.", examples=["openai-search"])
     Name: str = Field(..., min_length=1, max_length=255, pattern=r"\S",
@@ -23,7 +33,7 @@ class LLMProviderFromEnvironment(BaseModel):
 class LLMProviderConfiguration(BaseModel):
     Code: str = Field(..., min_length=1, max_length=80, description="Código único de la conexión; se utiliza como ProviderCode al asignarla a un agente.")
     Name: str = Field(..., min_length=1, max_length=255, description="Nombre visible y descriptivo de la conexión.")
-    Provider: str = Field(..., min_length=1, max_length=40, description="Tipo de servicio: ollama, openai, azure_openai, anthropic, gemini, local_openai u openai_compatible.")
+    Provider: str = Field(..., min_length=1, max_length=40, description="Tipo de servicio: ollama, openai, nvidia, azure_openai, anthropic, gemini, local_openai u openai_compatible.")
     Model: str = Field(..., min_length=1, max_length=255, description="Identificador exacto del modelo que ofrece el proveedor, por ejemplo gpt-4.1-mini o qwen2.5:3b.")
     BaseUrl: Optional[str] = Field(None, max_length=500, description="URL base del servicio; no incluyas /chat/completions ni /responses.")
     APIKey: Optional[str] = Field(None, max_length=8000, description="Clave secreta del proveedor. Se cifra al guardar y no se devuelve. Omítela al actualizar para conservar la existente.")

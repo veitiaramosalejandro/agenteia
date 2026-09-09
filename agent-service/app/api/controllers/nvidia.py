@@ -11,7 +11,7 @@ from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from app.config import settings
-from app.llm.providers import NVIDIA_BASE_URL, NVIDIA_MODEL
+from app.llm.providers import NVIDIA_BASE_URL, NVIDIA_MODEL, nvidia_model_options
 
 router = APIRouter(tags=["LLM Providers"])
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 class NvidiaTestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    model: str = Field(NVIDIA_MODEL, min_length=1, max_length=255, pattern=r"^\S+$")
 
     prompt: str = Field("Responde brevemente: ¿qué es una GPU?", min_length=1,
                         max_length=8000, pattern=r"\S")
@@ -39,7 +40,7 @@ class NvidiaTestResponse(BaseModel):
 
 
 @router.post("/api/v1/agent/llm/nvidia/test", response_model=NvidiaTestResponse,
-             summary="Probar NVIDIA Kimi K3 con texto, imágenes y streaming",
+             summary="Probar un modelo NVIDIA con texto, imágenes y streaming",
              responses={200: {"content": {"text/event-stream": {}}}})
 async def test_nvidia(body: NvidiaTestRequest):
     if not settings.NVIDIA_API_KEY.strip():
@@ -48,10 +49,14 @@ async def test_nvidia(body: NvidiaTestRequest):
     if body.image_url:
         content = [{"type": "text", "text": body.prompt},
                    {"type": "image_url", "image_url": {"url": str(body.image_url)}}]
-    payload = dict(model=NVIDIA_MODEL, messages=[{"role": "user", "content": content}],
+    payload = dict(model=body.model, messages=[{"role": "user", "content": content}],
                    temperature=body.temperature, max_tokens=body.max_tokens,
-                   seed=body.seed, reasoning_effort=body.reasoning_effort,
                    stream=body.stream)
+    payload.update(nvidia_model_options(body.model))
+    if body.model == "moonshotai/kimi-k3":
+        payload.update(seed=body.seed, reasoning_effort=body.reasoning_effort)
+    elif {"seed", "reasoning_effort"} & body.model_fields_set:
+        raise HTTPException(422, "seed y reasoning_effort solo se admiten para Kimi K3 en esta prueba.")
     if body.stream:
         return StreamingResponse(_stream(payload), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

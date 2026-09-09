@@ -62,6 +62,31 @@ class NvidiaTests(unittest.TestCase):
         self.assertNotIn('service_tier', payload)
         self.assertNotIn('store', payload)
 
+    def test_registered_models_send_selected_model_to_nvidia(self):
+        import json
+        from app.llm.providers import provider_config_from_record
+        observed = []
+        def handler(request):
+            self.assertEqual(str(request.url), 'https://integrate.api.nvidia.com/v1/chat/completions')
+            payload = json.loads(request.content)
+            observed.append(payload['model'])
+            return httpx.Response(200, json={'id': 'test', 'created': 1,
+                'object': 'chat.completion', 'model': payload['model'],
+                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'OK'},
+                             'finish_reason': 'stop'}]})
+        names = ['moonshotai/kimi-k3', 'nvidia/nemotron-3-ultra-550b-a55b', 'another/model']
+        for name in names:
+            config = provider_config_from_record({'Provider': 'nvidia', 'Model': name, 'APIKey': 'test-only'})
+            model = create_chat_model(config)
+            from openai import OpenAI
+            with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+                with OpenAI(api_key='test-only', base_url=model.openai_api_base,
+                            http_client=http_client, max_retries=0) as sdk:
+                    model.client = sdk.chat.completions
+                    model.root_client = sdk
+                    self.assertEqual(model.invoke('Hola').content, 'OK')
+        self.assertEqual(observed, names)
+
     def test_timeout_returns_504(self):
         with patch.object(nvidia.settings, 'NVIDIA_API_KEY', 'test-only'), patch.object(nvidia, 'AsyncOpenAI') as factory:
             client = factory.return_value.__aenter__.return_value

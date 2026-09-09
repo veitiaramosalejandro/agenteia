@@ -109,6 +109,16 @@ NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_MODEL = "moonshotai/kimi-k3"
 
 
+def nvidia_model_options(model: str) -> dict[str, Any]:
+    """Only send vendor extensions to models known to support them."""
+    if model == "moonshotai/kimi-k3":
+        return {"reasoning_effort": "max", "seed": 0}
+    if model == "nvidia/nemotron-3-ultra-550b-a55b":
+        return {"top_p": 0.95,
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": True}}}
+    return {}
+
+
 class NvidiaProvider(ChatProvider):
     """NVIDIA NIM uses Chat Completions, without OpenAI-only options."""
 
@@ -116,13 +126,9 @@ class NvidiaProvider(ChatProvider):
 
     def create_model(self, config: LLMProviderConfig) -> Any:
         ChatOpenAI = _optional_class("langchain_openai", "ChatOpenAI", "langchain-openai")
-        kimi = (config.model or NVIDIA_MODEL) == "moonshotai/kimi-k3"
-        options = ({"reasoning_effort": "max", "seed": 0} if kimi else {
-            "top_p": 0.95,
-            "extra_body": {"chat_template_kwargs": {"enable_thinking": True}},
-        })
+        options = nvidia_model_options(config.model)
         return ChatOpenAI(
-            model=config.model or NVIDIA_MODEL,
+            model=config.model,
             api_key=config.api_key or None,
             base_url=config.base_url or NVIDIA_BASE_URL,
             temperature=config.temperature,
