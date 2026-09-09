@@ -33,6 +33,8 @@ class NvidiaTestRequest(BaseModel):
         False, description="Solo Nemotron Ultra: activar razonamiento explícitamente en la prueba.",
     )
     temperature: float = Field(1, ge=0, le=1)
+    top_p: float = Field(0.95, gt=0, le=1,
+                         description="Solo DeepSeek V4 Pro: probabilidad acumulada de muestreo.")
     max_tokens: int = Field(256, ge=1, le=16384)
     timeout_seconds: int = Field(
         300, ge=10, le=600,
@@ -97,8 +99,15 @@ async def test_nvidia(body: NvidiaTestRequest):
         raise HTTPException(422, "enable_thinking solo se admite para Nemotron Ultra en esta prueba.")
     if body.model == "moonshotai/kimi-k3":
         payload.update(seed=body.seed, reasoning_effort=body.reasoning_effort)
+    elif body.model == "deepseek-ai/deepseek-v4-pro-0813":
+        if "reasoning_effort" in body.model_fields_set:
+            raise HTTPException(422, "reasoning_effort no se admite para DeepSeek V4 Pro en esta prueba.")
+        payload.update(seed=body.seed if "seed" in body.model_fields_set else 42,
+                       top_p=body.top_p)
     elif {"seed", "reasoning_effort"} & body.model_fields_set:
-        raise HTTPException(422, "seed y reasoning_effort solo se admiten para Kimi K3 en esta prueba.")
+        raise HTTPException(422, "seed se admite para Kimi K3 y DeepSeek V4 Pro; reasoning_effort solo para Kimi K3.")
+    if "top_p" in body.model_fields_set and body.model != "deepseek-ai/deepseek-v4-pro-0813":
+        raise HTTPException(422, "top_p solo se admite para DeepSeek V4 Pro en esta prueba.")
     if body.stream:
         return StreamingResponse(_stream(payload, body.timeout_seconds), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

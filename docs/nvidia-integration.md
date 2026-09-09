@@ -172,3 +172,47 @@ es 300 segundos en ambos modos, ajustable mediante `timeout_seconds`.
 La respuesta antigua `detail: NVIDIA excedió el tiempo de espera.` corresponde
 al controlador previo a los errores estructurados. Los cambios requieren cargar
 el código actualizado. Esta última modificación no se ha probado ni desplegado.
+
+
+## DeepSeek V4 Pro 0813
+
+Registro mediante `POST /api/v1/agent/llm/providers/from-env`:
+
+```json
+{
+  "Source": "nvidia",
+  "Code": "nvidia-deepseek-v4-pro-0813",
+  "Name": "NVIDIA DeepSeek V4 Pro 0813",
+  "Model": "deepseek-ai/deepseek-v4-pro-0813",
+  "IsDefault": false
+}
+```
+
+Usa `NVIDIA_API_KEY` del entorno. La asignación al agente se realiza con
+`ProviderCode: nvidia-deepseek-v4-pro-0813` y `LocalExecution:false`, conforme
+al flujo de capacidades y prioridades descrito arriba.
+
+Petición al endpoint `POST /api/v1/agent/llm/nvidia/test`:
+
+```json
+{
+  "model": "deepseek-ai/deepseek-v4-pro-0813",
+  "prompt": "Write a limerick about the wonders of GPU computing.",
+  "temperature": 1,
+  "top_p": 0.95,
+  "max_tokens": 16384,
+  "seed": 42,
+  "stream": false,
+  "timeout_seconds": 300
+}
+```
+
+Tanto el adaptador del agente como la ruta de prueba añaden automáticamente
+`extra_body: {"chat_template_kwargs":{"thinking":false}}`. Para este modelo,
+`seed` usa 42 si se omite y `top_p` usa 0.95. El endpoint permite modificar ambos.
+No se envían `enable_thinking` ni `reasoning_effort` a DeepSeek.
+El runtime usa la temperatura y el límite de tokens del registro; para replicar
+16384 tokens en el agente configura `MaxOutputTokens:16384` mediante el PUT del
+proveedor. La prueba ya admite ese valor sin modificar registros.
+
+Implementado según el ejemplo proporcionado; sin ejecutar pruebas ni desplegar.

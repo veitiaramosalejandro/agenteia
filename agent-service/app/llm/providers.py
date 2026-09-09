@@ -111,6 +111,9 @@ NVIDIA_MODEL = "moonshotai/kimi-k3"
 
 def nvidia_model_options(model: str) -> dict[str, Any]:
     """Only send vendor extensions to models known to support them."""
+    if model == "deepseek-ai/deepseek-v4-pro-0813":
+        return {"top_p": 0.95, "seed": 42,
+                "extra_body": {"chat_template_kwargs": {"thinking": False}}}
     if model == "moonshotai/kimi-k3":
         return {"reasoning_effort": "max", "seed": 0}
     if model == "nvidia/nemotron-3-ultra-550b-a55b":
