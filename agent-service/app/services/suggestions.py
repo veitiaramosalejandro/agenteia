@@ -236,6 +236,40 @@ def _verified_related_records_context(
     return "\n\n".join(blocks)
 
 
+def _verified_task_code_context(
+    solidset_instance: dict[str, Any], request_text: str, requester_resource: str
+) -> str:
+    """Resolve an explicit task code only within the requester's own tasks."""
+    codes = list(dict.fromkeys(re.findall(r"\bT-\d{2}-\d+\b", request_text, re.I)))
+    if not codes:
+        return ""
+    if len(codes) != 1:
+        raise LookupError("Indique o código de uma única tarefa para analisar.")
+    code = codes[0].upper()
+    with solidset_sql_instance_context(solidset_instance):
+        raw = query_sql_server.invoke({
+            "query": (
+                "SELECT TOP 2 Code, ShortName, Description, TechnicalSpecification, "
+                "Status, WorkStatus, ProgressPercentage, Priority, StartDate, EndDate, DueDate "
+                "FROM dbo.SysTask WHERE Code = %s "
+                "AND (IDResource = %s OR IDResourceAssign = %s)"
+            ),
+            "parameters_json": json.dumps([code, requester_resource, requester_resource]),
+        })
+    try:
+        rows = json.loads(str(raw))
+    except (TypeError, ValueError) as exc:
+        raise LookupError(f"Não foi possível consultar a tarefa {code} neste momento.") from exc
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+        raise LookupError(
+            f"Não foi possível identificar uma tarefa única {code} associada ao seu recurso."
+        )
+    return "\n".join(
+        f"{key}: {_sanitize_related_record_value(value)}"
+        for key, value in rows[0].items() if value is not None and value != ""
+    )
+
+
 def _verified_quoted_chat_message(
     solidset_instance: dict[str, Any],
     user_id: str,
@@ -821,6 +855,16 @@ def _parse_chat_question_suggestions(
     )
     if labeled:
         text = labeled.group(1).strip()
+    # Decode transport strings before interpreting their contents. Never display
+    # a serialized array as if it were the actual suggestion.
+    for _ in range(2):
+        try:
+            unwrapped = json.loads(text)
+        except (ValueError, TypeError):
+            break
+        if not isinstance(unwrapped, str):
+            break
+        text = unwrapped.strip()
     values: list[Any] = []
     try:
         decoded = json.loads(text)
@@ -834,17 +878,27 @@ def _parse_chat_question_suggestions(
                     or decoded.get("text")
                     or decoded.get("response")
                     or decoded.get("suggestion")
+                    or decoded.get("mensaje")
+                    or decoded.get("mensagem")
+                    or decoded.get("message")
                 )
                 values = [single] if single else []
     except json.JSONDecodeError:
+        try:
+            literal = ast.literal_eval(text)
+        except (ValueError, SyntaxError, RecursionError):
+            literal = None
         # Los modelos pequeños a veces devuelven un array de un elemento con
         # comillas internas sin escapar. Recuperamos solo el envoltorio externo;
         # el contenido seguirá pasando todos los filtros semánticos y de idioma.
-        if text.startswith("[") and text.endswith("]"):
-            inner = text[1:-1].strip()
-            if inner.startswith('"') and inner.endswith('"'):
-                inner = inner[1:-1]
-            values = [inner.replace('\\"', '"')]
+        if isinstance(literal, list):
+            values = literal
+        elif isinstance(literal, dict):
+            values = [literal]
+        elif text.startswith(("[", "{")):
+            # Malformed/truncated structured output is not prose. Let the
+            # caller repair it or supply its record-specific fallback.
+            return []
         else:
             values = re.split(r"\n\s*(?:---SUGGESTION---|\d+[.)]\s+)", text)
 
@@ -874,6 +928,9 @@ def _parse_chat_question_suggestions(
                 or lowered.get("response")
                 or lowered.get("suggestion")
                 or lowered.get("string")
+                or lowered.get("mensaje")
+                or lowered.get("mensagem")
+                or lowered.get("message")
             )
         elif (
             isinstance(value, str)
@@ -891,14 +948,23 @@ def _parse_chat_question_suggestions(
                     or lowered.get("response")
                     or lowered.get("suggestion")
                     or lowered.get("string")
+                    or lowered.get("mensaje")
+                    or lowered.get("mensagem")
+                    or lowered.get("message")
                 )
-        candidate = str(value or "").strip().strip('"')
+            else:
+                continue
+        if not isinstance(value, str):
+            continue
+        candidate = value.strip().strip('"').strip()
+        candidate = candidate.replace("\\r\\n", "\n").replace("\\n", "\n")
         normalized = re.sub(r"\s+", " ", candidate).casefold()
         contains_internal_list = bool(
             re.search(r"(?:^|\n)\s*(?:#{1,6}\s*|\d+\s*[-.)]|[-*]\s+)", candidate)
         )
         if (
             not candidate
+            or candidate.startswith(("{", "["))
             or normalized in seen
             or any(message in normalized for message in rejected_messages)
             or any(structure in normalized for structure in rejected_structures)
@@ -1105,6 +1171,23 @@ def _reason_about_related_record(
         )
         + localized["instructions"]
     )
+    prompt += "\n\n" + {
+        "pt": (
+            "Limita a resposta a 140 palavras e no máximo três ações prioritárias, "
+            "específicas para o objetivo e a especificação da tarefa. Termina todas as frases "
+            "e fecha o array JSON. Não traduzas o título nem repitas a descrição."
+        ),
+        "es": (
+            "Limita la respuesta a 140 palabras y como máximo tres acciones prioritarias, "
+            "específicas para el objetivo y la especificación de la tarea. Termina todas las "
+            "frases y cierra el array JSON. No traduzcas el título ni repitas la descripción."
+        ),
+        "en": (
+            "Use at most 140 words and three priority actions specific to the task objective "
+            "and specification. Finish every sentence and close the JSON array. "
+            "Do not translate the title or repeat the description."
+        ),
+    }.get(language, "Use at most 140 words and three actions. Close the JSON array.")
     if previous_output:
         rejected_label = {
             "pt": "RASCUNHO REJEITADO",
@@ -1125,6 +1208,13 @@ def _reason_about_related_record(
             HumanMessage(content=prompt),
         ]
     )
+    response_metadata = getattr(result, "response_metadata", {}) or {}
+    if (
+        response_metadata.get("finish_reason") in {"length", "max_tokens"}
+        or response_metadata.get("done_reason") == "length"
+        or response_metadata.get("status") == "incomplete"
+    ):
+        return ""
     return llm_response_text(result).strip()
 
 
@@ -1345,6 +1435,14 @@ async def _process_chat_question_response_suggestion(
             solidset_instance,
             context["related_records"],
         )
+        task_code_context = await asyncio.to_thread(
+            _verified_task_code_context,
+            solidset_instance,
+            effective_request_text,
+            context["requester_resource"],
+        )
+        if task_code_context:
+            related_records_context = task_code_context
         log_stage("related_records_sql", related_started)
         research_context = ""
         if related_records_context and _is_research_suggestion_request(
@@ -1399,9 +1497,12 @@ async def _process_chat_question_response_suggestion(
             and _is_concrete_suggestion_answer_request(effective_request_text)
         )
         related_guidance_mode = bool(
-            advice_request
-            and context["related_records"]
-            and _is_related_record_guidance_request(effective_request_text)
+            not ambient_mode
+            and related_records_context
+            and (
+                _is_related_record_guidance_request(effective_request_text)
+                or task_code_context
+            )
         )
         if related_guidance_mode:
             concrete_answer_mode = False
@@ -1585,7 +1686,7 @@ async def _process_chat_question_response_suggestion(
             if advice_request
             else None
         )
-        direct_answer = await asyncio.to_thread(
+        direct_answer = None if related_records_context else await asyncio.to_thread(
             agent.answer_with_assigned_openai, effective_request_text, metadata, scoped_session
         )
         if direct_answer is not None:
