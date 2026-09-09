@@ -28,11 +28,14 @@ class NvidiaTestRequest(BaseModel):
     image_url: HttpUrl | None = None
     stream: bool = True
     seed: int = Field(0, ge=-9007199254740991, le=9007199254740991)
-    reasoning_effort: Literal["low", "high", "max"] = "max"
+    reasoning_effort: Literal["low", "high", "max"] = "low"
+    enable_thinking: bool = Field(
+        False, description="Solo Nemotron Ultra: activar razonamiento explícitamente en la prueba.",
+    )
     temperature: float = Field(1, ge=0, le=1)
     max_tokens: int = Field(256, ge=1, le=16384)
     timeout_seconds: int = Field(
-        180, ge=10, le=600,
+        300, ge=10, le=600,
         description="Plazo total local (10–600 segundos), incluido todo el stream. No se envía a NVIDIA.",
     )
 
@@ -86,6 +89,12 @@ async def test_nvidia(body: NvidiaTestRequest):
                    temperature=body.temperature, max_tokens=body.max_tokens,
                    stream=body.stream)
     payload.update(nvidia_model_options(body.model))
+    if body.model == "nvidia/nemotron-3-ultra-550b-a55b":
+        payload["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": body.enable_thinking},
+        }
+    elif "enable_thinking" in body.model_fields_set:
+        raise HTTPException(422, "enable_thinking solo se admite para Nemotron Ultra en esta prueba.")
     if body.model == "moonshotai/kimi-k3":
         payload.update(seed=body.seed, reasoning_effort=body.reasoning_effort)
     elif {"seed", "reasoning_effort"} & body.model_fields_set:
@@ -113,7 +122,7 @@ async def test_nvidia(body: NvidiaTestRequest):
         raise HTTPException(details["status"], details) from exc
 
 
-async def _stream(payload, timeout_seconds=180):
+async def _stream(payload, timeout_seconds=300):
     """Close upstream on completion, timeout or client cancellation.
 
     Headers are already sent: upstream failures are sanitized SSE error events.

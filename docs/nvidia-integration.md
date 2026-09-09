@@ -34,7 +34,7 @@ al terminar, cancelar o agotar el plazo. Con `stream: false` devuelve JSON con
 `provider`, `model`, `content`, `finish_reason` y `usage`, sin razonamiento interno.
 
 Límites: entrada de 8000 caracteres, 1–16384 tokens, temperatura 0–1 y plazo total
-180 s por defecto sin reintentos (configurable con `timeout_seconds`, de 10 a 600 s). `reasoning_effort` admite `low`, `high` y `max` (predeterminado).
+300 s por defecto sin reintentos (configurable con `timeout_seconds`, de 10 a 600 s). `reasoning_effort` admite `low`, `high` y `max` (predeterminado).
 Por defecto se usan 256 tokens; pueden agotarse durante el razonamiento antes de
 producir contenido final. Para reproducir el ejemplo usa el cuerpo anterior.
 No se envían `top_p` ni `chat_template_kwargs` a Kimi K3.
@@ -110,7 +110,7 @@ no cambia las asignaciones de agentes.
 
 ## Diagnóstico de timeout (504)
 
-La ruta de prueba admite `timeout_seconds` (180 por defecto, 10–600). Es un plazo
+La ruta de prueba admite `timeout_seconds` (300 por defecto, 10–600). Es un plazo
 local para toda la petición, incluyendo el stream; no se envía como parámetro
 al modelo. La conexión tiene un límite de 10 segundos y la espera de datos usa
 el plazo indicado, siempre dentro del límite total. No hay reintentos automáticos.
@@ -147,3 +147,28 @@ el HTTP es 504 con los detalles en `detail`. No se publican claves ni errores
 crudos del proveedor. Proxies externos pueden imponer otros plazos independientes.
 El cambio es local y requiere cargar la versión actualizada del servicio para
 usar el nuevo campo; no se ha desplegado ni reiniciado durante la corrección.
+
+
+### Nemotron Ultra sin razonamiento en la prueba
+
+El endpoint de prueba envía `enable_thinking:false` por defecto para Nemotron
+Ultra, tanto con `stream:true` como con `stream:false`. Se puede activar
+explícitamente con `enable_thinking:true`. Las configuraciones del runtime de
+agentes conservan sus opciones existentes. El plazo predeterminado de la prueba
+es 300 segundos en ambos modos, ajustable mediante `timeout_seconds`.
+
+```json
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b",
+  "prompt": "Responde apenas: OK",
+  "stream": false,
+  "enable_thinking": false,
+  "temperature": 1,
+  "max_tokens": 256,
+  "timeout_seconds": 300
+}
+```
+
+La respuesta antigua `detail: NVIDIA excedió el tiempo de espera.` corresponde
+al controlador previo a los errores estructurados. Los cambios requieren cargar
+el código actualizado. Esta última modificación no se ha probado ni desplegado.
