@@ -19,3 +19,5 @@ ollama_system_embedding_storage/
 redis_data/
 audio/
 data/
+.agents/
+skills-lock.json
