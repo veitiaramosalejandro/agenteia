@@ -22,7 +22,7 @@ from app.connectors.db_client import (
     save_llm_provider_configuration,
 )
 from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
-from app.llm.providers import provider_config_from_settings
+from app.llm.providers import provider_config_from_settings, NVIDIA_BASE_URL, NVIDIA_MODEL
 
 
 router = APIRouter(tags=["LLM Providers"])
@@ -143,6 +143,12 @@ def _save_llm_provider(request: Request, code: str, configuration: LLMProviderCo
 )
 def create_llm_provider_from_environment(request: Request, configuration: LLMProviderFromEnvironment):
     cfg = provider_config_from_settings(settings)
+    if configuration.Source == "nvidia":
+        cfg = LLMProviderConfig(
+            provider="nvidia", model=NVIDIA_MODEL, base_url=NVIDIA_BASE_URL,
+            api_key=settings.NVIDIA_API_KEY, temperature=1,
+            use_responses_api=False, max_retries=0,
+        )
     if configuration.Source == "openai_search":
         cfg = LLMProviderConfig(
             provider="openai", model=settings.OPENAI_SEARCH_MODEL,
@@ -154,10 +160,10 @@ def create_llm_provider_from_environment(request: Request, configuration: LLMPro
             use_responses_api=True, store_responses=False,
         )
     # Never copy the OpenAI environment credential into a different provider.
-    if configuration.Source == "runtime" and cfg.provider not in {"openai", "azure_openai"}:
+    if configuration.Source == "runtime" and cfg.provider not in {"openai", "azure_openai", "nvidia"}:
         from dataclasses import replace
         cfg = replace(cfg, api_key=settings.LLM_API_KEY)
-    if cfg.provider in {"openai", "azure_openai", "anthropic", "gemini"} and not cfg.api_key:
+    if cfg.provider in {"openai", "azure_openai", "anthropic", "gemini", "nvidia"} and not cfg.api_key:
         raise HTTPException(status_code=422, detail="Falta la clave API del proveedor en el entorno del servicio.")
     payload = LLMProviderConfiguration(
         Code=configuration.Code, Name=configuration.Name, Provider=cfg.provider,

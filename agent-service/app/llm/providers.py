@@ -105,6 +105,32 @@ class OpenAICompatibleProvider(OpenAIProvider):
         return super().create_model(config)
 
 
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+
+
+class NvidiaProvider(ChatProvider):
+    """NVIDIA NIM uses Chat Completions, without OpenAI-only options."""
+
+    name = "nvidia"
+
+    def create_model(self, config: LLMProviderConfig) -> Any:
+        ChatOpenAI = _optional_class("langchain_openai", "ChatOpenAI", "langchain-openai")
+        return ChatOpenAI(
+            model=config.model or NVIDIA_MODEL,
+            api_key=config.api_key or None,
+            base_url=config.base_url or NVIDIA_BASE_URL,
+            temperature=config.temperature,
+            max_tokens=config.max_output_tokens,
+            top_p=0.95,
+            timeout=config.timeout_seconds,
+            max_retries=config.max_retries,
+            use_responses_api=False,
+            stream_usage=False,
+            extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+        )
+
+
 class AzureOpenAIProvider(ChatProvider):
     name = "azure_openai"
 
@@ -187,6 +213,7 @@ class ProviderRegistry:
 
 ProviderRegistry.register("ollama", OllamaProvider)
 ProviderRegistry.register("openai", OpenAIProvider)
+ProviderRegistry.register("nvidia", NvidiaProvider)
 ProviderRegistry.register("openai_compatible", OpenAICompatibleProvider)
 ProviderRegistry.register("local_openai", OpenAICompatibleProvider)
 ProviderRegistry.register("azure_openai", AzureOpenAIProvider)
@@ -197,6 +224,7 @@ ProviderRegistry.register("gemini", GeminiProvider)
 def provider_config_from_settings(settings: Any) -> LLMProviderConfig:
     provider = str(getattr(settings, "LLM_PROVIDER", "ollama") or "ollama")
     configured_base = str(getattr(settings, "LLM_BASE_URL", "") or "").strip()
+    is_nvidia = provider.strip().lower().replace("-", "_") == "nvidia"
     if provider.strip().lower().replace("-", "_") == "ollama" and not configured_base:
         configured_base = str(getattr(settings, "OLLAMA_BASE_URL", "") or "")
     return LLMProviderConfig(
@@ -205,7 +233,8 @@ def provider_config_from_settings(settings: Any) -> LLMProviderConfig:
         base_url=configured_base,
         api_key=str(
             getattr(settings, "LLM_API_KEY", "")
-            or getattr(settings, "OPENAI_API_KEY", "")
+            or (getattr(settings, "NVIDIA_API_KEY", "") if is_nvidia
+                else getattr(settings, "OPENAI_API_KEY", ""))
             or ""
         ),
         temperature=float(getattr(settings, "LLM_TEMPERATURE", 0.5)),

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+    NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_ORGANIZATION: str = os.getenv("OPENAI_ORGANIZATION", "")
     OPENAI_PROJECT: str = os.getenv("OPENAI_PROJECT", "")

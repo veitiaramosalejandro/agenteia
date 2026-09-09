@@ -10,6 +10,21 @@ from app.connectors.db_client import save_llm_provider_configuration
 
 
 class ProviderFromEnvTests(unittest.TestCase):
+    @patch.object(controller, "create_chat_model")
+    @patch.object(controller, "save_llm_provider_configuration")
+    def test_nvidia_source_uses_own_key_and_no_resource(self, save, model):
+        save.side_effect = self.saved
+        with patch.object(controller.settings, "NVIDIA_API_KEY", "nvidia-test-only"):
+            response = self.client.post("/api/v1/agent/llm/providers/from-env", json={
+                "Source": "nvidia", "Code": "nvidia", "Name": "NVIDIA"})
+        self.assertEqual(response.status_code, 201, response.text)
+        payload = save.call_args.args[0]
+        self.assertEqual(payload['Provider'], 'nvidia')
+        self.assertEqual(payload['APIKey'], 'nvidia-test-only')
+        self.assertFalse(payload['UseResponsesAPI'])
+        self.assertNotIn('IDResource', payload)
+        self.assertNotIn('nvidia-test-only', response.text)
+
     def test_provider_creation_rejects_resource_association(self):
         r = self.client.post("/api/v1/agent/llm/providers/from-env", json={
             "Code": "resource-local", "Name": "Local", "IDResource": str(uuid4()),

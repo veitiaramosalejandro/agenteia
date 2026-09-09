@@ -16,6 +16,7 @@ from app.api.controllers.agent_prompts import router as agent_prompts_router
 from app.api.controllers.ingestion import router as ingestion_router
 from app.api.controllers.synchronization import router as synchronization_router
 from app.api.controllers.llm_configuration import router as llm_configuration_router
+from app.api.controllers.nvidia import router as nvidia_router
 from app.api.controllers.responses import router as responses_router
 from app.api.controllers import diagnostics
 from app.api.controllers.history import router as history_router
@@ -171,6 +172,7 @@ app.include_router(agent_prompts_router)
 app.include_router(ingestion_router)
 app.include_router(synchronization_router)
 app.include_router(llm_configuration_router)
+app.include_router(nvidia_router)
 app.include_router(responses_router)
 app.include_router(diagnostics.router)
 app.include_router(history_router)
@@ -491,21 +493,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         status_code=exc.status_code,
         content={"detail": exc.detail},
     )
-
-
-# ============================================================
-# ENDPOINTS PRINCIPALES
-# ============================================================
-
-
-# ============================================================
-# ✅ NUEVO ENDPOINT: PROBAR CONECTIVIDAD CON SOLIDSET API
-# ============================================================
-
-
-# ============================================================
-# PUNTO DE ENTRADA PARA EJECUCIÓN DIRECTA
-# ============================================================
 
 
 if __name__ == "__main__":
