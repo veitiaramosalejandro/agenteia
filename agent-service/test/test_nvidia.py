@@ -19,7 +19,8 @@ class NvidiaTests(unittest.TestCase):
     def test_missing_key_and_invalid_input(self):
         with patch.object(nvidia.settings, "NVIDIA_API_KEY", ""):
             self.assertEqual(self.client.post('/api/v1/agent/llm/nvidia/test', json={'stream': False}).status_code, 503)
-        for body in ({"prompt": " "}, {"max_tokens": 16385}, {"base_url": "http://localhost"}):
+        for body in ({"prompt": " "}, {"max_tokens": 16385}, {"base_url": "http://localhost"},
+                     {"timeout_seconds": 9}, {"timeout_seconds": 601}):
             self.assertEqual(self.client.post('/api/v1/agent/llm/nvidia/test', json=body).status_code, 422)
 
     def test_actual_sdk_serialization_and_safe_errors(self):
@@ -132,6 +133,59 @@ class NvidiaTests(unittest.TestCase):
         self.assertIn('504', response.text)
         self.assertNotIn('secret', response.text)
         self.assertNotIn('[DONE]', response.text)
+
+    def test_timeout_override_applies_to_sdk_but_not_nvidia_payload(self):
+        for streaming in (False, True):
+            with patch.object(nvidia.settings, 'NVIDIA_API_KEY', 'test-only'), patch.object(nvidia, 'AsyncOpenAI') as factory:
+                client = factory.return_value.__aenter__.return_value
+                client.chat.completions.create = AsyncMock(side_effect=TimeoutError())
+                response = self.client.post('/api/v1/agent/llm/nvidia/test', json={
+                    'stream': streaming, 'timeout_seconds': 300})
+            self.assertEqual(factory.call_args.kwargs['timeout'].read, 300)
+            self.assertEqual(factory.call_args.kwargs['timeout'].connect, 10)
+            self.assertEqual(factory.call_args.kwargs['max_retries'], 0)
+            self.assertNotIn('timeout_seconds', client.chat.completions.create.call_args.kwargs)
+            self.assertIn('request_deadline_exceeded', response.text)
+            self.assertIn('300', response.text)
+
+    def test_sdk_timeout_is_distinct_from_local_deadline(self):
+        from openai import APITimeoutError
+        with patch.object(nvidia.settings, 'NVIDIA_API_KEY', 'test-only'), patch.object(nvidia, 'AsyncOpenAI') as factory:
+            client = factory.return_value.__aenter__.return_value
+            client.chat.completions.create = AsyncMock(side_effect=APITimeoutError(
+                request=httpx.Request('POST', 'https://integrate.api.nvidia.com/v1/chat/completions')))
+            response = self.client.post('/api/v1/agent/llm/nvidia/test', json={'stream': True})
+        self.assertIn('upstream_timeout', response.text)
+        self.assertIn('first_chunk', response.text)
+        self.assertNotIn('request_deadline_exceeded', response.text)
+
+    def test_real_deadline_cancels_slow_stream_and_closes_resources(self):
+        import asyncio
+        from types import SimpleNamespace
+        closed = []
+        class SlowStream:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                closed.append('stream')
+            async def __aiter__(self):
+                yield SimpleNamespace(model_dump_json=lambda **kwargs: '{"choices":[]}')
+                await asyncio.sleep(1)
+        class Client:
+            chat = SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(return_value=SlowStream())))
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                closed.append('client')
+        async def collect():
+            return [event async for event in nvidia._stream({'stream': True}, timeout_seconds=0.01)]
+        with patch.object(nvidia, '_client', return_value=Client()):
+            events = asyncio.run(collect())
+        self.assertEqual(closed, ['stream', 'client'])
+        self.assertIn('"choices":[]', events[0])
+        self.assertIn('request_deadline_exceeded', events[-1])
+        self.assertIn('"phase": "stream"', events[-1])
+        self.assertNotIn('[DONE]', ''.join(events))
 
 
 if __name__ == '__main__':

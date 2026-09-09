@@ -34,7 +34,7 @@ al terminar, cancelar o agotar el plazo. Con `stream: false` devuelve JSON con
 `provider`, `model`, `content`, `finish_reason` y `usage`, sin razonamiento interno.
 
 Límites: entrada de 8000 caracteres, 1–16384 tokens, temperatura 0–1 y plazo total
-60 s sin reintentos. `reasoning_effort` admite `low`, `high` y `max` (predeterminado).
+180 s por defecto sin reintentos (configurable con `timeout_seconds`, de 10 a 600 s). `reasoning_effort` admite `low`, `high` y `max` (predeterminado).
 Por defecto se usan 256 tokens; pueden agotarse durante el razonamiento antes de
 producir contenido final. Para reproducir el ejemplo usa el cuerpo anterior.
 No se envían `top_p` ni `chat_template_kwargs` a Kimi K3.
@@ -106,3 +106,44 @@ específicas de Kimi K3 y Nemotron Ultra solo se envían a esos modelos. La capa
 de imágenes y herramientas depende del modelo elegido y debe verificarse con
 NVIDIA. La ruta de prueba admite `model` directamente y usa la clave del entorno;
 no cambia las asignaciones de agentes.
+
+
+## Diagnóstico de timeout (504)
+
+La ruta de prueba admite `timeout_seconds` (180 por defecto, 10–600). Es un plazo
+local para toda la petición, incluyendo el stream; no se envía como parámetro
+al modelo. La conexión tiene un límite de 10 segundos y la espera de datos usa
+el plazo indicado, siempre dentro del límite total. No hay reintentos automáticos.
+Esto sustituye los límites anteriores fijos de 55 segundos del SDK y 60 totales.
+
+Prueba breve de conectividad:
+
+```json
+{
+  "model": "moonshotai/kimi-k3",
+  "prompt": "Responde apenas: OK",
+  "stream": true,
+  "reasoning_effort": "low",
+  "temperature": 1,
+  "max_tokens": 1024,
+  "timeout_seconds": 180
+}
+```
+
+`reasoning_effort:max` pide más razonamiento; aumentar el tiempo no garantiza
+éxito si NVIDIA o la red no responden. Un presupuesto pequeño puede agotarse
+antes de la respuesta final, pero eso no demuestra la causa de un timeout.
+La prueba no incorpora búsqueda web: no verifica hechos actuales.
+
+Los errores incluyen `code`, `phase`, `elapsed_seconds` y `timeout_seconds`:
+- `upstream_timeout`: el SDK agotó la espera de conexión o datos de NVIDIA.
+- `request_deadline_exceeded`: se agotó el plazo total local.
+- `phase:first_chunk`: todavía no llegó ningún chunk; no permite distinguir
+  por sí solo entre red, cola del proveedor o generación inicial.
+- `phase:stream`: ya habían llegado chunks.
+
+En streaming se devuelve `event:error` después de enviar HTTP 200; sin streaming,
+el HTTP es 504 con los detalles en `detail`. No se publican claves ni errores
+crudos del proveedor. Proxies externos pueden imponer otros plazos independientes.
+El cambio es local y requiere cargar la versión actualizada del servicio para
+usar el nuevo campo; no se ha desplegado ni reiniciado durante la corrección.
