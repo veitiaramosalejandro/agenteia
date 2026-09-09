@@ -231,7 +231,14 @@ def answer_direct(user_text, metadata, session_id):
             print(f'OPENAI_RECHECK_CONTEXT_FAILED type={type(exc).__name__}', flush=True)
 
     # Resolve live questions before model assignment or historical answer reuse.
-    if _is_external_information_query(user_text) or metadata.get('public_research'):
+    if (
+        metadata.get('external_information_mode')
+        or metadata.get('public_research')
+        or (
+            not metadata.get('suggestion_intent')
+            and _is_external_information_query(user_text)
+        )
+    ):
         from app.connectors.db_client import get_agent_model_configurations
         from app.agent.tools import google_web_search
 

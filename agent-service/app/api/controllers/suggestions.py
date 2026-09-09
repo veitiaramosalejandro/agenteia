@@ -69,8 +69,11 @@ async def _wait_for_worker_result(
             return _completed_response(request_id, context, state or {})
         if status_name in {"failed", "cancelled"}:
             detail = str((state or {}).get("error") or "").strip()
+            failure_status = (state.get("result") or {}).get("httpStatus", 503)
+            if failure_status not in {400, 404, 422, 502, 503}:
+                failure_status = 503
             raise HTTPException(
-                status_code=503 if status_name == "failed" else 409,
+                status_code=failure_status if status_name == "failed" else 409,
                 detail=detail or "O worker não conseguiu gerar sugestões.",
             )
         await asyncio.sleep(settings.SUGGESTION_RESPONSE_POLL_INTERVAL_SECONDS)
@@ -104,13 +107,8 @@ async def suggest_chat_question_response(
     request: Request,
 ) -> ChatQuestionSuggestionResponse:
     """Encola de forma durable y espera asincrónicamente el resultado del worker."""
-    
+    print(message.model_dump_json(indent=2))
     payload = message.model_dump(mode="json")
-    print(
-        "📥 /api/v1/agent/notification/chat-question/suggest-response payload=",
-        payload,
-        flush=True,
-    )
     context = _chat_question_suggestion_context(payload)
     request_id = context["request_id"]
     if (

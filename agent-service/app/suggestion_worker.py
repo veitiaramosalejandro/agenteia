@@ -47,7 +47,13 @@ async def run_worker() -> None:
                 await asyncio.to_thread(queue.acknowledge, message_id)
             except (HTTPException, Exception) as exc:
                 detail = getattr(exc, "detail", None) or str(exc)
-                if attempt < settings.SUGGESTION_MAX_RETRIES:
+                terminal_output_error = isinstance(exc, HTTPException) and exc.status_code in {400, 404, 422, 502}
+                print(
+                    f"SUGGESTION_WORKER_ERROR request_id={request_id} attempt={attempt} "
+                    f"type={type(exc).__name__} retryable={not terminal_output_error}",
+                    flush=True,
+                )
+                if not terminal_output_error and attempt < settings.SUGGESTION_MAX_RETRIES:
                     _update_response_status(
                         request_id, "queued", error=f"Reintento {attempt + 1}: {detail}"
                     )
@@ -55,7 +61,10 @@ async def run_worker() -> None:
                         queue.enqueue, request_id, payload, instance, attempt + 1
                     )
                 else:
-                    _update_response_status(request_id, "failed", error=str(detail))
+                    _update_response_status(
+                        request_id, "failed", error=str(detail),
+                        result={"httpStatus": exc.status_code if isinstance(exc, HTTPException) else 503},
+                    )
                 await asyncio.to_thread(queue.acknowledge, message_id)
 
 
