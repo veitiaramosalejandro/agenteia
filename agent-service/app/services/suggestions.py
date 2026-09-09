@@ -598,18 +598,6 @@ def _related_guidance_is_useful(
         )
     ):
         return False
-    generic_deliverables = (
-        "guia ou manual",
-        "guia interno",
-        "manual interno",
-        "criar documentação",
-        "crear documentación",
-        "create documentation",
-        "programa de formação",
-        "training program",
-    )
-    if any(marker in normalized for marker in generic_deliverables):
-        return False
     if "solidset" in record_context.casefold() and re.search(
         r"qual (?:é )?o sistema|qual (?:é )?a plataforma|por exemplo,? solidset",
         normalized,
@@ -627,7 +615,8 @@ def _related_guidance_is_useful(
         return False
     action_or_limitation = re.search(
         r"\b(?:objetivo|sugir|recomend|analis|confirm|verific|defin|identific|"
-        r"implement|valid|test|crit[eé]ri|risco|falta|necess[aá]ri|primeir|"
+        r"implement|valid|test|integr|automat|configur|cri|crea|conect|map|"
+        r"sincron|protot|pilot|crit[eé]ri|risco|falta|necess[aá]ri|primeir|"
         r"prop[oõ]|avali|pergunta|pregunta|question)\w*\b",
         normalized,
     )
@@ -1198,6 +1187,12 @@ def _reason_about_related_record(
         f"\nReturn exactly {count} separate strings in the JSON array. "
         "Each string is one complete, independently selectable suggestion. "
         "Do not combine suggestions into one string. The 140-word limit applies to the whole array."
+        " Focus every suggestion on the CURRENT REQUEST's topic within this task, including "
+        "short follow-ups. You may use general engineering reasoning to propose hypothetical "
+        "approaches, clearly expressed as recommendations. The supplied record is the only "
+        "authority for existing internal facts. Do not invent existing APIs, endpoints, "
+        "integrations or completed work. Do not merely repeat the task description or suggest "
+        "analysing a database catalog unless the task specifically requires that."
     )
     if previous_output:
         rejected_label = {
@@ -1513,6 +1508,7 @@ async def _process_chat_question_response_suggestion(
             and (
                 _is_related_record_guidance_request(effective_request_text)
                 or task_code_context
+                or advice_mode
             )
         )
         if related_guidance_mode:
@@ -1789,16 +1785,15 @@ async def _process_chat_question_response_suggestion(
             concrete_answer_mode=concrete_answer_mode,
         ):
             if related_guidance_mode:
-                # Un segundo pase del mismo modelo pequeño tiende a repetir el
-                # registro y duplica la latencia. Usa un análisis determinista
-                # vinculado a la evidencia cuando el primer borrador no es útil.
-                repaired_raw = json.dumps(
-                    [
-                        _related_guidance_fallback(
-                            related_records_context, metadata["response_language"]
-                        )
-                    ],
-                    ensure_ascii=False,
+                # One bounded retry retains the actual task and current focus.
+                repaired_raw = await asyncio.to_thread(
+                    _reason_about_related_record,
+                    request_text=effective_request_text,
+                    record_context=related_records_context,
+                    research_context=research_context,
+                    language=metadata["response_language"],
+                    metadata=metadata,
+                    previous_output=str(raw_suggestions or ""),
                 )
             else:
                 repair_started = perf_counter()
