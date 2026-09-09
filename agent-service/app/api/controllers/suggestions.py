@@ -104,8 +104,13 @@ async def suggest_chat_question_response(
     request: Request,
 ) -> ChatQuestionSuggestionResponse:
     """Encola de forma durable y espera asincrónicamente el resultado del worker."""
-    print(message.model_dump_json(indent=2))
+    
     payload = message.model_dump(mode="json")
+    print(
+        "📥 /api/v1/agent/notification/chat-question/suggest-response payload=",
+        payload,
+        flush=True,
+    )
     context = _chat_question_suggestion_context(payload)
     request_id = context["request_id"]
     if (

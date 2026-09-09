@@ -623,19 +623,7 @@ def _related_guidance_is_useful(
         normalized,
     )
     numbered_points = len(re.findall(r"(?:^|\s)\d+[.)]\s", candidate))
-    asks_multiple_suggestions = bool(
-        re.search(
-            r"\b(?:sugest(?:ão|ões)|sugerencias|suggestions|ideias|ideas)\b",
-            request_text.casefold(),
-        )
-    )
     if deflection and numbered_points < 2:
-        return False
-    if (
-        asks_multiple_suggestions
-        and not re.search(r"\b(?:sugest|sugir|recomend)", normalized)
-        and numbered_points < 2
-    ):
         return False
     action_or_limitation = re.search(
         r"\b(?:objetivo|sugir|recomend|analis|confirm|verific|defin|identific|"
@@ -920,6 +908,25 @@ def _parse_chat_question_suggestions(
         "temas tratados",
         "topics discussed",
     )
+    # Some providers serialize the entire array again inside its first string.
+    # Unwrap only valid structured data; never split prose on commas or quotes.
+    for _ in range(2):
+        expanded: list[Any] = []
+        changed = False
+        for value in values:
+            if isinstance(value, str) and value.strip().startswith("["):
+                try:
+                    nested = json.loads(value)
+                except (ValueError, TypeError):
+                    nested = None
+                if isinstance(nested, list):
+                    expanded.extend(nested)
+                    changed = True
+                    continue
+            expanded.append(value)
+        values = expanded
+        if not changed:
+            break
     for value in values:
         if isinstance(value, dict):
             lowered = {str(key).casefold(): item for key, item in value.items()}
@@ -1104,9 +1111,8 @@ def _reason_about_related_record(
                 "primeiro ações concretas de estudo que possam ser realizadas com o catálogo real e "
                 "identifica apenas as decisões que precisam de confirmação. Não substituas a análise por "
                 "um guia, manual, documentação ou formação. Quando forem pedidas várias sugestões, inclui "
-                "vários pontos concretos no único texto. Responde integralmente em português europeu. "
-                "Devolve apenas um array JSON com uma string. A string pode conter pontos numerados, mas "
-                "não pode conter Markdown."
+                "uma ação independente por elemento do array. Responde integralmente em português europeu. "
+                "Devolve apenas um array JSON de strings, sem listas internas, numeração ou Markdown."
             ),
         },
         "en": {
@@ -1126,8 +1132,8 @@ def _reason_about_related_record(
                 "first propose concrete study actions that can be performed against the verified catalog and "
                 "identify only decisions requiring confirmation. Do not replace analysis with a guide, manual, "
                 "documentation, or training. If several suggestions are requested, include several concrete "
-                "points in the single text. Reply entirely in English. Return only a JSON array containing one "
-                "string. The string may contain numbered points but no Markdown."
+                "actions in separate array elements. Reply entirely in English. Return only a JSON array "
+                "of strings without internal lists, numbering or Markdown."
             ),
         },
         "es": {
@@ -1147,9 +1153,8 @@ def _reason_about_related_record(
                 "registro. Si faltan detalles, propón primero acciones concretas de estudio que puedan realizarse "
                 "contra el catálogo real e identifica únicamente las decisiones que deben confirmarse. No "
                 "sustituyas el análisis por una guía, manual, documentación o formación. Si se solicitan varias "
-                "sugerencias, incluye varios puntos concretos dentro del único texto. Responde íntegramente en "
-                "español. Devuelve solamente un array JSON con un string. Puede contener puntos numerados, pero "
-                "no Markdown."
+                "sugerencias, incluye una acción independiente por elemento del array. Responde íntegramente en "
+                "español. Devuelve solamente un array JSON de strings sin listas internas, numeración ni Markdown."
             ),
         },
     }.get(language) or {}
@@ -1159,7 +1164,7 @@ def _reason_about_related_record(
             "record": "VERIFIED RECORD",
             "research": "SUPPORTING RESEARCH",
             "system": "Use only the verified evidence supplied in this message.",
-            "instructions": "Answer the current request directly and return one JSON string in an array.",
+            "instructions": "Return a JSON array of independent suggestions, one action per string, without internal lists.",
         }
     prompt = (
         f"{localized['request']}:\n{request_text[:1200]}\n\n"
@@ -1188,6 +1193,12 @@ def _reason_about_related_record(
             "Do not translate the title or repeat the description."
         ),
     }.get(language, "Use at most 140 words and three actions. Close the JSON array.")
+    count = max(1, min(3, int(metadata.get("response_suggestion_count") or 3)))
+    prompt += (
+        f"\nReturn exactly {count} separate strings in the JSON array. "
+        "Each string is one complete, independently selectable suggestion. "
+        "Do not combine suggestions into one string. The 140-word limit applies to the whole array."
+    )
     if previous_output:
         rejected_label = {
             "pt": "RASCUNHO REJEITADO",
@@ -1506,7 +1517,7 @@ async def _process_chat_question_response_suggestion(
         )
         if related_guidance_mode:
             concrete_answer_mode = False
-            suggestion_count = 1
+            suggestion_count = min(3, suggestion_count)
         elif concrete_answer_mode:
             suggestion_count = 1
         suggestion_source = effective_request_text
@@ -1748,7 +1759,7 @@ async def _process_chat_question_response_suggestion(
             suggestions = _parse_chat_question_suggestions(
                 raw_suggestions,
                 limit=suggestion_count,
-                allow_internal_list=related_guidance_mode,
+                allow_internal_list=False,
             )
             suggestions = [
                 item
@@ -1772,7 +1783,7 @@ async def _process_chat_question_response_suggestion(
             ]
         if direct_answer is None and (
             not verified_business_context or business_recommendation
-        ) and _should_repair_suggestions(
+        ) and (not related_guidance_mode or not suggestions) and _should_repair_suggestions(
             suggestions,
             expected_count=suggestion_count,
             concrete_answer_mode=concrete_answer_mode,
@@ -1809,7 +1820,7 @@ async def _process_chat_question_response_suggestion(
             suggestions = _parse_chat_question_suggestions(
                 repaired_raw,
                 limit=suggestion_count,
-                allow_internal_list=related_guidance_mode,
+                allow_internal_list=False,
             )
             suggestions = [
                 item
