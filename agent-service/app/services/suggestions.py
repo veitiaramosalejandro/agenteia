@@ -309,7 +309,19 @@ def _sanitize_related_record_value(value: Any) -> str:
     return text.strip(" -;,.")
 
 
-def _related_record_direct_answer(context: str, language: str) -> str:
+_UNAVAILABLE_RECORD_VALUES = {
+    "", "no disponible", "not available", "não disponível", "none", "null",
+}
+
+
+def _available_record_value(value: Any) -> str:
+    candidate = str(value if value is not None else "").strip()
+    return "" if candidate.casefold() in _UNAVAILABLE_RECORD_VALUES else candidate
+
+
+def _related_record_direct_answer(
+    context: str, language: str, request_text: str = ""
+) -> str:
     """Resume hechos del registro sin inferir campos operativos ausentes."""
     lines = [line.strip() for line in str(context or "").splitlines() if line.strip()]
     if not lines:
@@ -323,20 +335,40 @@ def _related_record_direct_answer(context: str, language: str) -> str:
             fields[key.strip().casefold()] = value.strip()
     if not fields or fields.get("sql_verification", "").casefold() != "retrieved" and len(fields) == 1:
         return ""
-    instruction = fields.get("technicalspecification") or fields.get("description")
-    progress = fields.get("progresspercentage")
-    running_status = fields.get("runningstatus")
+    # Description is the business description. TechnicalSpecification is only
+    # its fallback and absence markers are never treated as real content.
+    instruction = (
+        _available_record_value(fields.get("description"))
+        or _available_record_value(fields.get("technicalspecification"))
+    )
+    progress = _available_record_value(fields.get("progresspercentage"))
+    running_status = _available_record_value(fields.get("runningstatus"))
     status = task_running_status(running_status, language) if running_status else ""
     has_rating = any(
         key in fields for key in ("rating", "calification", "qualification", "score")
     )
     rating = next(
-        (fields[key] for key in ("rating", "calification", "qualification", "score") if fields.get(key)),
+        (_available_record_value(fields[key]) for key in ("rating", "calification", "qualification", "score")
+         if _available_record_value(fields.get(key))),
         "",
     )
-    unavailable_values = {"no disponible", "not available", "não disponível"}
-    has_progress = bool(progress and progress.casefold() not in unavailable_values)
-    has_status = bool(status and status.casefold() not in unavailable_values)
+    has_rating = bool(rating)
+    has_progress = bool(progress)
+    has_status = bool(status)
+    normalized_request = " ".join(str(request_text or "").casefold().split())
+    asks_only_status = bool(re.search(
+        r"\b(?:estado|status|situa[cç][aã]o|state)\b", normalized_request
+    )) and not re.search(
+        r"\b(?:resumen|resumo|summary|descri[cç][aã]o|descripci[oó]n|description|"
+        r"porcentaje|percentagem|percentage|progreso|progresso|progress|"
+        r"nota|califica[cç][aã]o|rating|score)\b", normalized_request
+    )
+    if asks_only_status:
+        if language == "pt":
+            return f"O estado de execução da tarefa {label_sentence} é {status}." if has_status else "O estado de execução não está disponível no registo."
+        if language == "en":
+            return f"The running status of task {label_sentence} is {status}." if has_status else "The running status is not available in the record."
+        return f"El estado de ejecución de la tarea {label_sentence} es {status}." if has_status else "El estado de ejecución no está disponible en el registro."
     if language == "pt":
         detail = (
             f" Descrição verificada: {instruction}"
@@ -1885,7 +1917,9 @@ async def _process_chat_question_response_suggestion(
             # SQL already supplied the task fields. A factual record question
             # must not depend on a model completing absent status or rating data.
             direct_record_answer = _related_record_direct_answer(
-                related_records_context, metadata["response_language"]
+                related_records_context,
+                metadata["response_language"],
+                effective_request_text,
             )
             if direct_record_answer:
                 raw_suggestions = json.dumps([direct_record_answer], ensure_ascii=False)
