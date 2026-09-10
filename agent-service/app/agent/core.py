@@ -4358,7 +4358,7 @@ class MachiningAgent:
                         )),
                     ])
                     continue
-                if self._has_incomplete_response_markup(response_text):
+                if not response_suggestion_mode and self._has_incomplete_response_markup(response_text):
                     print("⚠️ Respuesta incompleta detectada; solicitando reescritura antes del envío")
                     messages.extend([
                         response,

@@ -1420,7 +1420,7 @@ async def _process_chat_question_response_suggestion(
         # Only a new request is authored by the user. In a refinement the
         # quoted text can be an AI draft selected by the UI, so persisting it
         # would teach the model its own output as if it were a verified fact.
-        if advice_request:
+        if advice_request and not context["related_records"]:
             learned_fact = _extract_learnable_suggestion_fact(effective_request_text)
         if learned_fact:
             try:
@@ -1708,6 +1708,15 @@ async def _process_chat_question_response_suggestion(
             "solidset_instance_code": str(solidset_instance["Code"]),
         }
         metadata["suggestion_intent"] = request_intent
+        if related_records_context:
+            # The UI wrapper can retain a title from another selected record.
+            # Preserve the actual question; use resolved SQL for record content.
+            metadata["quoted_message"] = effective_request_text
+            wrapper_codes = set(re.findall(r"\bT-\d{2}-\d+\b", context["quoted_message"], re.I))
+            selected_codes = {str(record.get("recordCode") or "").casefold()
+                              for record in context["related_records"]}
+            if any(code.casefold() not in selected_codes for code in wrapper_codes):
+                print(f"SUGGESTION_RECORD_REFERENCE_CONFLICT request_id={request_id}", flush=True)
         metadata["external_information_mode"] = request_intent == "external"
         suggestion_tool_allowlist = {
             "internal": {"query_sql_server", "get_db_schema"},
@@ -1786,7 +1795,7 @@ async def _process_chat_question_response_suggestion(
             suggestions = _parse_chat_question_suggestions(
                 raw_suggestions,
                 limit=suggestion_count,
-                allow_internal_list=related_guidance_mode,
+                allow_internal_list=bool(related_records_context),
             )
             suggestions = await asyncio.to_thread(
                 _filter_suggestion_output, suggestions, request_id=request_id,
@@ -1830,7 +1839,7 @@ async def _process_chat_question_response_suggestion(
             suggestions = _parse_chat_question_suggestions(
                 repaired_raw,
                 limit=suggestion_count,
-                allow_internal_list=related_guidance_mode,
+                allow_internal_list=bool(related_records_context),
             )
             suggestions = await asyncio.to_thread(
                 _filter_suggestion_output, suggestions, request_id=request_id,
