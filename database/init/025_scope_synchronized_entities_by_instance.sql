@@ -74,3 +74,43 @@ CREATE INDEX IF NOT EXISTS "IX_SysLogin_Instance_Login"
   ON public."SysLogin" ("IDSolidSETInstance", "IDLogin");
 CREATE INDEX IF NOT EXISTS "IX_SysChatIAResource_Instance_WorkRoom_Resource"
   ON public."SysChatIAResource" ("IDSolidSETInstance", "IDWorkRoom", "IDResource");
+
+CREATE TABLE IF NOT EXISTS public."SysSolidSETInstanceWorkRoom" (
+  "IDSolidSETInstance" uuid NOT NULL REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
+  "IDWorkRoom" uuid NOT NULL REFERENCES public."SysWorkRoom"("IDWorkRoom") ON DELETE CASCADE,
+  "Code" varchar(20), "Name" varchar(100), "Description" varchar(200),
+  active boolean NOT NULL DEFAULT true,
+  "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("IDSolidSETInstance", "IDWorkRoom")
+);
+
+CREATE TABLE IF NOT EXISTS public."SysSolidSETInstanceChatIAResource" (
+  "IDSolidSETInstance" uuid NOT NULL REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
+  "IDResource" uuid NOT NULL,
+  "IDWorkRoom" uuid NOT NULL,
+  active boolean NOT NULL DEFAULT true,
+  response_order integer NOT NULL DEFAULT 0,
+  "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("IDSolidSETInstance", "IDResource", "IDWorkRoom"),
+  FOREIGN KEY ("IDSolidSETInstance", "IDWorkRoom")
+    REFERENCES public."SysSolidSETInstanceWorkRoom"("IDSolidSETInstance", "IDWorkRoom") ON DELETE CASCADE,
+  FOREIGN KEY ("IDSolidSETInstance", "IDResource")
+    REFERENCES public."SysSolidSETInstanceResource"("IDSolidSETInstance", "IDResource") ON DELETE CASCADE
+);
+
+INSERT INTO public."SysSolidSETInstanceWorkRoom"
+  ("IDSolidSETInstance", "IDWorkRoom", "Code", "Name", "Description")
+SELECT "IDSolidSETInstance", "IDWorkRoom", "Code", "Name", "Description"
+FROM public."SysWorkRoom" WHERE "IDSolidSETInstance" IS NOT NULL
+ON CONFLICT ("IDSolidSETInstance", "IDWorkRoom") DO NOTHING;
+
+INSERT INTO public."SysSolidSETInstanceChatIAResource"
+  ("IDSolidSETInstance", "IDResource", "IDWorkRoom", active, response_order)
+SELECT c."IDSolidSETInstance", c."IDResource", c."IDWorkRoom", c.active, c.response_order
+FROM public."SysChatIAResource" c
+WHERE c."IDSolidSETInstance" IS NOT NULL
+  AND EXISTS (SELECT 1 FROM public."SysSolidSETInstanceWorkRoom" w
+              WHERE w."IDSolidSETInstance"=c."IDSolidSETInstance" AND w."IDWorkRoom"=c."IDWorkRoom")
+  AND EXISTS (SELECT 1 FROM public."SysSolidSETInstanceResource" r
+              WHERE r."IDSolidSETInstance"=c."IDSolidSETInstance" AND r."IDResource"=c."IDResource")
+ON CONFLICT ("IDSolidSETInstance", "IDResource", "IDWorkRoom") DO NOTHING;

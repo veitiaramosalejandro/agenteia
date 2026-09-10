@@ -130,17 +130,8 @@ def ingest_solidset_logins(instance: dict[str, object]) -> dict[str, int]:
             existing_ids: set[UUID] = set()
             if login_ids:
                 target_cursor.execute(
-                    'SELECT "IDLogin" FROM public."SysLogin" '
-                    'WHERE "IDLogin"=ANY(%s) AND "IDSolidSETInstance" IS NOT NULL '
-                    'AND "IDSolidSETInstance"<>%s LIMIT 1',
-                    (login_ids, instance_id),
-                )
-                if target_cursor.fetchone() is not None:
-                    raise RuntimeError(
-                        "Um IDLogin já pertence a outra instância SolidSET."
-                    )
-                target_cursor.execute(
-                    'SELECT "IDLogin" FROM public."SysLogin" WHERE "IDSolidSETInstance"=%s AND "IDLogin" = ANY(%s)',
+                    'SELECT "IDLogin" FROM public."SysSolidSETInstanceLogin" '
+                    'WHERE "IDSolidSETInstance"=%s AND "IDLogin" = ANY(%s)',
                     (instance_id, login_ids),
                 )
                 existing_ids = {row["IDLogin"] for row in target_cursor.fetchall()}
@@ -233,17 +224,7 @@ def ingest_solidset_resources(instance: dict[str, object]) -> dict[str, int]:
             existing_ids: set[UUID] = set()
             if resource_ids:
                 target_cursor.execute(
-                    'SELECT "IDResource" FROM public."SysResourceIA" '
-                    'WHERE "IDResource"=ANY(%s) AND "IDSolidSETInstance" IS NOT NULL '
-                    'AND "IDSolidSETInstance"<>%s LIMIT 1',
-                    (resource_ids, instance_id),
-                )
-                if target_cursor.fetchone() is not None:
-                    raise RuntimeError(
-                        "Um IDResource já pertence a outra instância SolidSET."
-                    )
-                target_cursor.execute(
-                    'SELECT "IDResource" FROM public."SysResourceIA" '
+                    'SELECT "IDResource" FROM public."SysSolidSETInstanceResource" '
                     'WHERE "IDSolidSETInstance"=%s AND "IDResource" = ANY(%s)',
                     (instance_id, resource_ids),
                 )
@@ -305,6 +286,7 @@ def ingest_solidset_chat_resources(instance: dict[str, object]) -> dict[str, int
     instance_id = UUID(str(instance["ID"]))
 
     relations: dict[tuple[UUID, UUID], str | None] = {}
+    relation_workrooms: dict[UUID, tuple[str | None, str | None]] = {}
     skipped = 0
     for row in source_rows:
         try:
@@ -317,33 +299,15 @@ def ingest_solidset_chat_resources(instance: dict[str, object]) -> dict[str, int
         relations[(resource_id, workroom_id)] = (
             str(display_name).strip() if display_name is not None else None
         )
+        relation_workrooms[workroom_id] = (
+            str(row.get("Code")).strip() if row.get("Code") is not None else None,
+            str(row.get("Name")).strip() if row.get("Name") is not None else None,
+        )
 
     relation_keys = list(relations)
+    relation_resource_ids = list({key[0] for key in relation_keys})
     with _postgres_connection() as target_connection:
         with target_connection.cursor() as target_cursor:
-            relation_resource_ids = list({key[0] for key in relation_keys})
-            relation_workroom_ids = list({key[1] for key in relation_keys})
-            if relation_keys:
-                target_cursor.execute(
-                    'SELECT 1 FROM public."SysResourceIA" '
-                    'WHERE "IDResource"=ANY(%s) AND "IDSolidSETInstance" IS NOT NULL '
-                    'AND "IDSolidSETInstance"<>%s LIMIT 1',
-                    (relation_resource_ids, instance_id),
-                )
-                if target_cursor.fetchone() is not None:
-                    raise RuntimeError(
-                        "Um recurso da relação pertence a outra instância SolidSET."
-                    )
-                target_cursor.execute(
-                    'SELECT 1 FROM public."SysWorkRoom" '
-                    'WHERE "IDWorkRoom"=ANY(%s) AND "IDSolidSETInstance" IS NOT NULL '
-                    'AND "IDSolidSETInstance"<>%s LIMIT 1',
-                    (relation_workroom_ids, instance_id),
-                )
-                if target_cursor.fetchone() is not None:
-                    raise RuntimeError(
-                        "Um canal da relação pertence a outra instância SolidSET."
-                    )
             # Garantiza la clave padre incluso si esta ingesta se ejecuta sola.
             target_cursor.executemany(
                 '''
@@ -361,23 +325,47 @@ def ingest_solidset_chat_resources(instance: dict[str, object]) -> dict[str, int
                     for (resource_id, _), display_name in relations.items()
                 ],
             )
+            target_cursor.executemany(
+                '''INSERT INTO public."SysSolidSETInstanceResource"
+                   ("IDSolidSETInstance", "IDResource", active)
+                   VALUES (%s,%s,true)
+                   ON CONFLICT ("IDSolidSETInstance", "IDResource")
+                   DO UPDATE SET active=true''',
+                [(instance_id, resource_id) for resource_id in relation_resource_ids],
+            )
+            target_cursor.executemany(
+                '''INSERT INTO public."SysWorkRoom"
+                   ("IDWorkRoom", "Code", "Name", "IDSolidSETInstance")
+                   VALUES (%s,%s,%s,%s)
+                   ON CONFLICT ("IDWorkRoom") DO UPDATE SET
+                     "Code"=EXCLUDED."Code", "Name"=EXCLUDED."Name",
+                     "IDSolidSETInstance"=EXCLUDED."IDSolidSETInstance"
+                   WHERE public."SysWorkRoom"."IDSolidSETInstance" IS NULL
+                      OR public."SysWorkRoom"."IDSolidSETInstance"=EXCLUDED."IDSolidSETInstance"''',
+                [
+                    (workroom_id, code, name, instance_id)
+                    for workroom_id, (code, name) in relation_workrooms.items()
+                ],
+            )
+            target_cursor.executemany(
+                '''INSERT INTO public."SysSolidSETInstanceWorkRoom"
+                   ("IDSolidSETInstance", "IDWorkRoom", "Code", "Name", active)
+                   VALUES (%s,%s,%s,%s,true)
+                   ON CONFLICT ("IDSolidSETInstance", "IDWorkRoom") DO UPDATE SET
+                     "Code"=EXCLUDED."Code", "Name"=EXCLUDED."Name", active=true,
+                     "UpdatedAt"=CURRENT_TIMESTAMP''',
+                [
+                    (instance_id, workroom_id, code, name)
+                    for workroom_id, (code, name) in relation_workrooms.items()
+                ],
+            )
 
             existing_keys: set[tuple[UUID, UUID]] = set()
             if relation_keys:
                 target_cursor.execute(
-                    'SELECT 1 FROM public."SysChatIAResource" '
-                    "WHERE (\"IDResource\"::text || ':' || \"IDWorkRoom\"::text)=ANY(%s) "
-                    'AND "IDSolidSETInstance" IS NOT NULL '
-                    'AND "IDSolidSETInstance"<>%s LIMIT 1',
-                    ([f"{resource_id}:{workroom_id}" for resource_id, workroom_id in relation_keys], instance_id),
-                )
-                if target_cursor.fetchone() is not None:
-                    raise RuntimeError(
-                        "Uma relação recurso-canal já pertence a outra instância SolidSET."
-                    )
-                target_cursor.execute(
                     'SELECT "IDResource", "IDWorkRoom" '
-                    'FROM public."SysChatIAResource" WHERE "IDSolidSETInstance"=%s',
+                    'FROM public."SysSolidSETInstanceChatIAResource" '
+                    'WHERE "IDSolidSETInstance"=%s',
                     (instance_id,),
                 )
                 requested = set(relation_keys)
@@ -396,6 +384,14 @@ def ingest_solidset_chat_resources(instance: dict[str, object]) -> dict[str, int
                        OR public."SysChatIAResource"."IDSolidSETInstance" = EXCLUDED."IDSolidSETInstance"
                     ''',
                     [(resource_id, workroom_id, instance_id) for resource_id, workroom_id in relation_keys],
+                )
+                target_cursor.executemany(
+                    '''INSERT INTO public."SysSolidSETInstanceChatIAResource"
+                       ("IDSolidSETInstance", "IDResource", "IDWorkRoom", active)
+                       VALUES (%s,%s,%s,true)
+                       ON CONFLICT ("IDSolidSETInstance", "IDResource", "IDWorkRoom")
+                       DO UPDATE SET active=true, "UpdatedAt"=CURRENT_TIMESTAMP''',
+                    [(instance_id, resource_id, workroom_id) for resource_id, workroom_id in relation_keys],
                 )
 
     return {
@@ -530,17 +526,7 @@ def ingest_solidset_workrooms(instance: dict[str, object]) -> dict[str, int]:
             existing_ids: set[UUID] = set()
             if workroom_ids:
                 target_cursor.execute(
-                    'SELECT "IDWorkRoom" FROM public."SysWorkRoom" '
-                    'WHERE "IDWorkRoom"=ANY(%s) AND "IDSolidSETInstance" IS NOT NULL '
-                    'AND "IDSolidSETInstance"<>%s LIMIT 1',
-                    (workroom_ids, instance_id),
-                )
-                if target_cursor.fetchone() is not None:
-                    raise RuntimeError(
-                        "Um IDWorkRoom já pertence a outra instância SolidSET."
-                    )
-                target_cursor.execute(
-                    'SELECT "IDWorkRoom" FROM public."SysWorkRoom" '
+                    'SELECT "IDWorkRoom" FROM public."SysSolidSETInstanceWorkRoom" '
                     'WHERE "IDSolidSETInstance"=%s AND "IDWorkRoom" = ANY(%s)',
                     (instance_id, workroom_ids),
                 )
@@ -560,6 +546,19 @@ def ingest_solidset_workrooms(instance: dict[str, object]) -> dict[str, int]:
                     ''',
                     [
                         (workroom_id, code, name, description, instance_id)
+                        for workroom_id, (code, name, description) in workrooms.items()
+                    ],
+                )
+                target_cursor.executemany(
+                    '''INSERT INTO public."SysSolidSETInstanceWorkRoom"
+                       ("IDSolidSETInstance", "IDWorkRoom", "Code", "Name", "Description", active)
+                       VALUES (%s,%s,%s,%s,%s,true)
+                       ON CONFLICT ("IDSolidSETInstance", "IDWorkRoom") DO UPDATE SET
+                         "Code"=EXCLUDED."Code", "Name"=EXCLUDED."Name",
+                         "Description"=EXCLUDED."Description", active=true,
+                         "UpdatedAt"=CURRENT_TIMESTAMP''',
+                    [
+                        (instance_id, workroom_id, code, name, description)
                         for workroom_id, (code, name, description) in workrooms.items()
                     ],
                 )
