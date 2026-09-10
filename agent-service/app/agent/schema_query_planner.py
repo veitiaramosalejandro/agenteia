@@ -100,6 +100,8 @@ def plan_related_record_query(
         "Code", "ShortName", "Description", "TechnicalSpecification", "Status",
         "WorkStatus", "ProgressPercentage", "StartDate", "EndDate", "DueDate",
         "Priority", "Complexity", "ModifiedTime",
+        "DateCompletion", "Duration", "DurationEstimated", "TotalWorkDuration",
+        "StartDateEstimated", "EndDateEstimated",
     )
     selected = tuple(columns[name.casefold()] for name in preferred if name.casefold() in columns)
     predicates: list[str] = []
