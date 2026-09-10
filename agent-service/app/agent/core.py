@@ -3774,6 +3774,11 @@ class MachiningAgent:
                     system_prompt += (
                         "\n\n=== MODO RESPUESTA CONCRETA VERIFICADA ===\n"
                         "La solicitud tiene una respuesta factual que puede verificarse. Devuelve "
+                        "Cada apartado solicitado debe contestarse con evidencia. No deduzcas el estado "
+                        "a partir del progreso ni interpretes códigos de estado sin su catálogo. "
+                        "Distingue duración planificada, duración transcurrida y esfuerzo registrado; "
+                        "si faltan valores o su significado, indica que no se puede calcular. "
+                        "No inventes calificaciones ni escalas: exige criterios y evidencia de cumplimiento. "
                         "exactamente una respuesta directa que conteste la pregunta, no consejos sobre "
                         "dónde buscar, no alternativas y no preguntas de seguimiento. Usa primero los "
                         "datos operativos o resultados de búsqueda proporcionados. Para información "
@@ -4335,6 +4340,7 @@ class MachiningAgent:
                         return ""
                 if (
                     business_knowledge_query
+                    and not message_metadata.get("related_records_context")
                     and not successful_sql_query
                     and schema_only_retries < 1
                     and iteration + 1 < self.max_iterations
