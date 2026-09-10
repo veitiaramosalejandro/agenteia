@@ -303,7 +303,7 @@ def _sanitize_related_record_value(value: Any) -> str:
 
 
 def _related_record_direct_answer(context: str, language: str) -> str:
-    """Resume hechos del registro; nunca fabrica un plan de ejecución."""
+    """Resume hechos del registro sin inferir campos operativos ausentes."""
     lines = [line.strip() for line in str(context or "").splitlines() if line.strip()]
     if not lines:
         return ""
@@ -314,27 +314,50 @@ def _related_record_direct_answer(context: str, language: str) -> str:
         key, separator, value = line.partition(":")
         if separator and value.strip():
             fields[key.strip().casefold()] = value.strip()
+    if not fields or fields.get("sql_verification", "").casefold() != "retrieved" and len(fields) == 1:
+        return ""
     instruction = fields.get("technicalspecification") or fields.get("description")
+    progress = fields.get("progresspercentage")
+    status = fields.get("workstatus") or fields.get("status")
+    has_rating = any(
+        key in fields for key in ("rating", "calification", "qualification", "score")
+    )
+    rating = next(
+        (fields[key] for key in ("rating", "calification", "qualification", "score") if fields.get(key)),
+        "",
+    )
+    unavailable_values = {"no disponible", "not available", "não disponível"}
+    has_progress = bool(progress and progress.casefold() not in unavailable_values)
+    has_status = bool(status and status.casefold() not in unavailable_values)
     if language == "pt":
         detail = (
             f" Descrição verificada: {instruction}"
             if instruction
-            else " O registo não contém descrição nem especificação técnica suficiente para recomendar uma execução sem inventar dados."
+            else " O registo não contém descrição nem especificação técnica disponível."
         )
-        return f"Tarefa relacionada: {label_sentence}.{detail}"
+        progress_text = f" Percentagem de cumprimento registada: {progress}." if has_progress else " A percentagem de cumprimento não está disponível no registo."
+        status_text = f" Estado registado: {status}." if has_status else " O estado não está disponível no registo."
+        rating_text = f" Classificação registada: {rating}." if has_rating else " Não é possível atribuir uma classificação: o registo não contém critérios nem avaliação verificável."
+        return f"Resumo da tarefa: {label_sentence}.{detail}{progress_text}{status_text}{rating_text}"
     if language == "en":
         detail = (
             f" Verified description: {instruction}"
             if instruction
-            else " The record has no description or technical specification sufficient to recommend an execution without inventing details."
+            else " The record has no available description or technical specification."
         )
-        return f"Related task: {label_sentence}.{detail}"
+        progress_text = f" Recorded completion percentage: {progress}." if has_progress else " The completion percentage is not available in the record."
+        status_text = f" Recorded status: {status}." if has_status else " The status is not available in the record."
+        rating_text = f" Recorded rating: {rating}." if has_rating else " A rating cannot be assigned because the record contains no verifiable criteria or evaluation."
+        return f"Task summary: {label_sentence}.{detail}{progress_text}{status_text}{rating_text}"
     detail = (
         f" Descripción verificada: {instruction}"
         if instruction
-        else " El registro no contiene descripción ni especificación técnica suficiente para recomendar una ejecución sin inventar datos."
+        else " El registro no contiene descripción ni especificación técnica disponible."
     )
-    return f"Tarea relacionada: {label_sentence}.{detail}"
+    progress_text = f" Porcentaje de cumplimiento registrado: {progress}." if has_progress else " El porcentaje de cumplimiento no está disponible en el registro."
+    status_text = f" Estado registrado: {status}." if has_status else " El estado no está disponible en el registro."
+    rating_text = f" Calificación registrada: {rating}." if has_rating else " No es posible asignar una calificación: el registro no contiene criterios ni una evaluación verificable."
+    return f"Resumen de la tarea: {label_sentence}.{detail}{progress_text}{status_text}{rating_text}"
 
 
 def _format_suggestion_scope_context(
@@ -1774,6 +1797,18 @@ async def _process_chat_question_response_suggestion(
                 [verified_business_context], ensure_ascii=False
             )
             suggestions = [verified_business_context]
+        elif concrete_answer_mode and related_records_context:
+            # SQL already supplied the task fields. A factual record question
+            # must not depend on a model completing absent status or rating data.
+            direct_record_answer = _related_record_direct_answer(
+                related_records_context, metadata["response_language"]
+            )
+            if direct_record_answer:
+                raw_suggestions = json.dumps([direct_record_answer], ensure_ascii=False)
+                suggestions = [direct_record_answer]
+            else:
+                raw_suggestions = ""
+                suggestions = []
         else:
             generation_started = perf_counter()
             raw_suggestions = await asyncio.to_thread(
