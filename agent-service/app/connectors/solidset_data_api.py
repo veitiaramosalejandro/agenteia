@@ -254,13 +254,22 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
     with DataAPIConnection(configuration, as_dict=True) as connection:
         rows: list[dict[str, Any]] = []
         offset = 0
+        pages = 0
+        # Large description fields make 5,000-row responses unreliable through
+        # HTTPS tunnels. Keep each transfer bounded while retaining full pagination.
+        page_size = min(connection.max_rows, 1000)
         while True:
             try:
                 response = connection.client.get(
                     f"/api/v1/datasets/{dataset}",
-                    params={"offset": offset, "limit": connection.max_rows},
+                    params={"offset": offset, "limit": page_size},
                 )
             except httpx.HTTPError as exc:
+                print(
+                    f"SOLIDSET_DATASET_REQUEST_FAILED dataset={dataset} "
+                    f"offset={offset} limit={page_size} type={type(exc).__name__}",
+                    flush=True,
+                )
                 raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
             _reject_redirect(response, f"dataset-{dataset}")
             if response.status_code == 404 and dataset == "agent-scopes" and offset == 0:
@@ -305,7 +314,13 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                 )
             page = [dict(row) for row in raw_page]
             rows.extend(page)
+            pages += 1
             if not has_more:
+                print(
+                    f"SOLIDSET_DATASET_READ dataset={dataset} rows={len(rows)} "
+                    f"pages={pages} page_size={page_size}",
+                    flush=True,
+                )
                 return rows
             next_offset = payload.get("nextOffset")
             try:
