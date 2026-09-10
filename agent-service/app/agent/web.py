@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from app.agent.contracts import AgentContext
+from app.agent.capabilities import tool_permissions as resolve_tool_permissions
 
 
 class AgentWeb:
@@ -21,7 +22,7 @@ class AgentWeb:
         agent_resource_id: Optional[str] = None,
         tool_permissions: Any = None,
     ) -> Any:
-        permissions = None if tool_permissions is None else set(tool_permissions)
+        permissions = None if tool_permissions is None else resolve_tool_permissions(tool_permissions)
         if permissions is not None and "external_web" not in permissions:
             raise PermissionError("Permission required for tool google_web_search: external_web")
         context = AgentContext(

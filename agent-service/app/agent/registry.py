@@ -8,6 +8,7 @@ from typing import Any
 from time import perf_counter
 
 from app.agent.contracts import AgentContext, ToolAuditEvent, ToolPolicy, ToolResult
+from app.agent.capabilities import tool_permissions
 
 
 class ToolRegistry(dict[str, Any]):
@@ -15,7 +16,9 @@ class ToolRegistry(dict[str, Any]):
 
     def __init__(self, tools: Mapping[str, Any] | None = None):
         super().__init__(tools or {})
-        self._policies: dict[str, ToolPolicy] = {}
+        self._policies: dict[str, ToolPolicy] = {
+            name: ToolPolicy(required_permission=f"tool:{name}") for name in self
+        }
         self._learner: Any = None
         self._auditor: Any = None
 
@@ -24,6 +27,7 @@ class ToolRegistry(dict[str, Any]):
         if not normalized:
             raise ValueError("Tool name cannot be empty")
         self[normalized] = tool
+        self._policies.setdefault(normalized, ToolPolicy(required_permission=f"tool:{normalized}"))
 
     def allowed(self, names: Iterable[str] | None = None) -> list[Any]:
         if names is None:
@@ -87,7 +91,7 @@ class ToolRegistry(dict[str, Any]):
         if "tool_permissions" not in context.metadata:
             return False
         permissions = context.metadata.get("tool_permissions", ())
-        return policy.required_permission in set(permissions or ())
+        return policy.required_permission in tool_permissions(permissions)
 
     def invoke_result(
         self,

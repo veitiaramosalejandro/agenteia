@@ -98,7 +98,20 @@ class AgentIAModelConfiguration(BaseModel):
     LearnFromOwner: bool = True
     LearnFromSystem: bool = True
     LearnFromReactions: bool = True
-    Capabilities: list[str] = Field(default_factory=lambda: ["general"], min_length=1)
+    Capabilities: list[str] = Field(
+        default_factory=lambda: ["general"], min_length=1,
+        description=("Model capabilities do not implicitly grant actions. sql grants solidset_sql "
+                     "and solidset_schema; external_web grants web search. Other tools require "
+                     "tool:<registered_name>. Legacy solidset_sql/solidset_schema remain supported."),
+    )
+
+    @model_validator(mode="after")
+    def normalize_capability_names(self):
+        from app.agent.capabilities import normalize_capabilities
+        self.Capabilities = sorted(normalize_capabilities(self.Capabilities))
+        if not self.Capabilities:
+            raise ValueError("At least one non-empty capability is required")
+        return self
     Priority: int = Field(100, ge=0, le=10000)
     IsDefault: bool = False
     active: bool = True

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar, Token
 from typing import Any
+from app.agent.capabilities import tool_permissions
 
 
 _tool_permissions: ContextVar[set[str] | None] = ContextVar(
@@ -12,9 +13,7 @@ _tool_permissions: ContextVar[set[str] | None] = ContextVar(
 
 
 def set_tool_permissions(permissions: Any) -> Token:
-    normalized = None if permissions is None else {
-        str(value).strip().lower() for value in permissions if str(value).strip()
-    }
+    normalized = None if permissions is None else tool_permissions(permissions)
     return _tool_permissions.set(normalized)
 
 

@@ -23,6 +23,7 @@ from app.agent.audit import PostgresToolAudit
 from app.agent.knowledge import AgentKnowledge
 from app.agent.learning import AgentLearning
 from app.agent.language import LanguageResolver
+from app.agent.capabilities import tool_permissions as resolve_tool_permissions
 from app.agent.sql import AgentSql, reset_tool_permissions, set_tool_permissions
 from app.agent.web import AgentWeb
 from app.agent.contracts import AgentContext, ToolPolicy
@@ -67,6 +68,7 @@ from app.llm import create_chat_model, provider_config_from_record, provider_con
 from app.connectors.db_client import (
     get_active_agent_prompt,
     get_agent_model_configuration,
+    get_agent_model_configurations,
     get_llm_provider_configuration,
     get_solidset_schema_snapshot,
 )
@@ -2693,7 +2695,13 @@ class MachiningAgent:
         external_query_mode: bool = False,
         general_conversation_mode: bool = False,
     ) -> str:
-        permissions = (message_metadata or {}).get("tool_permissions")
+        message_metadata = dict(message_metadata or {})
+        configured_resource = str(message_metadata.get("agent_resource_id") or user_id or "").strip()
+        configurations = get_agent_model_configurations(configured_resource) if configured_resource else []
+        permissions = set()
+        for configuration in configurations:
+            permissions.update(resolve_tool_permissions(configuration.get("Capabilities")))
+        message_metadata["tool_permissions"] = permissions
         token = set_tool_permissions(permissions)
         try:
             return self._analyze_event_with_dialogue(
@@ -2768,17 +2776,11 @@ class MachiningAgent:
             agent_model_policy = None
             print(f"⚠️ No se pudo leer la política SysAgentIAModel: {exc}")
         if agent_model_policy is not None:
-            capabilities = agent_model_policy.get("Capabilities") or []
-            if isinstance(capabilities, str):
-                try:
-                    capabilities = json.loads(capabilities)
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    capabilities = [capabilities]
-            metadata_identity["tool_permissions"] = {
-                str(value).strip().lower()
-                for value in capabilities
-                if str(value).strip()
-            }
+            # Tool permissions were resolved from all active assignments before
+            # entering the SQL context; the default model only controls learning.
+            metadata_identity["tool_permissions"] = resolve_tool_permissions(
+                message_metadata.get("tool_permissions")
+            )
         training_enabled = not agent_model_policy or agent_model_policy.get("TrainingMode") != "disabled"
         learn_from_system = not agent_model_policy or bool(agent_model_policy.get("LearnFromSystem", True))
         learn_from_reactions = not agent_model_policy or bool(agent_model_policy.get("LearnFromReactions", True))
@@ -4016,6 +4018,8 @@ class MachiningAgent:
             f"🧠 LLM provider={request_provider_config.provider} "
             f"model={request_provider_config.model} agent={agent_resource_id or 'default'}"
         )
+        if tool_allowlist is None:
+            tool_allowlist = set(self.tools_map.names())
         if tool_allowlist is not None:
             tool_allowlist = self.tools_map.permitted_names(tool_allowlist, AgentContext(
                 agent_resource_id=agent_resource_id,

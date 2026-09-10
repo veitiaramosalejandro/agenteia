@@ -36,6 +36,7 @@ from app.services.auto_reply import (
     _learn_agent_interaction,
 )
 from app.services import auto_reply as auto_reply_service
+from app.agent.capabilities import tool_permissions as resolve_tool_permissions
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.services.external_search import search_with_openai
 
@@ -55,7 +56,7 @@ def _dialogue_public_research(question: str, resource_id: str) -> dict[str, Any]
                 values = [values]
         if isinstance(values, list):
             capabilities.update(str(value).strip().lower() for value in values)
-    if "external_web" not in capabilities:
+    if "external_web" not in resolve_tool_permissions(capabilities):
         return {"status": "not_permitted", "detail": "This agent has no external_web capability."}
     try:
         # Never append the twin's private profile, knowledge or history to a
@@ -287,9 +288,7 @@ async def handle_multi_agent_dialogue(
                 "agent_reinforcement": reinforcement,
                 "workroom_id": str(request.IDWorkRoom),
                 "source": "solidset_multi_agent",
-                "tool_permissions": {
-                    "external_web", "solidset_sql", "solidset_schema"
-                }.intersection(capabilities) or capabilities,
+                "tool_permissions": resolve_tool_permissions(capabilities),
                 "model_capabilities": sorted(capabilities),
                 "training_mode": training_mode,
                 "training_enabled": training_mode != "disabled",
