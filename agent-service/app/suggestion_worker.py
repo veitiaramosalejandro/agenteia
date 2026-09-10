@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import suppress
 
 import redis
 from fastapi import HTTPException
@@ -14,6 +15,18 @@ from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.services.suggestions import _process_chat_question_response_suggestion
 from app.suggestion_queue import SuggestionQueue
+
+
+async def _renew_delivery(queue: SuggestionQueue, message_id: str, consumer: str) -> None:
+    interval = min(30, settings.SUGGESTION_CLAIM_IDLE_MS / 3000)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            if not await asyncio.to_thread(queue.renew, message_id, consumer):
+                print("SUGGESTION_LEASE_LOST", flush=True)
+                return
+        except redis.RedisError:
+            print("SUGGESTION_LEASE_RENEW_FAILED", flush=True)
 
 
 async def run_worker() -> None:
@@ -35,6 +48,7 @@ async def run_worker() -> None:
             attempt = int(fields.get("attempt") or 0)
             payload: dict = {}
             instance: dict = {}
+            heartbeat = asyncio.create_task(_renew_delivery(queue, message_id, consumer))
             try:
                 status = _load_response_status(request_id) or {}
                 if status.get("status") == "completed":
@@ -45,6 +59,7 @@ async def run_worker() -> None:
                 message = FrameworkMessageDTO.model_validate(payload)
                 await _process_chat_question_response_suggestion(message, instance)
                 await asyncio.to_thread(queue.acknowledge, message_id)
+
             except (HTTPException, Exception) as exc:
                 detail = getattr(exc, "detail", None) or str(exc)
                 terminal_output_error = isinstance(exc, HTTPException) and exc.status_code in {400, 404, 422, 502}
@@ -66,6 +81,11 @@ async def run_worker() -> None:
                         result={"httpStatus": exc.status_code if isinstance(exc, HTTPException) else 503},
                     )
                 await asyncio.to_thread(queue.acknowledge, message_id)
+            finally:
+                heartbeat.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat
+
 
 
 if __name__ == "__main__":

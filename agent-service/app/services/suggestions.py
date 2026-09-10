@@ -450,6 +450,18 @@ def _classify_suggestion_request(
     request_text: str, *, has_related_record: bool, metadata: dict[str, Any]
 ) -> tuple[str, bool]:
     """Classify the request independently of attachments; never grants write access."""
+    record_reference = re.search(
+        r"\b(?:esta?|essa?|this|the)\s+(?:tarea|tarefa|task|actividad|atividade|activity|meeting|reuni[oó]n|reuni[aã]o|registro|registo)\b",
+        request_text, re.I,
+    )
+    if has_related_record and record_reference:
+        # Explicit references to private records cannot be answered by public web.
+        opinion = re.search(
+            r"opini[oó]n|opini[aã]o|opinion|parecer|analiz|analis|eval[uú]|aval|mejor|melhor|propon|sug|recom|qu[eé].*hacer|como.*(?:hacer|fazer|realizar)",
+            request_text, re.I,
+        )
+        return ("recommendation" if opinion or _is_related_record_guidance_request(request_text)
+                else "internal"), True
     # Avoid a model round trip for clear advice phrasing. Attachments do not
     # affect this decision; only the user's actual request does.
     if (
@@ -658,6 +670,10 @@ def _related_guidance_is_useful(
     """Rechaza copias del registro, referencias internas y no-respuestas."""
     candidate = " ".join(str(suggestion or "").split()).strip()
     normalized = candidate.casefold()
+    # A heading with no body is not a completed recommendation. Let the
+    # existing bounded repair handle it instead of publishing an introduction.
+    if candidate.rstrip().endswith((":", "：")):
+        return False
     if not candidate or re.search(
         r"(?:solidset://)?file/[0-9a-f-]{16,}|\b[0-9a-f]{8}-[0-9a-f-]{27,}\b",
         candidate,
@@ -919,7 +935,12 @@ def _parse_chat_question_suggestions(
                     break
                 offset += 1
         else:
-            values = re.split(r"\n\s*(?:---SUGGESTION---|\d+[.)]\s+)", text)
+            # A single developed answer may contain numbered steps. Splitting
+            # those steps and applying limit=1 silently kept only its preamble.
+            if allow_internal_list and limit == 1:
+                values = [text]
+            else:
+                values = re.split(r"\n\s*(?:---SUGGESTION---|\d+[.)]\s+)", text)
 
     suggestions: list[str] = []
     seen: set[str] = set()
@@ -1416,6 +1437,7 @@ async def _process_chat_question_response_suggestion(
         print(f"SUGGESTION_INTENT intent={request_intent} related={use_related_record}", flush=True)
         related_records_context = ""
         if use_related_record:
+            related_started = perf_counter()
             related_records_context = await asyncio.to_thread(
                 _verified_related_records_context, solidset_instance, context["related_records"],
             )
@@ -1424,6 +1446,7 @@ async def _process_chat_question_response_suggestion(
                     _verified_task_code_context, solidset_instance,
                     effective_request_text, context["requester_resource"],
                 )
+            log_stage("related_record_sql", related_started)
         research_context = ""
         # The channel/meeting is read only for the initial empty payload. Later
         # turns reuse the same Redis-backed agent memory and refine the selected
@@ -1612,6 +1635,8 @@ async def _process_chat_question_response_suggestion(
         if related_guidance_mode:
             metadata["model_capability"] = "reasoning"
             metadata["quoted_request_mode"] = False
+            # Internal record analysis must not fall back to public research.
+            suggestion_tool_allowlist = {"query_sql_server", "get_db_schema"}
         metadata["general_knowledge_mode"] = request_intent in {"general", "recommendation"} and not related_records_context
         if request_intent in {"general", "external"} or metadata["general_knowledge_mode"]:
             metadata["strict_current_question"] = True

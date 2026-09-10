@@ -81,6 +81,16 @@ class SuggestionQueue:
     def acknowledge(self, message_id: str) -> None:
         self.client.xack(self.stream, self.group, message_id)
 
+    def renew(self, message_id: str, consumer: str) -> bool:
+        """Reset idle time only while this consumer still owns the delivery."""
+        return bool(self.client.eval(
+            "local p = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1) "
+            "if #p == 0 or p[1][2] ~= ARGV[2] then return 0 end "
+            "redis.call('XCLAIM', KEYS[1], ARGV[1], ARGV[2], 0, ARGV[3], 'JUSTID') "
+            "return 1",
+            1, self.stream, self.group, consumer, message_id,
+        ))
+
     def stats(self) -> dict[str, Any]:
         self.ensure_group()
         groups = self.client.xinfo_groups(self.stream)

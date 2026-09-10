@@ -3342,12 +3342,14 @@ class MachiningAgent:
             )
 
         # --- 4. OBTENER CONTEXTOS ---
+        record_focused = bool(response_suggestion_mode and metadata_identity.get("related_records_context"))
+        context_started = perf_counter()
 
         # 4.0 Catálogo real para SQL dinámico. Las rutas deterministas anteriores
         # ya han respondido; llegar aquí significa que necesitamos generar una
         # consulta nueva sin inventar tablas, columnas ni JOINs.
         business_schema_context = ""
-        if business_knowledge_query and not vector_answers_business_query:
+        if business_knowledge_query and not vector_answers_business_query and not record_focused:
             table_hints = self._business_schema_table_hints(business_query_text)
             if table_hints:
                 business_schema_context = str(self._sql_adapter().schema({
@@ -3358,7 +3360,7 @@ class MachiningAgent:
         
         # 4.1 Contexto del usuario (canales, rol, permisos)
         contexto_usuario = ""
-        if valid_user_guid and not external_query_mode and not general_conversation_mode:
+        if valid_user_guid and not external_query_mode and not general_conversation_mode and not record_focused:
             contexto_usuario = self._get_user_context(user_id)
         
         # 4.2 Contexto RAG (documentos técnicos)
@@ -3372,6 +3374,7 @@ class MachiningAgent:
         rag_context = business_rag_context
         if (
             not business_knowledge_query
+            and not record_focused
             and training_enabled
             and learn_from_system
             and not external_query_mode
@@ -3396,6 +3399,7 @@ class MachiningAgent:
             chat_context_bd = str(metadata_identity.get("scope_context") or "").strip()
         elif (
             valid_user_guid
+            and not record_focused
             and not suggestion_refine_mode
             and not external_query_mode
             and not general_conversation_mode
@@ -3411,6 +3415,7 @@ class MachiningAgent:
         if (
             valid_user_guid
             and valid_channel_guid
+            and not record_focused
             and not suggestion_refine_mode
             and not external_query_mode
             and not general_conversation_mode
@@ -3426,6 +3431,7 @@ class MachiningAgent:
         if (
             training_enabled
             and agent_resource_id
+            and not record_focused
             and not suggestion_refine_mode
             and not external_query_mode
         ):
@@ -3451,6 +3457,7 @@ class MachiningAgent:
                 )
         elif (
             valid_user_guid
+            and not record_focused
             and not suggestion_refine_mode
             and not external_query_mode
             and not general_conversation_mode
@@ -3478,6 +3485,9 @@ class MachiningAgent:
                     )
             except Exception as exc:
                 print(f"⚠️ No se pudo consultar la memoria web: {exc}")
+
+        if response_suggestion_mode:
+            print(f"SUGGESTION_CONTEXT request_id={metadata_identity.get('chat_id')} record_focused={record_focused} elapsed={perf_counter() - context_started:.3f}s", flush=True)
 
         # --- 5. CONSTRUIR MENSAJES ---
         
@@ -3730,8 +3740,12 @@ class MachiningAgent:
                     }.get(response_language, self._language_name(response_language))
                     system_prompt += (
                         "\n\n=== MODO ANÁLISIS DE REGISTRO RELACIONADO ===\n"
-                        "Antes de sugerir, razona internamente sobre: objetivo explícito, contexto útil, "
-                        "restricciones, datos ausentes, riesgos y criterio de validación. La respuesta debe "
+                        "Antes de sugerir, razona sobre objetivo, contexto, restricciones, riesgos y validación. "
+                        "El registro puede ser tarea, actividad o reunión: respeta su tipo. Una opinión "
+                        "debe valorar lo que está documentado, señalar carencias y proponer mejoras. "
+                        "Un título solo no demuestra acuerdos, participantes ni resultados: si no hay "
+                        "más datos, declara esa limitación y presenta las mejoras como propuestas. "
+                        "La respuesta debe "
                         "estar vinculada al registro actual y explicar brevemente por qué la propuesta encaja. "
                         "No copies la descripción como respuesta y no uses pasos universales aplicables a cualquier tarea. "
                         "Usa el historial de esta tarea para desarrollar la propuesta seleccionada sin repetirla. "
