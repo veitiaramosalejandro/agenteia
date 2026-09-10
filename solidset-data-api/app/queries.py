@@ -58,6 +58,16 @@ DATASET_ORDER_BY = {
     "agent-scopes": "ResourceId, IDLogin, IDWorkRoom, IDCommunity",
 }
 
+# Stable, unique columns used for keyset pagination. Keeping this metadata
+# separate from the SQL text avoids accepting column names from callers.
+DATASET_CURSOR_COLUMNS = {
+    "resources": ("ResourceId",),
+    "logins": ("IDLogin",),
+    "workrooms": ("IDWorkRoom",),
+    "workroom-resources": ("IDWorkRoom", "ResourceId"),
+    "agent-scopes": ("ResourceId", "IDLogin", "IDWorkRoom", "IDCommunity"),
+}
+
 ACTIVE_RESOURCE_AGENT = """
     SELECT TOP 1 IDAgentResource
     FROM dbo.SysResource2Agent WITH (NOLOCK)

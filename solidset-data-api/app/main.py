@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
 import re
 
@@ -10,7 +12,12 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.database import connection, execute_read
 from app.security import valid_api_key, validate_read_query
-from app.queries import ACTIVE_RESOURCE_AGENT, DATASETS, DATASET_ORDER_BY
+from app.queries import (
+    ACTIVE_RESOURCE_AGENT,
+    DATASETS,
+    DATASET_CURSOR_COLUMNS,
+    DATASET_ORDER_BY,
+)
 
 
 app = FastAPI(
@@ -34,6 +41,38 @@ class QueryResponse(BaseModel):
     limit: int | None = None
     hasMore: bool = False
     nextOffset: int | None = None
+    nextCursor: str | None = None
+
+
+def _decode_dataset_cursor(dataset: str, cursor: str) -> list[Any]:
+    """Decode an opaque keyset cursor and validate it for the selected dataset."""
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        values = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="Cursor de paginação inválido.") from exc
+    expected = len(DATASET_CURSOR_COLUMNS[dataset])
+    if not isinstance(values, list) or len(values) != expected or any(value is None for value in values):
+        raise HTTPException(status_code=422, detail="Cursor de paginação inválido.")
+    return values
+
+
+def _encode_dataset_cursor(dataset: str, row: dict[str, Any]) -> str:
+    values = [row.get(column) for column in DATASET_CURSOR_COLUMNS[dataset]]
+    encoded = json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
+
+
+def _keyset_predicate(dataset: str, values: list[Any]) -> tuple[str, list[Any]]:
+    columns = DATASET_CURSOR_COLUMNS[dataset]
+    clauses: list[str] = []
+    parameters: list[Any] = []
+    for position, column in enumerate(columns):
+        equality = [f"[{previous}] = %s" for previous in columns[:position]]
+        clauses.append("(" + " AND ".join([*equality, f"[{column}] > %s"]) + ")")
+        parameters.extend(values[:position])
+        parameters.append(values[position])
+    return " OR ".join(clauses), parameters
 
 
 class SchemaColumn(BaseModel):
@@ -257,6 +296,7 @@ def read_dataset(
     dataset: str,
     offset: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1),
+    cursor: str | None = Query(None, min_length=1, max_length=4000),
 ) -> QueryResponse:
     dataset_code = dataset.strip().lower()
     query = DATASETS.get(dataset_code)
@@ -265,13 +305,24 @@ def read_dataset(
     try:
         page_size = min(limit, settings.SOLIDSET_DATA_API_MAX_ROWS)
         order_by = DATASET_ORDER_BY[dataset_code]
-        paged_query = (
-            f"SELECT * FROM ({query.strip().rstrip(';')}) AS DatasetPage "
-            f"ORDER BY {order_by} OFFSET %s ROWS FETCH NEXT %s ROWS ONLY"
-        )
+        parameters: list[Any]
+        if cursor:
+            cursor_values = _decode_dataset_cursor(dataset_code, cursor)
+            predicate, parameters = _keyset_predicate(dataset_code, cursor_values)
+            paged_query = (
+                f"SELECT TOP (%s) * FROM ({query.strip().rstrip(';')}) AS DatasetPage "
+                f"WHERE {predicate} ORDER BY {order_by}"
+            )
+            parameters = [page_size + 1, *parameters]
+        else:
+            paged_query = (
+                f"SELECT * FROM ({query.strip().rstrip(';')}) AS DatasetPage "
+                f"ORDER BY {order_by} OFFSET %s ROWS FETCH NEXT %s ROWS ONLY"
+            )
+            parameters = [offset, page_size + 1]
         columns, rows = execute_read(
             paged_query,
-            [offset, page_size + 1],
+            parameters,
             page_size + 1,
             operation=f"dataset:{dataset_code}",
         )
@@ -285,6 +336,10 @@ def read_dataset(
             limit=page_size,
             hasMore=has_more,
             nextOffset=(offset + len(page)) if has_more else None,
+            nextCursor=(
+                _encode_dataset_cursor(dataset_code, page[-1])
+                if has_more and page else None
+            ),
         )
     except pymssql.Error as exc:
         raise HTTPException(status_code=503, detail="A leitura do conjunto de dados falhou.") from exc

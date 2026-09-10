@@ -256,6 +256,7 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
     with DataAPIConnection(configuration, as_dict=True) as connection:
         rows: list[dict[str, Any]] = []
         offset = 0
+        cursor: str | None = None
         pages = 0
         # Large description fields make 5,000-row responses unreliable through
         # HTTPS tunnels. Keep each transfer bounded while retaining full pagination.
@@ -265,9 +266,12 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
             last_transport_error: httpx.HTTPError | None = None
             for attempt in range(1, 4):
                 try:
+                    params: dict[str, Any] = {"offset": offset, "limit": page_size}
+                    if cursor:
+                        params["cursor"] = cursor
                     response = connection.client.get(
                         f"/api/v1/datasets/{dataset}",
-                        params={"offset": offset, "limit": page_size},
+                        params=params,
                         timeout=httpx.Timeout(min(connection.timeout_seconds, 30)),
                     )
                     last_transport_error = None
@@ -355,6 +359,13 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                 )
                 return rows
             next_offset = payload.get("nextOffset")
+            next_cursor = payload.get("nextCursor")
+            if next_cursor is not None:
+                if not isinstance(next_cursor, str) or not next_cursor.strip():
+                    raise SolidSETDataAPIError(
+                        f"Cursor de paginação inválido no dataset {dataset}."
+                    )
+                cursor = next_cursor
             try:
                 parsed_next_offset = int(next_offset)
             except (TypeError, ValueError) as exc:
