@@ -6,6 +6,7 @@ import hashlib
 import json
 import threading
 import time
+from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
 
@@ -135,6 +136,10 @@ def ensure_solidset_instance_location_schema() -> None:
                       "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
                     );
                 ''')
+            migration = Path(__file__).with_name("sync_instance_schema.sql").read_text(
+                encoding="utf-8"
+            )
+            connection.execute(migration)
         _solidset_location_schema_ready = True
 
 
