@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 import os
 import re
+import time as time_module
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
@@ -149,6 +150,7 @@ class DataAPIConnection:
         self.default_as_dict = as_dict
         self.max_rows = int(configuration.get("MaxRows") or 5000)
         timeout = max(5, int(configuration.get("TimeoutSeconds") or 120))
+        self.timeout_seconds = timeout
         self.client = httpx.Client(
             base_url=base_url,
             headers={"X-SolidSET-Data-Key": api_key},
@@ -259,18 +261,43 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
         # HTTPS tunnels. Keep each transfer bounded while retaining full pagination.
         page_size = min(connection.max_rows, 1000)
         while True:
-            try:
-                response = connection.client.get(
-                    f"/api/v1/datasets/{dataset}",
-                    params={"offset": offset, "limit": page_size},
-                )
-            except httpx.HTTPError as exc:
-                print(
-                    f"SOLIDSET_DATASET_REQUEST_FAILED dataset={dataset} "
-                    f"offset={offset} limit={page_size} type={type(exc).__name__}",
-                    flush=True,
-                )
-                raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+            response: httpx.Response | None = None
+            last_transport_error: httpx.HTTPError | None = None
+            for attempt in range(1, 4):
+                try:
+                    response = connection.client.get(
+                        f"/api/v1/datasets/{dataset}",
+                        params={"offset": offset, "limit": page_size},
+                        timeout=httpx.Timeout(min(connection.timeout_seconds, 30)),
+                    )
+                    last_transport_error = None
+                except httpx.HTTPError as exc:
+                    last_transport_error = exc
+                    print(
+                        f"SOLIDSET_DATASET_REQUEST_FAILED dataset={dataset} "
+                        f"offset={offset} limit={page_size} attempt={attempt} "
+                        f"type={type(exc).__name__}",
+                        flush=True,
+                    )
+                    if attempt < 3:
+                        time_module.sleep(0.5 * attempt)
+                        continue
+                    raise SolidSETDataAPIError(
+                        f"SolidSET Data API indisponível ao ler {dataset}."
+                    ) from exc
+                if response.status_code in {408, 429, 502, 503, 504} and attempt < 3:
+                    print(
+                        f"SOLIDSET_DATASET_RETRY dataset={dataset} offset={offset} "
+                        f"limit={page_size} attempt={attempt} status={response.status_code}",
+                        flush=True,
+                    )
+                    time_module.sleep(0.5 * attempt)
+                    continue
+                break
+            if response is None:
+                raise SolidSETDataAPIError(
+                    f"SolidSET Data API indisponível ao ler {dataset}."
+                ) from last_transport_error
             _reject_redirect(response, f"dataset-{dataset}")
             if response.status_code == 404 and dataset == "agent-scopes" and offset == 0:
                 try:
@@ -280,6 +307,11 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                 if missing_dataset:
                     return _read_legacy_agent_scopes(connection)
             if response.status_code >= 400:
+                print(
+                    f"SOLIDSET_DATASET_HTTP_ERROR dataset={dataset} offset={offset} "
+                    f"limit={page_size} status={response.status_code}",
+                    flush=True,
+                )
                 raise SolidSETDataAPIError(
                     f"Falha ao obter dataset {dataset} (HTTP {response.status_code})."
                 )
