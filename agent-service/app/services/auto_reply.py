@@ -1645,7 +1645,10 @@ async def _process_auto_replies(
             "time_zone": candidate.get("time_zone") or "Europe/Lisbon",
             "solidset_instance_id": candidate.get("solidset_instance_id"),
             "solidset_instance_code": candidate.get("solidset_instance_code"),
+            "current_reference_time": datetime.now(ZoneInfo(candidate.get("time_zone") or "Europe/Lisbon")).isoformat(),
+            "system_utc_time": datetime.utcnow().isoformat()
         }
+
         if not incoming_text or (not channel_id and not reply_resource):
             continue
 

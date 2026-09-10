@@ -915,11 +915,17 @@ def query_sql_server(query: str, parameters_json: str = "[]") -> str:
         if not rows:
             return "La consulta se ejecutó correctamente pero no devolvió resultados."
 
+        def date_serializer(obj):
+            if isinstance(obj, (datetime, pd.Timestamp)):
+                return obj.isoformat()
+            return str(obj)
+
         # 🚨 NUEVA VALIDACIÓN: Si son más de 50 filas, advertir
         if len(rows) > 50:
-            return f"⚠️ ADVERTENCIA: La consulta devolvió {len(rows)} filas. Mostrando solo las primeras 15.\n\n{json.dumps(rows[:15], ensure_ascii=False, default=str)}"
+            return f"⚠️ ADVERTENCIA: La consulta devolvió {len(rows)} filas. Mostrando solo las primeras 15.\n\n{json.dumps(rows[:15], ensure_ascii=False, default=date_serializer)}"
 
-        return json.dumps(rows[:15], ensure_ascii=False, default=str)
+        return json.dumps(rows[:15], ensure_ascii=False, default=date_serializer)
+
 
     except (pymssql.Error, RuntimeError) as db_err:
         return f"Error SQL Server: {str(db_err)}. Ajusta los campos/tablas y vuelve a intentar."

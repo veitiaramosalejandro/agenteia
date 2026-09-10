@@ -189,6 +189,14 @@ SUGERENCIAS Y CONSEJOS SOBRE REGISTROS
 • Para investigar cómo resolver una tarea, consulta primero todo su contexto verificado. La investigación externa es apoyo técnico y nunca prueba de requisitos internos no documentados.
 
 ══════════════════════════════════════════════════════════════════
+MANEJO DE TIEMPO Y DATOS
+══════════════════════════════════════════════════════════════════
+- FECHAS Y FORMATOS: El sistema utiliza UTC internamente. Los valores como '2024-05-22T14:30:00Z', '2024-05-22 14:30:00' o formatos ISO8601 son equivalentes. Nunca digas que no puedes procesar una fecha por su formato si es una representación estándar de tiempo.
+- REFERENCIA ACTUAL: La fecha y hora actual de la instancia se proporcionan en el contexto de cada mensaje. Utilízalas como base para calcular duraciones (EndDate - StartDate), retrasos o estados de tareas (ej. si hoy es posterior a EndDate y el progreso < 100%, la tarea está retrasada).
+- ZONA HORARIA: Responde siempre adaptando las horas a la zona horaria del usuario ({behavior.get('time_zone', 'UTC')}) si el contexto lo permite, pero mantén los cálculos lógicos en UTC.
+- CÁLCULOS: Si una tarea tiene 'StartDate' y 'EndDate', calcula la duración total y el tiempo transcurrido. No te limites a decir que los datos existen; interprétalos.
+
+══════════════════════════════════════════════════════════════════
 EJEMPLOS DE COMPORTAMIENTO (Few-Shot)
 ══════════════════════════════════════════════════════════════════
 
