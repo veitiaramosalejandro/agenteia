@@ -98,7 +98,7 @@ def plan_related_record_query(
 
     preferred = (
         "Code", "ShortName", "Description", "TechnicalSpecification", "Status",
-        "WorkStatus", "ProgressPercentage", "StartDate", "EndDate", "DueDate",
+        "RunningStatus", "WorkStatus", "ProgressPercentage", "StartDate", "EndDate", "DueDate",
         "Priority", "Complexity", "ModifiedTime",
         "DateCompletion", "Duration", "DurationEstimated", "TotalWorkDuration",
         "StartDateEstimated", "EndDateEstimated",

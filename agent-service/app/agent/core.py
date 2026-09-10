@@ -25,6 +25,7 @@ from app.agent.learning import AgentLearning
 from app.agent.language import LanguageResolver
 from app.agent.capabilities import tool_permissions as resolve_tool_permissions
 from app.agent.sql import AgentSql, reset_tool_permissions, set_tool_permissions
+from app.agent.task_status import task_running_status
 from app.agent.web import AgentWeb
 from app.agent.contracts import AgentContext, ToolPolicy
 from app.agent.registry import ToolRegistry
@@ -1905,7 +1906,7 @@ class MachiningAgent:
             "SELECT TOP 50 t.ModifiedTime, t.CreatedTime, t.IDResource, "
             "t.IDResourceAssign, t.Code, t.Status, t.Archived, t.ShortName, "
             "t.importance, t.IDTask, t.StartDate, t.EndDate, t.IDActivity, "
-            "t.WorkStatus, t.ProgressPercentage, t.Priority, t.TaskKind, "
+            "t.RunningStatus, t.WorkStatus, t.ProgressPercentage, t.Priority, t.TaskKind, "
             "t.IDTaskExternal, r.DisplayName AS ResourceName, "
             "l.FullName AS UserFullName, l.Username "
             "FROM dbo.SysTask t WITH (NOLOCK) "
@@ -1948,7 +1949,10 @@ class MachiningAgent:
             if not isinstance(row, dict):
                 continue
             title = str(row.get("ShortName") or row.get("Code") or untitled).strip()
-            status = row.get("WorkStatus") if row.get("WorkStatus") is not None else row.get("Status")
+            status = task_running_status(row.get("RunningStatus"), (
+                "pt" if status_label == "estado" and "progresso" == progress_label
+                else "en" if status_label == "status" else "es"
+            ))
             progress = row.get("ProgressPercentage")
             details = [f"{status_label} {status}" if status is not None else ""]
             if progress is not None:
@@ -3780,7 +3784,13 @@ class MachiningAgent:
                     system_prompt += (
                         "\n\n=== MODO RESPUESTA CONCRETA VERIFICADA ===\n"
                         "La solicitud tiene una respuesta factual que puede verificarse. Devuelve "
-                        "Cada apartado solicitado debe contestarse con evidencia. No deduzcas el estado "
+                        "Cada apartado solicitado debe contestarse con evidencia. Para una tarea, "
+                        "RunningStatus es su estado de ejecución: 2723 NotReady, 2724 Ready, "
+                        "2725 Ongoing, 2731 Suspended, 2732 InTest, 2733 InRedo, 2726 Completed, "
+                        "2727 Cancelled y 2734 NewReady. Status y WorkStatus tienen otra semántica. "
+                        "StartDate y EndDate son fechas registradas; no las describas como futuras "
+                        "ni como estimadas. Solo StartDateEstimated y EndDateEstimated son estimaciones. "
+                        "No deduzcas el estado "
                         "a partir del progreso ni interpretes códigos de estado sin su catálogo. "
                         "Distingue duración planificada, duración transcurrida y esfuerzo registrado; "
                         "si faltan valores o su significado, indica que no se puede calcular. "
