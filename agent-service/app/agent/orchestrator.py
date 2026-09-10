@@ -81,7 +81,11 @@ class SolidSETOrchestrator:
         is_business = getattr(
             self.agent, "_is_business_knowledge_query", lambda _text: False
         )
-        if metadata.get("response_suggestion_mode"):
+        if metadata.get("conversation_followup_mode"):
+            # Questions about the preceding answer use session memory and must
+            # never be converted into SQL discovery from isolated keywords.
+            route = "general_conversation"
+        elif metadata.get("response_suggestion_mode"):
             # A suggestion must be grounded in the requester's own agent
             # knowledge. It must not escape to the public web merely because
             # the quoted text is outside the internal-domain classifier.

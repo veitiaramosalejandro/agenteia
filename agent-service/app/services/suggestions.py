@@ -18,6 +18,7 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.llm.text import response_text as llm_response_text
 from app.agent.task_status import task_running_status
+from app.agent.semantic_text import normalized_text
 
 from app.api.schemas.common import (
     ChatQuestionSuggestionItem,
@@ -558,10 +559,62 @@ def _classify_suggestion_request(
     } or not isinstance(decision.get("use_related_record"), bool):
         raise SuggestionOutputError("Invalid suggestion intent classification")
     intent = decision["intent"]
-    use_record = bool(has_related_record and decision["use_related_record"])
+    use_record = bool(
+        has_related_record
+        and decision["use_related_record"]
+        and _request_depends_on_related_record(request_text)
+    )
+    if not use_record and _is_record_answer_correction(request_text):
+        # The user is correcting the prior answer and states the intended
+        # subject in this turn. Reclassify that subject without the stale UI
+        # attachment rather than summarizing the record again.
+        intent = "general"
     if use_record and intent == "external":
         intent = "recommendation"
     return intent, use_record
+
+
+def _request_depends_on_related_record(request_text: str) -> bool:
+    """Ignore stale UI attachments unless the current request refers to them."""
+    text = normalized_text(request_text)
+    if re.search(r"\bt\s+\d{2}\s+\d+\b", text):
+        return True
+    entity = (
+        r"tarea|tarefa|task|actividad|atividade|activity|trabalho|work item|"
+        r"meeting|reunion|reuniao|registro|registo|record|proyecto|projeto|project"
+    )
+    deictic = r"esta|este|essa|esse|this|that|selected|seleccionad[ao]|selecionad[ao]"
+    if re.search(rf"\b(?:{deictic})\s+(?:{entity})\b", text):
+        return True
+    if re.search(rf"\b(?:{entity})\b", text) and re.search(
+        r"\b(?:su|sus|seu|sua|its|the|la|el|a|o|del|da|do)\b", text
+    ):
+        return True
+    # Short follow-ups often omit the noun: “¿Y su estado?” / “its deadline?”.
+    return bool(re.search(
+        r"\b(?:estado|status|running status|progreso|progresso|progress|"
+        r"cumplimiento|cumprimento|completion|plazo|prazo|deadline|due date|"
+        r"duracion|duracao|duration|responsable|responsavel|assignee)\b", text
+    ))
+
+
+def _is_record_answer_correction(request_text: str) -> bool:
+    text = normalized_text(request_text)
+    return bool(
+        re.search(r"\b(?:respuesta|resposta|answer|respondio|respondeu)\b", text)
+        and re.search(r"\b(?:pregunte|perguntei|asked|pedi|solicite|solicitei)\b", text)
+    )
+
+
+def _is_answer_meta_question(request_text: str) -> bool:
+    """Questions about the previous answer are conversational, never SQL intents."""
+    text = normalized_text(request_text)
+    return bool(re.search(
+        r"\b(?:respuesta|resposta|answer|informacion|informacao|information)\b", text
+    ) and re.search(
+        r"\b(?:devolviendo|devolvendo|returning|respuesta|resposta|answer|"
+        r"dijiste|disseste|said|respondio|respondeu)\b", text
+    ))
 
 
 def _suggestion_tool_allowlist(
@@ -811,6 +864,53 @@ def _record_evidence_fallback(evidence: str, language: str, *, guidance: bool = 
     return heading + "\n" + "\n".join(rows) + "\n" + caveat if rows else unavailable
 
 
+def _record_guidance_fallback(evidence: str, language: str) -> str:
+    """Return useful bounded guidance when synthesis fails, without inventing record facts."""
+    values: dict[str, str] = {}
+    retrieved = False
+    for line in evidence.splitlines():
+        if line.startswith("SQL_VERIFICATION:"):
+            retrieved = line.strip() == "SQL_VERIFICATION: retrieved"
+            continue
+        key, sep, value = line.partition(":")
+        if retrieved and sep and key.strip().casefold() in {
+            "code", "shortname", "description", "technicalspecification"
+        } and value.strip() and value.strip().casefold() not in {
+            "no disponible", "não disponível", "not available", "none", "null"
+        }:
+            values[key.strip().casefold()] = value.strip()
+    title = values.get("shortname") or values.get("code") or {
+        "es": "el registro seleccionado", "pt": "o registo selecionado",
+        "en": "the selected record",
+    }.get(language, "the selected record")
+    templates = {
+        "es": (
+            f"Propuesta para {title}: 1) delimitar el objetivo y los procesos afectados; "
+            "2) inventariar datos, integraciones, permisos y restricciones; 3) priorizar los "
+            "casos de uso por valor, viabilidad y riesgo; 4) validar el caso principal con una "
+            "prueba de concepto y métricas acordadas; 5) entregar conclusiones, riesgos y una "
+            "hoja de ruta. Criterio de aceptación: informe revisable con alcance, alternativas, "
+            "métricas, resultado de la validación y recomendación justificada."
+        ),
+        "pt": (
+            f"Proposta para {title}: 1) delimitar o objetivo e os processos afetados; "
+            "2) inventariar dados, integrações, permissões e restrições; 3) priorizar os casos "
+            "de uso por valor, viabilidade e risco; 4) validar o caso principal com uma prova "
+            "de conceito e métricas acordadas; 5) entregar conclusões, riscos e um roteiro. "
+            "Critério de aceitação: relatório revisto com âmbito, alternativas, métricas, "
+            "resultado da validação e recomendação fundamentada."
+        ),
+        "en": (
+            f"Proposal for {title}: 1) define the objective and affected processes; 2) inventory "
+            "data, integrations, permissions and constraints; 3) rank use cases by value, "
+            "feasibility and risk; 4) validate the main case with a proof of concept and agreed "
+            "metrics; 5) deliver findings, risks and a roadmap. Acceptance criterion: a reviewable "
+            "report covering scope, alternatives, metrics, validation results and a justified recommendation."
+        ),
+    }
+    return templates.get(language, templates["en"])
+
+
 def _record_answer_is_grounded(answer: str, evidence: str, metadata: dict[str, Any]) -> bool:
     """Apply the same evidence check to answers in every language."""
     llm, _, provider = agent.get_llm_for_metadata({
@@ -877,10 +977,10 @@ def _filter_suggestion_output(
             reason = "unsafe_output"
         elif not _suggestion_matches_related_records(item, records):
             reason = "different_record"
-        elif record_context and metadata and not _record_answer_is_grounded(item, record_context, metadata):
-            reason = str(metadata.get("record_validation_reason") or "unsupported_operational_claim")
         elif guidance and not _related_guidance_is_useful(item, request_text, record_context):
             reason = "record_copy_or_deflection"
+        elif not guidance and record_context and metadata and not _record_answer_is_grounded(item, record_context, metadata):
+            reason = str(metadata.get("record_validation_reason") or "unsupported_operational_claim")
         elif not guidance and not _suggestion_language_is_consistent(item, language):
             reason = "language"
         if reason:
@@ -1609,6 +1709,12 @@ async def _process_chat_question_response_suggestion(
                 },
             )
         print(f"SUGGESTION_INTENT intent={request_intent} related={use_related_record}", flush=True)
+        answer_meta_question = _is_answer_meta_question(effective_request_text)
+        if answer_meta_question:
+            # A follow-up about the previous answer needs conversation memory.
+            # It must not be interpreted as a request to search a business table.
+            request_intent = "general"
+            use_related_record = False
         related_records_context = ""
         vector_record_context = ""
         if use_related_record:
@@ -1663,10 +1769,13 @@ async def _process_chat_question_response_suggestion(
                 raise LookupError(
                     "Não foram encontradas mensagens acessíveis no canal ou na reunião para gerar sugestões."
                 )
-        scoped_session = _chat_question_session_id(context)
+        session_context = context if use_related_record or answer_meta_question else {
+            **context, "related_records": [], "quoted_chat_id": "",
+        }
+        scoped_session = _chat_question_session_id(session_context)
         # Keep follow-ups anchored to the same record; unrelated unanchored
         # requests still start a fresh flow.
-        if ambient_mode or (advice_request and not context["related_records"]):
+        if ambient_mode or (advice_request and not use_related_record and not answer_meta_question):
             _reset_chat_question_memory(scoped_session)
         completed_turns = _chat_question_turn_count(scoped_session)
         suggestion_count = _suggestion_count(
@@ -1780,6 +1889,7 @@ async def _process_chat_question_response_suggestion(
             "concrete_answer_mode": concrete_answer_mode,
             "strict_current_question": bool(concrete_answer_mode and advice_request),
             "related_guidance_mode": related_guidance_mode,
+            "conversation_followup_mode": answer_meta_question,
             "response_suggestion_scope": (
                 "advice_refine"
                 if advice_refine
@@ -1865,9 +1975,14 @@ async def _process_chat_question_response_suggestion(
         if related_guidance_mode:
             metadata["model_capability"] = "reasoning"
             metadata["quoted_request_mode"] = False
-            suggestion_tool_allowlist = {"query_sql_server", "get_db_schema", "google_web_search"}
+            suggestion_tool_allowlist = {"query_sql_server", "get_db_schema"}
+            if (
+                _is_research_suggestion_request(effective_request_text)
+                or agent._requires_fresh_web_search(effective_request_text)
+            ):
+                suggestion_tool_allowlist.add("google_web_search")
         metadata["general_knowledge_mode"] = request_intent in {"general", "recommendation"} and not related_records_context
-        if request_intent in {"general", "external"} or metadata["general_knowledge_mode"]:
+        if (request_intent in {"general", "external"} or metadata["general_knowledge_mode"]) and not answer_meta_question:
             metadata["strict_current_question"] = True
             metadata["quoted_request_mode"] = False
             metadata["agent_knowledge"] = ""
@@ -1927,6 +2042,38 @@ async def _process_chat_question_response_suggestion(
             else:
                 raw_suggestions = ""
                 suggestions = []
+        elif related_guidance_mode:
+            # SQL and vector retrieval have already run. Generate once from that
+            # bounded evidence instead of entering the open tool loop again.
+            generation_started = perf_counter()
+            try:
+                raw_suggestions = await asyncio.to_thread(
+                    _reason_about_related_record,
+                    request_text=effective_request_text,
+                    record_context=related_records_context,
+                    research_context=research_context,
+                    language=metadata["response_language"],
+                    metadata=metadata,
+                )
+            except Exception as exc:
+                print(
+                    f"SUGGESTION_RECORD_GENERATION_FAILED request_id={request_id} "
+                    f"type={type(exc).__name__}", flush=True,
+                )
+                raw_suggestions = ""
+            log_stage("related_record_generation", generation_started)
+            suggestions = _parse_chat_question_suggestions(
+                raw_suggestions, limit=suggestion_count, allow_internal_list=True,
+            )
+            suggestions = await asyncio.to_thread(
+                _filter_suggestion_output, suggestions, request_id=request_id,
+                language=metadata["response_language"], guidance=True,
+                request_text=effective_request_text,
+                record_context=related_records_context,
+                records=context["related_records"] if use_related_record else [],
+                metadata=metadata,
+            )
+            metadata["direct_related_generation"] = True
         else:
             generation_started = perf_counter()
             # Request-local collector survives shallow metadata copies in the
@@ -1969,7 +2116,7 @@ async def _process_chat_question_response_suggestion(
                 records=context["related_records"] if use_related_record else [],
                 metadata=metadata,
             )
-        if direct_answer is None and (
+        if not metadata.get("direct_related_generation") and direct_answer is None and (
             not verified_business_context or business_recommendation
         ) and not suggestions:
             if related_records_context:
@@ -2019,9 +2166,13 @@ async def _process_chat_question_response_suggestion(
             )
         if not suggestions:
             if related_records_context:
-                suggestions = [_record_evidence_fallback(
-                    related_records_context, metadata["response_language"], guidance=related_guidance_mode,
-                )]
+                suggestions = [
+                    _record_guidance_fallback(related_records_context, metadata["response_language"])
+                    if related_guidance_mode
+                    else _record_evidence_fallback(
+                        related_records_context, metadata["response_language"], guidance=False,
+                    )
+                ]
                 print(f"SUGGESTION_PARTIAL_EVIDENCE request_id={request_id} reason=invalid_synthesis", flush=True)
             elif concrete_answer_mode:
                 print(
@@ -2067,6 +2218,18 @@ async def _process_chat_question_response_suggestion(
                 for index, text in enumerate(suggestions, start=1)
             ],
         }
+        if metadata.get("direct_related_generation"):
+            # The direct bounded generator bypasses the dialogue core, so keep
+            # its exchange in the same record-scoped session for follow-ups.
+            try:
+                history = RedisChatMessageHistory(scoped_session, url=settings.REDIS_URL)
+                history.add_user_message(effective_request_text)
+                history.add_ai_message("\n".join(suggestions))
+            except Exception as exc:
+                print(
+                    f"SUGGESTION_HISTORY_UNAVAILABLE request_id={request_id} "
+                    f"type={type(exc).__name__}", flush=True,
+                )
         _update_response_status(
             request_id,
             "completed",
