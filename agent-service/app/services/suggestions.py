@@ -1139,7 +1139,7 @@ def _reason_about_related_record(
     request_llm, _, provider = agent.get_llm_for_metadata({
         **metadata,
         "model_capability": "reasoning",
-        "max_output_tokens": settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS,
+        "max_output_tokens": max(1024, settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS),
     })
     count = max(1, min(3, int(metadata.get("response_suggestion_count") or 3)))
     request_llm = _json_model(request_llm, provider, _suggestion_schema(count))
@@ -1160,6 +1160,9 @@ def _reason_about_related_record(
         "Develop each proposal with concrete steps, a deliverable and a proposed acceptance "
         "criterion. Do not merely tell the user to investigate or define objectives: do the "
         "analysis and propose those objectives. Distinguish assumptions from verified facts."
+        " Keep the complete answer within 180 words. Start with concrete proposals, not "
+        "a speculative description of what the record might mean. Never invent its state, "
+        "specification or restrictions. Do not reproduce internal context labels."
     )
     if metadata.get("suggestion_intent") == "internal":
         instructions = (
@@ -1197,6 +1200,8 @@ def _reason_about_related_record(
     ])
     response_metadata = getattr(result, "response_metadata", {}) or {}
     finish = response_metadata.get("finish_reason") or response_metadata.get("done_reason")
+    if finish in {"length", "max_tokens", "max_output_tokens"}:
+        raise SuggestionOutputError("Related record answer exceeded output budget")
     print(
         f"SUGGESTION_RECORD_GENERATION provider={provider.provider} model={provider.model} "
         f"finish={finish} requested_count={count}",

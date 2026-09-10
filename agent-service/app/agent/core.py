@@ -3746,6 +3746,8 @@ class MachiningAgent:
                         "Un título solo no demuestra acuerdos, participantes ni resultados: si no hay "
                         "más datos, declara esa limitación y presenta las mejoras como propuestas. "
                         "La respuesta debe "
+                        "ser completa y de hasta 180 palabras; comienza por las propuestas concretas. "
+                        "No reproduzcas etiquetas internas como EVIDÊNCIA AUTORITATIVA. Debe "
                         "estar vinculada al registro actual y explicar brevemente por qué la propuesta encaja. "
                         "No copies la descripción como respuesta y no uses pasos universales aplicables a cualquier tarea. "
                         "Usa el historial de esta tarea para desarrollar la propuesta seleccionada sin repetirla. "
@@ -3988,6 +3990,10 @@ class MachiningAgent:
             if request_metadata.get("response_suggestion_mode")
             else settings.LLM_DIALOGUE_MAX_OUTPUT_TOKENS
         )
+        if request_metadata.get("related_guidance_mode"):
+            request_metadata["max_output_tokens"] = max(
+                768, request_metadata["max_output_tokens"]
+            )
         request_llm, request_llm_with_tools, request_provider_config = (
             self.get_llm_for_metadata(request_metadata)
         )
@@ -4315,6 +4321,18 @@ class MachiningAgent:
             else:
                 # Respuesta final del modelo
                 response_text = self._llm_response_text(response)
+                if response_suggestion_mode:
+                    completion_metadata = getattr(response, "response_metadata", {}) or {}
+                    finish = completion_metadata.get("finish_reason") or completion_metadata.get("done_reason")
+                    print(
+                        f"SUGGESTION_COMPLETION request_id={message_metadata.get('chat_id')} "
+                        f"finish={finish} chars={len(response_text)}",
+                        flush=True,
+                    )
+                    if finish in {"length", "max_tokens", "max_output_tokens"}:
+                        # The suggestion service performs one bounded rewrite.
+                        # Never persist or publish a partial answer as complete.
+                        return ""
                 if (
                     business_knowledge_query
                     and not successful_sql_query
