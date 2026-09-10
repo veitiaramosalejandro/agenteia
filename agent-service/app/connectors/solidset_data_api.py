@@ -19,6 +19,24 @@ class SolidSETDataAPIError(RuntimeError):
     pass
 
 
+def _reject_redirect(response: httpx.Response, operation: str) -> None:
+    """Never forward the private Data API key through an unexpected redirect."""
+    if not 300 <= response.status_code < 400:
+        return
+    raw_location = str(response.headers.get("location") or "")
+    parsed = urlsplit(raw_location)
+    safe_location = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    print(
+        f"SOLIDSET_DATA_API_REDIRECT operation={operation} "
+        f"status={response.status_code} destination={safe_location or 'unknown'}",
+        flush=True,
+    )
+    raise SolidSETDataAPIError(
+        "A SolidSET Data API devolveu uma redireção inesperada. "
+        "Verifique a URL e a autenticação não interativa do gateway."
+    )
+
+
 def _runtime_base_url(value: str) -> str:
     """Resolve host-local URLs from inside the agent container."""
     base_url = str(value or "").strip().rstrip("/")
@@ -82,6 +100,7 @@ class DataAPICursor:
             response = self.connection.client.post("/api/v1/query/read", json=payload)
         except httpx.HTTPError as exc:
             raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+        _reject_redirect(response, "query-read")
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail")
@@ -210,6 +229,7 @@ def read_catalog_page(configuration: dict[str, Any], dataset: str, *, offset: in
             response = connection.client.get(
                 f"/api/v1/datasets/{dataset}", params={"offset": offset, "limit": page_size}
             )
+            _reject_redirect(response, f"catalog-{dataset}")
             response.raise_for_status()
             payload = response.json()
         rows = payload["rows"]
@@ -242,6 +262,7 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                 )
             except httpx.HTTPError as exc:
                 raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+            _reject_redirect(response, f"dataset-{dataset}")
             if response.status_code == 404 and dataset == "agent-scopes" and offset == 0:
                 try:
                     missing_dataset = response.json().get("detail") == "O conjunto de dados não existe."
@@ -253,17 +274,51 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                 raise SolidSETDataAPIError(
                     f"Falha ao obter dataset {dataset} (HTTP {response.status_code})."
                 )
-            payload = response.json()
-            page = [dict(row) for row in payload.get("rows") or []]
+            try:
+                payload = response.json()
+            except (ValueError, TypeError) as exc:
+                content_type = str(response.headers.get("content-type") or "unknown")[:120]
+                print(
+                    f"SOLIDSET_DATASET_INVALID_RESPONSE dataset={dataset} "
+                    f"status={response.status_code} content_type={content_type} "
+                    f"body_bytes={len(response.content)}",
+                    flush=True,
+                )
+                raise SolidSETDataAPIError(
+                    f"Resposta inválida da SolidSET Data API para o dataset {dataset}."
+                ) from exc
+            if not isinstance(payload, dict):
+                raise SolidSETDataAPIError(
+                    f"Resposta inválida do dataset {dataset}: objeto JSON esperado."
+                )
+            raw_page = payload.get("rows")
+            if not isinstance(raw_page, list) or not all(
+                isinstance(row, dict) for row in raw_page
+            ):
+                raise SolidSETDataAPIError(
+                    f"Resposta inválida do dataset {dataset}: rows deve ser uma lista de objetos."
+                )
+            has_more = payload.get("hasMore", False)
+            if not isinstance(has_more, bool):
+                raise SolidSETDataAPIError(
+                    f"Resposta inválida do dataset {dataset}: hasMore deve ser booleano."
+                )
+            page = [dict(row) for row in raw_page]
             rows.extend(page)
-            if not payload.get("hasMore"):
+            if not has_more:
                 return rows
             next_offset = payload.get("nextOffset")
-            if next_offset is None or int(next_offset) <= offset:
+            try:
+                parsed_next_offset = int(next_offset)
+            except (TypeError, ValueError) as exc:
+                raise SolidSETDataAPIError(
+                    f"Paginação inválida no dataset {dataset}."
+                ) from exc
+            if parsed_next_offset <= offset or not page:
                 raise SolidSETDataAPIError(
                     f"Paginação inválida no dataset {dataset}."
                 )
-            offset = int(next_offset)
+            offset = parsed_next_offset
 
 
 def read_active_resource_agent(
@@ -274,6 +329,7 @@ def read_active_resource_agent(
             response = connection.client.get(f"/api/v1/agents/{human_resource_id}")
         except httpx.HTTPError as exc:
             raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+        _reject_redirect(response, "active-resource-agent")
         if response.status_code >= 400:
             raise SolidSETDataAPIError(
                 f"Falha ao validar agente (HTTP {response.status_code})."
@@ -314,6 +370,7 @@ def read_schema_catalog(
             response = connection.client.get("/api/v1/schema/catalog", params=params)
         except httpx.HTTPError as exc:
             raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+        _reject_redirect(response, "schema-catalog")
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail")

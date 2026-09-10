@@ -81,9 +81,12 @@ class SolidSETOrchestrator:
         is_business = getattr(
             self.agent, "_is_business_knowledge_query", lambda _text: False
         )
-        if metadata.get("conversation_followup_mode"):
+        if metadata.get("conversation_followup_mode") or metadata.get(
+            "conversational_recommendation_mode"
+        ):
             # Questions about the preceding answer use session memory and must
             # never be converted into SQL discovery from isolated keywords.
+            # Ordinary social recommendations also need no business tools.
             route = "general_conversation"
         elif metadata.get("response_suggestion_mode"):
             # A suggestion must be grounded in the requester's own agent

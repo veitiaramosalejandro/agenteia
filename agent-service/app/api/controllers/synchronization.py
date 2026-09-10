@@ -70,7 +70,7 @@ def _synchronize(instance_code: str, operation: Callable, entity: str) -> dict:
         return operation(instance)
     except HTTPException:
         raise
-    except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
+    except (SolidSETDataAPIError, pymssql.Error, psycopg.Error, RuntimeError) as exc:
         print(f"❌ No se pudo sincronizar {entity}: {type(exc).__name__}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

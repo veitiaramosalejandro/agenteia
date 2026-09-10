@@ -975,6 +975,19 @@ def _filter_suggestion_output(
         reason = ""
         if not _is_safe_auto_reply_output(_sanitize_related_record_value(item)):
             reason = "unsafe_output"
+        elif re.search(
+            r"(?:\b(?:array|lista|list|objeto|object)\s+json\b|"
+            r"\bjson\s+(?:requerid[oa]|esperad[oa]|required|expected)\b|"
+            r"\b(?:prompt|system prompt|instrucciones? internas?|instru[cç][oõ]es internas?)\b|"
+            r"\b(?:motor de b[uú]squeda|mecanismo de pesquisa|search engine)\b|"
+            r"\b(?:consulta|b[uú]squeda|pesquisa|search)\s+(?:web|externa|external)\b.*"
+            r"\b(?:no puedo|n[aã]o posso|cannot|can't|unable)\b|"
+            r"\b(?:no puedo|n[aã]o posso|cannot|can't|unable)\b.*"
+            r"\b(?:consulta|b[uú]squeda|pesquisa|search)\s+(?:web|externa|external)\b)",
+            normalized_text(item),
+            flags=re.IGNORECASE,
+        ):
+            reason = "internal_contract_leak"
         elif not _suggestion_matches_related_records(item, records):
             reason = "different_record"
         elif guidance and not _related_guidance_is_useful(item, request_text, record_context):
@@ -1846,6 +1859,11 @@ async def _process_chat_question_response_suggestion(
         business_recommendation = _is_business_recommendation_request(
             effective_request_text
         )
+        conversational_recommendation = bool(
+            request_intent == "recommendation"
+            and not related_records_context
+            and not business_recommendation
+        )
         if request_intent == "internal" and not related_records_context and (
             advice_request
             or (
@@ -1890,6 +1908,7 @@ async def _process_chat_question_response_suggestion(
             "strict_current_question": bool(concrete_answer_mode and advice_request),
             "related_guidance_mode": related_guidance_mode,
             "conversation_followup_mode": answer_meta_question,
+            "conversational_recommendation_mode": conversational_recommendation,
             "response_suggestion_scope": (
                 "advice_refine"
                 if advice_refine
@@ -1972,6 +1991,10 @@ async def _process_chat_question_response_suggestion(
             "external": {"google_web_search"},
             "recommendation": {"query_sql_server", "get_db_schema", "google_web_search"},
         }.get(request_intent, set())
+        if conversational_recommendation:
+            # Social and writing advice is answered from language reasoning.
+            # A person's name alone is never justification for SQL or web lookup.
+            suggestion_tool_allowlist = set()
         if related_guidance_mode:
             metadata["model_capability"] = "reasoning"
             metadata["quoted_request_mode"] = False
