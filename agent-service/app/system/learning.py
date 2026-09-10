@@ -1428,7 +1428,7 @@ class SistemaAprendizaje:
             related = [str(value).lower() for value in payload.get("related_resource_ids") or []]
             # Datos relacionados con recursos concretos solo son visibles para
             # el propietario del agente. Los catálogos sin recurso son comunes.
-            if related and expected_resource and expected_resource not in related:
+            if related and (not expected_resource or expected_resource not in related):
                 continue
             content = str(payload.get("page_content") or "").strip()
             key = " ".join(content.casefold().split())

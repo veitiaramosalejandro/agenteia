@@ -6,6 +6,8 @@ import hashlib
 import json
 import re
 import threading
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from time import perf_counter
 from typing import Any, Optional
 
@@ -197,7 +199,7 @@ def _format_related_records_context(records: list[dict[str, Any]]) -> str:
 
 
 def _verified_related_records_context(
-    solidset_instance: dict[str, Any], records: list[dict[str, Any]]
+    solidset_instance: dict[str, Any], records: list[dict[str, Any]], requester_resource: str = ""
 ) -> str:
     """Amplía RelatedRecordsData con campos descriptivos verificados mediante el catálogo SQL."""
     if not records:
@@ -231,6 +233,10 @@ def _verified_related_records_context(
                 blocks.append(base + "\nSQL_VERIFICATION: query failed; client reference only.")
                 continue
             row = rows[0] if isinstance(rows, list) and rows else {}
+            if row and requester_resource:
+                from app.services.record_snapshot import schedule_record_snapshot
+                schedule_record_snapshot(str(solidset_instance["ID"]), requester_resource,
+                                         plan.table, record, row)
             details = [
                 f"{key}: {_sanitize_related_record_value(value) if value not in (None, '') else 'NO DISPONIBLE'}"
                 for key, value in row.items()
@@ -289,7 +295,7 @@ def _verified_quoted_chat_message(
 
 def _sanitize_related_record_value(value: Any) -> str:
     """Conserva el contenido funcional sin filtrar referencias internas de archivos."""
-    text = " ".join(str(value or "").split()).strip()
+    text = " ".join(str(value if value is not None else "").split()).strip()
     text = re.sub(
         r"(?:solidset://)?file/[0-9a-f-]{16,}(?:[-_/][a-z0-9-]+)*",
         "",
@@ -784,8 +790,18 @@ def _record_answer_is_grounded(answer: str, evidence: str, metadata: dict[str, A
                 " Do not classify a denial such as 'no rating can be assigned' as invented_scale. "
                 "A verbatim numeric status code labeled as uninterpreted is supported if present "
                 "in evidence. Missing evidence only invalidates asserted facts, not explicit limitations."
+                " Distinguish current internal facts from recommended future actions and general "
+                "technical explanations. Recommendations do not require proof they are already "
+                "implemented. SQL results support internal facts; schema results only describe "
+                "structure. Web results support external technical claims, never private status "
+                "or task completion. Failed tool results and truncated missing text are not evidence."
             )),
-            HumanMessage(content=json.dumps({"answer": answer, "sql_evidence": evidence}, ensure_ascii=False)),
+            HumanMessage(content=json.dumps({
+                "answer": answer, "sql_evidence": evidence,
+                "request_intent": metadata.get("suggestion_intent"),
+                "tool_evidence": metadata.get("suggestion_tool_evidence") or [],
+                "historical_evidence": metadata.get("record_vector_context") or "",
+            }, ensure_ascii=False)),
         ])
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", llm_response_text(result).strip(), flags=re.I)
         decision = json.loads(raw)
@@ -1301,6 +1317,7 @@ def _reason_about_related_record(
             "verified_record": record_context[:6000],
             "historical_vector_context": str(metadata.get("record_vector_context") or "")[:5000],
             "supporting_research": research_context[:4000],
+            "tool_evidence": metadata.get("suggestion_tool_evidence") or [],
         }, ensure_ascii=False)),
     ])
     response_metadata = getattr(result, "response_metadata", {}) or {}
@@ -1572,6 +1589,7 @@ async def _process_chat_question_response_suggestion(
             related_started = perf_counter()
             related_records_context = await asyncio.to_thread(
                 _verified_related_records_context, solidset_instance, context["related_records"],
+                context["requester_resource"],
             )
             if explicit_task:
                 related_records_context = await asyncio.to_thread(
@@ -1765,9 +1783,18 @@ async def _process_chat_question_response_suggestion(
             ),
             "solidset_instance_id": str(solidset_instance["ID"]),
             "solidset_instance_code": str(solidset_instance["Code"]),
-            "current_reference_time": datetime.now(ZoneInfo(suggestion_locale.split('-')[0] + '/Lisbon' if 'pt' in suggestion_locale else 'Europe/Madrid')).isoformat(),
-            "system_utc_time": datetime.utcnow().isoformat()
         }
+        reference_utc = datetime.now(timezone.utc)
+        try:
+            reference_zone = ZoneInfo(metadata["time_zone"])
+        except (ZoneInfoNotFoundError, ValueError):
+            # Locale describes language, not geographic time zone. Invalid
+            # zones must not abort generation or create a false local time.
+            reference_zone = timezone.utc
+            metadata["time_zone"] = "UTC"
+            print(f"SUGGESTION_TIMEZONE_FALLBACK request_id={request_id}", flush=True)
+        metadata["current_reference_time"] = reference_utc.astimezone(reference_zone).isoformat()
+        metadata["system_utc_time"] = reference_utc.isoformat()
 
         metadata["suggestion_intent"] = request_intent
         if related_records_context:
@@ -1851,6 +1878,9 @@ async def _process_chat_question_response_suggestion(
                 suggestions = []
         else:
             generation_started = perf_counter()
+            # Request-local collector survives shallow metadata copies in the
+            # orchestrator. Never store tool evidence in shared agent state.
+            metadata["suggestion_tool_evidence"] = []
             raw_suggestions = await asyncio.to_thread(
                 _invoke_orchestrator_for_instance,
                 str(solidset_instance["Code"]),
@@ -1867,6 +1897,14 @@ async def _process_chat_question_response_suggestion(
                 auto_reply_mode=True,
             )
             log_stage("generation", generation_started)
+            research_context = json.dumps(
+                metadata.get("suggestion_tool_evidence") or [], ensure_ascii=False,
+            )
+            print(
+                f"SUGGESTION_EVIDENCE_TRANSFER request_id={request_id} "
+                f"tool_results={len(metadata.get('suggestion_tool_evidence') or [])}",
+                flush=True,
+            )
             suggestions = _parse_chat_question_suggestions(
                 raw_suggestions,
                 limit=suggestion_count,
@@ -1929,9 +1967,7 @@ async def _process_chat_question_response_suggestion(
                 metadata=metadata,
             )
         if not suggestions:
-            if related_guidance_mode:
-                raise SuggestionOutputError("No valid task proposals after bounded generation")
-            elif related_records_context:
+            if related_records_context:
                 suggestions = [_record_evidence_fallback(related_records_context, metadata["response_language"])]
                 print(f"SUGGESTION_PARTIAL_EVIDENCE request_id={request_id} reason=invalid_synthesis", flush=True)
             elif concrete_answer_mode:

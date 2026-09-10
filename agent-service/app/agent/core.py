@@ -3746,6 +3746,10 @@ class MachiningAgent:
                         "Un título solo no demuestra acuerdos, participantes ni resultados: si no hay "
                         "más datos, declara esa limitación y presenta las mejoras como propuestas. "
                         "La respuesta debe "
+                        "responder al objetivo actual: si pregunta cómo resolver, entrega pasos de "
+                        "implementación basados en la descripción SQL ya disponible, sin volver a "
+                        "pedir el esquema salvo que sea imprescindible conocer tablas concretas. "
+                        "No arrastres una petición anterior de calificación o resumen. Debe "
                         "ser completa y de hasta 180 palabras; comienza por las propuestas concretas. "
                         "No reproduzcas etiquetas internas como EVIDÊNCIA AUTORITATIVA. Debe "
                         "estar vinculada al registro actual y explicar brevemente por qué la propuesta encaja. "
@@ -4013,6 +4017,12 @@ class MachiningAgent:
             f"model={request_provider_config.model} agent={agent_resource_id or 'default'}"
         )
         if tool_allowlist is not None:
+            tool_allowlist = self.tools_map.permitted_names(tool_allowlist, AgentContext(
+                agent_resource_id=agent_resource_id,
+                solidset_instance_id=solidset_instance_id,
+                canal_id=canal_id, session_id=session_id,
+                metadata=message_metadata or {},
+            ))
             allowed_tools = self.tools_map.allowed(tool_allowlist)
             llm_for_request = request_llm.bind_tools(allowed_tools) if allowed_tools else request_llm
 
@@ -4271,6 +4281,18 @@ class MachiningAgent:
                                 )
                             )
                             last_tool_result = tool_result
+                            evidence_collector = message_metadata.get("suggestion_tool_evidence")
+                            if (
+                                response_suggestion_mode
+                                and isinstance(evidence_collector, list)
+                                and len(evidence_collector) < 8
+                                and tool_name in {"google_web_search", "query_sql_server", "get_db_schema"}
+                            ):
+                                evidence_collector.append({
+                                    "tool": tool_name,
+                                    "content": str(tool_result)[:6000],
+                                    "truncated": len(str(tool_result)) > 6000,
+                                })
                             herramientas_usadas.append(tool_name)
                             if (
                                 tool_name == "query_sql_server"

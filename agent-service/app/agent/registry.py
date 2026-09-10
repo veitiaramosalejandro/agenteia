@@ -34,6 +34,12 @@ class ToolRegistry(dict[str, Any]):
     def names(self) -> tuple[str, ...]:
         return tuple(self.keys())
 
+    def permitted_names(self, names: Iterable[str], context: AgentContext) -> set[str]:
+        return {name for name in names if name in self and (
+            not self._policies.get(name, ToolPolicy()).required_permission
+            or self._has_permission(self._policies[name], context)
+        )}
+
     def set_policy(self, name: str, policy: ToolPolicy) -> None:
         if name not in self:
             raise KeyError(name)
