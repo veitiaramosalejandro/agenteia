@@ -30,6 +30,7 @@ from app.connectors.db_client import (
     save_agent_knowledge,
     touch_agent_session,
 )
+from app.connectors.solidset_data_api import SolidSETDataAPIError
 from app.connectors.solidset_sql import (
     instance_context as solidset_sql_instance_context,
 )
@@ -1199,7 +1200,9 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             continue
         try:
             ensure_payload_agent_workroom_assignments(channel_id, selected)
-            configured_agents = get_active_agents_for_workroom(channel_id, selected)
+            configured_agents = get_active_agents_for_workroom(
+                channel_id, selected, instance.get("ID")
+            )
         except (ValueError, psycopg.Error) as exc:
             print(
                 f"⚠️ No se pudo resolver agentes seleccionados para {channel_id}: {exc}"
@@ -1213,6 +1216,27 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 verification = verify_and_sync_solidset_agent_mapping(
                     selected_resource_id, expected_agent_id, instance
                 )
+            except SolidSETDataAPIError as exc:
+                # A timeout/5xx means the authoritative source could not be
+                # checked; it does not prove that the active relation was
+                # removed. Preserve the already synchronized mapping so a
+                # transient Data API outage does not silence the agent.
+                cached_agent_id = str(expected_agent_id or "").strip()
+                if cached_agent_id:
+                    verified_mappings[selected_resource_id.lower()] = cached_agent_id
+                    print(
+                        "⚠️ Validação ao vivo de SysResource2Agent indisponível; "
+                        "usando relação local ativa previamente sincronizada "
+                        f"IDHumanResource={selected_resource_id} "
+                        f"IDAgentResource={cached_agent_id}: {exc}"
+                    )
+                else:
+                    print(
+                        "⚠️ Agente omitido: validação ao vivo indisponível e sem "
+                        "relação local sincronizada "
+                        f"IDHumanResource={selected_resource_id}: {exc}"
+                    )
+                continue
             except (ValueError, pymssql.Error, psycopg.Error, RuntimeError) as exc:
                 print(
                     "⚠️ Agente omitido: no se pudo verificar SysResource2Agent "

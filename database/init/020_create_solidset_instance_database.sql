@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS public."SysSolidSETInstanceResource" (
   "IDSolidSETInstance" uuid NOT NULL
     REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
   "IDResource" uuid NOT NULL,
+  "IDAgentResource" uuid,
   active boolean NOT NULL DEFAULT true,
   "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY ("IDSolidSETInstance", "IDResource")

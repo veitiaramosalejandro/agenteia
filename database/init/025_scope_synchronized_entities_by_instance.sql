@@ -6,6 +6,16 @@ ALTER TABLE public."SysLogin"
   ADD COLUMN IF NOT EXISTS "IDSolidSETInstance" uuid;
 ALTER TABLE public."SysChatIAResource"
   ADD COLUMN IF NOT EXISTS "IDSolidSETInstance" uuid;
+ALTER TABLE public."SysSolidSETInstanceResource"
+  ADD COLUMN IF NOT EXISTS "IDAgentResource" uuid;
+
+UPDATE public."SysSolidSETInstanceResource" ir
+SET "IDAgentResource" = r."IDAgentResource"
+FROM public."SysResourceIA" r
+WHERE r."IDResource" = ir."IDResource"
+  AND ir."IDAgentResource" IS NULL
+  AND (r."IDSolidSETInstance" IS NULL
+       OR r."IDSolidSETInstance" = ir."IDSolidSETInstance");
 
 UPDATE public."SysResourceIA" r
 SET "IDSolidSETInstance" = source."IDSolidSETInstance"

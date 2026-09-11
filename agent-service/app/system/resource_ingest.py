@@ -71,10 +71,19 @@ def verify_and_sync_solidset_agent_mapping(
                     human_id, instance_id,
                 ),
             )
-            local_agent_exists = target_cursor.rowcount == 1
+            target_cursor.execute(
+                '''INSERT INTO public."SysSolidSETInstanceResource"
+                     ("IDSolidSETInstance", "IDResource", "IDAgentResource", active)
+                   VALUES (%s,%s,%s,true)
+                   ON CONFLICT ("IDSolidSETInstance", "IDResource") DO UPDATE SET
+                     "IDAgentResource"=EXCLUDED."IDAgentResource", active=true
+                   RETURNING "IDResource"''',
+                (instance_id, human_id, verified_agent_id),
+            )
+            instance_resource_exists = target_cursor.fetchone() is not None
 
     return {
-        "verified": bool(local_agent_exists and verified_agent_id),
+        "verified": bool(instance_resource_exists and verified_agent_id),
         "matchesExpected": bool(
             verified_agent_id and (
                 expected_id is None or verified_agent_id == expected_id
@@ -262,11 +271,15 @@ def ingest_solidset_resources(instance: dict[str, object]) -> dict[str, int]:
                 )
                 target_cursor.executemany(
                     '''INSERT INTO public."SysSolidSETInstanceResource"
-                       ("IDSolidSETInstance", "IDResource", active)
-                       VALUES (%s, %s, true)
+                       ("IDSolidSETInstance", "IDResource", "IDAgentResource", active)
+                       VALUES (%s, %s, %s, true)
                        ON CONFLICT ("IDSolidSETInstance", "IDResource")
-                       DO UPDATE SET active=true''',
-                    [(instance["ID"], resource_id) for resource_id in resource_ids],
+                       DO UPDATE SET "IDAgentResource"=EXCLUDED."IDAgentResource",
+                                     active=true''',
+                    [
+                        (instance_id, resource_id, agent_resource_id)
+                        for resource_id, (_, _, agent_resource_id) in resources.items()
+                    ],
                 )
 
     inserted = len(set(resource_ids) - existing_ids)

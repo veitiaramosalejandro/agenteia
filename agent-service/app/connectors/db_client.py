@@ -112,10 +112,13 @@ def ensure_solidset_instance_location_schema() -> None:
                       "IDSolidSETInstance" uuid NOT NULL
                         REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
                       "IDResource" uuid NOT NULL,
+                      "IDAgentResource" uuid,
                       active boolean NOT NULL DEFAULT true,
                       "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       PRIMARY KEY ("IDSolidSETInstance", "IDResource")
                     );
+                    ALTER TABLE public."SysSolidSETInstanceResource"
+                      ADD COLUMN IF NOT EXISTS "IDAgentResource" uuid;
                     CREATE TABLE IF NOT EXISTS public."SysSolidSETInstanceLogin" (
                       "IDSolidSETInstance" uuid NOT NULL
                         REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
@@ -762,21 +765,27 @@ def get_solidset_login_for_active_agent(
             cursor.execute(
                 '''
                 SELECT l."IDLogin", l."Username", l."Password", l."Salt",
-                       l."LastIDResource", l."ActiveIDLogin2Resource"
-                FROM public."SysSolidSETInstanceLogin" l
-                INNER JOIN public."SysResourceIA" r
-                    ON (
+                       l."LastIDResource", l."ActiveIDLogin2Resource",
+                       ir."IDAgentResource"
+                FROM public."SysResourceIA" r
+                INNER JOIN public."SysSolidSETInstanceResource" ir
+                    ON ir."IDResource"=r."IDResource"
+                   AND ir."IDSolidSETInstance"=%s
+                   AND ir.active=true
+                   AND ir."IDAgentResource" IS NOT NULL
+                INNER JOIN public."SysSolidSETInstanceLogin" l
+                    ON l."IDSolidSETInstance"=ir."IDSolidSETInstance"
+                   AND (
+                       (%s::uuid IS NOT NULL AND l."IDLogin"=%s)
+                       OR (
                         r."ActiveIDLogin2Resource" IS NOT NULL
                         AND l."ActiveIDLogin2Resource" = r."ActiveIDLogin2Resource"
-                    ) OR (
+                       ) OR (
                         r."ActiveIDLogin2Resource" IS NULL
                         AND l."LastIDResource" = r."IDResource"
-                    )
+                       ) OR l."LastIDResource"=ir."IDAgentResource"
+                   )
                 WHERE r."IDResource" = %s
-                  AND l."IDSolidSETInstance" = %s
-                  AND EXISTS (SELECT 1 FROM public."SysSolidSETInstanceResource" ir
-                    WHERE ir."IDSolidSETInstance"=l."IDSolidSETInstance"
-                      AND ir."IDResource"=r."IDResource" AND ir.active=true)
                   AND r.active = true
                   AND NULLIF(l."Username", '') IS NOT NULL
                   AND NULLIF(l."Password", '') IS NOT NULL
@@ -784,7 +793,10 @@ def get_solidset_login_for_active_agent(
                          l."IDLogin"
                 LIMIT 1
                 ''',
-                (UUID(str(resource_id)), UUID(str(instance_id)), preferred),
+                (
+                    UUID(str(instance_id)), preferred, preferred,
+                    UUID(str(resource_id)), preferred,
+                ),
             )
             row = cursor.fetchone()
             return dict(row) if row is not None else None
@@ -1094,6 +1106,7 @@ def resolve_solidset_identity(identifier: str) -> dict[str, Any] | None:
 def get_active_agents_for_workroom(
     workroom_id: UUID | str,
     selected_resource_ids: Iterable[UUID | str],
+    instance_id: UUID | str | None = None,
 ) -> list[dict[str, Any]]:
     """Devuelve únicamente agentes activos, seleccionados y asignados al canal."""
     selected = list(dict.fromkeys(UUID(str(value)) for value in selected_resource_ids))
@@ -1101,13 +1114,29 @@ def get_active_agents_for_workroom(
         return []
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
+            instance = UUID(str(instance_id)) if instance_id else None
             cursor.execute(
                 '''
-                SELECT r."ID", r."Name", r."IDResource", r."IDAgentResource", r.active,
-                       c."IDWorkRoom", c.response_order, login."FullName"
+                SELECT r."ID", r."Name", r."IDResource",
+                       CASE WHEN %s::uuid IS NULL THEN r."IDAgentResource"
+                            ELSE ir."IDAgentResource" END AS "IDAgentResource",
+                       r.active,
+                       c."IDWorkRoom",
+                       CASE WHEN %s::uuid IS NULL THEN c.response_order
+                            ELSE ic.response_order END AS response_order,
+                       login."FullName"
                 FROM public."SysResourceIA" r
                 INNER JOIN public."SysChatIAResource" c
                     ON c."IDResource" = r."IDResource"
+                LEFT JOIN public."SysSolidSETInstanceResource" ir
+                    ON ir."IDResource"=r."IDResource"
+                   AND ir."IDSolidSETInstance"=%s::uuid
+                   AND ir.active=true
+                LEFT JOIN public."SysSolidSETInstanceChatIAResource" ic
+                    ON ic."IDResource"=r."IDResource"
+                   AND ic."IDWorkRoom"=c."IDWorkRoom"
+                   AND ic."IDSolidSETInstance"=%s::uuid
+                   AND ic.active=true
                 LEFT JOIN LATERAL (
                     SELECT l."FullName"
                     FROM public."SysLogin" l
@@ -1127,9 +1156,14 @@ def get_active_agents_for_workroom(
                   AND r.active = true
                   AND c.active = true
                   AND r."IDResource" = ANY(%s)
-                ORDER BY c.response_order ASC, r."Name" ASC, r."IDResource" ASC
+                  AND (%s::uuid IS NULL OR ir."IDResource" IS NOT NULL)
+                  AND (%s::uuid IS NULL OR ic."IDResource" IS NOT NULL)
+                ORDER BY response_order ASC, r."Name" ASC, r."IDResource" ASC
                 ''',
-                (UUID(str(workroom_id)), selected),
+                (
+                    instance, instance, instance, instance,
+                    UUID(str(workroom_id)), selected, instance, instance,
+                ),
             )
             return [dict(row) for row in cursor.fetchall()]
 

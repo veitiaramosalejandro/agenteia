@@ -188,7 +188,9 @@ async def handle_multi_agent_dialogue(
             )
 
     configured_agents = auto_reply_service.get_active_agents_for_workroom(
-        request.IDWorkRoom, selected
+        request.IDWorkRoom,
+        selected,
+        solidset_instance.get("ID") if solidset_instance else None,
     )
     if not configured_agents:
         raise HTTPException(
