@@ -1,3 +1,4 @@
+from app.redis_runtime import redis_client
 import uuid
 import hashlib
 import json
@@ -41,7 +42,7 @@ class SistemaAprendizaje:
         self._embeddings_disabled_at = 0
         self._embeddings_disabled_reason = None
         redis_options = {"socket_connect_timeout": 3, "socket_timeout": 10} if background_io_options() else {}
-        self.redis_cache = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, **redis_options)
+        self.redis_cache = redis_client(settings.REDIS_URL, decode_responses=True, **redis_options)
         self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL, **background_io_options())
         self.collection = settings.VECTOR_COLLECTION_NAME
         self.sql_retry_stats = {

@@ -490,12 +490,12 @@ services:
     container_name: machining_redis
     hostname: redis-cache
     restart: always
-    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--maxmemory", "${REDIS_MAXMEMORY:-6gb}", "--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY:-allkeys-lru}"]
     expose:
       - "6379"
     volumes:
       - ${SERVER_DATA_ROOT:-.}/redis_data:/data
-    mem_limit: ${REDIS_MEMORY_LIMIT:-4g}
+    mem_limit: ${REDIS_MEMORY_LIMIT:-8g}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

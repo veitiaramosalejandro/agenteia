@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.redis_runtime import redis_client
+
 import hashlib
 import threading
 from collections import OrderedDict
@@ -18,7 +20,7 @@ _active_lock = threading.Lock()
 slots = threading.BoundedSemaphore(value=max(1, settings.DIALOGUE_MAX_CONCURRENT))
 _cache_lock = threading.Lock()
 _cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
-_redis = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+_redis = redis_client(settings.REDIS_URL, decode_responses=True)
 _metrics_lock = threading.Lock()
 _metrics = {
     "count": 0,

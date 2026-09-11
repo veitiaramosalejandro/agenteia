@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.redis_runtime import redis_client as create_redis_client
+
 import json
 import re
 import threading
@@ -49,7 +51,7 @@ class AgentIdentityService:
     _state_prefix = "machining:agent_state:v1:"
 
     def __init__(self, redis_client: Any = None, state_ttl_seconds: Optional[int] = None):
-        self.redis = redis_client or redis.Redis.from_url(
+        self.redis = redis_client or create_redis_client(
             settings.REDIS_URL, decode_responses=True
         )
         self.state_ttl_seconds = max(

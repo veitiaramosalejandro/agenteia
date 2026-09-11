@@ -84,6 +84,10 @@ class Settings(BaseSettings):
 
     # Redis Cache / Memory
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-cache:6379")
+    REDIS_HISTORY_TTL_SECONDS: int = max(3600, int(os.getenv("REDIS_HISTORY_TTL_SECONDS", "604800")))
+    REDIS_HISTORY_MAX_MESSAGES: int = max(3, int(os.getenv("REDIS_HISTORY_MAX_MESSAGES", "100")))
+    REDIS_MAINTENANCE_INTERVAL_SECONDS: int = max(60, int(os.getenv("REDIS_MAINTENANCE_INTERVAL_SECONDS", "300")))
+    SOLIDSET_RETRY_QUEUE_MAXLEN: int = max(100, int(os.getenv("SOLIDSET_RETRY_QUEUE_MAXLEN", "10000")))
     LANGUAGE_MIN_CONFIDENCE: float = max(
         0.0, min(float(os.getenv("LANGUAGE_MIN_CONFIDENCE", "0.75")), 1.0)
     )
@@ -103,7 +107,7 @@ class Settings(BaseSettings):
         "AGENT_RESPONSE_CONSUMER_GROUP", "agent-response-workers-v1"
     )
     AGENT_RESPONSE_STREAM_MAXLEN: int = max(
-        10000, int(os.getenv("AGENT_RESPONSE_STREAM_MAXLEN", "100000"))
+        1000, int(os.getenv("AGENT_RESPONSE_STREAM_MAXLEN", "10000"))
     )
     AGENT_RESPONSE_MAX_RETRIES: int = max(
         0, min(10, int(os.getenv("AGENT_RESPONSE_MAX_RETRIES", "3")))

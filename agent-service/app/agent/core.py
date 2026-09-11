@@ -12,7 +12,7 @@ from datetime import datetime
 from time import perf_counter
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from langchain_community.chat_message_histories import RedisChatMessageHistory
+from app.redis_history import RedisChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from langchain_core.runnables import RunnableLambda
 

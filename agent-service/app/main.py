@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import psycopg
+from app.redis_runtime import require_redis, maintenance_loop
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from datetime import datetime
@@ -378,6 +379,10 @@ async def _ciclo_notificaciones_api() -> None:
 @app.on_event("startup")
 async def startup_db_learning() -> None:
     """Lanza la tarea de aprendizaje continuo desde la base de datos."""
+    try:
+        await asyncio.wait_for(asyncio.to_thread(require_redis), timeout=4)
+    except (asyncio.TimeoutError, RuntimeError):
+        raise RuntimeError("Arranque abortado: Redis no responde dentro de 4 segundos.") from None
     if getattr(app.state, "db_study_task", None) is None:
         max_schema_attempts = 10
         for schema_attempt in range(max_schema_attempts):
@@ -402,7 +407,7 @@ async def startup_db_learning() -> None:
                     await asyncio.sleep(2.0)
                 else:
                     print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
-        app.state.startup_connectivity = _run_startup_connectivity_checks()
+        app.state.startup_connectivity = await asyncio.to_thread(_run_startup_connectivity_checks)
         _log_startup_connectivity(app.state.startup_connectivity)
         if app.state.startup_connectivity.get("all_ok"):
             print("✅ Comprobador de conectividad inicial: OK")
@@ -418,6 +423,7 @@ async def startup_db_learning() -> None:
         app.state.notification_warmup = None
         app.state.active_dialogues = 0
         app.state.notification_task = None
+        app.state.redis_maintenance_task = asyncio.create_task(maintenance_loop())
         if notification_listener.is_enabled():
             try:
                 app.state.notification_warmup = (
@@ -448,6 +454,12 @@ async def startup_db_learning() -> None:
 @app.on_event("shutdown")
 async def shutdown_db_learning() -> None:
     """Detiene la tarea de aprendizaje continuo al apagar el servicio."""
+    maintenance = getattr(app.state, "redis_maintenance_task", None)
+    if maintenance is not None:
+        maintenance.cancel()
+        with suppress(asyncio.CancelledError):
+            await maintenance
+        app.state.redis_maintenance_task = None
     task = getattr(app.state, "db_study_task", None)
     if task is not None:
         task.cancel()

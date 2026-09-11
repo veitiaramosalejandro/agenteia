@@ -222,7 +222,7 @@ def answer_direct(user_text, metadata, session_id):
         'estas seguro', 'estas segura', 'seguro', 'are you sure',
     }:
         try:
-            from langchain_community.chat_message_histories import RedisChatMessageHistory
+            from app.redis_history import RedisChatMessageHistory
 
             history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
             for message in reversed(list(history.messages)):
@@ -294,7 +294,7 @@ def answer_direct(user_text, metadata, session_id):
         else:
             result = answer
         try:
-            from langchain_community.chat_message_histories import RedisChatMessageHistory
+            from app.redis_history import RedisChatMessageHistory
 
             history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
             history.add_user_message(user_text)

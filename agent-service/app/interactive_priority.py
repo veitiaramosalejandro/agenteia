@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.redis_runtime import redis_client
+
 import asyncio
 import os
 import socket
@@ -35,7 +37,7 @@ class IngestionBusy(RuntimeError):
 
 @lru_cache(maxsize=1)
 def _client() -> redis.Redis:
-    return redis.Redis.from_url(
+    return redis_client(
         settings.REDIS_URL,
         decode_responses=True,
         socket_connect_timeout=1,

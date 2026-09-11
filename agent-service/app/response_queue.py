@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.redis_runtime import redis_client
+
 import json
 import socket
 from typing import Any
@@ -7,16 +9,17 @@ from typing import Any
 import redis
 
 from app.config import settings
+from app.redis_runtime import enqueue_stream, acknowledge_stream
 
 
 class AgentResponseQueue:
     """Cola durable de respuestas basada en Redis Streams."""
 
     def __init__(self) -> None:
-        self.client = redis.Redis.from_url(
+        self.client = redis_client(
             settings.REDIS_URL,
             decode_responses=True,
-            socket_connect_timeout=5,
+            socket_connect_timeout=1,
             socket_timeout=settings.AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS,
             health_check_interval=30,
             retry_on_timeout=True,
@@ -41,7 +44,7 @@ class AgentResponseQueue:
         candidates: list[dict[str, Any]] | None = None,
     ) -> str:
         self.ensure_group()
-        return str(self.client.xadd(
+        return str(enqueue_stream(self.client, 
             self.stream,
             {
                 "request_id": request_id,
@@ -82,7 +85,7 @@ class AgentResponseQueue:
         return [(message_id, fields) for _, messages in response for message_id, fields in messages]
 
     def acknowledge(self, message_id: str) -> None:
-        self.client.xack(self.stream, self.group, message_id)
+        acknowledge_stream(self.client, self.stream, self.group, message_id)
 
     def stats(self) -> dict[str, Any]:
         self.ensure_group()

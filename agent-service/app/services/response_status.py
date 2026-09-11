@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.redis_runtime import redis_client
+
 import json
 import threading
 from datetime import datetime
@@ -10,7 +12,7 @@ import redis
 from app.config import settings
 
 
-_redis = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+_redis = redis_client(settings.REDIS_URL, decode_responses=True)
 _fallback_lock = threading.Lock()
 _fallback: dict[str, dict[str, Any]] = {}
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.redis_runtime import redis_client
+
 import re
 import math
 from dataclasses import dataclass
@@ -34,7 +36,7 @@ class LanguageResolver:
             if LanguageDetectorBuilder is not None
             else None
         )
-        self._redis = redis.Redis.from_url(
+        self._redis = redis_client(
             redis_url or settings.REDIS_URL,
             decode_responses=True,
             socket_connect_timeout=1,

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+import asyncio
 from typing import Any
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Query
 
 from app.config import settings
+from app.redis_runtime import require_redis
 from app.connectors.db_client import get_llm_provider_configuration
 from app.services.connectivity import (
     _extract_host_port_from_url,
@@ -36,10 +38,18 @@ def configure(
 
 
 @router.get("/api/v1/agent/health", tags=["Observability"])
-def health_check():
+async def health_check():
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_health_check), timeout=4)
+    except (asyncio.TimeoutError, RuntimeError):
+        raise HTTPException(status_code=503, detail="Dependencias no disponibles dentro del límite de 4 segundos.") from None
+
+
+def _health_check():
     """
     Endpoint de salud para verificar que el servicio está funcionando.
     """
+    require_redis()
     try:
         db_llm = get_llm_provider_configuration()
     except psycopg.Error:

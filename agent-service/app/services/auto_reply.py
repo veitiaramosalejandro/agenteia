@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.redis_runtime import redis_client
+
 import ast
 import asyncio
 import hashlib
@@ -44,7 +46,7 @@ from app.system.schema import Actividad
 agent = None
 orchestrator = None
 response_queue: AgentResponseQueue | None = None
-_dialogue_redis = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+_dialogue_redis = redis_client(settings.REDIS_URL, decode_responses=True)
 _auto_reply_lock = threading.Lock()
 _auto_reply_seen_fingerprints: "OrderedDict[str, float]" = OrderedDict()
 _auto_reply_max_seen = 2000

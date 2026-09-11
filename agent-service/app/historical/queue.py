@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from app.redis_runtime import redis_client
+
 import json
 import os
 import socket
 from typing import Any
 import redis
 from app.config import settings
+from app.redis_runtime import enqueue_stream, acknowledge_stream
 
 
 class HistoricalQueue:
     def __init__(self) -> None:
-        self.client = redis.Redis.from_url(
-            settings.REDIS_URL, decode_responses=True, socket_connect_timeout=5,
+        self.client = redis_client(
+            settings.REDIS_URL, decode_responses=True, socket_connect_timeout=1,
             socket_timeout=settings.AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS,
             health_check_interval=30, retry_on_timeout=True,
         )
@@ -26,7 +29,7 @@ class HistoricalQueue:
 
     def enqueue(self, batch: dict[str, Any], attempt: int = 0) -> str:
         self.ensure_group()
-        return str(self.client.xadd(self.stream, {
+        return str(enqueue_stream(self.client, self.stream, {
             "batch": json.dumps(batch, ensure_ascii=False, default=str),
             "attempt": str(attempt),
         }, maxlen=settings.HISTORICAL_INGESTION_STREAM_MAXLEN, approximate=True))
@@ -46,7 +49,7 @@ class HistoricalQueue:
             return []
 
     def ack(self, message_id: str) -> None:
-        self.client.xack(self.stream, self.group, message_id)
+        acknowledge_stream(self.client, self.stream, self.group, message_id)
 
     def paused(self) -> bool:
         return self.client.get("machining:historical-ingestion:paused") == "1"

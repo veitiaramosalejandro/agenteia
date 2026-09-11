@@ -14,7 +14,7 @@ from typing import Any, Optional
 import psycopg
 import pymssql
 from fastapi import HTTPException
-from langchain_community.chat_message_histories import RedisChatMessageHistory
+from app.redis_history import RedisChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.llm.text import response_text as llm_response_text
 from app.agent.task_status import task_running_status

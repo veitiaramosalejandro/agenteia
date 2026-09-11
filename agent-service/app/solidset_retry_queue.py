@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.redis_runtime import redis_client
+
 import json
 import time
 import uuid
@@ -14,7 +16,7 @@ class SolidSETRetryQueue:
     """Cola Redis diferida para entregas ya generadas hacia SolidSET."""
 
     def __init__(self) -> None:
-        self.client = redis.Redis.from_url(
+        self.client = redis_client(
             settings.REDIS_URL,
             decode_responses=True,
             socket_connect_timeout=5,
@@ -45,7 +47,16 @@ class SolidSETRetryQueue:
         # Los trabajos nuevos quedan listos para el próximo ciclo del worker,
         # que se ejecuta cada cinco minutos.
         score = retry_at if retry_at is not None else time.time()
-        self.client.zadd(self.key, {json.dumps(item, ensure_ascii=False, default=str): score})
+        self.client.eval(
+            "local count=redis.call('ZCARD',KEYS[1])+redis.call('HLEN',KEYS[2]) "
+            "local replacing=redis.call('HEXISTS',KEYS[2],ARGV[1]) "
+            "if count-replacing >= tonumber(ARGV[4]) then "
+            "return redis.error_reply('QUEUE_FULL: cola de entregas llena') end "
+            "redis.call('ZADD',KEYS[1],ARGV[2],ARGV[3]); "
+            "redis.call('HDEL',KEYS[2],ARGV[1]); return 1",
+            2, self.key, self.processing_key, identifier, score,
+            json.dumps(item, ensure_ascii=False, default=str), settings.SOLIDSET_RETRY_QUEUE_MAXLEN,
+        )
         return identifier
 
     def claim_due(self, limit: int | None = None) -> list[dict[str, Any]]:
@@ -74,7 +85,6 @@ class SolidSETRetryQueue:
         self.client.hdel(self.processing_key, item_id)
 
     def retry(self, item: dict[str, Any], error: str) -> None:
-        self.acknowledge(str(item["id"]))
         self.enqueue(
             item["arguments"],
             error=error,
@@ -92,7 +102,6 @@ class SolidSETRetryQueue:
                 item["arguments"], error="Worker reiniciado durante el envío",
                 item_id=item_id, attempts=int(item.get("attempts") or 0),
             )
-            self.client.hdel(self.processing_key, item_id)
             recovered += 1
         return recovered
 

@@ -4,7 +4,7 @@ import os
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
-from langchain_community.chat_message_histories import RedisChatMessageHistory
+from app.redis_history import RedisChatMessageHistory
 
 from app.config import settings
 
