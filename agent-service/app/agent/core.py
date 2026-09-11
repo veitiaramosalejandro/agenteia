@@ -14,10 +14,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
+from langchain_core.runnables import RunnableLambda
 
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
+from app.agent.prompt_budget import budget_messages, compact_system, context_message
 from app.agent.identity import AgentIdentityService
 from app.agent.audit import PostgresToolAudit
 from app.agent.knowledge import AgentKnowledge
@@ -222,6 +224,8 @@ class MachiningAgent:
         requested_cap = int(metadata.get("max_output_tokens") or 0)
         if requested_cap > 0 and requested_cap < config.max_output_tokens:
             config = replace(config, max_output_tokens=max(128, requested_cap))
+        if config.provider == "ollama":
+            config = replace(config, max_output_tokens=min(400, max(1, config.max_output_tokens or 400)))
         key = (
             str((record or {}).get("ID") or "environment"),
             (record or {}).get("UpdatedAt"), capability, config.provider, config.model,
@@ -2381,16 +2385,19 @@ class MachiningAgent:
             if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
                 return None
             web_messages = list(messages)
+            web_messages.append(SystemMessage(
+                content=f"RESULTADOS DE BÚSQUEDA WEB EXTERNA (no verificados):\n{web_result}",
+                additional_kwargs={"budget_context": True},
+            ))
             web_messages.append(SystemMessage(content=(
-                "RESULTADOS DE BÚSQUEDA WEB EXTERNA (no verificados):\n"
-                f"{web_result}\n\n"
                 "Responde la consulta original usando la información útil de estos resultados. "
                 "Redacta una respuesta natural y directa: no muestres URLs, nombres de fuentes, "
                 "ni expresiones como 'según este artículo', 'este análisis' o 'esta fuente'. "
                 "No menciones que buscaste en Internet ni añadas advertencias genéricas sobre las "
                 "fuentes, salvo que exista una incertidumbre concreta y relevante. No inventes datos."
             )))
-            web_messages.append(HumanMessage(content=f"Responde de nuevo a mi consulta original: {user_text}"))
+            if not any(message.additional_kwargs.get("budget_current") for message in web_messages):
+                web_messages.append(HumanMessage(content=f"Responde de nuevo a mi consulta original: {user_text}"))
             web_response = request_llm.invoke(web_messages)
             answer = self._llm_response_text(web_response)
             return self._clean_web_answer(answer) or None
@@ -2597,7 +2604,8 @@ class MachiningAgent:
                 "natural y responde exactamente lo preguntado. Si los datos no permiten responder, "
                 "indícalo brevemente sin copiar el contenido técnico."
             )))
-            synthesis_messages.append(HumanMessage(content=f"Consulta original: {user_text}"))
+            if not any(message.additional_kwargs.get("budget_current") for message in synthesis_messages):
+                synthesis_messages.append(HumanMessage(content=f"Consulta original: {user_text}"))
             response = request_llm.invoke(synthesis_messages)
             answer = self._llm_response_text(response)
             answer = str(answer or "").strip()
@@ -3420,7 +3428,7 @@ class MachiningAgent:
             chat_context_bd = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
                 user_id=user_id,
                 canal_id=canal_id if valid_channel_guid else None,
-                limit=8,
+                limit=3,
             )
 
         # 4.3.1 Resumen operativo vivo del canal actual
@@ -3503,6 +3511,20 @@ class MachiningAgent:
             print(f"SUGGESTION_CONTEXT request_id={metadata_identity.get('chat_id')} record_focused={record_focused} elapsed={perf_counter() - context_started:.3f}s", flush=True)
 
         # --- 5. CONSTRUIR MENSAJES ---
+        request_metadata = dict(message_metadata or {})
+        request_metadata["max_output_tokens"] = (
+            settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS
+            if request_metadata.get("response_suggestion_mode")
+            else settings.LLM_DIALOGUE_MAX_OUTPUT_TOKENS
+        )
+        if request_metadata.get("related_records_context"):
+            request_metadata["max_output_tokens"] = max(
+                768, request_metadata["max_output_tokens"]
+            )
+        request_llm, request_llm_with_tools, request_provider_config = (
+            self.get_llm_for_metadata(request_metadata)
+        )
+        compact_local_prompt = request_provider_config.provider == "ollama"
         
         # System Prompt con contexto del usuario
         if external_query_mode:
@@ -3529,6 +3551,8 @@ class MachiningAgent:
                 else SYSTEM_PROMPT + "\n\n" + SYSTEM_PROMPT_MAESTRO
             )
             system_prompt = base_prompt + "\n\n" + self.identity_service.build_prompt_context(identity_snapshot)
+
+        local_output_contract = system_prompt if external_query_mode else ""
 
         # La plantilla manual personaliza al agente, pero se agrega después de
         # las políticas globales y nunca concede permisos ni herramientas.
@@ -3729,6 +3753,7 @@ class MachiningAgent:
                 message_metadata.get("quoted_message") or ""
             ).strip()
             if message_metadata.get("response_suggestion_mode"):
+                local_contract_start = len(system_prompt)
                 suggestion_count = max(
                     1, min(6, int(message_metadata.get("response_suggestion_count") or 3))
                 )
@@ -3886,6 +3911,7 @@ class MachiningAgent:
                         "SQL Server para datos internos actuales, contexto y conocimiento aprendido para información disponible, "
                         "y búsqueda web para información externa actual. Basa las alternativas en la evidencia recuperada y no inventes datos."
                     )
+                local_output_contract = system_prompt[local_contract_start:]
             if quoted_message:
                 system_prompt += (
                     "\n\n=== MENSAJE CITADO POR EL USUARIO ===\n"
@@ -3956,9 +3982,57 @@ class MachiningAgent:
                 f"Devuelve únicamente un array JSON con un string en {language_name}, "
                 "sin Markdown, títulos ni explicaciones externas al array."
             )
+        local_context_messages = []
+        if compact_local_prompt:
+            if message_metadata.get("general_knowledge_mode") or isolated_quoted_request or strict_current_question:
+                local_output_contract = system_prompt
+            system_prompt = compact_system(
+                local_output_contract,
+                language=self._language_name(str(metadata_identity.get("resolved_language")
+                                                or metadata_identity.get("response_language") or "es")),
+                identity=identity_snapshot, agent_id=agent_resource_id,
+                subject_id=business_subject_id if business_knowledge_query else "",
+                now=verified_now.isoformat(), business_query=business_knowledge_query,
+                auto_reply=auto_reply_mode,
+            )
+            isolated_context = external_query_mode or strict_current_question or isolated_quoted_request or bool(
+                message_metadata.get("general_knowledge_mode")
+            )
+            if not isolated_context:
+                local_context_messages.append(context_message({
+                    "Registro actual": related_records_context,
+                    "Catálogo SQL verificado": business_schema_context,
+                    "Mensaje citado": str(message_metadata.get("quoted_message") or ""),
+                }, 1400))
+                local_context_messages.append(context_message({
+                    "Conocimiento pertinente del agente": agent_rag_context,
+                    "Registros sincronizados (pueden estar desactualizados)": system_snapshot_context,
+                    "Documentación": rag_context,
+                    "Conocimiento privado": agent_private_knowledge,
+                    "Aprendizaje": aprendizaje_relevante if "No hay conocimiento" not in (aprendizaje_relevante or "") else "",
+                }, 2000))
+                local_context_messages.append(context_message({
+                    "Plantilla de tono y especialidad (sin permisos adicionales)":
+                        str((active_prompt or {}).get("SystemPrompt") or ""),
+                    "Preferencias aprendidas (no hechos)": agent_reinforcement,
+                    "Estilo del gemelo": str((identity_snapshot.get("identity") or {}).get("style") or ""),
+                    "Contexto del interlocutor": contexto_usuario,
+                    "Chat reciente": chat_context_bd,
+                    "Resumen del canal": canal_operativo_context,
+                    "Reunión actual": f"{meeting_id or ''} {meeting_code or ''}".strip(),
+                }, 700))
+            elif strict_current_question and not message_metadata.get("general_knowledge_mode"):
+                local_context_messages.append(context_message({
+                    "Conocimiento pertinente": agent_rag_context,
+                    "Registros sincronizados": system_snapshot_context,
+                    "Documentación": rag_context,
+                    "Registro actual": related_records_context,
+                }, 2000))
+            # The compact context replaces the duplicate legacy context messages.
+            chat_context_bd = canal_operativo_context = aprendizaje_relevante = ""
         system_msg = SystemMessage(content=system_prompt)
         
-        messages = [system_msg]
+        messages = [system_msg, *local_context_messages]
 
         if strict_current_question or isolated_quoted_request:
             chat_context_bd = ""
@@ -3987,7 +4061,7 @@ class MachiningAgent:
             messages.append(aprendizaje_msg)
 
         # Mensaje de contexto RAG
-        if not external_query_mode:
+        if not external_query_mode and not compact_local_prompt:
             rag_msg = HumanMessage(
                 content=f"📚 DOCUMENTACIÓN TÉCNICA RELEVANTE:\n{rag_context if rag_context else 'No hay documentación específica para esta consulta.'}"
             )
@@ -3995,7 +4069,11 @@ class MachiningAgent:
 
         # --- 6. CARGAR HISTORIAL CON RESUMEN ---
         if history and not strict_current_question and not isolated_quoted_request:
-            all_history = list(history.messages)
+            all_history = [
+                message for message in history.messages
+                if isinstance(message, (HumanMessage, AIMessage))
+                and not getattr(message, "tool_calls", None)
+            ]
             # Resumir aquí añadía otra inferencia completa antes de responder y,
             # al crecer Redis, podía repetirse en cada turno. El camino crítico
             # conserva solo la ventana reciente; la memoria persistente ya se
@@ -4010,26 +4088,13 @@ class MachiningAgent:
         )))
 
         # Añadir mensaje del usuario
-        messages.append(HumanMessage(content=user_text))
+        messages.append(HumanMessage(content=user_text, additional_kwargs={"budget_current": True}))
 
         # --- 7. BUCLE DE EJECUCIÓN DE HERRAMIENTAS ---
         iteration = 0
         response_text = ""
         herramientas_usadas = []
         last_tool_result = None
-        request_metadata = dict(message_metadata or {})
-        request_metadata["max_output_tokens"] = (
-            settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS
-            if request_metadata.get("response_suggestion_mode")
-            else settings.LLM_DIALOGUE_MAX_OUTPUT_TOKENS
-        )
-        if request_metadata.get("related_records_context"):
-            request_metadata["max_output_tokens"] = max(
-                768, request_metadata["max_output_tokens"]
-            )
-        request_llm, request_llm_with_tools, request_provider_config = (
-            self.get_llm_for_metadata(request_metadata)
-        )
         llm_for_request = request_llm_with_tools
         print(
             f"🧠 LLM provider={request_provider_config.provider} "
@@ -4047,6 +4112,12 @@ class MachiningAgent:
             allowed_tools = self.tools_map.allowed(tool_allowlist)
             llm_for_request = request_llm.bind_tools(allowed_tools) if allowed_tools else request_llm
 
+        if compact_local_prompt:
+            # Bind tools first; all inference/retry/synthesis calls then pass the budget.
+            limiter = RunnableLambda(budget_messages)
+            llm_for_request = limiter | llm_for_request
+            request_llm = limiter | request_llm
+
         # En consultas externas se busca antes de invocar al LLM. La latencia de
         # respuesta ya no depende de que el modelo decida llamar a la herramienta.
         if external_query_mode:
@@ -4057,9 +4128,11 @@ class MachiningAgent:
             if memoria_web_reciente:
                 last_tool_result = memoria_web_reciente
                 herramientas_usadas.append("web_memory")
+                messages.append(SystemMessage(
+                    content=f"CONOCIMIENTO WEB RECIENTE RECUPERADO:\n{memoria_web_reciente}",
+                    additional_kwargs={"budget_context": True},
+                ))
                 messages.append(SystemMessage(content=(
-                    "CONOCIMIENTO WEB RECIENTE RECUPERADO DE LA MEMORIA VECTORIAL:\n"
-                    f"{memoria_web_reciente}\n\n"
                     "Responde con este conocimiento. No busques de nuevo salvo que sea insuficiente."
                 )))
                 llm_for_request = request_llm
@@ -4086,9 +4159,11 @@ class MachiningAgent:
                         self._cache_web_knowledge(
                             search_query, prefetched_web_result, agent_resource_id
                         )
+                        messages.append(SystemMessage(
+                            content=f"RESULTADOS WEB PARA RESPONDER EL TURNO ACTUAL:\n{prefetched_web_result}",
+                            additional_kwargs={"budget_context": True},
+                        ))
                         messages.append(SystemMessage(content=(
-                            "RESULTADOS WEB PARA RESPONDER EL TURNO ACTUAL:\n"
-                            f"{prefetched_web_result}\n\n"
                             "Sintetiza ahora la respuesta. No solicites otra búsqueda."
                         )))
                         llm_for_request = request_llm
@@ -4150,7 +4225,7 @@ class MachiningAgent:
                 marker = "🐢" if llm_elapsed >= settings.LLM_SLOW_CALL_SECONDS else "⏱️"
                 print(
                     f"{marker} LLM call iteration={iteration + 1} "
-                    f"elapsed={llm_elapsed:.2f}s prompt_chars={prompt_chars} "
+                    f"elapsed={llm_elapsed:.2f}s source_prompt_chars={prompt_chars} "
                     f"messages={len(messages)}",
                     flush=True,
                 )

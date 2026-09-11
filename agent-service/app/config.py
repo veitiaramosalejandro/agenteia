@@ -51,7 +51,7 @@ class Settings(BaseSettings):
         128, int(os.getenv("LLM_SUGGESTION_MAX_OUTPUT_TOKENS", "384"))
     )
     LLM_MAX_HISTORY_MESSAGES: int = max(
-        2, min(20, int(os.getenv("LLM_MAX_HISTORY_MESSAGES", "6")))
+        1, min(3, int(os.getenv("LLM_MAX_HISTORY_MESSAGES", "3")))
     )
     LLM_MAX_TOOL_ITERATIONS: int = max(
         1, min(5, int(os.getenv("LLM_MAX_TOOL_ITERATIONS", "3")))
