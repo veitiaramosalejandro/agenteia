@@ -12,6 +12,7 @@ import redis
 from fastapi import APIRouter, Body, HTTPException, Request, Response, status
 
 from app.api.schemas.common import FrameworkMessageDTO, SendMessageResultDTO
+from app.api.schemas.preview import FrameworkMessagePreviewResponse
 from app.api.examples import _FRAMEWORK_MESSAGE_EXAMPLES
 from app.config import settings
 from app.connectors.db_client import save_agent_response_audit
@@ -181,7 +182,10 @@ def _inflate_solidset_form_payload(form_payload: dict[str, Any]) -> dict[str, An
     return result
 
 
-@router.post("/api/v1/agent/notification/framework-message/preview")
+@router.post(
+    "/api/v1/agent/notification/framework-message/preview",
+    response_model=FrameworkMessagePreviewResponse,
+)
 async def preview_framework_notification(
     message: Annotated[
         FrameworkMessageDTO,
@@ -189,7 +193,12 @@ async def preview_framework_notification(
     ],
     request: Request,
 ) -> dict[str, Any]:
-    """Genera la respuesta y devuelve su payload sin enviarlo a SolidSET."""
+    """Devuelve Response y Responses aunque no se pueda preparar un payload.
+
+    No envía mensajes a SolidSET. Response es null cuando no se obtiene una
+    respuesta; PayloadCount solo cuenta los payloads preparados. La captura
+    conserva su comportamiento de aprendizaje existente.
+    """
     payload = message.model_dump(mode="json")
     try:
         instance = _resolve_request_solidset_instance(request)
@@ -214,12 +223,17 @@ async def preview_framework_notification(
             status_code=503,
             detail=f"Não foi possível processar a mensagem: {capture['errors']} erro(s).",
         )
-    flat_payloads = await _process_auto_replies(candidates, preview_only=True)
+    preview_responses: list[dict[str, Any]] = []
+    flat_payloads = await _process_auto_replies(
+        candidates, preview_only=True, _preview_responses=preview_responses,
+    )
     logical_payloads = [_inflate_solidset_form_payload(item) for item in flat_payloads]
     return {
         "Result": 0,
         "Learned": capture["learned"],
         "Skipped": capture["skipped"],
+        "Response": "\n\n".join(item["Response"] for item in preview_responses) or None,
+        "Responses": preview_responses,
         "PayloadCount": len(logical_payloads),
         "Payloads": logical_payloads,
     }

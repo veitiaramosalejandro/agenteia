@@ -1486,17 +1486,20 @@ async def _process_auto_replies(
     preview_only: bool = False,
     _already_routed: bool = False,
     _finalize_status: bool = True,
+    _preview_responses: list[dict[str, Any]] | None = None,
 ) -> int | list[dict[str, Any]]:
     # Cover routing as well as generation. Child tasks share the outer lease.
     if _already_routed or not candidates:
         return await _process_auto_replies_impl(
             candidates, preview_only=preview_only, _already_routed=_already_routed,
             _finalize_status=_finalize_status,
+            _preview_responses=_preview_responses,
         )
     async with async_interactive_work("auto-reply-routing"):
         return await _process_auto_replies_impl(
             candidates, preview_only=preview_only, _already_routed=_already_routed,
             _finalize_status=_finalize_status,
+            _preview_responses=_preview_responses,
         )
 
 
@@ -1506,6 +1509,7 @@ async def _process_auto_replies_impl(
     preview_only: bool = False,
     _already_routed: bool = False,
     _finalize_status: bool = True,
+    _preview_responses: list[dict[str, Any]] | None = None,
 ) -> int | list[dict[str, Any]]:
     print(
         f"🤖 Iniciando procesamiento de auto-respuesta; candidatos={len(candidates)}",
@@ -1580,6 +1584,7 @@ async def _process_auto_replies_impl(
                     preview_only=preview_only,
                     _already_routed=True,
                     _finalize_status=False,
+                    _preview_responses=_preview_responses,
                 )
                 for candidate in unique_candidates
             ),
@@ -1862,15 +1867,24 @@ async def _process_auto_replies_impl(
                 "Por favor, inténtalo de nuevo en unos instantes."
             )
 
+        # Request-local collector shared by this request's concurrent agents.
+        # Capture the validated final text before payload construction can fail.
+        if preview_only and _preview_responses is not None:
+            _preview_responses.append({
+                "AgentResourceId": status_agent_id,
+                "AgentName": agent_name,
+                "Response": response_text,
+            })
+
         try:
             _update_response_status(
                 response_request_id,
-                "sending",
+                "thinking" if preview_only else "sending",
                 agent_resource_id=status_agent_id,
                 agent_name=agent_name,
             )
             print(
-                f"📤 Enviando auto-respuesta a SolidSET "
+                f"📤 {'Preparando preview' if preview_only else 'Enviando auto-respuesta a SolidSET'} "
                 f"base={candidate.get('solidset_base_url') or '-'} "
                 f"agent_resource={agent_resource_id} meeting={meeting_id or '-'}",
                 flush=True,
@@ -1904,7 +1918,10 @@ async def _process_auto_replies_impl(
             )
             send_result_text = str(send_result)
             if preview_only:
-                preview_payloads.append(json.loads(send_result_text))
+                preview_payload = json.loads(send_result_text)
+                if not isinstance(preview_payload, dict):
+                    raise ValueError("El preview no devolvió un objeto de payload válido.")
+                preview_payloads.append(preview_payload)
                 sent += 1
                 continue
             if send_result_text.startswith("✅"):

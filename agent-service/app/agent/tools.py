@@ -1238,7 +1238,7 @@ def solidset_send_chat_message(
         f"resource={recurso_id or '-'} meeting={meeting_id or '-'}",
         flush=True,
     )
-    if not settings.SOLIDSET_USER_ACTIONS_ENABLED:
+    if not preview_only and not settings.SOLIDSET_USER_ACTIONS_ENABLED:
         return (
             "Acción bloqueada: habilita SOLIDSET_USER_ACTIONS_ENABLED=true en .env "
             "para permitir operaciones de escritura en SOLIDSET."
