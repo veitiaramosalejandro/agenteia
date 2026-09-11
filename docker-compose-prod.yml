@@ -43,7 +43,7 @@ services:
       - ./certbot/conf:/etc/letsencrypt
 
   agent-service:
-    image: agent-beta:0.0.1    
+    image: agent-beta:0.0.2
     build:
       context: ./agent-service
       dockerfile: Dockerfile
@@ -110,7 +110,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 60s
     networks:
       - machining-network      
     logging: *default-logging
@@ -118,7 +118,7 @@ services:
   # Worker durable. Escala horizontalmente sin cambiar la API:
   # docker compose -f docker-compose-prod.yml up -d --scale agent-worker=4
   agent-worker:
-    image: agent-beta:0.0.1
+    image: agent-beta:0.0.2
     restart: always
     command: ["python", "-m", "app.response_worker"]
     env_file:
@@ -167,7 +167,7 @@ services:
   # Cola interactiva durable: acepta cientos de solicitudes HTTP rápidamente
   # y mantiene sólo dos trabajos activos, alineados con los dos slots de Ollama.
   suggestion-worker:
-    image: agent-beta:0.0.1
+    image: agent-beta:0.0.2
     restart: always
     command: ["python", "-m", "app.suggestion_worker"]
     env_file:
@@ -208,7 +208,7 @@ services:
     logging: *default-logging
 
   solidset-retry-worker:
-    image: agent-beta:0.0.1
+    image: agent-beta:0.0.2
     container_name: machining_solidset_retry_worker
     hostname: solidset-retry-worker
     restart: always
@@ -234,7 +234,7 @@ services:
     logging: *default-logging
 
   historical-worker:
-    image: agent-beta:0.0.1
+    image: agent-beta:0.0.2
     restart: always
     command: ["python", "-m", "app.historical.worker"]
     env_file:
@@ -265,7 +265,7 @@ services:
     command: ["python", "-m", "app.historical.producer"]
 
   system-knowledge-worker:
-    image: agent-beta:0.0.1
+    image: agent-beta:0.0.2
     container_name: system-knowledge-worker
     hostname: system-knowledge-worker
     restart: always
@@ -275,6 +275,7 @@ services:
     environment:
       ENVIRONMENT: production
       RUNNING_IN_DOCKER: "1"
+      EMBEDDING_BASE_URL: http://ollama-system-embeddings:11434   # ← AÑADIR ESTA LÍNEA
       SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL: http://ollama-system-embeddings:11434
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
@@ -349,7 +350,7 @@ services:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_EMBEDDING_NUM_PARALLEL:-2}
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_EMBEDDING_MAX_QUEUE:-64}
-      - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_CONTEXT_LENGTH=4096
       - OLLAMA_KEEP_ALIVE=${OLLAMA_EMBEDDING_KEEP_ALIVE:-24h}
     cpus: ${OLLAMA_EMBEDDING_CPUS:-4.0}
     mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-6g}
@@ -378,10 +379,10 @@ services:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_SYSTEM_EMBEDDING_NUM_PARALLEL:-2}
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_SYSTEM_EMBEDDING_MAX_QUEUE:-128}
-      - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_CONTEXT_LENGTH=4096
       - OLLAMA_KEEP_ALIVE=${OLLAMA_SYSTEM_EMBEDDING_KEEP_ALIVE:-24h}
-    cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-4.0}
-    mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-6g}
+    cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-8.0}
+    mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-12g}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -510,7 +511,7 @@ services:
     hostname: n8n
     restart: always
     ports:
-      - "${N8N_BIND_ADDRESS:-127.0.0.1}:5678:5678"
+      - "5678:5678"
     environment:
       - N8N_HOST=${N8N_HOST:-localhost}
       - N8N_PORT=5678
@@ -518,7 +519,8 @@ services:
       - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678/}
       - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Lisbon}
       - TZ=${TZ:-Europe/Lisbon}
-      - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE:-true}
+      #- N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE:-true}
+      - N8N_SECURE_COOKIE=false
       - N8N_DIAGNOSTICS_ENABLED=false
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:?N8N_BASIC_AUTH_USER debe estar definido}
