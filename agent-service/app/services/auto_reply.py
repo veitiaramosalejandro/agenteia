@@ -1646,9 +1646,19 @@ async def _process_auto_replies_impl(
                 learned = await asyncio.to_thread(
                     _learn_direct_agent_assertion, candidate
                 )
+                if learned:
+                    sent += 1
+                    _update_response_status(
+                        response_request_id,
+                        "learned",
+                        agent_resource_id=status_agent_id,
+                        agent_name=agent_name,
+                        response_count=sent,
+                    )
                 if not learned and _is_relative_temporal_assertion(
                     str(candidate.get("message") or "")
                 ):
+
                     print(
                         "🕒 Afirmación temporal relativa no persistida; "
                         "se resolverá con el reloj de la instancia",
@@ -2022,17 +2032,28 @@ async def _process_auto_replies_impl(
                 f"⚠️ Error enviando auto-respuesta a SOLIDSET (canal {channel_id}): {exc}"
             )
 
-    if response_request_id and not preview_only and _finalize_status:
+        if response_request_id and not preview_only and _finalize_status:
+            final_status = "completed"
+        if sent > 0:
+            current_status = load(response_request_id)
+            if current_status and current_status.get("status") == "learned":
+                final_status = "learned"
+        elif not candidates:
+            final_status = "completed"
+        elif queued_for_delivery:
+            final_status = "queued"
+        else:
+            final_status = "failed"
+
         _update_response_status(
             response_request_id,
-            "completed"
-            if sent > 0 or not candidates
-            else ("queued" if queued_for_delivery else "failed"),
+            final_status,
             error=None
             if sent > 0 or not candidates or queued_for_delivery
             else "Ningún agente pudo enviar la respuesta.",
             response_count=sent,
         )
+
     return preview_payloads if preview_only else sent + queued_for_delivery
 
 

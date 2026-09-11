@@ -31,6 +31,7 @@ DISPLAY_MESSAGES = {
         "pt": "A enviar a resposta…",
     },
     "completed": {"es": "Respondido", "en": "Answered", "pt": "Respondido"},
+    "learned": {"es": "Aprendido", "en": "Learned", "pt": "Aprendido"},
     "failed": {
         "es": "No se pudo responder",
         "en": "Unable to respond",
@@ -48,9 +49,11 @@ CODES = {
             "thinking",
             "sending",
             "completed",
+            "learned",
             "failed",
             "cancelled",
         )
+
     )
 }
 
@@ -98,17 +101,21 @@ def aggregate_agent_status(agents: list[dict[str, Any]]) -> tuple[str, int, Opti
     """Distinguish accepted delivery jobs from actual delivered responses."""
     states = [item.get("status") for item in agents]
     delivered = states.count("completed")
+    learned = states.count("learned")
     for active in ("sending", "thinking", "searching", "processing", "queued"):
         if active in states:
-            return active, delivered, None
+            return active, delivered + learned, None
     if "failed" in states:
-        return "failed", delivered, "Uno o más agentes no pudieron responder."
+        return "failed", delivered + learned, "Uno o más agentes no pudieron responder."
     if "cancelled" in states:
-        return "cancelled", delivered, None
-    return "completed", delivered, None
+        return "cancelled", delivered + learned, None
+    if "completed" in states:
+        return "completed", delivered + learned, None
+    return "learned", learned, None
 
 
 def save(data: dict[str, Any]) -> None:
+
     request_id = str(data["requestId"])
     try:
         _redis.setex(
@@ -216,9 +223,10 @@ def update(
     ):
         status_name, response_count, error = aggregate_agent_status(data["agents"])
         messages = display_messages(status_name)
-    completed = status_name in {"completed", "failed", "cancelled"}
+        completed = status_name in {"completed", "failed", "cancelled", "learned"}
     data.update(
         status=status_name,
+
         code=CODES.get(status_name, -1),
         displayMessage=messages["pt"],
         displayMessages=messages,
