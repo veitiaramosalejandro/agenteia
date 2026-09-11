@@ -40,10 +40,10 @@ services:
     environment:
       ENVIRONMENT: development
       RUNNING_IN_DOCKER: "1"
+      OLLAMA_CHAT_CONTEXT_LENGTH: ${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       OLLAMA_BASE_URL: http://ollama-chat:11434
       EMBEDDING_BASE_URL: http://ollama-embeddings:11434
       MODEL_NAME: qwen2.5:3b
-      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-2048}
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
       POSTGRES_PORT: 5432
@@ -100,6 +100,7 @@ services:
     environment:
       ENVIRONMENT: development
       RUNNING_IN_DOCKER: "1"
+      OLLAMA_CHAT_CONTEXT_LENGTH: ${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       OLLAMA_BASE_URL: http://ollama-chat:11434
       EMBEDDING_BASE_URL: http://ollama-embeddings:11434
       VECTOR_DB_URL: http://vector-db:6333
@@ -150,6 +151,7 @@ services:
     environment:
       ENVIRONMENT: development
       RUNNING_IN_DOCKER: "1"
+      OLLAMA_CHAT_CONTEXT_LENGTH: ${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       PYTHONUNBUFFERED: "1"
       OLLAMA_BASE_URL: http://ollama-chat:11434
       EMBEDDING_BASE_URL: http://ollama-embeddings:11434
@@ -195,6 +197,7 @@ services:
     environment:
       ENVIRONMENT: development
       RUNNING_IN_DOCKER: "1"
+      OLLAMA_CHAT_CONTEXT_LENGTH: ${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       REDIS_URL: redis://redis-cache:6379
       POSTGRES_HOST: timescaledb
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -215,6 +218,7 @@ services:
     env_file: [.env]
     environment:
       RUNNING_IN_DOCKER: "1"
+      OLLAMA_CHAT_CONTEXT_LENGTH: ${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       OLLAMA_BASE_URL: http://ollama-chat:11434
       EMBEDDING_BASE_URL: http://ollama-embeddings:11434
       VECTOR_DB_URL: http://vector-db:6333
@@ -248,6 +252,7 @@ services:
     env_file: [.env]
     environment:
       RUNNING_IN_DOCKER: "1"
+      OLLAMA_CHAT_CONTEXT_LENGTH: ${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL: http://ollama-system-embeddings:11434
       EMBEDDING_BASE_URL: http://ollama-system-embeddings:11434
       VECTOR_DB_URL: http://vector-db:6333
@@ -280,7 +285,7 @@ services:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-1}
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
-      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-2048}
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_KV_CACHE_TYPE=q8_0
       - LLAMA_ARG_FIT_TARGET=512
@@ -319,7 +324,7 @@ services:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_EMBEDDING_NUM_PARALLEL:-2}
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_EMBEDDING_MAX_QUEUE:-64}
-      - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_EMBEDDING_CONTEXT_LENGTH:-2048}
       - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
       - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_EMBEDDING_KEEP_ALIVE:-24h}
@@ -355,7 +360,7 @@ services:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_SYSTEM_EMBEDDING_NUM_PARALLEL:-2}
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_SYSTEM_EMBEDDING_MAX_QUEUE:-128}
-      - OLLAMA_CONTEXT_LENGTH=2048
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_EMBEDDING_CONTEXT_LENGTH:-2048}
       - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
       - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q8_0}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_SYSTEM_EMBEDDING_KEEP_ALIVE:-24h}

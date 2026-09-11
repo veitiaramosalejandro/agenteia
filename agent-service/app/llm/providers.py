@@ -56,13 +56,15 @@ class OllamaProvider(ChatProvider):
     name = "ollama"
 
     def create_model(self, config: LLMProviderConfig) -> Any:
+        from app.config import settings
+
         ChatOllama = _optional_class("langchain_ollama", "ChatOllama", "langchain-ollama")
         return ChatOllama(
             base_url=config.base_url,
             model=config.model,
             temperature=config.temperature,
             num_predict=min(400, max(1, config.max_output_tokens or 400)),
-            num_ctx=4096,
+            num_ctx=settings.OLLAMA_CHAT_CONTEXT_LENGTH,
             keep_alive="30m",  # o -1 para mantener indefinidamente
             top_p=0.9,
             repeat_penalty=1.2,

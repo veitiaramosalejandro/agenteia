@@ -8,7 +8,11 @@ Implementación local pendiente de pruebas. No requiere cambios adicionales en e
 - Antes de cada llamada del diálogo, incluidos reintentos y síntesis, el contenido de mensajes y argumentos de herramientas queda limitado a 7.999 caracteres. Se conservan completos las políticas, la consulta actual y los argumentos de llamadas. Se priorizan los resultados recientes de herramientas sobre el historial.
 - Los recortes de contenido llevan una indicación de omisión. No se modifican los datos originales, Redis ni Qdrant. Las parejas de llamada/resultado conservan sus identificadores.
 - Si las instrucciones, la consulta y los argumentos obligatorios no caben, se produce `OLLAMA_PROMPT_BUDGET_EXCEEDED` antes de inferir, en lugar de cortar la consulta o las políticas.
-- El proveedor Ollama impone `num_predict <= 400` y `num_ctx=4096`. El límite de salida también se aplica a otros consumidores de este proveedor; el presupuesto de mensajes corresponde al diálogo de `MachiningAgent`.
+- El proveedor Ollama impone `num_predict <= 400` y toma `num_ctx` de `OLLAMA_CHAT_CONTEXT_LENGTH` (4096 por defecto). El límite de salida también se aplica a otros consumidores de este proveedor; el presupuesto de mensajes corresponde al diálogo de `MachiningAgent`.
+
+Los Compose de desarrollo y producción separan `OLLAMA_CHAT_CONTEXT_LENGTH=4096` de `OLLAMA_EMBEDDING_CONTEXT_LENGTH=2048`. Dentro de cada contenedor Ollama se conserva el nombre nativo `OLLAMA_CONTEXT_LENGTH`, alimentado únicamente por la variable correspondiente a su servicio. Ambos runtimes de embeddings usan la variable de embeddings. La variable global antigua no se usa como fallback.
+
+Si se emplea `.env.production`, seleccionar también ese archivo para la interpolación de Compose (`--env-file .env.production`); `env_file` de un servicio no selecciona las variables de interpolación del Compose. La prioridad de variables del shell sigue aplicándose a los nuevos nombres.
 
 ## Validación a cargo del usuario
 

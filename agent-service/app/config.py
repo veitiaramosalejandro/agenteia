@@ -1,5 +1,5 @@
 import os
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     
     # Ollama Local Configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-chat:11434")
+    OLLAMA_CHAT_CONTEXT_LENGTH: int = Field(default=4096, ge=1)
     # Required explicitly: embeddings must never inherit the chat endpoint.
     # Validation below runs before any consumer can create an embedding client.
     EMBEDDING_BASE_URL: str = ""
