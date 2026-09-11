@@ -6,13 +6,14 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.schemas.synchronization import (
     SolidSETCatalogPage,
+    SysAgentIAModelSyncResponse,
     SysAgentIAScopeIngestResponse,
     SysChatIAResourceIngestResponse,
     SysLoginIngestResponse,
     SysResourceIAIngestResponse,
     SysWorkRoomIngestResponse,
 )
-from app.connectors.db_client import get_solidset_instance
+from app.connectors.db_client import get_solidset_instance, synchronize_agent_model_defaults
 from app.connectors.solidset_data_api import read_catalog_page, SolidSETDataAPIError
 from app.system.resource_ingest import (
     ingest_solidset_agent_scopes,
@@ -24,6 +25,28 @@ from app.system.resource_ingest import (
 
 
 router = APIRouter(prefix="/api/v1/agent/solidset", tags=["SolidSET Configuration"])
+
+
+@router.post("/agent-models/sync", response_model=SysAgentIAModelSyncResponse,
+             summary="Complete default SysAgentIAModel assignments",
+             description="Completa asignaciones faltantes de recursos activos ya sincronizados. "
+                         "Conserva configuraciones personalizadas y no consulta SolidSET ni invoca un LLM.")
+def sync_agent_models(
+    instanceCode: str = Query(..., min_length=1, max_length=100, pattern=r"\S"),
+) -> SysAgentIAModelSyncResponse:
+    try:
+        instance = get_solidset_instance(code=instanceCode.strip(), source_ip=None)
+        if not instance:
+            raise HTTPException(status_code=404, detail="A instância SolidSET não existe.")
+        result = synchronize_agent_model_defaults(instance["ID"])
+        return SysAgentIAModelSyncResponse(
+            status="partial" if result["skippedNoProvider"] else "synchronized",
+            synchronized=result["sourceRows"] - result["skippedNoProvider"],
+            skipped=result["skippedNoProvider"],
+            instanceCode=instance["Code"], **result,
+        )
+    except (psycopg.Error, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="Não foi possível sincronizar os modelos dos agentes.") from exc
 
 
 def _catalog_page(instance_code: str, dataset: str, offset: int, limit: int) -> SolidSETCatalogPage:

@@ -486,7 +486,6 @@ def ensure_llm_provider_schema() -> None:
 
 
 def ensure_agent_model_schema() -> None:
-    ensure_llm_provider_schema()
     global _agent_default_model_schema_ready
     if _agent_default_model_schema_ready:
         return
@@ -494,10 +493,25 @@ def ensure_agent_model_schema() -> None:
     with _agent_default_model_schema_lock:
         if _agent_default_model_schema_ready:
             return
+        ensure_llm_provider_schema()
         migration = Path(__file__).with_name("agent_default_model.sql").read_text(encoding="utf-8")
         with _postgres_connection() as connection:
             connection.execute(migration)
         _agent_default_model_schema_ready = True
+
+
+def synchronize_agent_model_defaults(instance_id: UUID | str) -> dict[str, int]:
+    """Fill missing defaults for one instance using registered providers only."""
+    ensure_agent_model_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL lock_timeout = '5s'")
+            cursor.execute("SET LOCAL statement_timeout = '30s'")
+            cursor.execute(
+                "SELECT * FROM public.synchronize_agent_model_defaults(%s::uuid)",
+                (UUID(str(instance_id)),),
+            )
+            return dict(cursor.fetchone())
 
 
 def save_agent_model_configuration(resource_id: UUID | str, data: dict[str, Any]) -> dict[str, Any]:

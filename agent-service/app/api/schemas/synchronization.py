@@ -41,3 +41,11 @@ class SysWorkRoomIngestResponse(_BaseSyncResponse):
 class SysLoginIngestResponse(_BaseSyncResponse):
     inserted: int
     updated: int
+
+
+class SysAgentIAModelSyncResponse(_BaseSyncResponse):
+    instanceCode: str
+    inserted: int
+    promoted: int
+    existing: int
+    skippedNoProvider: int
