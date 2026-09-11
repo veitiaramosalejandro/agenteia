@@ -346,8 +346,9 @@ class SistemaAprendizaje:
                     sl.ActiveIDLogin2Resource,
                     sr.ResourceId,
                     sr.DisplayName
-                FROM dbo.SysLogin sl
-                LEFT JOIN dbo.SysResources sr
+                                FROM dbo.SysLogin sl WITH (NOLOCK)
+                LEFT JOIN dbo.SysResources sr WITH (NOLOCK)
+
                     ON sr.ActiveIDLogin2Resource = sl.ActiveIDLogin2Resource
                 WHERE sl.Username = %s
                    OR sl.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
@@ -420,22 +421,24 @@ class SistemaAprendizaje:
             query="""
                 WITH user_rooms AS (
                     SELECT DISTINCT wr.IDWorkRoom, wr.Name, wr.Description, wr.Kind
-                    FROM dbo.SysWorkRoomResource wrr
-                    INNER JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = wrr.IDWorkRoom
+                                        FROM dbo.SysWorkRoomResource wrr WITH (NOLOCK)
+                    INNER JOIN dbo.SysWorkRoom wr WITH (NOLOCK) ON wr.IDWorkRoom = wrr.IDWorkRoom
                     WHERE wrr.IDResource = TRY_CONVERT(uniqueidentifier, %s)
                     OR wrr.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                    OR EXISTS (SELECT 1 FROM dbo.SysLogin slu WHERE slu.IDLogin = wrr.IDLogin AND slu.Username = %s)
+                    OR EXISTS (SELECT 1 FROM dbo.SysLogin slu WITH (NOLOCK) WHERE slu.IDLogin = wrr.IDLogin AND slu.Username = %s)
+
                 ), room_members AS (
                     SELECT 
                         wrr.IDWorkRoom,
                         -- Reemplazar STRING_AGG con FOR XML PATH para evitar límite de 8000 bytes
                         STUFF((
                             SELECT DISTINCT ',' + COALESCE(CONVERT(varchar(max), sub.IDResource), CONVERT(varchar(max), sub.IDLogin))
-                            FROM dbo.SysWorkRoomResource sub
+                                                        FROM dbo.SysWorkRoomResource sub WITH (NOLOCK)
                             WHERE sub.IDWorkRoom = wrr.IDWorkRoom
                             FOR XML PATH(''), TYPE
                         ).value('.', 'varchar(max)'), 1, 1, '') AS Members
-                    FROM dbo.SysWorkRoomResource wrr
+                    FROM dbo.SysWorkRoomResource wrr WITH (NOLOCK)
+
                     INNER JOIN user_rooms ur ON ur.IDWorkRoom = wrr.IDWorkRoom
                     GROUP BY wrr.IDWorkRoom
                 )
@@ -516,16 +519,17 @@ class SistemaAprendizaje:
                 cursor,
                 query="""
                     SELECT TOP 50 c.IDChat2
-                    FROM dbo.SysChat2SysResource c2rsc
-                    INNER JOIN dbo.SysChat c ON c.IDChat2 = c2rsc.IDChat
+                                        FROM dbo.SysChat2SysResource c2rsc WITH (NOLOCK)
+                    INNER JOIN dbo.SysChat c WITH (NOLOCK) ON c.IDChat2 = c2rsc.IDChat
                     WHERE c2rsc.IDResource = TRY_CONVERT(uniqueidentifier, %s)
                     OR c2rsc.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
                     OR EXISTS (
                         SELECT 1 
-                        FROM dbo.SysLogin slu 
+                        FROM dbo.SysLogin slu WITH (NOLOCK)
                         WHERE slu.IDLogin = c2rsc.IDLogin 
                         AND slu.Username = %s
                     )
+
                     ORDER BY c.Stamp DESC
                 """,
                 params=(identity.get("resource_id"), identity.get("login_id"), identity.get("username")),
@@ -548,7 +552,8 @@ class SistemaAprendizaje:
                         c2r.RecordShortName,
                         COUNT(*) as UsageCount,
                         MAX(c2r.Stamp) as LastUsed
-                    FROM dbo.SysChat2Record c2r
+                                        FROM dbo.SysChat2Record c2r WITH (NOLOCK)
+
                     WHERE c2r.IDChat IN ({id_list})
                     AND c2r.RecordCode IS NOT NULL
                     GROUP BY c2r.RecordCode, c2r.RecordShortName
@@ -1068,10 +1073,11 @@ class SistemaAprendizaje:
                     self._execute_with_retry(
                         cursor,
                         query="""
-                            SELECT TOP 1 1 AS allowed FROM dbo.SysWorkRoomResource req
+                                                        SELECT TOP 1 1 AS allowed FROM dbo.SysWorkRoomResource req WITH (NOLOCK)
                             WHERE req.IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s)
                               AND (req.IDResource = TRY_CONVERT(uniqueidentifier, %s) OR req.IDLogin = TRY_CONVERT(uniqueidentifier, %s)
-                                   OR EXISTS (SELECT 1 FROM dbo.SysLogin slu WHERE slu.IDLogin = req.IDLogin AND slu.Username = %s))
+                                   OR EXISTS (SELECT 1 FROM dbo.SysLogin slu WITH (NOLOCK) WHERE slu.IDLogin = req.IDLogin AND slu.Username = %s))
+
                         """,
                         params=(canal_id, identity.get("resource_id"), identity.get("login_id"), identity.get("username")),
                         context="channel_members_acl"
@@ -1086,11 +1092,12 @@ class SistemaAprendizaje:
                                 wr.IDWorkRoom, wr.Name AS ChannelName, COALESCE(sr.ResourceId, wrr.IDResource) AS ResourceId,
                                 COALESCE(sr.DisplayName, sl.FullName, sl.Username, 'Sin nombre') AS DisplayName,
                                 sl.Username, sl.FullName, wrr.IDLogin
-                            FROM dbo.SysWorkRoomResource wrr
-                            INNER JOIN dbo.SysWorkRoom wr ON wr.IDWorkRoom = wrr.IDWorkRoom
-                            INNER JOIN dbo.SysResources sr ON sr.ResourceId = wrr.IDResource
-                            INNER JOIN dbo.SysLogin sl ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
+                                                        FROM dbo.SysWorkRoomResource wrr WITH (NOLOCK)
+                            INNER JOIN dbo.SysWorkRoom wr WITH (NOLOCK) ON wr.IDWorkRoom = wrr.IDWorkRoom
+                            INNER JOIN dbo.SysResources sr WITH (NOLOCK) ON sr.ResourceId = wrr.IDResource
+                            INNER JOIN dbo.SysLogin sl WITH (NOLOCK) ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource
                             WHERE wrr.IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s)
+
                             ORDER BY DisplayName
                         """,
                         params=(canal_id,),
