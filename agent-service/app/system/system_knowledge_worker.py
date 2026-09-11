@@ -48,6 +48,8 @@ def _retry_delay(error: Exception, attempts: int) -> int:
 
 
 def run_worker() -> None:
+    # Keep configuration errors outside the retry loop and before any threads.
+    settings.validate_embedding_configuration()
     from app.services.openai_direct import run_learning_worker
     threading.Thread(target=run_learning_worker, daemon=True, name="openai-local-learning").start()
     worker_id = f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"

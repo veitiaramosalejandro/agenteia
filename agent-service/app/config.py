@@ -1,4 +1,5 @@
 import os
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -14,11 +15,9 @@ class Settings(BaseSettings):
     
     # Ollama Local Configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-chat:11434")
-    # Embeddings use an isolated runtime so indexing cannot evict or queue the
-    # interactive chat model. Falling back preserves non-Docker deployments.
-    EMBEDDING_BASE_URL: str = os.getenv(
-        "EMBEDDING_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://ollama-chat:11434")
-    )
+    # Required explicitly: embeddings must never inherit the chat endpoint.
+    # Validation below runs before any consumer can create an embedding client.
+    EMBEDDING_BASE_URL: str = ""
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
@@ -178,7 +177,7 @@ class Settings(BaseSettings):
         50, min(1000, int(os.getenv("SYSTEM_KNOWLEDGE_BATCH_SIZE", "500")))
     )
     SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL: str = os.getenv(
-        "SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL", EMBEDDING_BASE_URL
+        "SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL", ""
     )
     SYSTEM_KNOWLEDGE_POLL_SECONDS: int = max(
         2, int(os.getenv("SYSTEM_KNOWLEDGE_POLL_SECONDS", "10"))
@@ -324,6 +323,27 @@ class Settings(BaseSettings):
         port = options.get("port")
         return f"{options['server']}:{port}" if port else str(options["server"])
     
+    @model_validator(mode="after")
+    def validate_embedding_configuration(self) -> "Settings":
+        """Fail at startup, before clients, threads or ingestion retries begin."""
+        embedding_url = self.EMBEDDING_BASE_URL.strip()
+        if not embedding_url:
+            # RuntimeError propagates directly without dumping other settings,
+            # which may contain credentials, in a Pydantic validation error.
+            raise RuntimeError(
+                "Configuración fatal: EMBEDDING_BASE_URL es obligatoria y no puede "
+                "estar vacía. Define la URL del servicio de embeddings dedicado "
+                "(por ejemplo, http://ollama-system-embeddings:11434 para "
+                "system-knowledge-worker). No se utilizará OLLAMA_BASE_URL como fallback."
+            )
+        self.EMBEDDING_BASE_URL = embedding_url
+        # Resolve from the effective validated setting, not the class-level
+        # environment snapshot. This fallback stays within embedding endpoints.
+        self.SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL = (
+            self.SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL.strip() or embedding_url
+        )
+        return self
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

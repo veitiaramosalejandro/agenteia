@@ -249,6 +249,7 @@ services:
     environment:
       RUNNING_IN_DOCKER: "1"
       SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL: http://ollama-system-embeddings:11434
+      EMBEDDING_BASE_URL: http://ollama-system-embeddings:11434
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
     extra_hosts: ["host.docker.internal:host-gateway"]
