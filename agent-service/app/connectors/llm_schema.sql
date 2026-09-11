@@ -52,10 +52,13 @@ SELECT pg_advisory_xact_lock(hashtext('llm-provider-model-schema'));
               ADD COLUMN IF NOT EXISTS "Capabilities" jsonb NOT NULL DEFAULT '["general"]'::jsonb,
               ADD COLUMN IF NOT EXISTS "Priority" integer NOT NULL DEFAULT 100,
               ADD COLUMN IF NOT EXISTS "IsDefault" boolean NOT NULL DEFAULT false;
-            CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysAgentIAModel_ResourceProvider"
-              ON public."SysAgentIAModel" ("IDResource", "IDProviderConfiguration") WHERE active=true;
-            CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysAgentIAModel_DefaultResource"
-              ON public."SysAgentIAModel" ("IDResource") WHERE active=true AND "IsDefault"=true;
+                        DROP INDEX IF EXISTS public."UQ_SysAgentIAModel_ResourceProvider";
+            CREATE UNIQUE INDEX "UQ_SysAgentIAModel_ResourceProvider"
+              ON public."SysAgentIAModel" ("IDSolidSETInstance", "IDResource", "IDProviderConfiguration") WHERE active=true;
+            DROP INDEX IF EXISTS public."UQ_SysAgentIAModel_DefaultResource";
+            CREATE UNIQUE INDEX "UQ_SysAgentIAModel_DefaultResource"
+              ON public."SysAgentIAModel" ("IDSolidSETInstance", "IDResource") WHERE active=true AND "IsDefault"=true;
+
             
 DO $migration$
 BEGIN
