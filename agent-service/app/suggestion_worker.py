@@ -9,6 +9,7 @@ import redis
 from fastapi import HTTPException
 
 from app.config import settings
+from app.interactive_priority import async_interactive_work
 from app.container import agent as _configured_agent  # noqa: F401 - configures shared runtime
 from app.api.schemas.common import FrameworkMessageDTO
 from app.services.response_status import load as _load_response_status
@@ -57,7 +58,8 @@ async def run_worker() -> None:
                 payload = json.loads(fields.get("payload") or "{}")
                 instance = json.loads(fields.get("instance") or "{}")
                 message = FrameworkMessageDTO.model_validate(payload)
-                await _process_chat_question_response_suggestion(message, instance)
+                async with async_interactive_work("suggestion-worker"):
+                    await _process_chat_question_response_suggestion(message, instance)
                 await asyncio.to_thread(queue.acknowledge, message_id)
 
             except (HTTPException, Exception) as exc:

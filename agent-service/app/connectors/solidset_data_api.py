@@ -12,6 +12,7 @@ from uuid import UUID
 import httpx
 
 from app.config import settings
+from app.interactive_priority import background_checkpoint, background_io_options
 from app.connectors.agent_scope_query import AGENT_SCOPES_QUERY
 from app.llm.secrets import decrypt_api_key
 
@@ -91,6 +92,7 @@ class DataAPICursor:
         self._offset = 0
 
     def execute(self, query: str, params: Any = None) -> None:
+        background_checkpoint()
         parameters = list(params or [])
         payload = {
             "query": _strip_sql_comments(str(query)),
@@ -98,7 +100,9 @@ class DataAPICursor:
             "maxRows": self.connection.max_rows,
         }
         try:
-            response = self.connection.client.post("/api/v1/query/read", json=payload)
+            response = self.connection.client.post(
+                "/api/v1/query/read", json=payload, **background_io_options(),
+            )
         except httpx.HTTPError as exc:
             raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
         _reject_redirect(response, "query-read")

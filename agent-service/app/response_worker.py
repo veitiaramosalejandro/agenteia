@@ -16,7 +16,7 @@ from app.services.instance_resolution import _attach_solidset_instance
 from app.services.response_status import update as _update_response_status
 from app.services.response_status import load as _load_response_status
 from app.response_queue import AgentResponseQueue
-from app.interactive_priority import interactive_work
+from app.interactive_priority import async_interactive_work
 
 
 async def run_worker() -> None:
@@ -48,7 +48,10 @@ async def run_worker() -> None:
                 if cached_candidates:
                     candidates = json.loads(cached_candidates)
                 else:
-                    capture = notification_listener.capture_realtime_payload(payload)
+                    async with async_interactive_work("notification-capture"):
+                        capture = await asyncio.to_thread(
+                            notification_listener.capture_realtime_payload, payload,
+                        )
                     if capture.get("errors"):
                         raise RuntimeError(
                             f"Falló la captura: {capture['errors']} error(es)."
@@ -57,7 +60,7 @@ async def run_worker() -> None:
                     _attach_solidset_instance(candidates, instance)
                 for candidate in candidates:
                     candidate["response_request_id"] = request_id
-                with interactive_work("agent-response-worker"):
+                async with async_interactive_work("agent-response-worker"):
                     result = await _process_auto_replies(candidates)
                 if candidates and int(result) == 0:
                     raise RuntimeError("Ningún agente pudo completar el envío.")

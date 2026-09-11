@@ -11,6 +11,7 @@ from datetime import datetime
 import pymssql
 
 from app.config import settings
+from app.interactive_priority import background_checkpoint, background_ingestion, IngestionCancelled
 from app.system.learning import SistemaAprendizaje
 from app.system.schema import Actividad, Canal
 
@@ -29,14 +30,22 @@ def _first_value(row: dict, *keys, default=None):
 
 
 def ingestar_sistema_completo(*, instance_code: str | None = None):
+    with background_ingestion():
+        return _ingestar_sistema_completo_background(instance_code=instance_code)
+
+
+def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
     """Ingesta la estructura real del sistema: canales, roles, usuarios y chat."""
 
+    background_checkpoint()
     sistema = SistemaAprendizaje()
+    conn = None
 
     instance_label = str(instance_code or "contexto-actual").strip()
     print(f"🔄 Ingestando estructura real del sistema instance={instance_label}...")
 
     try:
+        background_checkpoint()
         conn = sistema._connect_sql_with_retry(
             timeout=max(3, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS),
             retries=max(1, settings.DB_INGEST_CONNECT_RETRIES),
@@ -49,6 +58,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
 
         # 1. Canales reales del sistema
         print("📚 Ingestando canales (SysWorkRoom)...")
+        background_checkpoint()
         cursor.execute("""
             SELECT TOP 500 *
             FROM dbo.SysWorkRoom
@@ -59,6 +69,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
         canales = []
         canales_indexados = 0
         for row in workrooms:
+            background_checkpoint()
             canal_id = _safe_str(_first_value(row, "IDWorkRoom", "IdWorkRoom", "idWorkRoom"))
             if not canal_id:
                 continue
@@ -80,6 +91,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
 
         # 2. Roles del sistema
         print("📚 Ingestando roles (SysRole)...")
+        background_checkpoint()
         cursor.execute("""
             SELECT TOP 500 *
             FROM dbo.SysRole
@@ -88,6 +100,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
         roles = cursor.fetchall() or []
 
         for row in roles:
+            background_checkpoint()
             rol_code = _safe_str(_first_value(row, "Code", "Name", "RoleCode"), "rol_desconocido")
             rol_texto = " | ".join(
                 f"{k}={_safe_str(v)}"
@@ -111,6 +124,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
         print("📚 Ingestando usuarios asociados a recursos (SysLogin + SysResources)...")
         
         # Paso 3.1: Obtener todos los usuarios activos
+        background_checkpoint()
         cursor.execute("""
             SELECT IDLogin, FullName, Username
             FROM dbo.SysLogin
@@ -120,6 +134,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
         all_users = cursor.fetchall() or []
 
         # Paso 3.2: Obtener todos los mapeos de recursos para esos usuarios
+        background_checkpoint()
         cursor.execute("""
             SELECT
                 sl2r.IDLogin,
@@ -135,12 +150,14 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
         # Agrupar recursos por usuario en Python
         resources_by_user = {}
         for mapping in resource_mappings:
+            background_checkpoint()
             user_id = _safe_str(mapping.get("IDLogin"))
             if user_id:
                 resources_by_user.setdefault(user_id, []).append(mapping)
 
         resource_profiles = {}
         for user_row in all_users:
+            background_checkpoint()
             user_id = _safe_str(user_row.get("IDLogin"))
             if not user_id:
                 continue
@@ -157,6 +174,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
 
         recursos_ingestados = 0
         for user_id, profile in resource_profiles.items():
+            background_checkpoint()
             actividad = Actividad(
                 id=f"resource_{user_id}",
                 recurso_humano_id=user_id, # El ID del recurso humano es el ID del Login
@@ -182,6 +200,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
 
         # 4. Canales en los que cada recurso tiene permiso (consulta real compartida)
         print("📚 Ingestando permisos de canal por recurso (SysWorkRoom + SysWorkRoomResource + SysResources)...")
+        background_checkpoint()
         cursor.execute("""
             SELECT TOP 5000
                 wrr.IDResource,
@@ -199,6 +218,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
         channels_by_resource = {}
         member_count_by_channel = {}
         for row in channels_permissions:
+            background_checkpoint()
             resource_id = _safe_str(_first_value(row, "ResourceId", "IDResource"))
             channel_id = _safe_str(_first_value(row, "IDWorkRoom"))
             if not resource_id or not channel_id:
@@ -213,6 +233,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
 
         permisos_canal_ingestados = 0
         for user_id, channels in channels_by_resource.items():
+            background_checkpoint()
             profile = resource_profiles.get(user_id, {})
             display_name = profile.get("display_name") or user_id
             unique_channel_names = sorted({c["channel_name"] for c in channels if c.get("channel_name")})
@@ -245,6 +266,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
         print("📚 Ingestando historial de conversación por recurso (SysChat + Sys* joins)...")
         chats_ingestados = 0
         try:
+            background_checkpoint()
             cursor.execute("""
                 SELECT TOP 500
                     sc.IDChat2,
@@ -286,6 +308,7 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
             chats_by_resource = cursor.fetchall() or []
 
             for row in chats_by_resource:
+                background_checkpoint()
                 chat_id = _safe_str(_first_value(row, "IDChat2", "IDChat"))
                 resource_id = _safe_str(_first_value(row, "ResourceId", "IDResource"), "chat_user")
                 channel_id = _safe_str(_first_value(row, "IDWorkRoom"), "canal_general")
@@ -326,10 +349,10 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
                 )
                 if sistema.aprender_actividad(actividad):
                     chats_ingestados += 1
+        except IngestionCancelled:
+            raise
         except Exception as e:
             print(f"⚠️ Se omite la ingesta de chats por error SQL transitorio: {e}")
-
-        conn.close()
 
         resumen = {
             "instanceCode": instance_code,
@@ -351,6 +374,14 @@ def ingestar_sistema_completo(*, instance_code: str | None = None):
     except Exception as e:
         print(f"❌ Error en la ingesta real: {e}")
         raise
+    finally:
+        if conn is not None:
+            with suppress(Exception):
+                conn.close()
+        with suppress(Exception):
+            sistema.qdrant.close()
+        with suppress(Exception):
+            sistema.redis_cache.close()
 
 
 if __name__ == "__main__":

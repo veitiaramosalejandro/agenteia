@@ -1,5 +1,7 @@
 import asyncio
+import threading
 import psycopg
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from datetime import datetime
 from time import perf_counter
@@ -10,7 +12,10 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.interactive_priority import interactive_work
+from app.interactive_priority import (
+    async_interactive_work, background_checkpoint, background_ingestion,
+    IngestionBusy, IngestionCancelled, lower_background_thread_priority,
+)
 
 from app.api.controllers.agent_prompts import router as agent_prompts_router
 from app.api.controllers.ingestion import router as ingestion_router
@@ -160,10 +165,13 @@ async def prioritize_interactive_requests(request: Request, call_next):
     interactive_paths = (
         "/api/v1/agent/dialogue",
         "/api/v1/agent/notification/chat-question/suggest-response",
+        "/api/v1/agent/notification/framework-message",
+        "/api/v1/agent/notification/framework-message/preview",
+        "/api/v1/agent/notification/frameworkHub/SendMessage",
     )
     if request.url.path not in interactive_paths:
         return await call_next(request)
-    with interactive_work("http"):
+    async with async_interactive_work("http"):
         return await call_next(request)
 
 
@@ -194,8 +202,14 @@ configure_openapi(app, OPENAPI_TAGS)
 _dialogue_slots = dialogue_runtime.slots
 
 
-def _ingestar_instancias_solidset_activas() -> dict[str, Any]:
+def _ingestar_instancias_solidset_activas(stop: threading.Event | None = None) -> dict[str, Any]:
+    with background_ingestion(stop):
+        return _ingestar_instancias_solidset_activas_background()
+
+
+def _ingestar_instancias_solidset_activas_background() -> dict[str, Any]:
     """Ejecuta la ingesta periódica dentro del contexto aislado de cada instancia."""
+    background_checkpoint()
     instances = list_active_solidset_instances()
     eligible = [
         instance
@@ -211,6 +225,7 @@ def _ingestar_instancias_solidset_activas() -> dict[str, Any]:
     results: dict[str, Any] = {}
     errors: dict[str, str] = {}
     for instance in eligible:
+        background_checkpoint()
         instance_code = str(instance.get("Code") or instance.get("ID") or "unknown")
         print(f"🔄 Iniciando aprendizagem BD instance={instance_code}")
         try:
@@ -218,6 +233,8 @@ def _ingestar_instancias_solidset_activas() -> dict[str, Any]:
                 results[instance_code] = ingestar_sistema_completo(
                     instance_code=instance_code,
                 )
+        except IngestionCancelled:
+            raise
         except Exception as exc:
             errors[instance_code] = str(exc)
             print(f"⚠️ Aprendizagem BD falhou instance={instance_code}: {exc}")
@@ -235,7 +252,10 @@ def _ingestar_instancias_solidset_activas() -> dict[str, Any]:
 
 
 async def _ciclo_aprendizaje_bd() -> None:
-    """Mantiene al agente actualizándose con datos recientes de la base de datos."""
+    """Optional serialized background work, isolated from the chat thread pool."""
+    if settings.DB_STUDY_INTERVAL_SECONDS <= 0:
+        print("ℹ️ Ciclo de aprendizaje BD desactivado (DB_STUDY_INTERVAL_SECONDS=0)", flush=True)
+        return
     intervalo = max(60, settings.DB_STUDY_INTERVAL_SECONDS)
     print(f"🔄 Ciclo de aprendizaje BD activo cada {intervalo} segundos")
     consecutive_failures = 0
@@ -243,54 +263,54 @@ async def _ciclo_aprendizaje_bd() -> None:
     # Evita una ingesta inmediata al reiniciar: espera el primer ciclo programado.
     await asyncio.sleep(intervalo)
 
-    while True:
-        try:
-            chats_activos = _get_active_dialogues()
-            if chats_activos > 0:
-                wait_seconds = min(
-                    intervalo, max(5, settings.DB_STUDY_IDLE_CHECK_SECONDS)
-                )
-                print(
-                    f"⏸️ Ingesta BD diferida por {chats_activos} conversación(es) activa(s). "
-                    f"Revisando de nuevo en {wait_seconds}s"
-                )
-                await asyncio.sleep(wait_seconds)
-                continue
-
-            ingesta = asyncio.to_thread(_ingestar_instancias_solidset_activas)
-            if settings.DB_STUDY_MAX_RUN_SECONDS > 0:
-                resultado = await asyncio.wait_for(
-                    ingesta, timeout=settings.DB_STUDY_MAX_RUN_SECONDS
-                )
-            else:
-                resultado = await ingesta
-
-            app.state.last_db_study_at = datetime.utcnow().isoformat()
-            app.state.last_db_study_result = resultado
-            app.state.last_db_study_error = None
-            consecutive_failures = 0
-            print(f"✅ Aprendizaje BD completado: {resultado}")
+    executor = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="db-study",
+        initializer=lower_background_thread_priority,
+    )
+    try:
+        while True:
+            stop = threading.Event()
             wait_seconds = intervalo
-        except asyncio.TimeoutError:
-            app.state.last_db_study_error = f"Ingesta excedió el tiempo máximo de {settings.DB_STUDY_MAX_RUN_SECONDS}s"
-            # No castigamos exponencialmente un timeout de una tarea que sigue completándose en background.
-            consecutive_failures = 0
-            wait_seconds = intervalo
-            print(f"⚠️ {app.state.last_db_study_error}")
-            print(
-                f"⏳ Reintentando aprendizaje BD en {wait_seconds}s (timeout controlado, no se aplica backoff)"
-            )
-        except Exception as exc:
-            app.state.last_db_study_error = str(exc)
-            consecutive_failures += 1
-            backoff_factor = min(2 ** min(consecutive_failures, 4), 16)
-            wait_seconds = intervalo * backoff_factor
-            print(f"⚠️ Error en aprendizaje continuo desde BD: {exc}")
-            print(
-                f"⏳ Reintentando aprendizaje BD en {wait_seconds}s (fallos consecutivos: {consecutive_failures})"
-            )
-
-        await asyncio.sleep(wait_seconds)
+            try:
+                ingesta = asyncio.get_running_loop().run_in_executor(
+                    executor, _ingestar_instancias_solidset_activas, stop,
+                )
+                # Consume late errors even if shutdown cancels the awaiting task.
+                ingesta.add_done_callback(lambda result: None if result.cancelled() else result.exception())
+                if settings.DB_STUDY_MAX_RUN_SECONDS > 0:
+                    try:
+                        resultado = await asyncio.wait_for(
+                            asyncio.shield(ingesta), timeout=settings.DB_STUDY_MAX_RUN_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        stop.set()
+                        # wait_for cannot kill a thread. Drain it before permitting
+                        # another run; the event loop remains available to chat.
+                        with suppress(IngestionCancelled):
+                            await asyncio.shield(ingesta)
+                        raise
+                else:
+                    resultado = await asyncio.shield(ingesta)
+                app.state.last_db_study_at = datetime.utcnow().isoformat()
+                app.state.last_db_study_result = resultado
+                app.state.last_db_study_error = None
+                consecutive_failures = 0
+                print(f"✅ Aprendizaje BD completado: {resultado}")
+            except IngestionBusy:
+                print("⏸️ DB_STUDY omitido: otra ingesta mantiene el mutex", flush=True)
+            except asyncio.TimeoutError:
+                app.state.last_db_study_error = f"Ingesta cancelada al superar {settings.DB_STUDY_MAX_RUN_SECONDS}s"
+                print(f"⚠️ {app.state.last_db_study_error}")
+            except Exception as exc:
+                app.state.last_db_study_error = str(exc)
+                consecutive_failures += 1
+                wait_seconds = intervalo * min(2 ** min(consecutive_failures, 4), 16)
+                print(f"⚠️ Error en aprendizaje BD: {exc}; reintento en {wait_seconds}s")
+            finally:
+                stop.set()
+            await asyncio.sleep(wait_seconds)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 async def _ciclo_notificaciones_api() -> None:
@@ -410,7 +430,11 @@ async def startup_db_learning() -> None:
                     "error": str(exc),
                 }
                 print(f"⚠️ Warmup SOLIDSET listener falló: {exc}")
-        app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())
+        app.state.db_study_task = None
+        if settings.DB_STUDY_INTERVAL_SECONDS > 0:
+            app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())
+        else:
+            print("ℹ️ Ciclo de aprendizaje BD desactivado (DB_STUDY_INTERVAL_SECONDS=0)", flush=True)
         if settings.NOTIF_API_BACKGROUND_ENABLED:
             app.state.notification_task = asyncio.create_task(
                 _ciclo_notificaciones_api()

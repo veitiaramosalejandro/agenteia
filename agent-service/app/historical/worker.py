@@ -113,12 +113,18 @@ def process_batch(batch: dict[str, Any]) -> dict[str, int]:
         embeddings = OllamaEmbeddings(base_url=settings.EMBEDDING_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
         client = QdrantClient(url=settings.VECTOR_DB_URL)
         ensure_vector_collection(client, settings.VECTOR_COLLECTION_NAME, embeddings)
-        vectors = embeddings.embed_documents([doc["text"] for doc in documents])
-        client.upsert(collection_name=settings.VECTOR_COLLECTION_NAME, points=[
-            PointStruct(id=str(doc["QdrantPointID"]), vector=vector, payload=doc["payload"])
-            for doc, vector in zip(documents, vectors)
-        ], wait=True)
-        for doc in documents: save_document(doc)
+        for offset in range(0, len(documents), 10):
+            chunk = documents[offset:offset + 10]
+            wait_for_interactive_idle()
+            vectors = embeddings.embed_documents([doc["text"] for doc in chunk])
+            wait_for_interactive_idle()
+            client.upsert(collection_name=settings.VECTOR_COLLECTION_NAME, points=[
+                PointStruct(id=str(doc["QdrantPointID"]), vector=vector, payload=doc["payload"])
+                for doc, vector in zip(chunk, vectors)
+            ], wait=True)
+            for doc in chunk:
+                wait_for_interactive_idle()
+                save_document(doc)
         indexed = len(documents)
     last = (batch.get("messages") or [])[-1]
     set_cursor(

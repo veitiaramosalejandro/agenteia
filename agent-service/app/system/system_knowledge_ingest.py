@@ -443,18 +443,22 @@ def _relation_context_for_rows(
 def _upsert_documents(documents: list[dict[str, Any]], run_id: str) -> int:
     if not documents:
         return 0
+    wait_for_interactive_idle()
     embeddings = OllamaEmbeddings(
         base_url=settings.SYSTEM_KNOWLEDGE_EMBEDDING_BASE_URL,
         model=settings.EMBEDDING_MODEL_NAME,
     )
     qdrant = QdrantClient(url=settings.VECTOR_DB_URL)
     ensure_vector_collection(qdrant, settings.VECTOR_COLLECTION_NAME, embeddings)
+    wait_for_interactive_idle()
     vectors = embeddings.embed_documents([item["text"] for item in documents])
+    wait_for_interactive_idle()
     qdrant.upsert(
         collection_name=settings.VECTOR_COLLECTION_NAME,
         points=[PointStruct(id=item["point_id"], vector=vector, payload=item["payload"])
                 for item, vector in zip(documents, vectors)], wait=True,
     )
+    wait_for_interactive_idle()
     with _pg_connection() as conn, conn.cursor() as cur:
         for item in documents:
             cur.execute('''INSERT INTO public."SysAgentIASystemDocument"
@@ -702,6 +706,7 @@ def run_system_knowledge_ingestion(
                 order_by = ", ".join(_quote(column) for column in order_columns)
                 page_size = min(500, max(50, int(settings.SYSTEM_KNOWLEDGE_BATCH_SIZE)))
                 while True:
+                    wait_for_interactive_idle()
                     where_sql, where_parameters = _keyset_where(order_columns, table_checkpoint)
                     with connection.cursor(as_dict=True) as cur:
                         cur.execute(
@@ -748,14 +753,14 @@ def run_system_knowledge_ingestion(
                         })
                     changed, unchanged = _documents_requiring_embedding(documents, run_id)
                     skipped += unchanged
-                    for offset in range(0, len(changed), 100):
+                    for offset in range(0, len(changed), 10):
                         waited = wait_for_interactive_idle()
                         if waited >= 0.5:
                             print(
                                 f"⏸️ Ingesta de sistema cedió {waited:.1f}s al chat "
                                 f"run={run_id}", flush=True,
                             )
-                        indexed += _upsert_documents(changed[offset:offset + 100], run_id)
+                        indexed += _upsert_documents(changed[offset:offset + 10], run_id)
                         _run_update(
                             run_id, RowsRead=read, RowsIndexed=indexed,
                             RowsSkipped=skipped,

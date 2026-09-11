@@ -210,7 +210,7 @@ class Settings(BaseSettings):
     SQL_SERVER_USER: str = ""
     SQL_SERVER_PASSWORD: str = ""
     SQL_SERVER_DB: str = ""
-    DB_STUDY_INTERVAL_SECONDS: int = int(os.getenv("DB_STUDY_INTERVAL_SECONDS", "3600"))
+    DB_STUDY_INTERVAL_SECONDS: int = int(os.getenv("DB_STUDY_INTERVAL_SECONDS", "0"))
     DB_STUDY_IDLE_CHECK_SECONDS: int = int(os.getenv("DB_STUDY_IDLE_CHECK_SECONDS", "10"))
     DB_STUDY_MAX_RUN_SECONDS: int = int(os.getenv("DB_STUDY_MAX_RUN_SECONDS", "900"))
     DB_INGEST_CONNECT_TIMEOUT_SECONDS: int = max(
@@ -248,6 +248,9 @@ class Settings(BaseSettings):
     )
     INGESTION_INTERACTIVE_POLL_SECONDS: float = max(
         0.25, float(os.getenv("INGESTION_INTERACTIVE_POLL_SECONDS", "1"))
+    )
+    INGESTION_INTERACTIVE_IDLE_SECONDS: int = max(
+        30, int(os.getenv("INGESTION_INTERACTIVE_IDLE_SECONDS", "30"))
     )
 
     # Notification API listener (SolidSET Communicator)

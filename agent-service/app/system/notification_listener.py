@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ from typing import Any, DefaultDict, Dict, List, Optional
 import httpx
 
 from app.config import settings
+from app.interactive_priority import async_interactive_work
 from app.agent.authorization import resolve_resource_table
 from app.connectors.db_client import (
     agent_learning_enabled,
@@ -1500,7 +1502,9 @@ class NotificationApiListener:
                     if candidate is not None:
                         auto_reply_candidates.append(candidate)
 
-                    if self._learn_entry(entry, fp):
+                    async with async_interactive_work("notification-poll-capture"):
+                        entry_learned = await asyncio.to_thread(self._learn_entry, entry, fp)
+                    if entry_learned:
                         learned += 1
                         self._remember_fingerprint(fp)
                         self._trace_captured_message(entry, status="learned")

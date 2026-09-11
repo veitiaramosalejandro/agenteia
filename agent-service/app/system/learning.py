@@ -14,6 +14,7 @@ from qdrant_client.models import PointStruct, Distance, VectorParams
 from langchain_ollama import OllamaEmbeddings
 
 from app.config import settings
+from app.interactive_priority import background_checkpoint, background_io_options, IngestionCancelled
 from app.connectors.db_client import resolve_solidset_identity
 from app.rag.vector_store import ensure_vector_collection
 from app.system.schema import (
@@ -27,18 +28,21 @@ class SistemaAprendizaje:
     """
     
     def __init__(self):
+        background_checkpoint()
         embedding_model = (settings.EMBEDDING_MODEL_NAME or "").strip() or "nomic-embed-text"
         self.embedding_model = embedding_model
         self.embeddings = OllamaEmbeddings(
             base_url=settings.EMBEDDING_BASE_URL,
-            model=embedding_model
+            model=embedding_model,
+            client_kwargs=background_io_options(),
         )
         self._collection_ready = False
         self._embeddings_enabled = True
         self._embeddings_disabled_at = 0
         self._embeddings_disabled_reason = None
-        self.redis_cache = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-        self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL)
+        redis_options = {"socket_connect_timeout": 3, "socket_timeout": 10} if background_io_options() else {}
+        self.redis_cache = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, **redis_options)
+        self.qdrant = QdrantClient(url=settings.VECTOR_DB_URL, **background_io_options())
         self.collection = settings.VECTOR_COLLECTION_NAME
         self.sql_retry_stats = {
             "connect_retries": 0,
@@ -51,6 +55,7 @@ class SistemaAprendizaje:
 
     def _embed_query_safe(self, text: str, context: str) -> Optional[List[float]]:
         """Genera embedding con protección y recuperación automática tras enfriamiento (cooldown)."""
+        background_checkpoint()
         now = time.time()
         disabled_at = getattr(self, "_embeddings_disabled_at", 0)
         if not getattr(self, "_embeddings_enabled", True):
@@ -78,7 +83,9 @@ class SistemaAprendizaje:
             except (redis.RedisError, ValueError, TypeError, json.JSONDecodeError) as exc:
                 print(f"⚠️ Cache de embeddings Redis no disponible ({context}): {exc}")
         try:
+            background_checkpoint()
             vector = self.embeddings.embed_query(normalized)
+            background_checkpoint()
             if settings.EMBEDDING_CACHE_ENABLED and cache is not None:
                 try:
                     cache.setex(
@@ -89,6 +96,8 @@ class SistemaAprendizaje:
                 except redis.RedisError as exc:
                     print(f"⚠️ No se pudo guardar embedding en Redis ({context}): {exc}")
             return vector
+        except IngestionCancelled:
+            raise
         except Exception as e:
             self._embeddings_enabled = False
             self._embeddings_disabled_at = time.time()
@@ -167,6 +176,7 @@ class SistemaAprendizaje:
         last_error = None
         timeout = kwargs.get("timeout", settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS)
         for attempt in range(1, kwargs.get("retries", 3) + 1):
+            background_checkpoint()
             try:
                 return open_current_connection(as_dict=False)
             except Exception as e:
@@ -182,6 +192,7 @@ class SistemaAprendizaje:
         """Ejecuta una consulta SQL con reintentos para queries propensas a timeout."""
         last_error = None
         for attempt in range(1, kwargs.get("retries", 2) + 1):
+            background_checkpoint()
             try:
                 cursor.execute(kwargs["query"], kwargs.get("params", ()))
                 return
@@ -1478,6 +1489,7 @@ class SistemaAprendizaje:
             point_id = str(uuid.UUID(hashlib.md5(texto_aprendizaje.encode()).hexdigest()))
             if source == "openai_local_learning" and metadata.get("learning_id"):
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "openai-local:" + str(metadata["learning_id"])))
+            background_checkpoint()
             self.qdrant.upsert(
                 collection_name=self.collection,
                 points=[PointStruct(
@@ -1497,6 +1509,8 @@ class SistemaAprendizaje:
                 )]
             )
             return True
+        except IngestionCancelled:
+            raise
         except Exception as e:
             print(f"❌ Error aprendiendo actividad: {e}")
             return False
@@ -1544,11 +1558,14 @@ class SistemaAprendizaje:
             if vector is None: return False
 
             point_id = str(uuid.UUID(hashlib.md5(canal.id.encode()).hexdigest()))
+            background_checkpoint()
             self.qdrant.upsert(
                 collection_name=self.collection,
                 points=[PointStruct(id=point_id, vector=vector, payload={**canal.dict(), "page_content": texto_canal, "source": "estructura_canal"})]
             )
             return True
+        except IngestionCancelled:
+            raise
         except Exception as e:
             print(f"❌ Error aprendiendo canal: {e}")
             return False

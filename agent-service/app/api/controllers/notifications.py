@@ -99,7 +99,7 @@ async def receive_framework_notification(
                 chat_id,
             )
         else:
-            capture = notification_listener.capture_realtime_payload(payload)
+            capture = await asyncio.to_thread(notification_listener.capture_realtime_payload, payload)
             candidates = capture.get("auto_reply_candidates") or []
             _attach_solidset_instance(candidates, instance)
             _schedule_auto_replies(candidates, request_id)
@@ -206,7 +206,7 @@ async def preview_framework_notification(
             ),
         )
     payload["_SolidSETInstanceID"] = str(instance["ID"])
-    capture = notification_listener.capture_realtime_payload(payload)
+    capture = await asyncio.to_thread(notification_listener.capture_realtime_payload, payload)
     candidates = capture.get("auto_reply_candidates") or []
     _attach_solidset_instance(candidates, instance)
     if capture["errors"]:
@@ -248,7 +248,7 @@ async def capture_and_forward_framework_message(request: Request):
         )
     if isinstance(payload, dict):
         payload["_SolidSETInstanceID"] = str(instance["ID"])
-    capture = notification_listener.capture_realtime_payload(payload)
+    capture = await asyncio.to_thread(notification_listener.capture_realtime_payload, payload)
     candidates = capture.get("auto_reply_candidates") or []
     _attach_solidset_instance(candidates, instance)
 

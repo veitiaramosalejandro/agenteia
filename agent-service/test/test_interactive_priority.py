@@ -19,15 +19,19 @@ class FakeRedis:
 
 
 class TestInteractivePriority(unittest.TestCase):
-    def test_lease_is_registered_and_removed(self):
+    def test_lease_keeps_idle_grace_after_completion(self):
         client = FakeRedis()
         with patch("app.interactive_priority._client", return_value=client), patch(
             "app.interactive_priority.settings.INTERACTIVE_PRIORITY_ENABLED", True
-        ):
+        ), patch("app.interactive_priority.time.time", return_value=1000), patch(
+            "app.interactive_priority.settings.INGESTION_INTERACTIVE_IDLE_SECONDS", 30
+        ), patch("app.interactive_priority._local_idle_until", 0):
             with interactive_work("test"):
                 self.assertEqual(1, len(client.added))
-        self.assertEqual(1, len(client.removed))
-        self.assertEqual(next(iter(client.added[0][1])), client.removed[0][1])
+        self.assertEqual([], client.removed)
+        self.assertEqual(2, len(client.added))
+        lease_id = next(iter(client.added[0][1]))
+        self.assertEqual({lease_id: 1030}, client.added[-1][1])
 
     def test_ingestion_waits_only_while_interactive_work_exists(self):
         with patch(
@@ -35,9 +39,11 @@ class TestInteractivePriority(unittest.TestCase):
         ), patch(
             "app.interactive_priority.interactive_work_active",
             side_effect=[True, True, False],
-        ), patch("app.interactive_priority.time.sleep") as sleep:
+        ), patch("app.interactive_priority.settings.INTERACTIVE_PRIORITY_ENABLED", True), patch(
+            "app.interactive_priority._local_condition.wait"
+        ) as wait:
             wait_for_interactive_idle()
-        self.assertEqual(2, sleep.call_count)
+        self.assertEqual(2, wait.call_count)
 
     def test_runtime_prompt_is_native_and_compact_in_each_language(self):
         markers = {"pt": "És o assistente", "es": "Eres el asistente", "en": "You are the"}

@@ -20,6 +20,7 @@ import redis
 from app.agent.authorization import normalize_bool, normalize_uuid, resolve_resource_table
 from app.agent.tools import solidset_send_chat_message
 from app.config import settings
+from app.interactive_priority import async_interactive_work
 from app.knowledge_provenance import USER_ASSERTION_SOURCE
 from app.connectors.db_client import (
     agent_learning_enabled,
@@ -1486,6 +1487,26 @@ async def _process_auto_replies(
     _already_routed: bool = False,
     _finalize_status: bool = True,
 ) -> int | list[dict[str, Any]]:
+    # Cover routing as well as generation. Child tasks share the outer lease.
+    if _already_routed or not candidates:
+        return await _process_auto_replies_impl(
+            candidates, preview_only=preview_only, _already_routed=_already_routed,
+            _finalize_status=_finalize_status,
+        )
+    async with async_interactive_work("auto-reply-routing"):
+        return await _process_auto_replies_impl(
+            candidates, preview_only=preview_only, _already_routed=_already_routed,
+            _finalize_status=_finalize_status,
+        )
+
+
+async def _process_auto_replies_impl(
+    candidates: list[dict],
+    *,
+    preview_only: bool = False,
+    _already_routed: bool = False,
+    _finalize_status: bool = True,
+) -> int | list[dict[str, Any]]:
     print(
         f"🤖 Iniciando procesamiento de auto-respuesta; candidatos={len(candidates)}",
         flush=True,
@@ -1518,7 +1539,7 @@ async def _process_auto_replies(
 
     _update_response_status(response_request_id, "processing")
     if not _already_routed:
-        candidates = _route_candidates_to_selected_agents(candidates)
+        candidates = await asyncio.to_thread(_route_candidates_to_selected_agents, candidates)
     print(
         f"🤖 Enrutamiento de auto-respuesta completado; ejecuciones={len(candidates)}",
         flush=True,

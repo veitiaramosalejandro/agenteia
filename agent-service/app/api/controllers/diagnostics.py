@@ -72,6 +72,7 @@ def health_check():
             "suggestion_max_output_tokens": settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS,
             "interactive_priority_enabled": settings.INTERACTIVE_PRIORITY_ENABLED,
             "ingestion_pause_during_interactive": settings.INGESTION_PAUSE_DURING_INTERACTIVE,
+            "ingestion_interactive_idle_seconds": settings.INGESTION_INTERACTIVE_IDLE_SECONDS,
             "dialogue_metrics": _get_dialogue_metrics_snapshot(),
             "notification_listener_enabled": notification_listener.is_enabled(),
             "notification_background_enabled": settings.NOTIF_API_BACKGROUND_ENABLED,
