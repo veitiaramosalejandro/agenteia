@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS public."SysAgentIAModel" (
     "ID" uuid NOT NULL DEFAULT gen_random_uuid(),
+    "IDSolidSETInstance" uuid,
     "IDResource" uuid NOT NULL,
     "IDProviderConfiguration" uuid NOT NULL,
     "Role" varchar(80) NOT NULL DEFAULT 'general',

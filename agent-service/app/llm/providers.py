@@ -61,11 +61,13 @@ class OllamaProvider(ChatProvider):
             base_url=config.base_url,
             model=config.model,
             temperature=config.temperature,
-            num_predict=config.max_output_tokens,
+            num_predict=config.max_output_tokens or 512,
+            num_ctx=4096,  # ← AÑADIR para caso de modelos que requieren contexto corto
+            keep_alive="30m",  # o -1 para mantener indefinidamente
             top_p=0.9,
             repeat_penalty=1.2,
-            client_kwargs={"timeout": config.timeout_seconds},
-            async_client_kwargs={"timeout": config.timeout_seconds},
+            client_kwargs={"timeout": config.timeout_seconds or 300},
+            async_client_kwargs={"timeout": config.timeout_seconds or 300},
         )
 
 

@@ -41,11 +41,13 @@ from app.system.reaction_capture import get_agent_reinforcement_context
 from app.services.external_search import search_with_openai
 
 
-def _dialogue_public_research(question: str, resource_id: str) -> dict[str, Any]:
+def _dialogue_public_research(
+    question: str, resource_id: str, instance_id: str | None = None,
+) -> dict[str, Any]:
     """Ground current public questions using the selected agent's capability."""
     if not auto_reply_service._is_external_information_query(question):
         return {}
-    configurations = get_agent_model_configurations(resource_id)
+    configurations = get_agent_model_configurations(resource_id, instance_id)
     capabilities = set()
     for configuration in configurations:
         values = configuration.get("Capabilities") or []
@@ -61,7 +63,9 @@ def _dialogue_public_research(question: str, resource_id: str) -> dict[str, Any]
     try:
         # Never append the twin's private profile, knowledge or history to a
         # public search. Only the incoming question is submitted.
-        results = search_with_openai(question, resource_id=resource_id)
+        results = search_with_openai(
+            question, resource_id=resource_id, instance_id=instance_id
+        )
         if not results:
             raise RuntimeError("No sources")
         from app.agent.contracts import AgentContext
@@ -236,7 +240,9 @@ async def handle_multi_agent_dialogue(
         profile = None
         published_prompt = None
         model_configurations = await asyncio.to_thread(
-            get_agent_model_configurations, agent_resource_id
+            get_agent_model_configurations,
+            agent_resource_id,
+            solidset_instance.get("ID") if solidset_instance else None,
         )
         capabilities: set[str] = set()
         training_mode = "rag_reinforcement"
@@ -266,7 +272,10 @@ async def handle_multi_agent_dialogue(
                 get_active_agent_prompt, solidset_instance["ID"], agent_resource_id
             )
         research = await asyncio.to_thread(
-            _dialogue_public_research, request.RawMessage.strip(), agent_resource_id
+            _dialogue_public_research,
+            request.RawMessage.strip(),
+            agent_resource_id,
+            str(solidset_instance["ID"]) if solidset_instance else None,
         )
         response_text = await asyncio.to_thread(
             _invoke_orchestrator_for_instance,

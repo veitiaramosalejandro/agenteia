@@ -126,7 +126,7 @@ def ensure_schema():
         _ready = True
 
 
-def assigned_openai(resource_id, capability='general'):
+def assigned_openai(resource_id, capability='general', instance_id=None):
     if not resource_id:
         return None
     resource_id = UUID(str(resource_id))
@@ -135,11 +135,13 @@ def assigned_openai(resource_id, capability='general'):
             FROM public."SysAgentIAModel" m
             JOIN public."SysLLMProviderConfiguration" p ON p."ID"=m."IDProviderConfiguration"
             JOIN public."SysResourceIA" r ON r."IDResource"=m."IDResource"
-            WHERE m."IDResource"=%s AND m.active AND p.active AND r.active
+            WHERE m."IDResource"=%s
+              AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
+              AND m.active AND p.active AND r.active
               AND (m."Capabilities" ? %s OR m."IsDefault")
             ORDER BY CASE WHEN m."Capabilities" ? %s THEN 0 ELSE 1 END,
                      m."Priority", p."Code" LIMIT 1''',
-            (resource_id, capability, capability)).fetchone()
+            (resource_id, instance_id, instance_id, capability, capability)).fetchone()
     if row:
         row = dict(row)
         print(f'AGENT_MODEL_ROUTE agent={resource_id} capability={capability} '
@@ -246,7 +248,9 @@ def answer_direct(user_text, metadata, session_id):
         permissions = metadata.get('tool_permissions')
         if permissions is None:
             permissions = set()
-            for configuration in get_agent_model_configurations(resource_id) if resource_id else []:
+            for configuration in get_agent_model_configurations(
+                resource_id, metadata.get('solidset_instance_id')
+            ) if resource_id else []:
                 values = configuration.get('Capabilities') or []
                 if isinstance(values, str):
                     try:
@@ -300,7 +304,10 @@ def answer_direct(user_text, metadata, session_id):
         return result
     capability = requested_capability(user_text, metadata)
     metadata['model_capability'] = capability
-    record = assigned_openai(metadata.get('agent_resource_id'), capability)
+    record = assigned_openai(
+        metadata.get('agent_resource_id'), capability,
+        metadata.get('solidset_instance_id'),
+    )
     if record is None:
         return None
     if not isinstance(user_text, str) or not user_text.strip() or len(user_text) > 32000:

@@ -509,6 +509,30 @@ def save_agent_model_configuration(resource_id: UUID | str, data: dict[str, Any]
                 'SELECT "IDResource" FROM public."SysResourceIA" WHERE "IDResource"=%s FOR UPDATE',
                 (resource,),
             )
+            requested_instance = data.get("IDSolidSETInstance")
+            if requested_instance:
+                instance_id = UUID(str(requested_instance))
+                cursor.execute(
+                    '''SELECT 1 FROM public."SysSolidSETInstanceResource"
+                       WHERE "IDSolidSETInstance"=%s AND "IDResource"=%s AND active=true''',
+                    (instance_id, resource),
+                )
+                if cursor.fetchone() is None:
+                    raise LookupError("El recurso no pertenece a la instancia indicada.")
+            else:
+                cursor.execute(
+                    '''SELECT "IDSolidSETInstance"
+                       FROM public."SysSolidSETInstanceResource"
+                       WHERE "IDResource"=%s AND active=true
+                       ORDER BY "IDSolidSETInstance"''',
+                    (resource,),
+                )
+                memberships = cursor.fetchall()
+                if len(memberships) != 1:
+                    raise ValueError(
+                        "IDSolidSETInstance es obligatorio cuando el recurso no pertenece exactamente a una instancia."
+                    )
+                instance_id = memberships[0]["IDSolidSETInstance"]
             cursor.execute(
                 'SELECT "ID", "Provider" FROM public."SysLLMProviderConfiguration" '
                 'WHERE LOWER("Code")=LOWER(%s) AND active=true', (data["ProviderCode"],),
@@ -527,16 +551,18 @@ def save_agent_model_configuration(resource_id: UUID | str, data: dict[str, Any]
             if data.get("IsDefault") and data.get("active", True):
                 cursor.execute(
                     'UPDATE public."SysAgentIAModel" SET "IsDefault"=false, '
-                    '"UpdatedAt"=CURRENT_TIMESTAMP WHERE "IDResource"=%s AND active=true',
-                    (resource,),
+                    '"UpdatedAt"=CURRENT_TIMESTAMP WHERE "IDSolidSETInstance"=%s '
+                    'AND "IDResource"=%s AND active=true',
+                    (instance_id, resource),
                 )
             cursor.execute(
                 '''INSERT INTO public."SysAgentIAModel" (
-                  "IDResource", "IDProviderConfiguration", "Role", "LocalExecution",
+                  "IDSolidSETInstance", "IDResource", "IDProviderConfiguration", "Role", "LocalExecution",
                   "TrainingMode", "LearnFromOwner", "LearnFromSystem", "LearnFromReactions",
                   "Capabilities", "Priority", "IsDefault", active
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
-                ON CONFLICT ("IDResource", "IDProviderConfiguration") WHERE active=true DO UPDATE SET
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
+                ON CONFLICT ("IDSolidSETInstance", "IDResource", "IDProviderConfiguration")
+                  WHERE active=true DO UPDATE SET
                   "Role"=EXCLUDED."Role", "LocalExecution"=EXCLUDED."LocalExecution",
                   "TrainingMode"=EXCLUDED."TrainingMode", "LearnFromOwner"=EXCLUDED."LearnFromOwner",
                   "LearnFromSystem"=EXCLUDED."LearnFromSystem",
@@ -545,7 +571,7 @@ def save_agent_model_configuration(resource_id: UUID | str, data: dict[str, Any]
                   "IsDefault"=EXCLUDED."IsDefault", active=EXCLUDED.active,
                   "UpdatedAt"=CURRENT_TIMESTAMP RETURNING *''',
                 (
-                    resource, provider["ID"], data.get("Role", "general"), local_execution,
+                    instance_id, resource, provider["ID"], data.get("Role", "general"), local_execution,
                     data.get("TrainingMode", "rag_reinforcement"),
                     data.get("LearnFromOwner", True), data.get("LearnFromSystem", True),
                     data.get("LearnFromReactions", True),
@@ -558,7 +584,10 @@ def save_agent_model_configuration(resource_id: UUID | str, data: dict[str, Any]
     return {**dict(row), "ProviderCode": data["ProviderCode"]}
 
 
-def get_agent_model_configurations(resource_id: UUID | str) -> list[dict[str, Any]]:
+def get_agent_model_configurations(
+    resource_id: UUID | str,
+    instance_id: UUID | str | None = None,
+) -> list[dict[str, Any]]:
     ensure_agent_model_schema()
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
@@ -566,22 +595,32 @@ def get_agent_model_configurations(resource_id: UUID | str) -> list[dict[str, An
                 '''SELECT m.*, p."Code" AS "ProviderCode", p."Provider", p."Model", p."BaseUrl"
                    FROM public."SysAgentIAModel" m
                    JOIN public."SysLLMProviderConfiguration" p ON p."ID"=m."IDProviderConfiguration"
-                   WHERE m."IDResource"=%s AND m.active=true AND p.active=true
+                   WHERE m."IDResource"=%s
+                     AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
+                     AND m.active=true AND p.active=true
                    ORDER BY m."IsDefault" DESC, m."Priority", p."Code"''',
-                (UUID(str(resource_id)),),
+                (
+                    UUID(str(resource_id)), instance_id, instance_id,
+                ),
             )
             rows = cursor.fetchall()
     return [dict(row) for row in rows]
 
 
-def get_agent_model_configuration(resource_id: UUID | str) -> dict[str, Any] | None:
-    rows = get_agent_model_configurations(resource_id)
+def get_agent_model_configuration(
+    resource_id: UUID | str, instance_id: UUID | str | None = None,
+) -> dict[str, Any] | None:
+    rows = get_agent_model_configurations(resource_id, instance_id)
     return rows[0] if rows else None
 
 
-def agent_learning_enabled(resource_id: UUID | str, source: str) -> bool:
+def agent_learning_enabled(
+    resource_id: UUID | str,
+    source: str,
+    instance_id: UUID | str | None = None,
+) -> bool:
     """Consulta la política de aprendizaje; sin asignación conserva compatibilidad."""
-    config = get_agent_model_configuration(resource_id)
+    config = get_agent_model_configuration(resource_id, instance_id)
     if not config or config.get("TrainingMode") == "disabled":
         return config is None
     field = {
@@ -676,6 +715,7 @@ def get_llm_provider_configuration(
     resource_id: UUID | str | None = None,
     capability: str | None = None,
     provider: str | None = None,
+    instance_id: UUID | str | None = None,
 ) -> dict[str, Any] | None:
     """Resuelve primero la configuración del agente y después la global."""
     ensure_llm_provider_schema()
@@ -688,6 +728,7 @@ def get_llm_provider_configuration(
                    LEFT JOIN public."SysAgentIAModel" m
                      ON m."IDProviderConfiguration"=p."ID" AND m.active=true
                         AND m."IDResource"=%s::uuid
+                        AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
                    WHERE p.active=true AND (%s::text IS NULL OR lower(p."Provider")=%s)
                      AND ((m."ID" IS NOT NULL AND (m."Capabilities" ? %s OR m."IsDefault"))
                      OR p."IsDefault"=true)
@@ -695,7 +736,10 @@ def get_llm_provider_configuration(
                                  WHEN m."ID" IS NOT NULL AND m."IsDefault" THEN 1
                                  ELSE 2 END,
                             m."Priority" NULLS LAST, p."Code" LIMIT 1''',
-                (normalized, provider, provider, requested_capability, requested_capability),
+                (
+                    normalized, instance_id, instance_id, provider, provider,
+                    requested_capability, requested_capability,
+                ),
             )
             row = cursor.fetchone()
     if not row:

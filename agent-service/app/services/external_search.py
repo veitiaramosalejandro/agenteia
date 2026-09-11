@@ -70,13 +70,19 @@ def _extract_sources(response: Any) -> list[tuple[str, str]]:
     return sources
 
 
-def search_with_openai(query: str, resource_id: str | None = None) -> list[ExternalSearchResult]:
+def search_with_openai(
+    query: str,
+    resource_id: str | None = None,
+    instance_id: str | None = None,
+) -> list[ExternalSearchResult]:
     """Busca en la web con Responses API sin almacenar la respuesta en OpenAI."""
     query = " ".join(str(query or "").split())
     if not query or len(query) > 2000:
         raise ValueError("La consulta pública debe contener entre 1 y 2000 caracteres.")
     record = (
-        get_llm_provider_configuration(resource_id, "external_web", provider="openai")
+        get_llm_provider_configuration(
+            resource_id, "external_web", provider="openai", instance_id=instance_id
+        )
         if resource_id or not settings.OPENAI_API_KEY else None
     ) or {}
     api_key = record.get("APIKey") if record else settings.OPENAI_API_KEY

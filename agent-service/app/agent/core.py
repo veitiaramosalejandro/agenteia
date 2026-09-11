@@ -208,7 +208,10 @@ class MachiningAgent:
         capability = str((metadata or {}).get("model_capability") or "general").strip()
         metadata = metadata or {}
         try:
-            record = get_llm_provider_configuration(resource_id, capability)
+            record = get_llm_provider_configuration(
+                resource_id, capability,
+                instance_id=metadata.get("solidset_instance_id"),
+            )
         except Exception as exc:
             print(f"⚠️ No se pudo resolver proveedor LLM en PostgreSQL: {exc}")
             record = None
@@ -2701,7 +2704,9 @@ class MachiningAgent:
     ) -> str:
         message_metadata = dict(message_metadata or {})
         configured_resource = str(message_metadata.get("agent_resource_id") or user_id or "").strip()
-        configurations = get_agent_model_configurations(configured_resource) if configured_resource else []
+        configurations = get_agent_model_configurations(
+            configured_resource, message_metadata.get("solidset_instance_id")
+        ) if configured_resource else []
         permissions = set()
         for configuration in configurations:
             permissions.update(resolve_tool_permissions(configuration.get("Capabilities")))
@@ -2774,7 +2779,9 @@ class MachiningAgent:
         agent_name = str(metadata_identity.get("agent_name") or agent_resource_id).strip()
         try:
             agent_model_policy = (
-                get_agent_model_configuration(agent_resource_id) if agent_resource_id else None
+                get_agent_model_configuration(
+                    agent_resource_id, metadata_identity.get("solidset_instance_id")
+                ) if agent_resource_id else None
             )
         except Exception as exc:
             agent_model_policy = None

@@ -247,9 +247,12 @@ def configure_agent_model(
 
 
 @router.get("/api/v1/agent/solidset/agents/{agent_resource_id}/model")
-def read_agent_model(agent_resource_id: UUID) -> dict[str, Any]:
+def read_agent_model(
+    agent_resource_id: UUID,
+    instance_id: UUID | None = None,
+) -> dict[str, Any]:
     try:
-        saved = get_agent_model_configurations(agent_resource_id)
+        saved = get_agent_model_configurations(agent_resource_id, instance_id)
     except psycopg.Error as exc:
         raise HTTPException(
             status_code=503, detail="Não foi possível consultar o modelo do agente."

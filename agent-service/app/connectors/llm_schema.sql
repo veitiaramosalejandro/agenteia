@@ -48,6 +48,7 @@ SELECT pg_advisory_xact_lock(hashtext('llm-provider-model-schema'));
             );
             DROP INDEX IF EXISTS public."UQ_SysAgentIAModel_ActiveResource";
             ALTER TABLE public."SysAgentIAModel"
+              ADD COLUMN IF NOT EXISTS "IDSolidSETInstance" uuid,
               ADD COLUMN IF NOT EXISTS "Capabilities" jsonb NOT NULL DEFAULT '["general"]'::jsonb,
               ADD COLUMN IF NOT EXISTS "Priority" integer NOT NULL DEFAULT 100,
               ADD COLUMN IF NOT EXISTS "IsDefault" boolean NOT NULL DEFAULT false;

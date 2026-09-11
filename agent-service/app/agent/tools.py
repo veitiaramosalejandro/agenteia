@@ -799,6 +799,7 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
             for item in search_with_openai(
                 clean_query,
                 resource_id=agent_resource_id,
+                instance_id=str((current_instance() or {}).get("ID") or "") or None,
             )
         ]
 

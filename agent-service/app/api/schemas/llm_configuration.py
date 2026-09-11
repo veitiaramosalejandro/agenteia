@@ -89,6 +89,7 @@ class LLMProviderConfigurationResponse(BaseModel):
 
 
 class AgentIAModelConfiguration(BaseModel):
+    IDSolidSETInstance: UUID | None = None
     ProviderCode: str = Field(..., min_length=1, max_length=80)
     Role: str = Field("general", min_length=1, max_length=80)
     LocalExecution: bool = True

@@ -50,8 +50,9 @@ def verify_and_sync_solidset_agent_mapping(
                 with target_connection.cursor() as target_cursor:
                     target_cursor.execute(
                         '''SELECT 1 FROM public."SysAgentIAModel"
-                           WHERE "IDResource"=%s AND active=true LIMIT 1''',
-                        (human_id,),
+                           WHERE "IDSolidSETInstance"=%s
+                             AND "IDResource"=%s AND active=true LIMIT 1''',
+                        (instance_id, human_id),
                     )
                     if target_cursor.fetchone() is not None:
                         verified_agent_id = human_id
@@ -255,6 +256,7 @@ def ingest_solidset_resources(instance: dict[str, object]) -> dict[str, int]:
                            AND EXISTS (
                              SELECT 1 FROM public."SysAgentIAModel" m
                              WHERE m."IDResource"=public."SysResourceIA"."IDResource"
+                               AND m."IDSolidSETInstance"=EXCLUDED."IDSolidSETInstance"
                                AND m.active=true
                            )
                           THEN public."SysResourceIA"."IDAgentResource"

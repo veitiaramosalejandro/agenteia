@@ -147,7 +147,11 @@ def capture_solidset_agent_reaction(
     if (
         changed
         and signal != "removed"
-        and agent_learning_enabled(message["IDAgentResource"], "reactions")
+        and agent_learning_enabled(
+            message["IDAgentResource"],
+            "reactions",
+            instance.get("ID") if instance else None,
+        )
     ):
         learning_backend = getattr(agent, "sistema_aprendizaje", None)
         learned = bool(
