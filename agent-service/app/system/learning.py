@@ -175,24 +175,30 @@ class SistemaAprendizaje:
     def _connect_sql_with_retry(self, **kwargs):
         """Conexión robusta a SQL Server con reintentos para fallos transitorios."""
         last_error = None
-        timeout = kwargs.get("timeout", settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS)
-        for attempt in range(1, kwargs.get("retries", 3) + 1):
+        # Reducir timeout por defecto para evitar latencias extremas en el flujo LangGraph
+        timeout = kwargs.get("timeout", min(10, settings.DB_INGEST_CONNECT_TIMEOUT_SECONDS))
+        retries = kwargs.get("retries", 2)
+        for attempt in range(1, retries + 1):
             background_checkpoint()
             try:
-                return open_current_connection(as_dict=False)
+                # Pasar el timeout efectivo a la conexión
+                return open_current_connection(as_dict=False, timeout=timeout)
             except Exception as e:
                 last_error = e
-                if attempt < kwargs.get("retries", 3):
+                if attempt < retries:
                     self._increment_retry_metric("connect_retries", kwargs.get("context", "sql"))
-                    delay = kwargs.get("base_delay_seconds", 1) * attempt
-                    print(f"⚠️ Conexión SQL falló ({kwargs.get('context', 'sql')}) intento {attempt}/{kwargs.get('retries', 3)}: {e}. Reintentando en {delay}s...")
+                    # Delay más corto entre reintentos
+                    delay = min(1, kwargs.get("base_delay_seconds", 0.5) * attempt)
+                    print(f"⚠️ Conexión SQL falló ({kwargs.get('context', 'sql')}) intento {attempt}/{retries}: {e}. Reintentando en {delay}s...")
                     time.sleep(delay)
         raise last_error
+
 
     def _execute_with_retry(self, cursor, **kwargs):
         """Ejecuta una consulta SQL con reintentos para queries propensas a timeout."""
         last_error = None
-        for attempt in range(1, kwargs.get("retries", 2) + 1):
+        retries = kwargs.get("retries", 2)
+        for attempt in range(1, retries + 1):
             background_checkpoint()
             try:
                 cursor.execute(kwargs["query"], kwargs.get("params", ()))
@@ -200,15 +206,15 @@ class SistemaAprendizaje:
             except Exception as e:
                 last_error = e
                 error_text = str(e).lower()
-                # Un cursor muerto requiere una conexión nueva; repetirlo aquí sólo añade espera.
                 if "dbprocess is dead" in error_text or "not connected" in error_text:
                     break
-                if attempt < kwargs.get("retries", 2):
+                if attempt < retries:
                     self._increment_retry_metric("query_retries", kwargs.get("context", "sql_query"))
-                    delay = kwargs.get("base_delay_seconds", 1) * attempt
-                    print(f"⚠️ Consulta SQL falló ({kwargs.get('context', 'sql_query')}) intento {attempt}/{kwargs.get('retries', 2)}: {e}. Reintentando en {delay}s...")
+                    delay = 0.5 * attempt # Delay fijo corto
+                    print(f"⚠️ Consulta SQL falló ({kwargs.get('context', 'sql_query')}) intento {attempt}/{retries}: {e}. Reintentando en {delay}s...")
                     time.sleep(delay)
         raise last_error
+
 
     def _fetch_one_with_fresh_connection_retry(
         self,

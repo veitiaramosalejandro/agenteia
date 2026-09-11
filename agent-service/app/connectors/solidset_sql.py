@@ -73,13 +73,16 @@ def current_instance() -> dict[str, Any] | None:
     return dict(instance) if instance else None
 
 
-def open_current_connection(*, as_dict: bool = False) -> Any:
+def open_current_connection(*, as_dict: bool = False, timeout: int | None = None) -> Any:
     instance = _current_instance.get()
     if not instance:
         raise RuntimeError("Não existe uma instância SolidSET no contexto SQL atual.")
     data_api = instance.get("DataAPI") or {}
     if data_api.get("active") and str(data_api.get("BaseUrl") or "").strip():
-        return connect_data_api(data_api, as_dict=as_dict)
+        config = dict(data_api)
+        if timeout is not None:
+            config["TimeoutSeconds"] = timeout
+        return connect_data_api(config, as_dict=as_dict)
     raise RuntimeError(
         "A instância SolidSET não tem uma SolidSET Data API ativa; "
         "o acesso SQL Server direto está desativado."

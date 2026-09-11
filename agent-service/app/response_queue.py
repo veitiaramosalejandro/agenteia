@@ -62,21 +62,32 @@ class AgentResponseQueue:
     def read(self, consumer: str, block_ms: int = 5000) -> list[tuple[str, dict[str, str]]]:
         try:
             self.ensure_group()
-            claimed = self.client.xautoclaim(
-                self.stream,
-                self.group,
-                consumer,
-                min_idle_time=settings.AGENT_RESPONSE_CLAIM_IDLE_MS,
-                start_id="0-0",
-                count=1,
-            )
-            claimed_messages = claimed[1] if claimed and len(claimed) > 1 else []
-            if claimed_messages:
-                return [(message_id, fields) for message_id, fields in claimed_messages]
-            response = self.client.xreadgroup(
-                self.group, consumer, {self.stream: ">"}, count=1, block=block_ms
-            )
+            try:
+                claimed = self.client.xautoclaim(
+                    self.stream,
+                    self.group,
+                    consumer,
+                    min_idle_time=settings.AGENT_RESPONSE_CLAIM_IDLE_MS,
+                    start_id="0-0",
+                    count=1,
+                )
+                claimed_messages = claimed[1] if claimed and len(claimed) > 1 else []
+                if claimed_messages:
+                    return [(message_id, fields) for message_id, fields in claimed_messages]
+                response = self.client.xreadgroup(
+                    self.group, consumer, {self.stream: ">"}, count=1, block=block_ms
+                )
+            except redis.ResponseError as exc:
+                if "NOGROUP" in str(exc):
+                    # El grupo o el stream desaparecieron (ej: FLUSHDB). Recrear y reintentar una vez.
+                    self.ensure_group()
+                    response = self.client.xreadgroup(
+                        self.group, consumer, {self.stream: ">"}, count=1, block=block_ms
+                    )
+                else:
+                    raise
         except redis.TimeoutError:
+
             # XREADGROUP es una espera larga. Un timeout sin mensajes no debe
             # finalizar el worker ni provocar el reinicio del contenedor.
             return []
