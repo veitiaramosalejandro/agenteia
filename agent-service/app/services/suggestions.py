@@ -514,6 +514,15 @@ def _classify_suggestion_request(
     request_text: str, *, has_related_record: bool, metadata: dict[str, Any]
 ) -> tuple[str, bool]:
     """Classify the request independently of attachments; never grants write access."""
+    # Current public facts have a deterministic multilingual classifier in the
+    # agent core. Apply it before the small intent model so questions such as
+    # "quién es el presidente" cannot be sent to internal SQL/RAG by a model
+    # classification error.
+    if agent._is_external_information_query(request_text):
+        use_record = bool(
+            has_related_record and _request_depends_on_related_record(request_text)
+        )
+        return ("recommendation" if use_record else "external"), use_record
     llm, _, provider = agent.get_llm_for_metadata({
         **metadata, "model_capability": "general", "max_output_tokens": 160,
     })

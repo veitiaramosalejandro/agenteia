@@ -88,6 +88,10 @@ class SolidSETOrchestrator:
             # never be converted into SQL discovery from isolated keywords.
             # Ordinary social recommendations also need no business tools.
             route = "general_conversation"
+        elif metadata.get("external_information_mode"):
+            # Suggestion mode controls the response envelope, not its source.
+            # Current public facts must retain web routing and verification.
+            route = "external_web"
         elif metadata.get("response_suggestion_mode"):
             # A suggestion must be grounded in the requester's own agent
             # knowledge. It must not escape to the public web merely because
@@ -112,7 +116,9 @@ class SolidSETOrchestrator:
             route = "external_web"
         else:
             route = "work_sql_rag"
-        if metadata.get("response_suggestion_mode"):
+        if route == "external_web":
+            capability = "external_web"
+        elif metadata.get("response_suggestion_mode"):
             # Advice is a constrained language-generation task. Words from the
             # channel such as "API" or "aplicações" must not select a coding model.
             capability = "general"
@@ -120,8 +126,6 @@ class SolidSETOrchestrator:
             capability = "coding"
         elif any(term in lowered for term in reasoning_terms):
             capability = "reasoning"
-        elif route == "external_web":
-            capability = "external_web"
         else:
             capability = "general"
         # Keep the capability already resolved before the direct-provider path.
