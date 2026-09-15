@@ -218,6 +218,7 @@ def update(
             updatedAt=now,
             error=error,
         )
+    completed = False
     if len(data.get("agents") or []) > 1 and (
         agent_resource_id or status_name in {"completed", "failed"}
     ):

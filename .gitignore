@@ -21,3 +21,8 @@ audio/
 data/
 .agents/
 skills-lock.json
+.continue/
+.freebuff/
+.ruff_cache/
+.venv-1/
+venv_machining/

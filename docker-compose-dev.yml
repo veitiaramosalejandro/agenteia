@@ -482,7 +482,8 @@ services:
       - machining-network
 
   n8n:
-    image: n8nio/n8n:latest
+    #image: n8nio/n8n:latest
+    image: lunare/n8n-chinese-enterprise
     container_name: n8n
     hostname: n8n
     restart: always

@@ -38,6 +38,7 @@ from app.connectors.solidset_sql import (
     instance_context as solidset_sql_instance_context,
 )
 from app.response_queue import AgentResponseQueue
+from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
@@ -396,10 +397,12 @@ def _schedule_auto_replies(candidates: list[dict], request_id: str = "") -> None
             sent = done.result()
             print(f"🤖 Procesamiento de auto-respuesta finalizado; enviadas={sent}")
         except asyncio.CancelledError:
-            _update_response_status(request_id, "cancelled")
+            if request_id:
+                _update_response_status(request_id, "cancelled")
             print("⚠️ Procesamiento de auto-respuesta cancelado")
         except Exception as exc:
-            _update_response_status(request_id, "failed", error=str(exc))
+            if request_id:
+                _update_response_status(request_id, "failed", error=str(exc))
             print(f"❌ Error no controlado procesando auto-respuesta: {exc}")
 
     task.add_done_callback(_completed)
@@ -2032,10 +2035,10 @@ async def _process_auto_replies_impl(
                 f"⚠️ Error enviando auto-respuesta a SOLIDSET (canal {channel_id}): {exc}"
             )
 
-        if response_request_id and not preview_only and _finalize_status:
-            final_status = "completed"
+    if response_request_id and not preview_only and _finalize_status:
+        final_status = "completed"
         if sent > 0:
-            current_status = load(response_request_id)
+            current_status = _load_response_status(response_request_id)
             if current_status and current_status.get("status") == "learned":
                 final_status = "learned"
         elif not candidates:
