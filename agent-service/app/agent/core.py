@@ -2772,6 +2772,15 @@ class MachiningAgent:
         if not is_valid:
             return f"⚠️ {error_msg}"
 
+        from app.services.agent_specialty import answer_agent_specialty_question
+
+        metadata = message_metadata or {}
+        specialty_answer = answer_agent_specialty_question(
+            user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
+        )
+        if specialty_answer is not None:
+            return specialty_answer
+
         direct_answer = self.answer_with_assigned_openai(user_text, message_metadata, session_id)
         if direct_answer is not None:
             return direct_answer

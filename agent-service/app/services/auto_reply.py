@@ -40,6 +40,7 @@ from app.connectors.solidset_sql import (
 from app.response_queue import AgentResponseQueue
 from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
+from app.services.agent_specialty import answer_agent_specialty_question
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.system.schema import Actividad
@@ -1776,8 +1777,13 @@ async def _process_auto_replies_impl(
         from app.services.openai_direct import answer_direct
         try:
             response_text = await asyncio.to_thread(
-                answer_direct, incoming_text, message_metadata, session_id
+                answer_agent_specialty_question,
+                incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
             )
+            if response_text is None:
+                response_text = await asyncio.to_thread(
+                    answer_direct, incoming_text, message_metadata, session_id
+                )
         except Exception as exc:
             _update_response_status(
                 response_request_id, "failed",
