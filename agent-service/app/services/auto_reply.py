@@ -1778,12 +1778,12 @@ async def _process_auto_replies_impl(
         from app.services.openai_direct import answer_direct
         try:
             response_text = await asyncio.to_thread(
-                answer_restricted_topic,
+                answer_agent_specialty_question,
                 incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
             )
             if response_text is None:
                 response_text = await asyncio.to_thread(
-                    answer_agent_specialty_question,
+                    answer_restricted_topic,
                     incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
                 )
             if response_text is None:

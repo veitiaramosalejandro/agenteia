@@ -2776,16 +2776,16 @@ class MachiningAgent:
         from app.services.agent_restrictions import answer_restricted_topic
 
         metadata = message_metadata or {}
-        restricted_answer = answer_restricted_topic(
-            user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
-        )
-        if restricted_answer is not None:
-            return restricted_answer
         specialty_answer = answer_agent_specialty_question(
             user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
         )
         if specialty_answer is not None:
             return specialty_answer
+        restricted_answer = answer_restricted_topic(
+            user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
+        )
+        if restricted_answer is not None:
+            return restricted_answer
 
         direct_answer = self.answer_with_assigned_openai(user_text, message_metadata, session_id)
         if direct_answer is not None:
