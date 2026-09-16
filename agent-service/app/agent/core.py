@@ -2773,8 +2773,14 @@ class MachiningAgent:
             return f"⚠️ {error_msg}"
 
         from app.services.agent_specialty import answer_agent_specialty_question
+        from app.services.agent_restrictions import answer_restricted_topic
 
         metadata = message_metadata or {}
+        restricted_answer = answer_restricted_topic(
+            user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
+        )
+        if restricted_answer is not None:
+            return restricted_answer
         specialty_answer = answer_agent_specialty_question(
             user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
         )
@@ -4003,6 +4009,7 @@ class MachiningAgent:
                 subject_id=business_subject_id if business_knowledge_query else "",
                 now=verified_now.isoformat(), business_query=business_knowledge_query,
                 auto_reply=auto_reply_mode,
+                agent_behavior=(active_prompt or {}).get("BehaviorConfig"),
             )
             isolated_context = external_query_mode or strict_current_question or isolated_quoted_request or bool(
                 message_metadata.get("general_knowledge_mode")

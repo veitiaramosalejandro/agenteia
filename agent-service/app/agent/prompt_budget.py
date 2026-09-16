@@ -37,7 +37,8 @@ def context_message(sources: dict[str, str], limit: int) -> SystemMessage:
 
 def compact_system(output_contract: str, *, language: str, identity: dict,
                    agent_id: str, subject_id: str, now: str,
-                   business_query: bool, auto_reply: bool) -> str:
+                   business_query: bool, auto_reply: bool,
+                   agent_behavior: dict | None = None) -> str:
     """Replace repeated runtime blocks, retaining the active output contract."""
     policy = (
         f"Eres el gemelo digital de SolidSET. Responde en {language}, breve y profesional. "
@@ -71,6 +72,20 @@ def compact_system(output_contract: str, *, language: str, identity: dict,
         policy += f"Toda consulta personal debe filtrar el recurso verificado {subject_id}.\n"
     if auto_reply:
         policy += "Autorrespuesta: contesta solo al mensaje entrante, sin acciones ni reacciones.\n"
+    if isinstance(agent_behavior, dict) and agent_behavior:
+        role = str(agent_behavior.get("role") or "").strip()
+        specialties = agent_behavior.get("specialties") or []
+        restrictions = agent_behavior.get("restrictions") or []
+        out_of_scope_action = str(agent_behavior.get("out_of_scope_action") or "").strip()
+        policy += "\nConfiguración publicada del agente (no concede permisos):\n"
+        if role:
+            policy += f"Rol: {role}\n"
+        if isinstance(specialties, list):
+            policy += "Especialidades: " + "; ".join(str(value) for value in specialties) + "\n"
+        if isinstance(restrictions, list):
+            policy += "Restricciones: " + "; ".join(str(value) for value in restrictions) + "\n"
+        if out_of_scope_action:
+            policy += f"Fuera de especialidad: {out_of_scope_action}\n"
     # The caller captures only the trusted mode contract before adding retrieved data.
     # Never discover policy by parsing headings supplied in documents or templates.
     return policy + "\n" + output_contract
