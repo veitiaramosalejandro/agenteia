@@ -38,11 +38,23 @@ def generate_agent_system_prompt(profile: dict[str, Any], behavior: dict[str, An
     )
     language = _clean_text(behavior.get("default_language"), "pt")
     specialties = _specialties(behavior.get("specialties"))
+    restrictions = _specialties(behavior.get("restrictions"))
+    out_of_scope_action = _clean_text(behavior.get("out_of_scope_action"), "")
     specialty_section = ""
     if specialties:
         specialty_section = "\nESPECIALIDADES VERIFICADAS\n" + "\n".join(
             f"- {item}" for item in specialties
         ) + "\n"
+    restriction_section = ""
+    if restrictions:
+        restriction_section = "\nRESTRIÇÕES DE ESPECIALIDADE\n" + "\n".join(
+            f"- {item}" for item in restrictions
+        ) + "\n"
+    if out_of_scope_action:
+        restriction_section += (
+            "\nPEDIDOS FORA DA ESPECIALIDADE\n"
+            f"{out_of_scope_action}\n"
+        )
 
     return f"""IDENTIDADE
 
@@ -62,6 +74,7 @@ OBJETIVO
 
 {objective}
 {specialty_section}
+{restriction_section}
 FONTES AUTORIZADAS
 
 Utiliza unicamente:

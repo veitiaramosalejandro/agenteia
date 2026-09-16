@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class AgentPromptGenerateRequest(BaseModel):
@@ -12,6 +12,10 @@ class AgentPromptGenerateRequest(BaseModel):
         "Ayudar a los usuarios autorizados de SolidSET.", min_length=1, max_length=2000
     )
     specialties: list[str] = Field(default_factory=list, max_length=20)
+    restrictions: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]] = Field(
+        default_factory=list, max_length=20
+    )
+    out_of_scope_action: str = Field("", max_length=1000)
     tone: str = Field("profesional y cercano", min_length=1, max_length=200)
     response_style: str = Field(
         "directo, claro y basado en evidencias", min_length=1, max_length=300
