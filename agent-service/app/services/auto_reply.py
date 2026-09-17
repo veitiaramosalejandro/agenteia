@@ -189,6 +189,7 @@ def _looks_like_question_or_request(raw_text: str) -> bool:
         "quiero que ",
         "haz ",
         "genera ",
+        "implementa ",
         "resume ",
         "analiza ",
         "compara ",
@@ -210,6 +211,7 @@ def _looks_like_question_or_request(raw_text: str) -> bool:
         "tell me ",
         "show me ",
         "generate ",
+        "implement ",
         "summarize ",
         "analyse ",
         "analyze ",
@@ -1656,8 +1658,14 @@ async def _process_auto_replies_impl(
                     _update_response_status(
                         response_request_id,
                         "learned",
-                        agent_resource_id=status_agent_id,
-                        agent_name=agent_name,
+                        agent_resource_id=str(
+                            candidate.get("agent_identity_id")
+                            or candidate.get("agent_resource_id") or ""
+                        ),
+                        agent_name=str(
+                            candidate.get("agent_name")
+                            or candidate.get("agent_resource_id") or ""
+                        ),
                         response_count=sent,
                     )
                 if not learned and _is_relative_temporal_assertion(

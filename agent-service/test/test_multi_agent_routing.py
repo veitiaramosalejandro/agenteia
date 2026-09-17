@@ -20,6 +20,7 @@ from app.api.controllers.notifications import (
 from app.services.auto_reply import (
     _auto_reply_rejection_reason,
     _payload_requests_agent_response,
+    _process_auto_replies_impl,
     _selected_agent_resource_ids,
     _route_candidates_to_selected_agents,
 )
@@ -77,6 +78,59 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                 },
                 "34 + 25",
             )
+        )
+        self.assertTrue(
+            _payload_requests_agent_response(
+                {
+                    "Chat": {
+                        "questionType": 0,
+                        "resourceTable": [{"type": 2, "talkWithAgent": True}],
+                    }
+                },
+                "Implementa un metodo para ordenar de menor a mayor una lista en C#",
+            )
+        )
+        self.assertFalse(
+            _payload_requests_agent_response(
+                {
+                    "Chat": {
+                        "questionType": 0,
+                        "resourceTable": [{"type": 2, "talkWithAgent": True}],
+                    }
+                },
+                "La lista se ordena de menor a mayor.",
+            )
+        )
+
+    async def test_learning_only_status_uses_candidate_identity(self):
+        candidate = {
+            "fingerprint": "learning-status",
+            "response_request_id": "request-learning",
+            "agent_resource_id": "resource-learning",
+            "agent_identity_id": "identity-learning",
+            "agent_name": "Developer IA",
+            "message": "La lista se ordena de menor a mayor.",
+            "payload": {
+                "Chat": {
+                    "questionType": 0,
+                    "resourceTable": [{"type": 2, "talkWithAgent": True}],
+                }
+            },
+        }
+        with (
+            patch("app.services.auto_reply._learn_direct_agent_assertion", return_value=True) as learn,
+            patch("app.services.auto_reply._update_response_status") as update,
+        ):
+            result = await _process_auto_replies_impl(
+                [candidate], _already_routed=True, _finalize_status=False,
+            )
+        self.assertEqual(1, result)
+        learn.assert_called_once_with(candidate)
+        update.assert_any_call(
+            "request-learning", "learned",
+            agent_resource_id="identity-learning",
+            agent_name="Developer IA",
+            response_count=1,
         )
 
     def test_type_two_question_type_zero_with_question_mark_is_authorized(self):
