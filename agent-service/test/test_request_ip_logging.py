@@ -1,5 +1,6 @@
 import unittest
 import json
+import asyncio
 from types import SimpleNamespace
 
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,9 @@ from app.services.instance_resolution import (
 )
 from app.connectors.db_client import get_solidset_instance
 from app.api.controllers.notifications import _trace_initial_request, _trace_resolved_instance
+from app.api.controllers.suggestions import suggest_chat_question_response
+from app.api.schemas.common import FrameworkMessageDTO
+from fastapi import HTTPException
 
 
 class RequestIpLoggingTests(unittest.TestCase):
@@ -119,6 +123,28 @@ class RequestIpLoggingTests(unittest.TestCase):
         self.assertEqual(result["DataAPI"]["BaseUrl"], "http://data-api")
         self.assertEqual(cursor.execute.call_count, 2)
         self.assertIn("'127.0.0.1', '::1'", cursor.execute.call_args_list[0].args[0])
+
+    @patch("app.api.controllers.suggestions._create_response_status")
+    @patch("app.api.controllers.suggestions._resolve_request_solidset_instance", return_value=None)
+    @patch("app.api.controllers.suggestions._trace_initial_request")
+    def test_suggestion_without_instance_rejects_before_status_creation(self, trace, _resolve, create):
+        message = FrameworkMessageDTO.model_validate({
+            "Sender": {"resource": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8"},
+            "Chat": {
+                "idChat2": 1962853995,
+                "idSenderResource": "ce0e837a-fe28-47ae-9ba0-8841fe042ca8",
+                "idWorkRoom": "d8e82821-d52f-44bf-9b70-682651a6196e",
+            },
+            "Info": {"request_id": "1962853995"},
+        })
+        request = SimpleNamespace(headers={}, client=SimpleNamespace(host="172.18.0.18"))
+
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(suggest_chat_question_response(message, request))
+
+        self.assertEqual(raised.exception.status_code, 400)
+        trace.assert_called_once()
+        create.assert_not_called()
 
     def test_candidate_is_namespaced_and_receives_response_url(self):
         candidates = [{"fingerprint": "same-message"}]

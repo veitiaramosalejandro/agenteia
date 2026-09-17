@@ -13,6 +13,7 @@ from app.api.schemas.common import (
     FrameworkMessageDTO,
 )
 from app.api.examples import _CHAT_QUESTION_SUGGESTION_EXAMPLES
+from app.api.controllers.notifications import _trace_initial_request, _trace_resolved_instance
 from app.config import settings
 from app.services.instance_resolution import _resolve_request_solidset_instance
 from app.services.response_status import CODES as _RESPONSE_STATUS_CODES
@@ -107,8 +108,8 @@ async def suggest_chat_question_response(
     request: Request,
 ) -> ChatQuestionSuggestionResponse:
     """Encola de forma durable y espera asincrónicamente el resultado del worker."""
-    print(message.model_dump_json(indent=2))
     payload = message.model_dump(mode="json")
+    _trace_initial_request(request, payload)
     context = _chat_question_suggestion_context(payload)
     request_id = context["request_id"]
     if (
@@ -123,8 +124,10 @@ async def suggest_chat_question_response(
         instance = _resolve_request_solidset_instance(request)
         if not instance:
             raise HTTPException(
-                status_code=400, detail="Instância SolidSET desconhecida."
+                status_code=400,
+                detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance com o host configurado em SourceIP.",
             )
+        _trace_resolved_instance(instance)
         existing = _load_response_status(request_id)
         if not existing or existing.get("status") not in {
             "queued", "processing", "searching", "thinking", "completed"
