@@ -82,7 +82,7 @@ async def receive_framework_notification(
     if instance is None:
         raise HTTPException(
             status_code=400,
-            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance ou registe o endereço IP de origem.",
+            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance com o Code da instância.",
         )
     payload["_SolidSETInstanceID"] = str(instance["ID"])
     chat_id = _framework_message_chat_id(payload, [])
@@ -211,7 +211,7 @@ async def preview_framework_notification(
             status_code=400,
             detail=(
                 "Instância SolidSET desconhecida. Envie X-SolidSET-Instance "
-                "ou registe o endereço IP de origem."
+                "com o Code da instância."
             ),
         )
     payload["_SolidSETInstanceID"] = str(instance["ID"])
@@ -258,7 +258,7 @@ async def capture_and_forward_framework_message(request: Request):
     if instance is None:
         raise HTTPException(
             status_code=400,
-            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance ou registe o endereço IP de origem.",
+            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance com o Code da instância.",
         )
     if isinstance(payload, dict):
         payload["_SolidSETInstanceID"] = str(instance["ID"])

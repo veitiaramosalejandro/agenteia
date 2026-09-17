@@ -17,12 +17,11 @@ CREATE TABLE IF NOT EXISTS public."SysSolidSETInstance" (
     CONSTRAINT "UQ_SysSolidSETInstance_Code" UNIQUE ("Code")
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS "UQ_SysSolidSETInstance_SourceIP"
-    ON public."SysSolidSETInstance" ("SourceIP")
-    WHERE NULLIF(BTRIM("SourceIP"), '') IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS "IX_SysSolidSETInstance_Active"
     ON public."SysSolidSETInstance" (active, "Code");
 
 COMMENT ON TABLE public."SysSolidSETInstance" IS
-    'Instancias SolidSET atendidas por la API; determina el origen y la URL de respuesta.';
+    'Instancias SolidSET atendidas por la API; Code identifica el origen y SourceIP indica un destino de respuesta.';
+
+COMMENT ON COLUMN public."SysSolidSETInstance"."SourceIP" IS
+    'Direccion de destino de respuesta; no identifica el origen de una peticion.';

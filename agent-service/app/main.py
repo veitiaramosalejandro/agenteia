@@ -144,6 +144,9 @@ async def log_request_origin_ip(request: Request, call_next):
     """Muestra en consola el origen y resultado de cada petición HTTP."""
     started_at = perf_counter()
     direct_ip, forwarded_ip = _request_ip_details(request)
+    instance_header = (
+        "present" if request.headers.get("x-solidset-instance", "").strip() else "missing"
+    )
     status_code = 500
     try:
         response = await call_next(request)
@@ -154,6 +157,7 @@ async def log_request_origin_ip(request: Request, call_next):
         print(
             "🌐 API_REQUEST "
             f"ip={direct_ip} forwarded_ip={forwarded_ip} "
+            f"solidset_instance_header={instance_header} "
             f"method={request.method} endpoint={request.url.path} "
             f"status={status_code} duration_ms={elapsed_ms:.1f}",
             flush=True,

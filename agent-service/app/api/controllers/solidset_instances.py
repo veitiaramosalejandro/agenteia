@@ -123,7 +123,7 @@ def register_solidset_instance(
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="SourceIP já está atribuído a outra instância SolidSET.",
+            detail="Code ou BaseUrl já está atribuído a outra instância SolidSET.",
         ) from exc
     except psycopg.Error as exc:
         raise HTTPException(

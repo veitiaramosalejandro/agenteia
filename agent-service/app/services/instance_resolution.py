@@ -34,55 +34,25 @@ def _request_ip_details(request: Request) -> tuple[str, str]:
 
 
 def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | None:
-    """Resuelve la instalación aun cuando la petición atraviesa Nginx."""
-    direct_ip, forwarded_ip = _request_ip_details(request)
+    """Resolve the caller's instance by explicit code, never by response address."""
     instance_code = request.headers.get("x-solidset-instance", "").strip()
-    request_host = str(getattr(getattr(request, "url", None), "hostname", "") or "")
-    cache_key = "|".join(
-        (
-            instance_code.lower(),
-            forwarded_ip.lower(),
-            direct_ip.lower(),
-            request_host.lower(),
-        )
-    )
-    with _solidset_instance_cache_lock:
-        cached = _solidset_instance_cache.get(cache_key)
-        if cached and cached[0] > time():
-            return dict(cached[1])
     if instance_code:
+        cache_key = instance_code.lower()
+        with _solidset_instance_cache_lock:
+            cached = _solidset_instance_cache.get(cache_key)
+            if cached and cached[0] > time():
+                return dict(cached[1])
         instance = get_solidset_instance(code=instance_code, source_ip=None)
         if instance is not None:
             with _solidset_instance_cache_lock:
                 _solidset_instance_cache[cache_key] = (time() + 60, dict(instance))
         return instance
 
-    # SourceIP puede contener una IP o el host público registrado para la
-    # instalación. Detrás de Nginx, request.client es la IP del contenedor del
-    # proxy, por lo que también se prueban X-Forwarded-For/X-Real-IP y Host.
-    candidates = [forwarded_ip, direct_ip, request_host]
-    seen: set[str] = set()
-    for candidate in candidates:
-        source = str(candidate or "").strip()
-        if not source or source == "-" or source in seen:
-            continue
-        seen.add(source)
-        instance = get_solidset_instance(source_ip=source)
-        if instance is not None:
-            with _solidset_instance_cache_lock:
-                _solidset_instance_cache[cache_key] = (time() + 60, dict(instance))
-            return instance
-
-    # En una instalación con un único SolidSET activo no existe ambigüedad y
-    # Nginx/Docker puede ocultar tanto el host público como la IP original.
-    # Con varias instalaciones no se aplica este fallback: deben identificarse
-    # por cabecera, IP o host para impedir respuestas en el sistema equivocado.
+    # Without an explicit code, only one active instance is unambiguous.
+    # SourceIP is an outbound response address, not an inbound identity.
     active_instances = list_active_solidset_instances()
     if len(active_instances) == 1:
-        instance = active_instances[0]
-        with _solidset_instance_cache_lock:
-            _solidset_instance_cache[cache_key] = (time() + 60, dict(instance))
-        return instance
+        return active_instances[0]
     return None
 
 

@@ -70,6 +70,7 @@ def ensure_solidset_instance_location_schema() -> None:
                       ADD COLUMN IF NOT EXISTS "CountryCode" varchar(2) NOT NULL DEFAULT 'PT',
                       ADD COLUMN IF NOT EXISTS "Locale" varchar(20) NOT NULL DEFAULT 'pt-PT',
                       ADD COLUMN IF NOT EXISTS "TimeZone" varchar(80) NOT NULL DEFAULT 'Europe/Lisbon';
+                    DROP INDEX IF EXISTS public."UQ_SysSolidSETInstance_SourceIP";
                 ''')
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS public."SysSolidSETDatabase" (
@@ -316,7 +317,7 @@ def save_agent_response_audit(
 
 
 def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
-    """Registra o actualiza por Code, BaseUrl o SourceIP sin crear duplicados."""
+    """Register or update an instance by its stable Code."""
     ensure_solidset_instance_location_schema()
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
@@ -325,22 +326,10 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
                 SELECT "ID"
                 FROM public."SysSolidSETInstance"
                 WHERE LOWER(BTRIM("Code")) = LOWER(BTRIM(%s))
-                   OR LOWER(RTRIM(BTRIM("BaseUrl"), '/')) =
-                      LOWER(RTRIM(BTRIM(%s), '/'))
-                   OR (NULLIF(%s::text, '') IS NOT NULL AND "SourceIP" = %s)
-                ORDER BY
-                    CASE WHEN LOWER(BTRIM("Code")) = LOWER(BTRIM(%s)) THEN 0
-                         WHEN NULLIF(%s::text, '') IS NOT NULL AND "SourceIP" = %s THEN 1
-                         ELSE 2 END
                 LIMIT 1
                 FOR UPDATE
                 ''',
-                (
-                    configuration["Code"], configuration["BaseUrl"],
-                    configuration.get("SourceIP"), configuration.get("SourceIP"),
-                    configuration["Code"], configuration.get("SourceIP"),
-                    configuration.get("SourceIP"),
-                ),
+                (configuration["Code"],),
             )
             existing = cursor.fetchone()
             if existing:
@@ -433,9 +422,11 @@ def get_solidset_instance(
     *, code: str | None = None, source_ip: str | None = None,
     active_only: bool = True,
 ) -> dict[str, Any] | None:
-    """Resuelve una instancia activa por código explícito o IP directa."""
+    """Resolve an instance by Code; SourceIP is an outbound address only."""
     ensure_solidset_instance_location_schema()
-    if not code and not source_ip:
+    if source_ip:
+        raise ValueError("SourceIP no identifica una instancia entrante.")
+    if not code:
         return None
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
@@ -443,16 +434,10 @@ def get_solidset_instance(
                 '''
                 SELECT * FROM public."SysSolidSETInstance"
                 WHERE (%s = false OR active = true)
-                  AND ((NULLIF(%s::text, '') IS NOT NULL
-                        AND LOWER("Code") = LOWER(%s::text))
-                    OR (NULLIF(%s::text, '') IS NOT NULL
-                        AND "SourceIP" = %s::text))
-                ORDER BY CASE WHEN NULLIF(%s::text, '') IS NOT NULL
-                                   AND LOWER("Code") = LOWER(%s::text)
-                              THEN 0 ELSE 1 END
+                  AND LOWER("Code") = LOWER(%s::text)
                 LIMIT 1
                 ''',
-                (active_only, code, code, source_ip, source_ip, code, code),
+                (active_only, code),
             )
             row = cursor.fetchone()
             result = dict(row) if row else None
