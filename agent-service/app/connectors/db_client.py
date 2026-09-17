@@ -422,24 +422,49 @@ def get_solidset_instance(
     *, code: str | None = None, source_ip: str | None = None,
     active_only: bool = True,
 ) -> dict[str, Any] | None:
-    """Resolve an instance by Code; SourceIP is an outbound address only."""
+    """Resolve by Code, or by the destination host declared by the caller."""
     ensure_solidset_instance_location_schema()
-    if source_ip:
-        raise ValueError("SourceIP no identifica una instancia entrante.")
-    if not code:
+    if code and source_ip:
+        raise ValueError("Indique Code ou SourceIP, não ambos.")
+    if not code and not source_ip:
         return None
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                '''
+            if code:
+                cursor.execute(
+                    '''
                 SELECT * FROM public."SysSolidSETInstance"
                 WHERE (%s = false OR active = true)
                   AND LOWER("Code") = LOWER(%s::text)
                 LIMIT 1
                 ''',
-                (active_only, code),
-            )
-            row = cursor.fetchone()
+                    (active_only, code),
+                )
+                row = cursor.fetchone()
+            else:
+                cursor.execute(
+                    '''
+                SELECT * FROM public."SysSolidSETInstance"
+                WHERE (%s = false OR active = true)
+                  AND CASE
+                        WHEN LOWER(TRIM(TRAILING '.' FROM BTRIM("SourceIP")))
+                             IN ('localhost', '127.0.0.1', '::1')
+                        THEN 'localhost'
+                        ELSE LOWER(TRIM(TRAILING '.' FROM BTRIM("SourceIP")))
+                      END = %s::text
+                LIMIT 2
+                ''',
+                    (active_only, source_ip),
+                )
+                matches = cursor.fetchall()
+                if len(matches) > 1:
+                    print(
+                        "⚠️ X-SolidSET-Instance coincide con varias instancias "
+                        f"activas: host={source_ip}",
+                        flush=True,
+                    )
+                    return None
+                row = matches[0] if matches else None
             result = dict(row) if row else None
             if result:
                 cursor.execute('SELECT * FROM public."SysSolidSETDataAPI" WHERE "IDSolidSETInstance"=%s', (result["ID"],))

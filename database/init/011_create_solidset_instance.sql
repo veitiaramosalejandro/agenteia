@@ -21,7 +21,7 @@ CREATE INDEX IF NOT EXISTS "IX_SysSolidSETInstance_Active"
     ON public."SysSolidSETInstance" (active, "Code");
 
 COMMENT ON TABLE public."SysSolidSETInstance" IS
-    'Instancias SolidSET atendidas por la API; Code identifica el origen y SourceIP indica un destino de respuesta.';
+    'Instancias SolidSET atendidas por la API; Code identifica la fila y SourceIP guarda un host de respuesta.';
 
 COMMENT ON COLUMN public."SysSolidSETInstance"."SourceIP" IS
-    'Direccion de destino de respuesta; no identifica el origen de una peticion.';
+    'Host de destino de respuesta; se compara con X-SolidSET-Instance, no con la IP de origen TCP.';

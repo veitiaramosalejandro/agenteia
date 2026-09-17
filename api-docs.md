@@ -5,17 +5,25 @@
 El diagnóstico de inicio y el campo `runtime.startup_connectivity` de `GET /api/v1/agent/health` obtienen las instalaciones activas directamente de PostgreSQL `SysSolidSETInstance`. Para cada fila verifican `BaseUrl` y `NotificationUrl` e informan `Code`, `SourceIP`, URL configurada y URL efectiva. Dentro de Docker, una URL configurada con `localhost` se prueba mediante `host.docker.internal`, sin modificar el valor persistido. Las variables históricas `SOLIDSET_RESTAPI_BASE_URL` y `NOTIF_API_BASE_URL` no determinan este diagnóstico multiinstancia.
 
 Los endpoints de notificación resuelven la instancia mediante el encabezado
-`X-SolidSET-Instance`, cuyo valor es `SysSolidSETInstance.Code`. FastAPI lee el
-encabezado sin distinguir mayúsculas y minúsculas. Si falta y PostgreSQL
-contiene exactamente una instancia activa, se utiliza esa instancia. Con varias
-instancias activas, la solicitud se rechaza con HTTP 400. `SourceIP` guarda una
-dirección de destino para responder; la IP entrante, `X-Forwarded-For` y el host
-HTTP no identifican la instancia. El proceso que envía el `FrameworkMessage`
-desde SolidSET debe añadir el encabezado; el cliente WPF no puede hacer que
-aparezca en esa petición si la envía otro servicio.
+`X-SolidSET-Instance`. Su valor es el host de destino configurado en
+`SysSolidSETInstance.SourceIP`, no el `Code`. Se admite host o host:puerto;
+la comparación ignora mayúsculas y un punto final. `localhost`, `127.0.0.1` y
+`::1` se consideran equivalentes para esta búsqueda. Si falta, no coincide o
+coincide con varias instancias activas, la solicitud se rechaza con HTTP 400.
+La IP entrante, `X-Forwarded-For` y el host HTTP no se usan para identificar la
+instancia. El proceso que envía el `FrameworkMessage` desde SolidSET debe
+añadir el encabezado; el cliente WPF no puede hacer que aparezca en esa
+petición si la envía otro servicio.
 El log `API_REQUEST` registra `solidset_instance_header=present|missing` para
 comprobar si llegó, sin imprimir su valor. El encabezado selecciona la
 instancia y no sustituye la autenticación del emisor.
+Los endpoints de notificación registran `INITIAL_REQUEST_IDENTITY` antes de
+resolver la instancia, con `X-SolidSET-Instance`, cabeceras de red permitidas,
+`Sender.session`, `Info.session_id`, identidad del remitente y chat. El registro
+incluye los nombres de las demás cabeceras, sin valores de cookies ni de
+autorización. Tras resolverla, `INITIAL_REQUEST_DESTINATION` muestra el `Code`,
+`SourceIP`, los orígenes de las URL de respuesta y el acceso Data API, sin
+credenciales ni rutas.
 
 Los saludos directos (`hola`, `hola como estás` y equivalentes) se contestan de
 forma inmediata, respetuosa y usando únicamente el `FullName` del remitente;
@@ -429,9 +437,11 @@ del contenedor SQL como `SQL_SERVER_HOST`, sin depender de un puerto del host.
 Antes de insertar, la API busca coincidencias por `Code`; si encuentra una,
 actualiza esa fila y conserva su `ID`. `BaseUrl` se utiliza para login y
 respuestas; `NotificationUrl`, para notificaciones. `SourceIP` es una dirección
-de destino y no participa en la identificación ni en la búsqueda de la
-instancia. Al arrancar, el servicio elimina el índice único heredado de
-`SourceIP` para permitir destinos compartidos.
+de destino. El registro sigue usando `Code` como identificador estable; las
+peticiones entrantes usan el host explícito de `X-SolidSET-Instance` para buscar
+una única fila activa con ese `SourceIP`. Al arrancar, el servicio elimina el
+índice único heredado de `SourceIP`; si varias filas activas comparten el mismo
+destino, la petición se rechaza por ambigüedad.
 
 Después del registro se verifica la conexión mediante:
 
@@ -531,17 +541,19 @@ válida se descarta. Cuando el payload no los incluye, se usa la configuración 
 servidor SolidSET o al proxy, no al equipo WPF, por lo que no se usa para ubicar
 al recurso.
 
-Cada SolidSET debe llamar los endpoints de entrada con:
+Cada SolidSET debe llamar los endpoints de entrada con el host de respuesta:
 
 ```http
-X-SolidSET-Instance: solidset-lisboa
+X-SolidSET-Instance: 192.168.10.20
 ```
 
-Si el encabezado falta, la API utiliza la única instancia activa solo cuando
-no hay ambigüedad; con varias, devuelve `400`. Un código desconocido también
-devuelve `400`, sin sustituirlo por otra instancia. La instancia resuelta se
-conserva en la huella del evento, sesión del agente, login y envío de respuesta.
-Los errores de acceso a PostgreSQL continúan devolviendo `503`.
+El valor debe coincidir con `SysSolidSETInstance.SourceIP` de una sola instancia
+activa, con equivalencia entre `localhost`, `127.0.0.1` y `::1`. No se acepta
+URL, ruta ni credenciales en el encabezado. Tras encontrar la fila, la API lee
+su `BaseUrl`, `NotificationUrl` y `SysSolidSETDataAPI`; las direcciones de acceso
+y respuesta salen de esa configuración, no del encabezado. La instancia
+resuelta se conserva en la huella del evento, sesión del agente, login y envío
+de respuesta. Los errores de acceso a PostgreSQL continúan devolviendo `503`.
 
 ## 1. Guardar o actualizar un agente
 

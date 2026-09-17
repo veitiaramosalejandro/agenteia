@@ -1,25 +1,17 @@
 from __future__ import annotations
 
-import threading
-from time import time
+import ipaddress
 from typing import Any
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Request
 
 from app.connectors.db_client import (
     get_solidset_instance,
-    list_active_solidset_instances,
 )
 
-
-_solidset_instance_cache_lock = threading.Lock()
-_solidset_instance_cache: dict[str, tuple[float, dict[str, Any]]] = {}
-
-
-def clear_instance_cache() -> None:
-    with _solidset_instance_cache_lock:
-        _solidset_instance_cache.clear()
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _request_ip_details(request: Request) -> tuple[str, str]:
@@ -33,27 +25,37 @@ def _request_ip_details(request: Request) -> tuple[str, str]:
     return direct_ip, forwarded_ip
 
 
-def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | None:
-    """Resolve the caller's instance by explicit code, never by response address."""
-    instance_code = request.headers.get("x-solidset-instance", "").strip()
-    if instance_code:
-        cache_key = instance_code.lower()
-        with _solidset_instance_cache_lock:
-            cached = _solidset_instance_cache.get(cache_key)
-            if cached and cached[0] > time():
-                return dict(cached[1])
-        instance = get_solidset_instance(code=instance_code, source_ip=None)
-        if instance is not None:
-            with _solidset_instance_cache_lock:
-                _solidset_instance_cache[cache_key] = (time() + 60, dict(instance))
-        return instance
+def _solidset_header_host(value: str) -> str | None:
+    """Accept a host or host:port, never a URL, path, or credentials."""
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 255 or any(char.isspace() for char in raw):
+        return None
+    if any(char in raw for char in "/\\?#@"):
+        return None
+    try:
+        host = ipaddress.ip_address(raw.strip("[]")).compressed.lower()
+        return "localhost" if host in _LOOPBACK_HOSTS else host
+    except ValueError:
+        pass
+    try:
+        parsed = urlsplit(f"//{raw}")
+        host = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return None
+    if not host or parsed.username or parsed.password or parsed.path:
+        return None
+    host = host.rstrip(".").lower()
+    return "localhost" if host in _LOOPBACK_HOSTS else host or None
 
-    # Without an explicit code, only one active instance is unambiguous.
-    # SourceIP is an outbound response address, not an inbound identity.
-    active_instances = list_active_solidset_instances()
-    if len(active_instances) == 1:
-        return active_instances[0]
-    return None
+
+def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | None:
+    """Match the destination host sent in X-SolidSET-Instance to SourceIP."""
+    host = _solidset_header_host(request.headers.get("x-solidset-instance", ""))
+    if not host:
+        return None
+    # Recheck each request: an outbound host may be shared or reassigned.
+    return get_solidset_instance(source_ip=host)
 
 
 def _attach_solidset_instance(candidates: list[dict], instance: dict[str, Any]) -> None:

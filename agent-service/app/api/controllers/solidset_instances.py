@@ -27,7 +27,6 @@ from app.connectors.db_client import (
 )
 from app.connectors.solidset_data_api import read_schema_catalog
 from app.connectors.solidset_sql import test_connection as test_solidset_sql_connection
-from app.services.instance_resolution import clear_instance_cache
 
 
 router = APIRouter(tags=["SolidSET Configuration"])
@@ -116,7 +115,6 @@ def register_solidset_instance(
     try:
         saved = save_solidset_instance(payload)
         operation = str(saved.get("_operation", "saved"))
-        clear_instance_cache()
         saved = get_solidset_instance(code=payload["Code"], source_ip=None) or saved
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -5,6 +5,7 @@ import json
 import re
 import uuid
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 import httpx
 import psycopg
@@ -23,6 +24,7 @@ from app.services.auto_reply import (
 )
 from app.services.instance_resolution import (
     _attach_solidset_instance,
+    _request_ip_details,
     _resolve_request_solidset_instance,
 )
 from app.services.response_status import create as _create_response_status
@@ -31,6 +33,103 @@ from app.services.response_status import update as _update_response_status
 
 router = APIRouter(tags=["SolidSET Notifications"])
 notification_listener = None
+
+
+def _trace_initial_request(request: Request, payload: dict[str, Any]) -> None:
+    """Log routing evidence without message text, cookies, or credentials."""
+    direct_ip, forwarded_ip = _request_ip_details(request)
+    headers = request.headers
+
+    def safe_header(name: str) -> str | None:
+        value = headers.get(name)
+        if value is None:
+            return None
+        return " ".join(str(value).split())[:255]
+
+    def field(source: dict[str, Any], name: str) -> str | None:
+        value = next(
+            (value for key, value in source.items() if str(key).lower() == name.lower()),
+            None,
+        )
+        return str(value)[:255] if value not in (None, "") else None
+
+    def section(name: str) -> dict[str, Any]:
+        value = next(
+            (value for key, value in payload.items() if str(key).lower() == name.lower()),
+            None,
+        )
+        return value if isinstance(value, dict) else {}
+
+    sender = section("Sender")
+    framework_sender = section("FrameworkSender")
+    destiny = section("Destiny")
+    info = section("Info")
+    chat = section("Chat")
+
+    print(
+        "📨 INITIAL_REQUEST_IDENTITY "
+        + json.dumps(
+            {
+                "remote_ip": direct_ip,
+                "forwarded_ip": forwarded_ip,
+                "header_names": sorted(str(name).lower() for name in headers.keys()),
+                "headers": {
+                    "x-solidset-instance": safe_header("x-solidset-instance"),
+                    "host": safe_header("host"),
+                    "x-real-ip": safe_header("x-real-ip"),
+                    "user-agent": safe_header("user-agent"),
+                    "x-request-id": safe_header("x-request-id"),
+                },
+                "session": {
+                    "sender": field(sender, "session"),
+                    "framework_sender": field(framework_sender, "session"),
+                    "destiny": field(destiny, "session"),
+                    "info": field(info, "session_id"),
+                },
+                "sender": {
+                    "login": field(sender, "login"),
+                    "resource": field(sender, "resource"),
+                    "framework_login": field(framework_sender, "login"),
+                    "framework_resource": field(framework_sender, "resource"),
+                    "chat_login": field(chat, "idSender"),
+                    "chat_resource": field(chat, "idSenderResource"),
+                },
+                "chat_id": field(chat, "idChat2") or field(chat, "idChat"),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+
+
+def _trace_resolved_instance(instance: dict[str, Any]) -> None:
+    def safe_origin(value: Any) -> str:
+        try:
+            parsed = urlsplit(str(value or ""))
+            hostname, port = parsed.hostname, parsed.port
+        except ValueError:
+            return ""
+        if not parsed.scheme or not hostname:
+            return ""
+        return f"{parsed.scheme}://{hostname}{f':{port}' if port else ''}"
+
+    data_api = instance.get("DataAPI") if isinstance(instance.get("DataAPI"), dict) else {}
+    print(
+        "📨 INITIAL_REQUEST_DESTINATION "
+        + json.dumps(
+            {
+                "code": str(instance.get("Code") or ""),
+                "instance_id": str(instance.get("ID") or ""),
+                "source_ip": str(instance.get("SourceIP") or ""),
+                "base_url_origin": safe_origin(instance.get("BaseUrl")),
+                "notification_url_origin": safe_origin(instance.get("NotificationUrl")),
+                "data_api_origin": safe_origin(data_api.get("BaseUrl")),
+                "data_api_active": data_api.get("active"),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
 
 
 def configure(runtime_notification_listener: Any) -> None:
@@ -64,8 +163,6 @@ async def receive_framework_notification(
     ],
     request: Request,
 ):
-    print(message.model_dump_json(indent=2))
-
     """Recibe desde Notification un FrameworkMessage ya capturado y lo aprende en Qdrant."""
 
     payload = (
@@ -73,6 +170,7 @@ async def receive_framework_notification(
         if hasattr(message, "model_dump")
         else message.dict()
     )
+    _trace_initial_request(request, payload)
     try:
         instance = _resolve_request_solidset_instance(request)
     except psycopg.Error as exc:
@@ -82,8 +180,9 @@ async def receive_framework_notification(
     if instance is None:
         raise HTTPException(
             status_code=400,
-            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance com o Code da instância.",
+            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance com o host configurado em SourceIP.",
         )
+    _trace_resolved_instance(instance)
     payload["_SolidSETInstanceID"] = str(instance["ID"])
     chat_id = _framework_message_chat_id(payload, [])
     # IDChat2 es la referencia compartida con WPF/SolidSET. Solo se genera un
@@ -200,6 +299,7 @@ async def preview_framework_notification(
     conserva su comportamiento de aprendizaje existente.
     """
     payload = message.model_dump(mode="json")
+    _trace_initial_request(request, payload)
     try:
         instance = _resolve_request_solidset_instance(request)
     except psycopg.Error as exc:
@@ -211,9 +311,10 @@ async def preview_framework_notification(
             status_code=400,
             detail=(
                 "Instância SolidSET desconhecida. Envie X-SolidSET-Instance "
-                "com o Code da instância."
+                "com o host configurado em SourceIP."
             ),
         )
+    _trace_resolved_instance(instance)
     payload["_SolidSETInstanceID"] = str(instance["ID"])
     capture = await asyncio.to_thread(notification_listener.capture_realtime_payload, payload)
     candidates = capture.get("auto_reply_candidates") or []
@@ -241,13 +342,14 @@ async def preview_framework_notification(
 
 @router.post("/api/v1/agent/notification/frameworkHub/SendMessage")
 async def capture_and_forward_framework_message(request: Request):
-    print(request)
     """Captura el mensaje en Qdrant antes de reenviarlo al endpoint real de SolidSET."""
     raw_body = await request.body()
     try:
         payload = json.loads(raw_body) if raw_body else {}
     except json.JSONDecodeError:
         payload = {"RawMessage": raw_body.decode("utf-8", errors="replace")}
+
+    _trace_initial_request(request, payload if isinstance(payload, dict) else {})
 
     try:
         instance = _resolve_request_solidset_instance(request)
@@ -258,8 +360,9 @@ async def capture_and_forward_framework_message(request: Request):
     if instance is None:
         raise HTTPException(
             status_code=400,
-            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance com o Code da instância.",
+            detail="Instância SolidSET desconhecida. Envie X-SolidSET-Instance com o host configurado em SourceIP.",
         )
+    _trace_resolved_instance(instance)
     if isinstance(payload, dict):
         payload["_SolidSETInstanceID"] = str(instance["ID"])
     capture = await asyncio.to_thread(notification_listener.capture_realtime_payload, payload)
