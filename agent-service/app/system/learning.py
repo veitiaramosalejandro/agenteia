@@ -52,7 +52,9 @@ class SistemaAprendizaje:
             "query_by_context": {},
             "last_retry_at": None,
         }
-        self._ensure_collection()
+        # Qdrant can still be starting when the API imports its dependencies.
+        # Initialize the collection on the first vector operation instead of
+        # blocking every SistemaAprendizaje construction during API startup.
 
     def _embed_query_safe(self, text: str, context: str) -> Optional[List[float]]:
         """Genera embedding con protección y recuperación automática tras enfriamiento (cooldown)."""

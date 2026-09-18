@@ -1,10 +1,24 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.system.learning import SistemaAprendizaje
 
 
 class TestSistemaAprendizaje(unittest.TestCase):
+    @patch("app.system.learning.background_checkpoint")
+    @patch("app.system.learning.redis_client")
+    @patch("app.system.learning.QdrantClient")
+    @patch("app.system.learning.OllamaEmbeddings")
+    @patch.object(SistemaAprendizaje, "_ensure_collection")
+    def test_constructor_does_not_wait_for_qdrant(
+        self, ensure_collection, _embeddings, _qdrant, _redis, _checkpoint
+    ):
+        sistema = SistemaAprendizaje()
+
+        ensure_collection.assert_not_called()
+        self.assertFalse(sistema._collection_ready)
+
     def test_private_knowledge_search_isolated_from_chat_interactions(self):
         sistema = SistemaAprendizaje.__new__(SistemaAprendizaje)
         sistema._embed_query_safe = lambda *_args, **_kwargs: [0.1, 0.2]

@@ -109,6 +109,19 @@ class TestWebSearch(unittest.TestCase):
             "Sí, necesito que busques por favor"
         ))
 
+    def test_ambiguous_actual_does_not_force_public_research(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        for question in (
+            "Que es el Valor Actual Neto?",
+            "¿Qué significa estado actual en este proceso?",
+            "What is current in electricity?",
+        ):
+            with self.subTest(question=question):
+                self.assertFalse(agent._is_external_information_query(question))
+        self.assertTrue(agent._is_external_information_query(
+            "Busca el Valor Actual Neto actualizado hoy"
+        ))
+
     def test_portuguese_current_president_is_external_and_forces_fresh_search(self):
         agent = MachiningAgent.__new__(MachiningAgent)
         question = "quem é o presidente de Portugal?"

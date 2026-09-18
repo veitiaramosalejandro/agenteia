@@ -315,7 +315,9 @@ def _log_startup_connectivity(report: dict) -> None:
 
     postgres = checks.get("postgres_timescaledb", {})
     db_url = os.getenv("DB_URL", "")
-    print(f"   - PostgreSQL/TimescaleDB URL: {db_url or 'DB_URL_no_configurada'}")
+    pg_host, pg_port = _extract_host_port_from_url(db_url, 5432)
+    pg_endpoint = f"{pg_host}:{pg_port}" if pg_host else "DB_URL_no_configurada"
+    print(f"   - PostgreSQL/TimescaleDB: {pg_endpoint}")
     print(f"     • TCP: {_probe_to_text(postgres.get('tcp', {}))}")
 
     configured = checks.get("solidset_instances", {})

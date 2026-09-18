@@ -547,6 +547,8 @@ def _classify_suggestion_request(
             "(retrieve actual personal/company/task facts, status, dates, assigned people), "
             "general (stable knowledge, explanations, examples, mathematics), or external "
             "(current public facts, prices, versions, news, officeholders, explicit web research). "
+            "Words such as actual, atual, or current are ambiguous; decide from the full "
+            "question whether they request a time-sensitive fact or describe a concept. "
             "use_related_record is a boolean: true only if answering depends on the attached "
             "record. An attachment alone never makes a request a recommendation or internal. "
             "'What is its deadline?' is internal; 'What is n8n?' is general; 'And how could "

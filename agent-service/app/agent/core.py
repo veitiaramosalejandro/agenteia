@@ -1328,7 +1328,9 @@ class MachiningAgent:
         ))
         freshness_request = bool(
             re.search(
-                r"\b(?:actual|actuales|atual|atuais|current|latest|últim[oa]s?|"
+                # "actual/current" alone is ambiguous (it can be part of a
+                # concept name). Let the intent classifier interpret it.
+                r"\b(?:latest|últim[oa]s?|"
                 r"recent|reciente|hoje|hoy|today|agora|ahora|now)\b",
                 text,
             )
