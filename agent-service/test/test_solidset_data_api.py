@@ -11,14 +11,34 @@ from app.connectors.solidset_data_api import (
     read_schema_catalog,
 )
 from app.connectors.solidset_sql import connect as connect_solidset_data
+from app.services.connectivity import _probe_sql_server_connection
 
 
 class SolidSETDataAPIConnectorTests(unittest.TestCase):
+    @patch("app.connectors.solidset_sql.connect_data_api")
+    def test_startup_timeout_override_does_not_mutate_persisted_config(self, connect_data_api):
+        configuration = {"active": True, "BaseUrl": "https://example.test", "TimeoutSeconds": 120}
+        instance = {"DataAPI": configuration}
+
+        with connect_solidset_data(instance, timeout_seconds=5):
+            pass
+
+        self.assertEqual(5, connect_data_api.call_args.args[0]["TimeoutSeconds"])
+        self.assertEqual(120, configuration["TimeoutSeconds"])
+
+    @patch("app.services.connectivity.test_solidset_sql_connection", return_value={"connected": True})
+    def test_startup_sql_probe_uses_bounded_timeout(self, test_connection):
+        instance = {"ID": "example"}
+
+        self.assertTrue(_probe_sql_server_connection(instance)["ok"])
+        test_connection.assert_called_once_with(instance, timeout_seconds=5)
+
     @patch("app.connectors.solidset_data_api.DataAPIConnection")
     @patch("app.connectors.solidset_data_api._read_legacy_agent_scopes")
     def test_only_missing_scope_dataset_uses_compatibility(self, fallback, connection_type):
         connection = connection_type.return_value.__enter__.return_value
         connection.max_rows = 1000
+        connection.timeout_seconds = 120
         response = connection.client.get.return_value
         response.status_code = 404
         response.json.return_value = {"detail": "O conjunto de dados não existe."}

@@ -383,11 +383,14 @@ async def _ciclo_notificaciones_api() -> None:
 @app.on_event("startup")
 async def startup_db_learning() -> None:
     """Lanza la tarea de aprendizaje continuo desde la base de datos."""
+    startup_started = perf_counter()
     try:
         await asyncio.wait_for(asyncio.to_thread(require_redis), timeout=4)
     except (asyncio.TimeoutError, RuntimeError):
         raise RuntimeError("Arranque abortado: Redis no responde dentro de 4 segundos.") from None
+    print(f"AGENT_STARTUP_STAGE stage=redis elapsed={perf_counter() - startup_started:.3f}s", flush=True)
     if getattr(app.state, "db_study_task", None) is None:
+        schema_started = perf_counter()
         max_schema_attempts = 10
         for schema_attempt in range(max_schema_attempts):
             try:
@@ -411,7 +414,10 @@ async def startup_db_learning() -> None:
                     await asyncio.sleep(2.0)
                 else:
                     print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
+        print(f"AGENT_STARTUP_STAGE stage=schema elapsed={perf_counter() - schema_started:.3f}s", flush=True)
+        connectivity_started = perf_counter()
         app.state.startup_connectivity = await asyncio.to_thread(_run_startup_connectivity_checks)
+        print(f"AGENT_STARTUP_STAGE stage=connectivity elapsed={perf_counter() - connectivity_started:.3f}s", flush=True)
         _log_startup_connectivity(app.state.startup_connectivity)
         if app.state.startup_connectivity.get("all_ok"):
             print("✅ Comprobador de conectividad inicial: OK")
@@ -429,6 +435,7 @@ async def startup_db_learning() -> None:
         app.state.notification_task = None
         app.state.redis_maintenance_task = asyncio.create_task(maintenance_loop())
         if notification_listener.is_enabled():
+            warmup_started = perf_counter()
             try:
                 app.state.notification_warmup = (
                     await notification_listener.warmup_session()
@@ -440,6 +447,7 @@ async def startup_db_learning() -> None:
                     "error": str(exc),
                 }
                 print(f"⚠️ Warmup SOLIDSET listener falló: {exc}")
+            print(f"AGENT_STARTUP_STAGE stage=notification_warmup elapsed={perf_counter() - warmup_started:.3f}s", flush=True)
         app.state.db_study_task = None
         if settings.DB_STUDY_INTERVAL_SECONDS > 0:
             app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())
@@ -453,6 +461,7 @@ async def startup_db_learning() -> None:
             print(
                 "ℹ️ Listener Notification API en background desactivado por rendimiento (NOTIF_API_BACKGROUND_ENABLED=false)"
             )
+        print(f"AGENT_STARTUP_TOTAL elapsed={perf_counter() - startup_started:.3f}s", flush=True)
 
 
 @app.on_event("shutdown")

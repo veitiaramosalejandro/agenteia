@@ -126,7 +126,9 @@ def _probe_http_json(
 def _probe_sql_server_connection(instance: dict[str, Any]) -> dict:
     """Checks the SQL Server connection persisted for one SolidSET instance."""
     try:
-        result = test_solidset_sql_connection(instance)
+        # This is a startup diagnostic, not a user query. A slow Data API must
+        # not hold the entire application at its normal 120-second timeout.
+        result = test_solidset_sql_connection(instance, timeout_seconds=5)
         return {"ok": True, **result}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}

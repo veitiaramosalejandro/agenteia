@@ -43,10 +43,16 @@ def connection_options(instance: dict[str, Any]) -> dict[str, Any]:
 
 
 @contextmanager
-def connect(instance: dict[str, Any], *, as_dict: bool = False) -> Iterator[Any]:
+def connect(
+    instance: dict[str, Any], *, as_dict: bool = False,
+    timeout_seconds: int | None = None,
+) -> Iterator[Any]:
     data_api = instance.get("DataAPI") or {}
     if data_api.get("active") and str(data_api.get("BaseUrl") or "").strip():
-        connection = connect_data_api(data_api, as_dict=as_dict)
+        config = dict(data_api)
+        if timeout_seconds is not None:
+            config["TimeoutSeconds"] = timeout_seconds
+        connection = connect_data_api(config, as_dict=as_dict)
         try:
             yield connection
         finally:
@@ -89,8 +95,10 @@ def open_current_connection(*, as_dict: bool = False, timeout: int | None = None
     )
 
 
-def test_connection(instance: dict[str, Any]) -> dict[str, Any]:
-    with connect(instance, as_dict=True) as connection:
+def test_connection(
+    instance: dict[str, Any], *, timeout_seconds: int | None = None,
+) -> dict[str, Any]:
+    with connect(instance, as_dict=True, timeout_seconds=timeout_seconds) as connection:
         with connection.cursor(as_dict=True) as cursor:
             cursor.execute("SELECT DB_NAME() AS DatabaseName, @@VERSION AS ServerVersion")
             row = cursor.fetchone() or {}
