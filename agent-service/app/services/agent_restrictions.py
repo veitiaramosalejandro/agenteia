@@ -7,6 +7,7 @@ from functools import lru_cache
 import json
 import re
 
+import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.connectors.db_client import (
@@ -101,6 +102,16 @@ def answer_restricted_topic(
         return None
     try:
         decision = _scope_decision(message, behavior, instance_id, resource_id)
+    except httpx.TimeoutException as exc:
+        # La plantilla publicada también se incorpora al prompt principal. Un
+        # timeout del clasificador auxiliar no debe convertirse en una negativa
+        # falsa; el modelo principal conserva rol, especialidades y restricciones.
+        print(
+            f"AGENT_SCOPE_DECISION_TIMEOUT agent={resource_id} "
+            f"type={type(exc).__name__} fallback=published_prompt",
+            flush=True,
+        )
+        return None
     except Exception as exc:
         print(f"AGENT_SCOPE_DECISION_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
         return _uncertain_response(language)

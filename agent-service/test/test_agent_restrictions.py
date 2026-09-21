@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import httpx
+
 from app.agent.prompt_budget import compact_system
 from app.services.agent_restrictions import answer_restricted_topic
 
@@ -46,6 +48,21 @@ def test_invalid_scope_decision_fails_closed():
          patch("app.services.agent_restrictions._scope_decision", side_effect=ValueError):
         answer = answer_restricted_topic("¿Qué ejercicios alivian el dolor lumbar?", "instance", "agent")
     assert "No puedo confirmar ahora" in answer
+
+
+def test_scope_timeout_continues_with_published_prompt():
+    with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
+         patch(
+             "app.services.agent_restrictions._scope_decision",
+             side_effect=httpx.ReadTimeout("scope classifier timed out"),
+         ):
+        answer = answer_restricted_topic(
+            "Interpreta el código siguiente: private void LostFocus() {}",
+            "instance",
+            "agent",
+        )
+
+    assert answer is None
 
 
 def test_compact_ollama_prompt_keeps_published_restrictions():
