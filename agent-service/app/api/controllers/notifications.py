@@ -35,6 +35,26 @@ router = APIRouter(tags=["SolidSET Notifications"])
 notification_listener = None
 
 
+def _redact_framework_payload(value: Any) -> Any:
+    """Oculta credenciales antes de imprimir el JSON recibido."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[REDACTED]"
+                if re.search(
+                    r"password|passwd|token|secret|authorization|api[_-]?key|cookie|salt",
+                    str(key),
+                    re.I,
+                )
+                else _redact_framework_payload(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_framework_payload(item) for item in value]
+    return value
+
+
 def _trace_initial_request(request: Request, payload: dict[str, Any]) -> None:
     """Log routing evidence without message text, cookies, or credentials."""
     direct_ip, forwarded_ip = _request_ip_details(request)
@@ -164,6 +184,15 @@ async def receive_framework_notification(
     request: Request,
 ):
     """Recibe desde Notification un FrameworkMessage ya capturado y lo aprende en Qdrant."""
+    print(
+        "📨 FRAMEWORK_MESSAGE_PAYLOAD "
+        + json.dumps(
+            _redact_framework_payload(await request.json()),
+            ensure_ascii=False,
+            default=str,
+        ),
+        flush=True,
+    )
 
     payload = (
         message.model_dump(mode="json")
