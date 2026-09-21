@@ -88,6 +88,19 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         self.assertTrue(self.agent._is_business_knowledge_query(question))
         self.assertTrue(self.agent._is_internal_domain_query(question))
 
+    def test_source_code_identifiers_do_not_trigger_business_sql(self):
+        question = (
+            "Interpreta el codigo siguiente: private void AllTextBoxes_LostFocus"
+            "(object sender, RoutedEventArgs e) { Activity currentActivity; }"
+        )
+        self.assertTrue(self.agent._is_source_code_explanation_request(question))
+        self.assertFalse(self.agent._is_business_knowledge_query(question))
+
+    def test_explicit_activity_question_remains_in_business_domain(self):
+        question = "Interpreta el estado de mis actividades pendientes"
+        self.assertFalse(self.agent._is_source_code_explanation_request(question))
+        self.assertTrue(self.agent._is_business_knowledge_query(question))
+
     def test_rag_must_preserve_distinctive_query_acronym(self):
         question = "Que recursos consome um PWA?"
         self.assertFalse(self.agent._rag_context_matches_query(

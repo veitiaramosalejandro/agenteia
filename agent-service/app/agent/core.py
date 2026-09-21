@@ -1396,7 +1396,10 @@ class MachiningAgent:
 
     def _is_business_knowledge_query(self, user_text: str) -> bool:
         """Business entities that must follow Vector DB -> SolidSET Data API."""
-        if self._is_resource_consumption_query(user_text):
+        if (
+            self._is_resource_consumption_query(user_text)
+            or self._is_source_code_explanation_request(user_text)
+        ):
             return False
         text = self._normalize_context_query(user_text).lower()
         terms = (
@@ -1412,6 +1415,27 @@ class MachiningAgent:
             "organisation",
         )
         return any(term in text for term in terms)
+
+    @staticmethod
+    def _is_source_code_explanation_request(user_text: str) -> bool:
+        """Evita interpretar identificadores de código como entidades de SolidSET."""
+        text = str(user_text or "").strip()
+        if not text:
+            return False
+        asks_about_code = bool(re.search(
+            r"(?i)\b(?:interpreta|interpretar|explica|explicar|analiza|analisar|"
+            r"explain|interpret|review)\b[^\n:]{0,80}\b(?:c[oó]digo|code)\b",
+            text,
+        ))
+        code_structure = bool(
+            re.search(r"```(?:\w+)?", text)
+            or re.search(
+                r"(?m)(?:\b(?:public|private|protected|internal|static|class|def|function)\b"
+                r"[^\n{};]{0,100}[({]|=>|;\s*(?:\r?\n|$)|\{\s*(?:\r?\n|$))",
+                text,
+            )
+        )
+        return asks_about_code and code_structure
 
     def _is_resource_consumption_query(self, user_text: str) -> bool:
         """Distingue consumo técnico de recursos de entidades Resource de SolidSET."""

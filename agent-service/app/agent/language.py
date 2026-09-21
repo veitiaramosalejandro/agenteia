@@ -53,6 +53,14 @@ class LanguageResolver:
         clean = " ".join(str(text or "").split())
         if not clean or self._detector is None:
             return LanguageDecision("", 0.0, "undetermined")
+        # En solicitudes que introducen un bloque de código, el vocabulario de
+        # identificadores no debe ocultar el idioma de la instrucción humana.
+        code_intro = re.match(
+            r"(?is)^(.{3,160}?\b(?:c[oó]digo|code)\b[^:]*)\s*:\s*"
+            r"(?:```|(?:public|private|protected|internal|static|class|def|function)\b)",
+            clean,
+        )
+        detection_text = code_intro.group(1).strip() if code_intro else clean
         greeting_signals = {
             "hola": "es",
             "buenas": "es",
@@ -70,7 +78,7 @@ class LanguageResolver:
         if "¿" in clean or "¡" in clean:
             return LanguageDecision("es", 1.0, "orthographic_signal")
         try:
-            values = self._detector.compute_language_confidence_values(clean)
+            values = self._detector.compute_language_confidence_values(detection_text)
             if not values:
                 return LanguageDecision("", 0.0, "undetermined")
             best = values[0]
@@ -80,7 +88,7 @@ class LanguageResolver:
             lingua_second = float(values[1].value) if len(values) > 1 else 0.0
             lingua_ratio = lingua_value / max(lingua_second, 1e-9)
 
-            ranked = langid.rank(clean)
+            ranked = langid.rank(detection_text)
             langid_language = self.normalize_language(ranked[0][0]) if ranked else ""
             langid_margin = (
                 float(ranked[0][1]) - float(ranked[1][1])
@@ -114,7 +122,7 @@ class LanguageResolver:
                 confidence = min(lingua_value, 0.49)
             # A single token/proper name has no dependable grammatical signal,
             # even when a classifier reports a deceptively high score.
-            word_count = len(re.findall(r"[^\W\d_]+", clean, flags=re.UNICODE))
+            word_count = len(re.findall(r"[^\W\d_]+", detection_text, flags=re.UNICODE))
             if word_count < 2:
                 confidence = min(confidence, 0.49)
             return LanguageDecision(language, confidence, "statistical_ensemble")

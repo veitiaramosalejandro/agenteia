@@ -62,6 +62,16 @@ class TestLanguageResolver(unittest.TestCase):
         self.assertEqual("es", decision.language)
         self.assertEqual("orthographic_signal", decision.source)
 
+    def test_code_identifiers_do_not_override_instruction_language(self):
+        decision = self.resolver.resolve(
+            "Interpreta el código siguiente: private void LostFocus(object sender) "
+            "{ Activity currentActivity; }",
+            session_id="spanish-code",
+            locale="pt-PT",
+        )
+
+        self.assertEqual("es", decision.language)
+
 
 if __name__ == "__main__":
     unittest.main()
