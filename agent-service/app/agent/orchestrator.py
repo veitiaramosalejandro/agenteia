@@ -333,12 +333,33 @@ class SolidSETOrchestrator:
             answer = direct(user_text, metadata, session_id)
             if answer is not None:
                 return answer
+        published_default_language = ""
+        prompt_loader = getattr(self.agent, "_get_active_agent_prompt_cached", None)
+        instance_id = str(metadata.get("solidset_instance_id") or "").strip()
+        agent_resource_id = str(metadata.get("agent_resource_id") or "").strip()
+        if callable(prompt_loader) and instance_id and agent_resource_id:
+            try:
+                published = prompt_loader(instance_id, agent_resource_id) or {}
+                behavior = published.get("BehaviorConfig") or {}
+                if isinstance(behavior, dict):
+                    published_default_language = str(
+                        behavior.get("default_language") or ""
+                    ).strip()
+            except Exception as exc:
+                print(
+                    "⚠️ No se pudo resolver el idioma publicado del agente: "
+                    f"{type(exc).__name__}",
+                    flush=True,
+                )
         decision = self.agent.language_resolver.resolve(
             user_text,
             session_id=session_id,
             locale=str(metadata.get("locale") or ""),
             preferred_language=str(metadata.get("preferred_language") or ""),
-            default_language=str(metadata.get("instance_language") or ""),
+            default_language=(
+                published_default_language
+                or str(metadata.get("instance_language") or "")
+            ),
         )
         metadata.update({
             "resolved_language": decision.language,

@@ -99,10 +99,20 @@ class LanguageResolver:
             lingua_strong = lingua_ratio >= 3.0
             if lingua_language and lingua_language == langid_language:
                 language = lingua_language
-                confidence = max(
-                    0.90,
-                    lingua_value,
-                    1.0 - math.exp(-max(0.0, langid_margin)),
+                # Agreement is not enough when both classifiers are uncertain.
+                # Short technical prompts can otherwise receive high confidence
+                # for an unrelated language (for example Spanish classified as eo).
+                confidence = (
+                    max(
+                        0.90,
+                        lingua_value,
+                        1.0 - math.exp(-max(0.0, langid_margin)),
+                    )
+                    if langid_strong or lingua_strong
+                    else min(
+                        0.49,
+                        max(lingua_value, 1.0 - math.exp(-max(0.0, langid_margin))),
+                    )
                 )
             elif langid_strong and lingua_strong:
                 # Two confident classifiers disagree: do not guess. Locale or
@@ -131,7 +141,9 @@ class LanguageResolver:
 
     @staticmethod
     def _session_key(session_id: str) -> str:
-        return f"solidset:conversation-language:v1:{session_id}"
+        # v2 invalidates language values persisted by the previous overconfident
+        # statistical agreement rule.
+        return f"solidset:conversation-language:v2:{session_id}"
 
     def _remembered(self, session_id: str) -> str:
         if not session_id:

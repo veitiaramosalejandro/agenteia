@@ -72,6 +72,16 @@ class TestLanguageResolver(unittest.TestCase):
 
         self.assertEqual("es", decision.language)
 
+    def test_weak_esperanto_match_uses_published_spanish_default(self):
+        decision = self.resolver.resolve(
+            "Implementa el algoritmo Floyd en Java por favor?",
+            session_id="floyd-spanish",
+            default_language="es",
+        )
+
+        self.assertEqual("es", decision.language)
+        self.assertEqual("instance_default", decision.source)
+
 
 if __name__ == "__main__":
     unittest.main()
