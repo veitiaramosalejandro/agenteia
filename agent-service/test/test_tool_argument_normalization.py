@@ -96,6 +96,16 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         self.assertTrue(self.agent._is_source_code_explanation_request(question))
         self.assertFalse(self.agent._is_business_knowledge_query(question))
 
+    def test_source_code_opinion_does_not_trigger_business_sql(self):
+        question = (
+            "Dame tu opinion sobre este codigo:\n"
+            "private void AllTextBoxes_LostFocus(object sender, RoutedEventArgs e) "
+            "{ bool isTextControl = e.OriginalSource is TextBox; "
+            "_chatTargetView.TypingActivityManager?.ProcessStoppedWriting(this); }"
+        )
+        self.assertTrue(self.agent._is_source_code_explanation_request(question))
+        self.assertFalse(self.agent._is_business_knowledge_query(question))
+
     def test_explicit_activity_question_remains_in_business_domain(self):
         question = "Interpreta el estado de mis actividades pendientes"
         self.assertFalse(self.agent._is_source_code_explanation_request(question))

@@ -1424,7 +1424,9 @@ class MachiningAgent:
             return False
         asks_about_code = bool(re.search(
             r"(?i)\b(?:interpreta|interpretar|explica|explicar|analiza|analisar|"
-            r"explain|interpret|review)\b[^\n:]{0,80}\b(?:c[oó]digo|code)\b",
+            r"revisa|revisar|opina|opinar|opini[oó]n|parecer|"
+            r"explain|interpret|review|opinion|thoughts?)\b"
+            r"[^\n:]{0,100}\b(?:c[oó]digo|code|fragmento|snippet)\b",
             text,
         ))
         code_structure = bool(
