@@ -3584,6 +3584,13 @@ class MachiningAgent:
             if request_metadata.get("response_suggestion_mode")
             else settings.LLM_DIALOGUE_MAX_OUTPUT_TOKENS
         )
+        if (
+            request_metadata.get("response_suggestion_mode")
+            and request_metadata.get("model_capability") == "coding"
+        ):
+            request_metadata["max_output_tokens"] = max(
+                512, request_metadata["max_output_tokens"]
+            )
         if request_metadata.get("related_records_context"):
             request_metadata["max_output_tokens"] = max(
                 768, request_metadata["max_output_tokens"]

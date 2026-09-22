@@ -29,6 +29,38 @@ class FakeAgent:
 
 
 class OrchestratorTests(unittest.TestCase):
+    def test_empty_suggestion_reaches_bounded_repair_instead_of_generic_fallback(self):
+        agent = FakeAgent()
+        agent.analyze_event_with_dialogue = lambda **kwargs: ""
+        orchestrator = SolidSETOrchestrator(agent)
+
+        response = orchestrator.invoke(
+            session_id="suggestion-repair",
+            user_text="Implementa Floyd en Java",
+            message_metadata={"response_suggestion_mode": True, "chat_id": "504815117"},
+            auto_reply_mode=True,
+        )
+
+        self.assertEqual(response, "")
+
+    def test_direct_code_suggestion_uses_coding_capability(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+
+        orchestrator.invoke(
+            session_id="code-suggestion",
+            user_text="Implementa el algoritmo Floyd en Java",
+            message_metadata={
+                "response_suggestion_mode": True,
+                "advice_request": True,
+            },
+            auto_reply_mode=True,
+        )
+
+        self.assertEqual(
+            agent.calls[0]["message_metadata"]["model_capability"], "coding"
+        )
+
     def test_direct_provider_check_is_not_repeated_by_dialogue_core(self):
         agent = FakeAgent()
         agent.direct_calls = 0

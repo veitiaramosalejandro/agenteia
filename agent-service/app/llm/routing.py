@@ -7,7 +7,7 @@ def requested_capability(text: str, metadata: dict | None = None) -> str:
     explicit = str(metadata.get('model_capability') or '').strip().lower()
     if explicit:
         return explicit
-    if metadata.get('response_suggestion_mode'):
+    if metadata.get('response_suggestion_mode') and not metadata.get('advice_request'):
         return 'general'
     text = str(text or '').casefold()
     if metadata.get('public_research') or re.search(

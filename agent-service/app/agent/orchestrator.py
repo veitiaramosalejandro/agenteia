@@ -69,7 +69,8 @@ class SolidSETOrchestrator:
         lowered = user_text.lower()
         metadata = dict(state.get("message_metadata") or {})
         coding_terms = (
-            "código", "codigo", "programa", "python", "javascript", "c#", ".net",
+            "código", "codigo", "programa", "programar", "implementa", "algoritmo",
+            "python", "java", "javascript", "typescript", "c#", ".net",
             "sql", "consulta", "query", "base de datos", "api", "endpoint",
             "docker", "error", "stack trace", "función", "metodo", "método",
         )
@@ -119,9 +120,18 @@ class SolidSETOrchestrator:
         if route == "external_web":
             capability = "external_web"
         elif metadata.get("response_suggestion_mode"):
-            # Advice is a constrained language-generation task. Words from the
-            # channel such as "API" or "aplicações" must not select a coding model.
-            capability = "general"
+            # Ambient channel advice remains general. A direct user request can
+            # still require the coding or reasoning assignment of their agent.
+            if metadata.get("advice_request") and any(
+                term in lowered for term in coding_terms
+            ):
+                capability = "coding"
+            elif metadata.get("advice_request") and any(
+                term in lowered for term in reasoning_terms
+            ):
+                capability = "reasoning"
+            else:
+                capability = "general"
         elif any(term in lowered for term in coding_terms):
             capability = "coding"
         elif any(term in lowered for term in reasoning_terms):
@@ -198,7 +208,20 @@ class SolidSETOrchestrator:
 
     def _validate(self, state: AgentGraphState) -> AgentGraphState:
         response = str(state.get("response") or "").strip()
+        metadata = state.get("message_metadata") or {}
         if not response:
+            if metadata.get("response_suggestion_mode"):
+                # The suggestion service owns its bounded repair pass. Preserve
+                # an empty result (for example after finish=length) so a generic
+                # transport fallback is never accepted as the user's draft.
+                started_at = state.get("started_at") or perf_counter()
+                elapsed = perf_counter() - started_at
+                print(
+                    f"SUGGESTION_REPAIR_REQUIRED request_id={metadata.get('chat_id')} "
+                    f"elapsed={elapsed:.2f}s",
+                    flush=True,
+                )
+                return {"response": "", "elapsed_seconds": elapsed}
             response = "No pude generar una respuesta en este momento. Inténtalo nuevamente."
         elif self.agent._looks_like_raw_tool_response(response):
             response = (
@@ -208,7 +231,7 @@ class SolidSETOrchestrator:
         response = self._ensure_response_language(
             state.get("user_text", ""),
             response,
-            state.get("message_metadata"),
+            metadata,
         )
         response = self._hide_internal_implementation_details(
             response,
