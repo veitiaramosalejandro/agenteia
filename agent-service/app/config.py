@@ -141,6 +141,9 @@ class Settings(BaseSettings):
     SUGGESTION_RESPONSE_POLL_INTERVAL_SECONDS: float = max(
         0.1, float(os.getenv("SUGGESTION_RESPONSE_POLL_INTERVAL_SECONDS", "0.5"))
     )
+    SOLIDSET_INTERACTIVE_VALIDATION_TIMEOUT_SECONDS: int = max(
+        5, min(30, int(os.getenv("SOLIDSET_INTERACTIVE_VALIDATION_TIMEOUT_SECONDS", "5")))
+    )
     SOLIDSET_RETRY_QUEUE_ENABLED: bool = _env_bool("SOLIDSET_RETRY_QUEUE_ENABLED", "true")
     SOLIDSET_RETRY_QUEUE_KEY: str = os.getenv(
         "SOLIDSET_RETRY_QUEUE_KEY", "machining:solidset-deliveries:v1"

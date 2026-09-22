@@ -35,6 +35,7 @@ from app.connectors.db_client import (
 from app.connectors.solidset_sql import (
     instance_context as solidset_sql_instance_context,
 )
+from app.connectors.solidset_data_api import SolidSETDataAPIError
 from app.knowledge_provenance import USER_ASSERTION_SOURCE
 from app.services.auto_reply import (
     _agent_visible_name,
@@ -1634,20 +1635,44 @@ async def _process_chat_question_response_suggestion(
                 "A instância SolidSET não tem um fornecedor de dados configurado."
             )
         identity_started = perf_counter()
-        verification = await asyncio.to_thread(
-            verify_and_sync_solidset_agent_mapping,
-            context["requester_resource"],
-            None,
-            solidset_instance,
-        )
-        if not verification.get("verified"):
-            raise LookupError(
-                "O recurso solicitante não possui um agente IA ativo em SysResource2Agent."
-            )
         identity = await asyncio.to_thread(
             get_active_agent_identity_for_resource,
             context["requester_resource"],
         )
+        validation_instance = dict(solidset_instance)
+        validation_instance["DataAPI"] = {
+            **(solidset_instance.get("DataAPI") or {}),
+            "TimeoutSeconds": settings.SOLIDSET_INTERACTIVE_VALIDATION_TIMEOUT_SECONDS,
+        }
+        try:
+            verification = await asyncio.to_thread(
+                verify_and_sync_solidset_agent_mapping,
+                context["requester_resource"],
+                identity.get("IDAgentResource") if identity else None,
+                validation_instance,
+            )
+        except SolidSETDataAPIError as exc:
+            cached_agent_id = str(
+                (identity or {}).get("IDAgentResource") or ""
+            ).strip()
+            if not cached_agent_id:
+                raise
+            verification = {
+                "verified": True,
+                "IDAgentResource": cached_agent_id,
+                "cached": True,
+            }
+            print(
+                "⚠️ Validação interativa de SysResource2Agent indisponível; "
+                "usando relação local ativa previamente sincronizada "
+                f"IDHumanResource={context['requester_resource']} "
+                f"IDAgentResource={cached_agent_id}: {exc}",
+                flush=True,
+            )
+        if not verification.get("verified"):
+            raise LookupError(
+                "O recurso solicitante não possui um agente IA ativo em SysResource2Agent."
+            )
         log_stage("identity_and_mapping", identity_started)
         if not identity:
             raise LookupError(

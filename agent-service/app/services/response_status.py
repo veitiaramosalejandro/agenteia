@@ -245,3 +245,29 @@ def update(
             {"status": status_name, "at": now, "agentResourceId": agent_resource_id}
         )
     save(data)
+
+
+def prepare_retry(request_id: str, error: str) -> None:
+    """Reset failures from a previous attempt without creating phantom agents."""
+    data = load(request_id)
+    if data is None:
+        return
+    data["agents"] = [
+        state for state in data.get("agents") or []
+        if state.get("status") != "failed"
+    ]
+    now = utc_timestamp()
+    messages = display_messages("queued")
+    data.update(
+        status="queued",
+        code=CODES["queued"],
+        displayMessage=messages["pt"],
+        displayMessages=messages,
+        updatedAt=now,
+        completed=False,
+        completedAt=None,
+        error=error,
+    )
+    data.pop("result", None)
+    data.setdefault("stageHistory", []).append({"status": "queued", "at": now})
+    save(data)

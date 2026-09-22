@@ -1241,9 +1241,14 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
         for configured_agent in configured_agents:
             selected_resource_id = str(configured_agent["IDResource"])
             expected_agent_id = configured_agent.get("IDAgentResource")
+            validation_instance = dict(instance)
+            validation_instance["DataAPI"] = {
+                **(instance.get("DataAPI") or {}),
+                "TimeoutSeconds": settings.SOLIDSET_INTERACTIVE_VALIDATION_TIMEOUT_SECONDS,
+            }
             try:
                 verification = verify_and_sync_solidset_agent_mapping(
-                    selected_resource_id, expected_agent_id, instance
+                    selected_resource_id, expected_agent_id, validation_instance
                 )
             except SolidSETDataAPIError as exc:
                 # A timeout/5xx means the authoritative source could not be

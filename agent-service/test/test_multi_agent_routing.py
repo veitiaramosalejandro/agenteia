@@ -9,6 +9,7 @@ from app.services.response_status import (
     create as _create_response_status,
     load as _load_response_status,
     localize as _localize_response_status,
+    prepare_retry as _prepare_response_retry,
     update as _update_response_status,
 )
 from app.api.controllers.notifications import (
@@ -410,6 +411,27 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             english["displayMessages"],
             {"es": "Respondido", "en": "Answered", "pt": "Respondido"},
         )
+
+    @patch("app.services.response_status._redis")
+    def test_suggestion_retry_removes_transient_failed_identity(self, redis_mock):
+        storage = {}
+        redis_mock.setex.side_effect = lambda key, ttl, value: storage.__setitem__(key, value)
+        redis_mock.get.side_effect = lambda key: storage.get(key)
+
+        _create_response_status("retry-1", "504815114", 1)
+        _update_response_status(
+            "retry-1", "failed", agent_resource_id="human-resource", error="HTTP 504"
+        )
+        _prepare_response_retry("retry-1", "Reintento 1")
+        _update_response_status(
+            "retry-1", "completed", agent_resource_id="agent-resource",
+            response_count=1, result={"suggestions": [{"id": "1", "text": "ok"}]},
+        )
+
+        current = _load_response_status("retry-1")
+        self.assertEqual(current["status"], "completed")
+        self.assertTrue(current["completed"])
+        self.assertEqual([item["agentResourceId"] for item in current["agents"]], ["agent-resource"])
 
     def test_inflates_preview_form_as_nested_solidset_payload(self):
         payload = _inflate_solidset_form_payload(

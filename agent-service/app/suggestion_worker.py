@@ -13,6 +13,7 @@ from app.interactive_priority import async_interactive_work
 from app.container import agent as _configured_agent  # noqa: F401 - configures shared runtime
 from app.api.schemas.common import FrameworkMessageDTO
 from app.services.response_status import load as _load_response_status
+from app.services.response_status import prepare_retry as _prepare_response_retry
 from app.services.response_status import update as _update_response_status
 from app.services.suggestions import _process_chat_question_response_suggestion
 from app.suggestion_queue import SuggestionQueue
@@ -91,8 +92,8 @@ async def run_worker() -> None:
                     flush=True,
                 )
                 if not terminal_output_error and attempt < settings.SUGGESTION_MAX_RETRIES:
-                    _update_response_status(
-                        request_id, "queued", error=f"Reintento {attempt + 1}: {detail}"
+                    _prepare_response_retry(
+                        request_id, f"Reintento {attempt + 1}: {detail}"
                     )
                     # Hand the request lock to the retry entry. Keeping it until
                     # ``finally`` can make another worker discard the new entry
