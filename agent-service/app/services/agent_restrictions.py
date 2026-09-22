@@ -18,8 +18,17 @@ from app.llm.providers import create_chat_model, provider_config_from_record
 from app.llm.text import response_text
 
 
+def _request_instruction(message: str) -> str:
+    """Return the user's instruction without letting an attached artifact dominate it."""
+    text = str(message or "").strip()
+    if not text:
+        return ""
+    first_paragraph = re.split(r"\r?\n\s*\r?\n", text, maxsplit=1)[0].strip()
+    return first_paragraph if first_paragraph else text
+
+
 def _language(message: str) -> str:
-    language = _language_resolver().detect(message).language
+    language = _language_resolver().detect(_request_instruction(message)).language
     return language if language in {"es", "en", "pt"} else "pt"
 
 
@@ -54,6 +63,8 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
         "role": behavior.get("role"),
         "objective": behavior.get("objective"),
         "specialties": behavior.get("specialties"),
+        "code_review_instructions": behavior.get("code_review_instructions"),
+        "response_format": behavior.get("response_format"),
         "restrictions": behavior.get("restrictions"),
         "out_of_scope_action": behavior.get("out_of_scope_action"),
     }
@@ -62,7 +73,10 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
     result = model.invoke([
         SystemMessage(content=(
             "Decide si la pregunta del usuario está permitida por la configuración PUBLICADA "
-            "del agente seleccionado. Las restricciones explícitas prevalecen. Si la pregunta "
+            "del agente seleccionado. Evalúa la TAREA SOLICITADA, no el tema ni el idioma del "
+            "artefacto que el usuario pide procesar (por ejemplo código, texto o datos). Si la "
+            "tarea aparece explícitamente en role, objective, specialties o instrucciones, decide "
+            "allow. Las restricciones explícitas prevalecen. Si la pregunta "
             "está claramente fuera del rol/especialidades y out_of_scope_action indica declinar, "
             "decide decline. Saludos y preguntas sobre la identidad del agente son allow salvo "
             "prohibición explícita. Si la relación con una restricción es incierta, decide decline "
@@ -71,7 +85,12 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
             '{"decision":"allow"} o {"decision":"decline"}. No respondas la pregunta.'
         )),
         HumanMessage(content=json.dumps(
-            {"published_agent_policy": policy, "question": message}, ensure_ascii=False
+            {
+                "published_agent_policy": policy,
+                "requested_task": _request_instruction(message),
+                "content_to_process": message,
+            },
+            ensure_ascii=False,
         )),
     ])
     raw = response_text(result).strip()

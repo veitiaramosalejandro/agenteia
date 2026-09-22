@@ -3,7 +3,7 @@ from unittest.mock import patch
 import httpx
 
 from app.agent.prompt_budget import compact_system
-from app.services.agent_restrictions import answer_restricted_topic
+from app.services.agent_restrictions import _language, _request_instruction, answer_restricted_topic
 
 
 PUBLISHED = {
@@ -65,6 +65,18 @@ def test_scope_timeout_continues_with_published_prompt():
         )
 
     assert answer is None
+
+
+def test_attached_code_does_not_change_request_language():
+    message = (
+        "Explícame bien qué está haciendo esta línea de código:\n\n"
+        "// Determine if the control that lost focus is a text input control\n"
+        "bool isTextControl = e.OriginalSource is TextBox;"
+    )
+    assert _request_instruction(message) == (
+        "Explícame bien qué está haciendo esta línea de código:"
+    )
+    assert _language(message) == "es"
 
 
 def test_compact_ollama_prompt_keeps_published_restrictions():
