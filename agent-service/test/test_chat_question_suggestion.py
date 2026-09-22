@@ -308,6 +308,22 @@ class TestChatQuestionSuggestion(unittest.TestCase):
         )
         self.assertNotEqual(first, second)
 
+    def test_suggestion_sessions_are_isolated_by_solidset_instance(self):
+        base = {
+            "requester_resource": "resource-1",
+            "workroom_id": "room-1",
+            "related_records": [],
+        }
+
+        local = _chat_question_session_id(
+            {**base, "solidset_instance_id": "local-developer"}
+        )
+        beta = _chat_question_session_id(
+            {**base, "solidset_instance_id": "beta-solidset"}
+        )
+
+        self.assertNotEqual(local, beta)
+
     def test_related_record_gate_rejects_another_task(self):
         records = [
             {

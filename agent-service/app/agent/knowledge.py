@@ -16,12 +16,14 @@ class AgentKnowledge:
         query: str,
         *,
         agent_resource_id: str,
+        solidset_instance_id: str,
         canal_id: Optional[str] = None,
         min_score: float = 0.0,
     ) -> str:
         return self.backend.consultar_conocimiento_agente(
             query,
             agent_resource_id=agent_resource_id,
+            solidset_instance_id=solidset_instance_id,
             canal_id=canal_id,
             min_score=min_score,
         )

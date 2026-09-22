@@ -11,13 +11,15 @@ class AgentKnowledgeTests(unittest.TestCase):
         knowledge = AgentKnowledge(backend)
 
         result = knowledge.search_agent(
-            "question", agent_resource_id="agent-a", canal_id="channel-a", min_score=0.7
+            "question", agent_resource_id="agent-a", solidset_instance_id="instance-a",
+            canal_id="channel-a", min_score=0.7
         )
 
         self.assertEqual(result, "known")
         backend.consultar_conocimiento_agente.assert_called_once_with(
             "question",
             agent_resource_id="agent-a",
+            solidset_instance_id="instance-a",
             canal_id="channel-a",
             min_score=0.7,
         )

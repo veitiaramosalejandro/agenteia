@@ -1333,7 +1333,10 @@ class NotificationApiListener:
         # agente utilice este patrón personal.
         if sender_resource and not generated_by_ia and (raw_message or structured_activity):
             try:
-                owner_agent = get_active_agent_identity_for_resource(sender_resource)
+                owner_agent = get_active_agent_identity_for_resource(
+                    sender_resource,
+                    str(payload.get("_SolidSETInstanceID") or "") or None,
+                )
             except Exception as exc:
                 owner_agent = None
                 print(f"⚠️ No se pudo resolver aprendizaje privado del agente: {exc}")

@@ -1324,7 +1324,11 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     else f"{configured_resource_name} [IA]"
                 )
             try:
-                private_knowledge = get_agent_knowledge(agent_resource_id, channel_id)
+                private_knowledge = get_agent_knowledge(
+                    agent_resource_id,
+                    channel_id,
+                    candidate.get("solidset_instance_id"),
+                )
             except (ValueError, psycopg.Error) as exc:
                 print(
                     f"⚠️ Conocimiento privado no disponible para {agent_resource_id}: {exc}"
@@ -1476,6 +1480,7 @@ def _learn_direct_agent_assertion(candidate: dict[str, Any]) -> bool:
         saved = save_agent_knowledge(
             {
                 "IDResource": agent_resource_id,
+                "IDSolidSETInstance": candidate.get("solidset_instance_id"),
                 "IDWorkRoom": channel_id or None,
                 "Title": "Hecho enseñado directamente al agente",
                 "KnowledgeText": assertion,

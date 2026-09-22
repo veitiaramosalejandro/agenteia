@@ -1337,6 +1337,7 @@ class SistemaAprendizaje:
         query: str,
         *,
         agent_resource_id: str,
+        solidset_instance_id: str,
         canal_id: Optional[str] = None,
         limit: int = 3,
         min_score: float = 0.0,
@@ -1351,6 +1352,7 @@ class SistemaAprendizaje:
             # this method to durable agent facts, never prior model answers.
             query_filter={
                 "agent_resource_id": str(agent_resource_id),
+                "solidset_instance_id": str(solidset_instance_id),
                 "scope": "agent",
             },
             limit=max(limit * 4, limit),
@@ -1555,6 +1557,7 @@ class SistemaAprendizaje:
                         "source": knowledge.get("Source") or "manual",
                         "learned_at": str(knowledge.get("Stamp") or datetime.now()),
                         "agent_resource_id": str(knowledge["IDResource"]),
+                        "solidset_instance_id": str(knowledge.get("IDSolidSETInstance") or ""),
                         "canal_id": str(knowledge.get("IDWorkRoom") or ""),
                         "scope": "agent",
                         "knowledge_id": str(knowledge["ID"]),

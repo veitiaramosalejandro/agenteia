@@ -2928,6 +2928,7 @@ class MachiningAgent:
                 agent_rag_context = self.knowledge.search_agent(
                     user_text,
                     agent_resource_id=agent_resource_id,
+                    solidset_instance_id=str(metadata_identity.get("solidset_instance_id") or ""),
                     canal_id=canal_id,
                     min_score=settings.BUSINESS_RAG_MIN_SCORE,
                 )

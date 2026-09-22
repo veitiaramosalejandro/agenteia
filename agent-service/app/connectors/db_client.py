@@ -894,22 +894,34 @@ def get_solidset_login_for_active_agent(
 
 def get_active_agent_identity_for_resource(
     resource_id: UUID | str,
+    instance_id: UUID | str | None = None,
 ) -> dict[str, Any] | None:
-    """Resuelve el agente activo cuyo propietario humano usa IDResource."""
+    """Resuelve el agente activo del propietario dentro de una instancia."""
     try:
         normalized = UUID(str(resource_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    try:
+        normalized_instance = UUID(str(instance_id)) if instance_id else None
     except (TypeError, ValueError, AttributeError):
         return None
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 '''
-                SELECT "ID", "IDResource", "IDAgentResource", "Name"
-                FROM public."SysResourceIA"
-                WHERE "IDResource" = %s AND active = true
+                SELECT r."ID", r."IDResource",
+                       COALESCE(ir."IDAgentResource", r."IDAgentResource") AS "IDAgentResource",
+                       r."Name"
+                FROM public."SysResourceIA" r
+                LEFT JOIN public."SysSolidSETInstanceResource" ir
+                  ON ir."IDResource" = r."IDResource"
+                 AND ir."IDSolidSETInstance" = %s
+                 AND ir.active = true
+                WHERE r."IDResource" = %s AND r.active = true
+                  AND (%s::uuid IS NULL OR ir."IDResource" IS NOT NULL)
                 LIMIT 1
                 ''',
-                (normalized,),
+                (normalized_instance, normalized, normalized_instance),
             )
             row = cursor.fetchone()
     return dict(row) if row is not None else None
@@ -1295,6 +1307,7 @@ def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
                     '''
                     SELECT * FROM public."SysResourceIAKnowledge"
                     WHERE "IDResource"=%s
+                      AND "IDSolidSETInstance"=%s
                       AND "IDWorkRoom" IS NOT DISTINCT FROM %s
                       AND "KnowledgeText"=%s
                       AND "Source"=%s
@@ -1302,7 +1315,8 @@ def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
                     ORDER BY "Stamp" DESC LIMIT 1
                     ''',
                     (
-                        knowledge["IDResource"], knowledge.get("IDWorkRoom"),
+                        knowledge["IDResource"], knowledge.get("IDSolidSETInstance"),
+                        knowledge.get("IDWorkRoom"),
                         knowledge["KnowledgeText"], source,
                     ),
                 )
@@ -1312,12 +1326,12 @@ def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
             cursor.execute(
                 '''
                 INSERT INTO public."SysResourceIAKnowledge" (
-                    "IDResource", "IDWorkRoom", "Title", "KnowledgeText", "Source", active
-                ) VALUES (%s, %s, %s, %s, %s, %s)
+                    "IDSolidSETInstance", "IDResource", "IDWorkRoom", "Title", "KnowledgeText", "Source", active
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 ''',
                 (
-                    knowledge["IDResource"], knowledge.get("IDWorkRoom"),
+                    knowledge.get("IDSolidSETInstance"), knowledge["IDResource"], knowledge.get("IDWorkRoom"),
                     knowledge.get("Title"), knowledge["KnowledgeText"],
                     source, knowledge.get("active", True),
                 ),
@@ -1328,7 +1342,11 @@ def save_agent_knowledge(knowledge: dict[str, Any]) -> dict[str, Any]:
     return {**dict(saved), "WasExisting": False}
 
 
-def get_agent_knowledge(resource_id: UUID | str, workroom_id: UUID | str) -> str:
+def get_agent_knowledge(
+    resource_id: UUID | str,
+    workroom_id: UUID | str,
+    instance_id: UUID | str,
+) -> str:
     """Obtiene conocimiento privado del agente y el específico del canal actual."""
     from app.knowledge_provenance import usable_agent_knowledge
 
@@ -1338,13 +1356,14 @@ def get_agent_knowledge(resource_id: UUID | str, workroom_id: UUID | str) -> str
                 '''
                 SELECT "Title", "KnowledgeText", "Source"
                 FROM public."SysResourceIAKnowledge"
-                WHERE "IDResource" = %s
+                WHERE "IDSolidSETInstance" = %s
+                  AND "IDResource" = %s
                   AND active = true
                   AND ("IDWorkRoom" IS NULL OR "IDWorkRoom" = %s)
                 ORDER BY "IDWorkRoom" NULLS FIRST, "Stamp" DESC
                 LIMIT 30
                 ''',
-                (UUID(str(resource_id)), UUID(str(workroom_id))),
+                (UUID(str(instance_id)), UUID(str(resource_id)), UUID(str(workroom_id))),
             )
             rows = cursor.fetchall()
     return "\n\n".join(

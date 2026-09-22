@@ -434,7 +434,8 @@ def _format_suggestion_scope_context(
 def _chat_question_session_id(context: dict[str, Any]) -> str:
     """Aísla la memoria por usuario/canal y, cuando existe, por registro relacionado."""
     base = (
-        f"solidset:suggestion:agent:{context['requester_resource']}:"
+        f"solidset:{context.get('solidset_instance_id') or 'unscoped'}:"
+        f"suggestion:agent:{context['requester_resource']}:"
         f"workroom:{context['workroom_id']}:advice"
     )
     records = context.get("related_records") or []
@@ -1098,6 +1099,7 @@ def _persist_suggestion_fact(
     saved = save_agent_knowledge(
         {
             "IDResource": resource_id,
+            "IDSolidSETInstance": solidset_instance_id,
             "IDWorkRoom": workroom_id,
             "Title": "Hecho enseñado desde el panel de sugerencias",
             "KnowledgeText": fact,
@@ -1638,6 +1640,7 @@ async def _process_chat_question_response_suggestion(
         identity = await asyncio.to_thread(
             get_active_agent_identity_for_resource,
             context["requester_resource"],
+            solidset_instance["ID"],
         )
         validation_instance = dict(solidset_instance)
         validation_instance["DataAPI"] = {
@@ -1718,6 +1721,7 @@ async def _process_chat_question_response_suggestion(
             get_agent_knowledge,
             context["requester_resource"],
             context["workroom_id"],
+            solidset_instance["ID"],
         )
         reinforcement = await asyncio.to_thread(
             get_agent_reinforcement_context,
@@ -1818,8 +1822,12 @@ async def _process_chat_question_response_suggestion(
                 raise LookupError(
                     "Não foram encontradas mensagens acessíveis no canal ou na reunião para gerar sugestões."
                 )
-        session_context = context if use_related_record or answer_meta_question else {
-            **context, "related_records": [], "quoted_chat_id": "",
+        session_context = {
+            **context,
+            "solidset_instance_id": str(solidset_instance["ID"]),
+            **({} if use_related_record or answer_meta_question else {
+                "related_records": [], "quoted_chat_id": "",
+            }),
         }
         scoped_session = _chat_question_session_id(session_context)
         # Keep follow-ups anchored to the same record; unrelated unanchored
