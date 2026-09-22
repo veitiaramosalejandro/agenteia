@@ -311,6 +311,18 @@ def _sanitize_related_record_value(value: Any) -> str:
     return text.strip(" -;,.")
 
 
+def _sanitize_learned_assertion_output(value: Any) -> str:
+    """Preserve user-authored Markdown while removing internal file references."""
+    text = str(value if value is not None else "").replace("\r\n", "\n").strip()
+    text = re.sub(
+        r"(?:solidset://)?file/[0-9a-f-]{16,}(?:[-_/][a-z0-9-]+)*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text.strip()
+
+
 _UNAVAILABLE_RECORD_VALUES = {
     "", "no disponible", "not available", "não disponível", "none", "null",
 }
@@ -1089,6 +1101,11 @@ def _extract_learnable_suggestion_fact(text: str) -> str:
     )
 
 
+def _learned_assertion_output(fact: str) -> tuple[str, list[str]]:
+    """Return a learned assertion verbatim without reparsing its Markdown."""
+    return json.dumps([fact], ensure_ascii=False), [fact]
+
+
 def _persist_suggestion_fact(
     *,
     resource_id: str,
@@ -1751,7 +1768,13 @@ async def _process_chat_question_response_suggestion(
         scope_context = ""
         request_intent, use_related_record = ("ambient", False)
         explicit_task = bool(re.search(r"\bT-\d{2}-\d+\b", effective_request_text, re.I))
-        if not ambient_mode:
+        if learned_fact:
+            # The current turn is an explicit user assertion that was just
+            # persisted with provenance. It is already the authoritative draft
+            # for this request: do not reinterpret it as an external question
+            # or replace it with web/model output.
+            request_intent, use_related_record = ("learned_assertion", False)
+        elif not ambient_mode:
             request_intent, use_related_record = await asyncio.to_thread(
                 _classify_suggestion_request,
                 effective_request_text,
@@ -1839,6 +1862,8 @@ async def _process_chat_question_response_suggestion(
             initial=ambient_mode,
             completed_turns=completed_turns,
         )
+        if learned_fact:
+            suggestion_count = 1
         concrete_answer_mode = request_intent in {"internal", "general", "external"}
         related_guidance_mode = bool(
             request_intent == "recommendation" and related_records_context
@@ -2072,10 +2097,29 @@ async def _process_chat_question_response_suggestion(
             if advice_request
             else None
         )
-        direct_answer = None if request_intent == "internal" or related_records_context else await asyncio.to_thread(
-            agent.answer_with_assigned_openai, effective_request_text, metadata, scoped_session
+        direct_answer = learned_fact or (
+            None
+            if request_intent == "internal" or related_records_context
+            else await asyncio.to_thread(
+                agent.answer_with_assigned_openai,
+                effective_request_text,
+                metadata,
+                scoped_session,
+            )
         )
-        if direct_answer is not None:
+        if learned_fact:
+            print(
+                f"SUGGESTION_LEARNED_ASSERTION request_id={request_id} "
+                f"chars={len(learned_fact)}",
+                flush=True,
+            )
+        if learned_fact:
+            # Preserve the complete assertion, including Markdown and code
+            # blocks. The generic parser intentionally rejects some long
+            # free-form documents, but this text has already passed the
+            # learning/provenance gate and was persisted successfully.
+            raw_suggestions, suggestions = _learned_assertion_output(learned_fact)
+        elif direct_answer is not None:
             suggestion_count = int(metadata.get("response_suggestion_count") or suggestion_count)
             raw_suggestions = direct_answer
             suggestions = _parse_chat_question_suggestions(raw_suggestions, limit=suggestion_count)
@@ -2262,11 +2306,16 @@ async def _process_chat_question_response_suggestion(
                 suggestions = _safe_chat_question_fallback(
                     metadata["response_language"], suggestion_count, scope_context
                 )
+        output_sanitizer = (
+            _sanitize_learned_assertion_output
+            if learned_fact
+            else _sanitize_related_record_value
+        )
         suggestions = [
-            _sanitize_related_record_value(item)
+            output_sanitizer(item)
             for item in suggestions
-            if _sanitize_related_record_value(item)
-            and _is_safe_auto_reply_output(_sanitize_related_record_value(item))
+            if output_sanitizer(item)
+            and _is_safe_auto_reply_output(output_sanitizer(item))
         ]
         if not suggestions:
             if related_guidance_mode:
