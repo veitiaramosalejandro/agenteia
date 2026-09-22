@@ -2855,7 +2855,13 @@ class MachiningAgent:
         resource_id = str(metadata_identity.get("resource_id") or user_id or "").strip()
         login_id = str(metadata_identity.get("login_id") or "").strip()
         workroom_id = str(metadata_identity.get("workroom_id") or canal_id or "").strip()
-        if self._is_valid_guid(resource_id):
+        solidset_sql_allowed = "solidset_sql" in set(
+            metadata_identity.get("tool_permissions") or ()
+        )
+        solidset_schema_allowed = "solidset_schema" in set(
+            metadata_identity.get("tool_permissions") or ()
+        )
+        if solidset_sql_allowed and self._is_valid_guid(resource_id):
             authenticated_identity = self.sistema_aprendizaje.resolve_conversation_identity(
                 resource_id=resource_id,
                 login_id=login_id or None,
@@ -3413,7 +3419,12 @@ class MachiningAgent:
         # ya han respondido; llegar aquí significa que necesitamos generar una
         # consulta nueva sin inventar tablas, columnas ni JOINs.
         business_schema_context = ""
-        if business_knowledge_query and not vector_answers_business_query and not record_focused:
+        if (
+            business_knowledge_query
+            and solidset_schema_allowed
+            and not vector_answers_business_query
+            and not record_focused
+        ):
             table_hints = self._business_schema_table_hints(business_query_text)
             if table_hints:
                 business_schema_context = str(self._sql_adapter().schema({
@@ -3424,7 +3435,13 @@ class MachiningAgent:
         
         # 4.1 Contexto del usuario (canales, rol, permisos)
         contexto_usuario = ""
-        if valid_user_guid and not external_query_mode and not general_conversation_mode and not record_focused:
+        if (
+            solidset_sql_allowed
+            and valid_user_guid
+            and not external_query_mode
+            and not general_conversation_mode
+            and not record_focused
+        ):
             contexto_usuario = self._get_user_context(user_id)
         
         # 4.2 Contexto RAG (documentos técnicos)
@@ -3463,6 +3480,7 @@ class MachiningAgent:
             chat_context_bd = str(metadata_identity.get("scope_context") or "").strip()
         elif (
             valid_user_guid
+            and solidset_sql_allowed
             and not record_focused
             and not suggestion_refine_mode
             and not external_query_mode
@@ -3479,6 +3497,7 @@ class MachiningAgent:
         if (
             valid_user_guid
             and valid_channel_guid
+            and solidset_sql_allowed
             and not record_focused
             and not suggestion_refine_mode
             and not external_query_mode
@@ -3521,6 +3540,7 @@ class MachiningAgent:
                 )
         elif (
             valid_user_guid
+            and solidset_sql_allowed
             and not record_focused
             and not suggestion_refine_mode
             and not external_query_mode

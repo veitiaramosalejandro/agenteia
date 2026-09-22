@@ -18,8 +18,9 @@ def requested_capability(text: str, metadata: dict | None = None) -> str:
     if re.search(r'\b(sql|t-sql)\b', text):
         return 'sql'
     if re.search(
-        r'\b(código|codigo|code|python|javascript|c#|\.net|wpf|api|endpoint|docker|'
-        r'programar|programação|método|metodo|función|funcion|function|classe|clase|class)\b',
+        r'\b(código|codigo|code|python|java|javascript|typescript|c#|\.net|wpf|api|endpoint|docker|'
+        r'programar|programação|implementa|implementar|implement|algoritmo|algorithm|'
+        r'método|metodo|función|funcion|function|classe|clase|class)\b',
         text,
     ):
         return 'coding'
