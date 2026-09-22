@@ -27,9 +27,12 @@ def _request_instruction(message: str) -> str:
     return first_paragraph if first_paragraph else text
 
 
-def _language(message: str) -> str:
+def _language(message: str, default_language: str | None = None) -> str:
     language = _language_resolver().detect(_request_instruction(message)).language
-    return language if language in {"es", "en", "pt"} else "pt"
+    if language in {"es", "en", "pt"}:
+        return language
+    configured = str(default_language or "").strip().lower().split("-", 1)[0]
+    return configured if configured in {"es", "en", "pt"} else "pt"
 
 
 @lru_cache(maxsize=1)
@@ -76,7 +79,9 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
             "del agente seleccionado. Evalúa la TAREA SOLICITADA, no el tema ni el idioma del "
             "artefacto que el usuario pide procesar (por ejemplo código, texto o datos). Si la "
             "tarea aparece explícitamente en role, objective, specialties o instrucciones, decide "
-            "allow. Las restricciones explícitas prevalecen. Si la pregunta "
+            "allow. Una tecnología, algoritmo o tarea nombrada tanto en la solicitud como en la "
+            "política publicada es evidencia explícita de que pertenece al ámbito. Las "
+            "restricciones explícitas prevalecen. Si la pregunta "
             "está claramente fuera del rol/especialidades y out_of_scope_action indica declinar, "
             "decide decline. Saludos y preguntas sobre la identidad del agente son allow salvo "
             "prohibición explícita. Si la relación con una restricción es incierta, decide decline "
@@ -108,13 +113,13 @@ def answer_restricted_topic(
     """Return a refusal only when the published policy calls for one."""
     if not instance_id or not resource_id:
         return None
-    language = _language(message)
     try:
         published = get_active_agent_prompt(instance_id, resource_id)
     except Exception as exc:
         print(f"AGENT_SCOPE_POLICY_LOOKUP_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
-        return _uncertain_response(language)
+        return _uncertain_response(_language(message))
     behavior = (published or {}).get("BehaviorConfig") or {}
+    language = _language(message, behavior.get("default_language"))
     if not isinstance(behavior, dict) or not (
         behavior.get("restrictions") or behavior.get("out_of_scope_action")
     ):

@@ -79,6 +79,19 @@ def test_attached_code_does_not_change_request_language():
     assert _language(message) == "es"
 
 
+def test_unknown_detected_language_uses_published_default():
+    class Decision:
+        language = "eo"
+
+    class Resolver:
+        @staticmethod
+        def detect(_message):
+            return Decision()
+
+    with patch("app.services.agent_restrictions._language_resolver", return_value=Resolver()):
+        assert _language("Implementa el algoritmo Floyd en Java", "es") == "es"
+
+
 def test_compact_ollama_prompt_keeps_published_restrictions():
     prompt = compact_system(
         "", language="español", identity={}, agent_id="agent", subject_id="",
