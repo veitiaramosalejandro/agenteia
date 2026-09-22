@@ -126,6 +126,9 @@ class SolidSETDataAPIConnectorTests(unittest.TestCase):
             {"offset": 1, "limit": 500},
             client_type.return_value.get.call_args_list[1].kwargs["params"],
         )
+        request_timeout = client_type.return_value.get.call_args.kwargs["timeout"]
+        self.assertEqual(5, request_timeout.connect)
+        self.assertEqual(30, request_timeout.read)
 
     @patch("app.connectors.solidset_data_api.os.path.exists", return_value=True)
     def test_localhost_uses_host_gateway_inside_docker(self, _exists):

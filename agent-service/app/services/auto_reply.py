@@ -1172,11 +1172,21 @@ def _candidate_session_id(candidate: dict) -> uuid.UUID:
         if isinstance(payload.get("FrameworkSender"), dict)
         else {}
     )
+    message_sender = (
+        payload.get("Sender")
+        if isinstance(payload.get("Sender"), dict)
+        else payload.get("sender")
+        if isinstance(payload.get("sender"), dict)
+        else {}
+    )
     candidates = (
         payload.get("IDSession"),
         sender.get("Session"),
         sender.get("session"),
         sender.get("IDSession"),
+        message_sender.get("Session"),
+        message_sender.get("session"),
+        message_sender.get("IDSession"),
         candidate.get("chat_id"),
     )
     for value in candidates:
@@ -1189,6 +1199,15 @@ def _candidate_session_id(candidate: dict) -> uuid.UUID:
         f"{candidate.get('reply_resource')}"
     )
     return uuid.uuid5(uuid.NAMESPACE_URL, f"solidset-agent-session:{stable_scope}")
+
+
+def _candidate_conversation_id(candidate: dict, fallback: str) -> str:
+    """Mantiene juntos los turnos de la sesión, aunque cambie IDChat2."""
+    return str(
+        candidate.get("agent_session_id")
+        or candidate.get("chat_id")
+        or fallback
+    )
 
 
 def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
@@ -1759,11 +1778,7 @@ async def _process_auto_replies_impl(
             agent_resource_id=status_agent_id,
             agent_name=agent_name,
         )
-        conversation_id = str(
-            candidate.get("chat_id")
-            or candidate.get("agent_session_id")
-            or conversation_scope
-        )
+        conversation_id = _candidate_conversation_id(candidate, conversation_scope)
         session_id = (
             f"solidset:{candidate.get('solidset_instance_id') or 'unscoped'}:"
             f"agent:{agent_resource_id}:room:{channel_id}:"

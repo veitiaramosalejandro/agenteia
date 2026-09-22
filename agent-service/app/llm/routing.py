@@ -17,7 +17,11 @@ def requested_capability(text: str, metadata: dict | None = None) -> str:
         return 'external_web'
     if re.search(r'\b(sql|t-sql)\b', text):
         return 'sql'
-    if re.search(r'\b(código|codigo|python|javascript|api|endpoint|docker|programar|programação)\b', text):
+    if re.search(
+        r'\b(código|codigo|code|python|javascript|c#|\.net|wpf|api|endpoint|docker|'
+        r'programar|programação|método|metodo|función|funcion|function|classe|clase|class)\b',
+        text,
+    ):
         return 'coding'
     if re.search(r'\b(analiza|analise|analisa|compara|razona|estrategia|estratégia|planifica)\b', text):
         return 'reasoning'

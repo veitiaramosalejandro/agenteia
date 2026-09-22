@@ -19,6 +19,8 @@ from app.api.controllers.notifications import (
 )
 from app.services.auto_reply import (
     _auto_reply_rejection_reason,
+    _candidate_conversation_id,
+    _candidate_session_id,
     _payload_requests_agent_response,
     _process_auto_replies_impl,
     _selected_agent_resource_ids,
@@ -30,6 +32,30 @@ from app.api.controllers.agent_management import (
 
 
 class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
+    def test_framework_sender_session_is_stable_across_chat_messages(self):
+        session_id = uuid4()
+        first = {
+            "chat_id": "1766719",
+            "payload": {"sender": {"session": str(session_id)}},
+        }
+        follow_up = {
+            "chat_id": "1766721",
+            "payload": {"Sender": {"Session": str(session_id)}},
+        }
+
+        first_session = str(_candidate_session_id(first))
+        follow_up_session = str(_candidate_session_id(follow_up))
+
+        self.assertEqual(str(session_id), first_session)
+        self.assertEqual(first_session, follow_up_session)
+        self.assertEqual(
+            first_session,
+            _candidate_conversation_id(
+                {"agent_session_id": first_session, "chat_id": "1766721"},
+                "fallback",
+            ),
+        )
+
     def test_question_type_response_contract(self):
         self.assertTrue(
             _payload_requests_agent_response(

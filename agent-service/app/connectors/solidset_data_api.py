@@ -155,6 +155,8 @@ class DataAPIConnection:
         self.max_rows = int(configuration.get("MaxRows") or 5000)
         timeout = max(5, int(configuration.get("TimeoutSeconds") or 120))
         self.timeout_seconds = timeout
+        parsed_base = urlsplit(base_url)
+        self.base_origin = urlunsplit((parsed_base.scheme, parsed_base.netloc, "", "", ""))
         self.client = httpx.Client(
             base_url=base_url,
             headers={"X-SolidSET-Data-Key": api_key},
@@ -276,7 +278,10 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                     response = connection.client.get(
                         f"/api/v1/datasets/{dataset}",
                         params=params,
-                        timeout=httpx.Timeout(min(connection.timeout_seconds, 30)),
+                        timeout=httpx.Timeout(
+                            min(connection.timeout_seconds, 30),
+                            connect=min(connection.timeout_seconds, 5),
+                        ),
                     )
                     last_transport_error = None
                 except httpx.HTTPError as exc:
@@ -284,7 +289,7 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                     print(
                         f"SOLIDSET_DATASET_REQUEST_FAILED dataset={dataset} "
                         f"offset={offset} limit={page_size} attempt={attempt} "
-                        f"type={type(exc).__name__}",
+                        f"type={type(exc).__name__} destination={connection.base_origin}",
                         flush=True,
                     )
                     if attempt < 3:
