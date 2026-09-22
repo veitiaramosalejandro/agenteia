@@ -9,7 +9,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.config import settings
-from app.connectors.db_client import get_llm_provider_configuration
+from app.connectors.db_client import (
+    get_active_llm_provider_configuration,
+    get_llm_provider_configuration,
+)
 
 
 @dataclass(frozen=True)
@@ -79,12 +82,16 @@ def search_with_openai(
     query = " ".join(str(query or "").split())
     if not query or len(query) > 2000:
         raise ValueError("La consulta pública debe contener entre 1 y 2000 caracteres.")
-    record = (
+    assigned_record = (
         get_llm_provider_configuration(
             resource_id, "external_web", provider="openai", instance_id=instance_id
         )
         if resource_id or not settings.OPENAI_API_KEY else None
-    ) or {}
+    )
+    # external_web is a permission on the conversational agent. The research
+    # engine is an active OpenAI connection registered by the system and does
+    # not need to be the same model that handles general/coding dialogue.
+    record = assigned_record or get_active_llm_provider_configuration("openai") or {}
     api_key = record.get("APIKey") if record else settings.OPENAI_API_KEY
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY no está configurada para búsqueda externa")

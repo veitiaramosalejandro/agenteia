@@ -38,6 +38,9 @@ class TestOpenAIExternalSearch(unittest.TestCase):
         fake_module = SimpleNamespace(OpenAI=FakeOpenAI)
         with patch.dict(sys.modules, {"openai": fake_module}), patch(
             "app.services.external_search.settings.OPENAI_API_KEY", "test-key"
+        ), patch(
+            "app.services.external_search.get_active_llm_provider_configuration",
+            return_value=None,
         ):
             results = search_with_openai("consulta pública")
 
@@ -49,18 +52,42 @@ class TestOpenAIExternalSearch(unittest.TestCase):
         self.assertEqual(request["input"], "consulta pública")
         self.assertTrue(FakeOpenAI.last_instance.closed)
 
+    @patch("app.services.external_search.get_active_llm_provider_configuration")
     @patch("app.services.external_search.get_llm_provider_configuration")
-    def test_agent_connection_is_used_without_inheriting_global_project(self, resolve):
+    def test_agent_connection_is_used_without_inheriting_global_project(self, resolve, fallback):
         resolve.return_value = {"APIKey": "agent-key", "Model": "gpt-4.1-mini"}
         with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}), patch(
             "app.services.external_search.settings.OPENAI_PROJECT", "another-project"
         ):
             search_with_openai("consulta pública", resource_id="agent-a")
-        resolve.assert_called_once_with("agent-a", "external_web", provider="openai")
+        resolve.assert_called_once_with(
+            "agent-a", "external_web", provider="openai", instance_id=None
+        )
+        fallback.assert_not_called()
         client = FakeOpenAI.last_instance
         self.assertEqual(client.client_kwargs["api_key"], "agent-key")
         self.assertNotIn("project", client.client_kwargs)
         self.assertEqual(client.responses.kwargs["input"], "consulta pública")
+
+    @patch("app.services.external_search.get_active_llm_provider_configuration")
+    @patch("app.services.external_search.get_llm_provider_configuration", return_value=None)
+    def test_registered_openai_is_used_when_agent_has_no_openai_assignment(
+        self, _resolve, fallback,
+    ):
+        fallback.return_value = {
+            "APIKey": "registered-key",
+            "Model": "gpt-4.1-mini",
+            "OpenAIProject": "registered-project",
+        }
+        with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
+            search_with_openai(
+                "consulta pública", resource_id="agent-a", instance_id="instance-a"
+            )
+
+        fallback.assert_called_once_with("openai")
+        client = FakeOpenAI.last_instance
+        self.assertEqual(client.client_kwargs["api_key"], "registered-key")
+        self.assertEqual(client.client_kwargs["project"], "registered-project")
 
     @patch("app.services.external_search.get_llm_provider_configuration")
     def test_validation_precedes_credentials_and_network(self, resolve):
@@ -76,6 +103,9 @@ class TestOpenAIExternalSearch(unittest.TestCase):
         ]:
             with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}), patch(
                 "app.services.external_search.settings.OPENAI_API_KEY", "test-key"
+            ), patch(
+                "app.services.external_search.get_active_llm_provider_configuration",
+                return_value=None,
             ), patch.object(FakeResponses, "create", return_value=response):
                 with self.assertRaises(RuntimeError):
                     search_with_openai("consulta pública")

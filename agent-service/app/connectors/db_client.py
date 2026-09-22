@@ -773,6 +773,28 @@ def get_llm_provider_configuration(
     return result
 
 
+def get_active_llm_provider_configuration(provider: str) -> dict[str, Any] | None:
+    """Return an active provider for a system capability such as web research."""
+    ensure_llm_provider_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT * FROM public."SysLLMProviderConfiguration"
+                   WHERE active=true AND lower("Provider")=lower(%s)
+                   ORDER BY "IsDefault" DESC,
+                            CASE WHEN lower("Code")=lower(%s) THEN 0 ELSE 1 END,
+                            "Code"
+                   LIMIT 1''',
+                (provider, provider),
+            )
+            row = cursor.fetchone()
+    if not row:
+        return None
+    result = dict(row)
+    result["APIKey"] = decrypt_api_key(result.get("APIKey"))
+    return result
+
+
 def deactivate_llm_provider_configuration(code: str) -> bool:
     ensure_llm_provider_schema()
     with _postgres_connection() as connection:
