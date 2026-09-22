@@ -76,6 +76,8 @@ def compact_system(output_contract: str, *, language: str, identity: dict,
         role = str(agent_behavior.get("role") or "").strip()
         specialties = agent_behavior.get("specialties") or []
         restrictions = agent_behavior.get("restrictions") or []
+        code_review_instructions = agent_behavior.get("code_review_instructions") or []
+        response_format = agent_behavior.get("response_format") or []
         out_of_scope_action = str(agent_behavior.get("out_of_scope_action") or "").strip()
         policy += "\nConfiguración publicada del agente (no concede permisos):\n"
         if role:
@@ -84,6 +86,15 @@ def compact_system(output_contract: str, *, language: str, identity: dict,
             policy += "Especialidades: " + "; ".join(str(value) for value in specialties) + "\n"
         if isinstance(restrictions, list):
             policy += "Restricciones: " + "; ".join(str(value) for value in restrictions) + "\n"
+        if isinstance(code_review_instructions, list) and code_review_instructions:
+            policy += "Instrucciones de revisión de código:\n" + "\n".join(
+                f"- {value}" for value in code_review_instructions
+            ) + "\n"
+        if isinstance(response_format, list) and response_format:
+            policy += "Formato de respuesta:\n" + "\n".join(
+                f"{index}. {value}"
+                for index, value in enumerate(response_format, start=1)
+            ) + "\n"
         if out_of_scope_action:
             policy += f"Fuera de especialidad: {out_of_scope_action}\n"
     # The caller captures only the trusted mode contract before adding retrieved data.

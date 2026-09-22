@@ -12,6 +12,8 @@ PUBLISHED = {
         "specialties": ["Valoración de empresas"],
         "restrictions": ["No proporcionar diagnósticos médicos ni consejos de salud física."],
         "out_of_scope_action": "Declinar amablemente las preguntas ajenas a finanzas.",
+        "code_review_instructions": ["No cambies el lenguaje del código."],
+        "response_format": ["Problemas por severidad", "Código propuesto"],
     }
 }
 
@@ -74,3 +76,5 @@ def test_compact_ollama_prompt_keeps_published_restrictions():
     assert "No proporcionar diagnósticos médicos" in prompt
     assert "Declinar amablemente" in prompt
     assert "especialista en finanzas corporativas" in prompt
+    assert "No cambies el lenguaje del código" in prompt
+    assert "1. Problemas por severidad" in prompt

@@ -45,6 +45,33 @@ class AgentPromptTests(unittest.TestCase):
         self.assertIn("Redirigir preguntas ajenas a finanzas.", prompt)
         self.assertIn("PEDIDOS FORA DA ESPECIALIDADE", prompt)
 
+    def test_code_review_contract_is_accepted_and_rendered(self):
+        request = AgentPromptGenerateRequest(
+            code_review_instructions=[
+                "Mantén el lenguaje y framework originales.",
+                "No inventes APIs ni variables.",
+            ],
+            response_format=[
+                "Propósito del código",
+                "Problemas encontrados, ordenados por severidad",
+            ],
+        )
+
+        behavior = request.model_dump(exclude={"name", "created_by"})
+        prompt = generate_agent_system_prompt(
+            {"DisplayName": "Developer", "OrganizationName": "ROBOTEA"},
+            behavior,
+        )
+
+        self.assertEqual(
+            ["Mantén el lenguaje y framework originales.", "No inventes APIs ni variables."],
+            behavior["code_review_instructions"],
+        )
+        self.assertIn("REVISÃO DE CÓDIGO", prompt)
+        self.assertIn("Mantén el lenguaje y framework originales.", prompt)
+        self.assertIn("FORMATO DE RESPOSTA CONFIGURADO", prompt)
+        self.assertIn("1. Propósito del código", prompt)
+
     @patch("app.agent.core.get_active_agent_prompt")
     def test_prompt_cache_is_scoped_by_instance_and_resource(self, loader):
         loader.return_value = {

@@ -38,6 +38,10 @@ def generate_agent_system_prompt(profile: dict[str, Any], behavior: dict[str, An
     )
     language = _clean_text(behavior.get("default_language"), "pt")
     specialties = _specialties(behavior.get("specialties"))
+    code_review_instructions = _specialties(
+        behavior.get("code_review_instructions")
+    )
+    response_format = _specialties(behavior.get("response_format"))
     restrictions = _specialties(behavior.get("restrictions"))
     out_of_scope_action = _clean_text(behavior.get("out_of_scope_action"), "")
     specialty_section = ""
@@ -55,6 +59,16 @@ def generate_agent_system_prompt(profile: dict[str, Any], behavior: dict[str, An
             "\nPEDIDOS FORA DA ESPECIALIDADE\n"
             f"{out_of_scope_action}\n"
         )
+    code_review_section = ""
+    if code_review_instructions:
+        code_review_section = "\nREVISÃO DE CÓDIGO\n" + "\n".join(
+            f"- {item}" for item in code_review_instructions
+        ) + "\n"
+    response_format_section = ""
+    if response_format:
+        response_format_section = "\nFORMATO DE RESPOSTA CONFIGURADO\n" + "\n".join(
+            f"{index}. {item}" for index, item in enumerate(response_format, start=1)
+        ) + "\n"
 
     return f"""IDENTIDADE
 
@@ -74,6 +88,7 @@ OBJETIVO
 
 {objective}
 {specialty_section}
+{code_review_section}
 {restriction_section}
 FONTES AUTORIZADAS
 
@@ -117,6 +132,7 @@ COMPORTAMENTO
 
 FORMA DE RESPONDER
 
+{response_format_section}
 1. Fornece primeiro a resposta concreta.
 2. Inclui evidência ou proveniência quando estiver disponível.
 3. Assinala claramente a incerteza.
