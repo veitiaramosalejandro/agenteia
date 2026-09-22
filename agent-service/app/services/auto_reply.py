@@ -1810,9 +1810,16 @@ async def _process_auto_replies_impl(
                     incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
                 )
             if response_text is None:
+                # The dialogue core receives the same metadata. Record that the
+                # published prompt scope was already evaluated so it does not
+                # perform the same model-backed classification a second time.
+                message_metadata["_agent_scope_prechecked"] = True
+            if response_text is None:
                 response_text = await asyncio.to_thread(
                     answer_direct, incoming_text, message_metadata, session_id
                 )
+            if response_text is None:
+                message_metadata["_assigned_direct_prechecked"] = True
         except Exception as exc:
             _update_response_status(
                 response_request_id, "failed",

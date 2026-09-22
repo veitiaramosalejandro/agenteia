@@ -29,6 +29,24 @@ class FakeAgent:
 
 
 class OrchestratorTests(unittest.TestCase):
+    def test_direct_provider_check_is_not_repeated_by_dialogue_core(self):
+        agent = FakeAgent()
+        agent.direct_calls = 0
+
+        def answer_with_assigned_openai(user_text, metadata, session_id):
+            agent.direct_calls += 1
+            return None
+
+        agent.answer_with_assigned_openai = answer_with_assigned_openai
+        orchestrator = SolidSETOrchestrator(agent)
+
+        orchestrator.invoke(session_id="direct-once", user_text="Explica este código")
+
+        self.assertEqual(agent.direct_calls, 1)
+        self.assertTrue(
+            agent.calls[0]["message_metadata"]["_assigned_direct_prechecked"]
+        )
+
     def test_external_query_uses_web_route(self):
         agent = FakeAgent()
         orchestrator = SolidSETOrchestrator(agent)

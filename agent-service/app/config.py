@@ -136,7 +136,7 @@ class Settings(BaseSettings):
         30000, int(os.getenv("SUGGESTION_CLAIM_IDLE_MS", "180000"))
     )
     SUGGESTION_RESPONSE_WAIT_TIMEOUT_SECONDS: int = max(
-        30, int(os.getenv("SUGGESTION_RESPONSE_WAIT_TIMEOUT_SECONDS", "840"))
+        30, int(os.getenv("SUGGESTION_RESPONSE_WAIT_TIMEOUT_SECONDS", "180"))
     )
     SUGGESTION_RESPONSE_POLL_INTERVAL_SECONDS: float = max(
         0.1, float(os.getenv("SUGGESTION_RESPONSE_POLL_INTERVAL_SECONDS", "0.5"))

@@ -218,13 +218,12 @@ def update(
             updatedAt=now,
             error=error,
         )
-    completed = False
     if len(data.get("agents") or []) > 1 and (
         agent_resource_id or status_name in {"completed", "failed"}
     ):
         status_name, response_count, error = aggregate_agent_status(data["agents"])
         messages = display_messages(status_name)
-        completed = status_name in {"completed", "failed", "cancelled", "learned"}
+    completed = status_name in {"completed", "failed", "cancelled", "learned"}
     data.update(
         status=status_name,
 

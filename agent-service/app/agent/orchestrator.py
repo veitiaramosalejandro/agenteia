@@ -329,10 +329,11 @@ class SolidSETOrchestrator:
     ) -> str:
         metadata = dict(message_metadata or {})
         direct = getattr(self.agent, "answer_with_assigned_openai", None)
-        if callable(direct):
+        if callable(direct) and not metadata.get("_assigned_direct_prechecked"):
             answer = direct(user_text, metadata, session_id)
             if answer is not None:
                 return answer
+            metadata["_assigned_direct_prechecked"] = True
         published_default_language = ""
         prompt_loader = getattr(self.agent, "_get_active_agent_prompt_cached", None)
         instance_id = str(metadata.get("solidset_instance_id") or "").strip()

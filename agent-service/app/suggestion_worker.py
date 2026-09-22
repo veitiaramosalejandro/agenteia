@@ -18,13 +18,22 @@ from app.services.suggestions import _process_chat_question_response_suggestion
 from app.suggestion_queue import SuggestionQueue
 
 
-async def _renew_delivery(queue: SuggestionQueue, message_id: str, consumer: str) -> None:
+async def _renew_delivery(
+    queue: SuggestionQueue,
+    message_id: str,
+    consumer: str,
+    request_id: str,
+    request_lock: str,
+) -> None:
     interval = min(30, settings.SUGGESTION_CLAIM_IDLE_MS / 3000)
     while True:
         await asyncio.sleep(interval)
         try:
             if not await asyncio.to_thread(queue.renew, message_id, consumer):
                 print("SUGGESTION_LEASE_LOST", flush=True)
+                return
+            if not await asyncio.to_thread(queue.renew_request, request_id, request_lock):
+                print(f"SUGGESTION_REQUEST_LOCK_LOST request_id={request_id}", flush=True)
                 return
         except redis.RedisError:
             print("SUGGESTION_LEASE_RENEW_FAILED", flush=True)
@@ -49,7 +58,17 @@ async def run_worker() -> None:
             attempt = int(fields.get("attempt") or 0)
             payload: dict = {}
             instance: dict = {}
-            heartbeat = asyncio.create_task(_renew_delivery(queue, message_id, consumer))
+            request_lock = await asyncio.to_thread(queue.acquire_request, request_id)
+            if request_lock is None:
+                print(
+                    f"SUGGESTION_DUPLICATE_SKIPPED request_id={request_id} message_id={message_id}",
+                    flush=True,
+                )
+                await asyncio.to_thread(queue.acknowledge, message_id)
+                continue
+            heartbeat = asyncio.create_task(
+                _renew_delivery(queue, message_id, consumer, request_id, request_lock)
+            )
             try:
                 status = _load_response_status(request_id) or {}
                 if status.get("status") == "completed":
@@ -67,13 +86,21 @@ async def run_worker() -> None:
                 terminal_output_error = isinstance(exc, HTTPException) and exc.status_code in {400, 404, 422, 502}
                 print(
                     f"SUGGESTION_WORKER_ERROR request_id={request_id} attempt={attempt} "
-                    f"type={type(exc).__name__} retryable={not terminal_output_error}",
+                    f"type={type(exc).__name__} retryable={not terminal_output_error} "
+                    f"status={getattr(exc, 'status_code', '-')} detail={detail[:500]!r}",
                     flush=True,
                 )
                 if not terminal_output_error and attempt < settings.SUGGESTION_MAX_RETRIES:
                     _update_response_status(
                         request_id, "queued", error=f"Reintento {attempt + 1}: {detail}"
                     )
+                    # Hand the request lock to the retry entry. Keeping it until
+                    # ``finally`` can make another worker discard the new entry
+                    # as a duplicate before this iteration releases the lock.
+                    await asyncio.to_thread(
+                        queue.release_request, request_id, request_lock
+                    )
+                    request_lock = ""
                     await asyncio.to_thread(
                         queue.enqueue, request_id, payload, instance, attempt + 1
                     )
@@ -87,6 +114,9 @@ async def run_worker() -> None:
                 heartbeat.cancel()
                 with suppress(asyncio.CancelledError):
                     await heartbeat
+                if request_lock:
+                    with suppress(redis.RedisError):
+                        await asyncio.to_thread(queue.release_request, request_id, request_lock)
 
 
 

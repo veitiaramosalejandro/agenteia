@@ -4,6 +4,7 @@ from app.redis_runtime import redis_client
 
 import json
 import socket
+import uuid
 from typing import Any
 
 import redis
@@ -83,6 +84,33 @@ class SuggestionQueue:
 
     def acknowledge(self, message_id: str) -> None:
         acknowledge_stream(self.client, self.stream, self.group, message_id)
+
+    def acquire_request(self, request_id: str) -> str | None:
+        """Allow only one worker to generate a given request at a time."""
+        token = uuid.uuid4().hex
+        ttl_seconds = max(60, int(settings.SUGGESTION_CLAIM_IDLE_MS / 1000) * 2)
+        acquired = self.client.set(
+            f"machining:suggestion-lock:v1:{request_id}",
+            token,
+            nx=True,
+            ex=ttl_seconds,
+        )
+        return token if acquired else None
+
+    def renew_request(self, request_id: str, token: str) -> bool:
+        ttl_seconds = max(60, int(settings.SUGGESTION_CLAIM_IDLE_MS / 1000) * 2)
+        return bool(self.client.eval(
+            "if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end "
+            "redis.call('EXPIRE',KEYS[1],ARGV[2]); return 1",
+            1, f"machining:suggestion-lock:v1:{request_id}", token, ttl_seconds,
+        ))
+
+    def release_request(self, request_id: str, token: str) -> None:
+        self.client.eval(
+            "if redis.call('GET',KEYS[1]) == ARGV[1] then "
+            "return redis.call('DEL',KEYS[1]) end return 0",
+            1, f"machining:suggestion-lock:v1:{request_id}", token,
+        )
 
     def renew(self, message_id: str, consumer: str) -> bool:
         """Reset idle time only while this consumer still owns the delivery."""
