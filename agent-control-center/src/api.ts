@@ -1,4 +1,4 @@
-import type { Agent, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, PromptDraft, Provider } from './types'
+import type { Agent, AutomationEvaluation, AutomationRule, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, PromptDraft, Provider, WorkRoom } from './types'
 
 const API_BASE = (import.meta.env.VITE_AGENT_API_URL || '').replace(/\/$/, '')
 
@@ -37,4 +37,11 @@ export const api = {
   searchKnowledge: (resourceId: string, body: Record<string, unknown>) => request<KnowledgeSearchResult>(`/api/v1/agent/solidset/agents/${resourceId}/knowledge/search`, { method: 'POST', body: JSON.stringify(body) }),
   startSystemIngestion: (instanceCode: string, tables: string[], adminKey: string) => request<{ status: string; runId: string; statusUrl: string }>('/api/v1/agent/system-knowledge-ingestion/start', { method: 'POST', headers: { 'X-Agent-Admin-Key': adminKey }, body: JSON.stringify({ instanceCode, tables: tables.length ? tables : null }) }),
   ingestionStatus: (instanceCode: string, adminKey: string) => request<IngestionRun>(`/api/v1/agent/system-knowledge-ingestion/status?instanceCode=${encodeURIComponent(instanceCode)}`, { headers: { 'X-Agent-Admin-Key': adminKey } }),
+  workrooms: (instanceCode: string) => request<{ total: number; items: WorkRoom[] }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/workrooms`),
+  configureWorkroomAgent: (instanceCode: string, workroomId: string, resourceId: string, body: { active: boolean; response_order: number }) => request(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/workrooms/${workroomId}/agents/${resourceId}`, { method: 'PUT', body: JSON.stringify(body) }),
+  automationRules: (instanceCode: string) => request<{ total: number; items: AutomationRule[] }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules`),
+  createAutomationRule: (instanceCode: string, body: Record<string, unknown>) => request<{ status: string; rule: AutomationRule }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules`, { method: 'POST', body: JSON.stringify(body) }),
+  deactivateAutomationRule: (instanceCode: string, ruleId: string) => request(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}`, { method: 'DELETE' }),
+  evaluateAutomationRule: (instanceCode: string, ruleId: string, message: string, approved: boolean) => request<AutomationEvaluation>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}/evaluate`, { method: 'POST', body: JSON.stringify({ Message: message, Approved: approved }) }),
+  executeAutomationRule: (instanceCode: string, ruleId: string, body: Record<string, unknown>) => request<{ status: string; evaluation: AutomationEvaluation; dialogue?: { responses: Array<{ AgentName: string; response: string; sent: boolean }> } }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}/execute`, { method: 'POST', body: JSON.stringify(body) }),
 }

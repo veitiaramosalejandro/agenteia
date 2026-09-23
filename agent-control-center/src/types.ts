@@ -113,3 +113,36 @@ export type IngestionRun = {
   Complete?: boolean
   UpdatedAt?: string
 }
+
+export type WorkRoom = {
+  IDWorkRoom: string
+  Code?: string | null
+  Name?: string | null
+  Description?: string | null
+  active: boolean
+  agents: Array<{ IDResource: string; active: boolean; response_order: number }>
+}
+
+export type AutomationRule = {
+  ID: string
+  IDSolidSETInstance: string
+  IDResource: string
+  IDWorkRoom: string
+  Name: string
+  TriggerType: 'manual' | 'selected_message'
+  Instruction: string
+  RequiredCapabilities: string[]
+  MaxRunsPerHour: number
+  RequireApproval: boolean
+  active: boolean
+  UpdatedAt: string
+}
+
+export type AutomationEvaluation = {
+  eligible: boolean
+  reasons: string[]
+  configuredCapabilities: string[]
+  requiredCapabilities: string[]
+  runsLastHour: number
+  maxRunsPerHour: number
+}

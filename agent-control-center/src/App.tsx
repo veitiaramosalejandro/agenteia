@@ -3,12 +3,12 @@ import {
   Activity, Bot, BrainCircuit, CheckCircle2, ChevronDown, CircleAlert,
   Database, FileSearch, FlaskConical, Gauge, Layers3, LoaderCircle, Menu, Network, PanelLeftClose,
   Play, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
-  Sparkles, Trash2, UploadCloud, Waypoints, X,
+  Sparkles, Trash2, UploadCloud, Waypoints, Workflow, X,
 } from 'lucide-react'
 import { api } from './api'
-import type { Agent, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, PromptDraft, Provider } from './types'
+import type { Agent, AutomationEvaluation, AutomationRule, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, PromptDraft, Provider, WorkRoom } from './types'
 
-type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'lab'
+type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'lab'
 type Notice = { type: 'success' | 'error'; text: string } | null
 
 const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
@@ -18,6 +18,7 @@ const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
   { id: 'prompts', label: 'Prompts', icon: BrainCircuit },
   { id: 'models', label: 'Modelos', icon: Network },
   { id: 'knowledge', label: 'Conocimiento', icon: Database },
+  { id: 'automation', label: 'Automatización', icon: Workflow },
   { id: 'lab', label: 'Laboratorio', icon: FlaskConical },
 ]
 
@@ -98,6 +99,7 @@ function App() {
     if (view === 'prompts') return <Prompts {...shared} />
     if (view === 'models') return <Models {...shared} />
     if (view === 'knowledge') return <Knowledge {...shared} />
+    if (view === 'automation') return <Automation {...shared} />
     if (view === 'lab') return <Lab {...shared} />
     return <Overview health={health} instances={instances} agents={agents} providers={providers} selected={selectedInstance} />
   }, [view, health, instances, agents, providers, selectedInstance, instanceCode, notify, loadAgents])
@@ -354,6 +356,115 @@ function Knowledge({ selectedInstance, agents, notify }: Shared) {
 
 function ResultContext({ title, count, text }: { title: string; count: number; text: string }) {
   return <div className="result-context"><div><strong>{title}</strong><span>{count}</span></div>{text ? <pre>{text}</pre> : <p>Sin coincidencias por encima del umbral.</p>}</div>
+}
+
+function Automation({ selectedInstance, agents, notify }: Shared) {
+  const [tab, setTab] = useState<'channels' | 'rules' | 'execute'>('channels')
+  const [rooms, setRooms] = useState<WorkRoom[]>([])
+  const [rules, setRules] = useState<AutomationRule[]>([])
+  const [roomId, setRoomId] = useState('')
+  const [agentId, setAgentId] = useState('')
+  const [ruleId, setRuleId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [name, setName] = useState('Revisión técnica controlada')
+  const [trigger, setTrigger] = useState<'manual' | 'selected_message'>('manual')
+  const [instruction, setInstruction] = useState('Responde dentro de la especialidad publicada del agente.')
+  const [requiredCaps, setRequiredCaps] = useState<string[]>(['general'])
+  const [maxRuns, setMaxRuns] = useState(10)
+  const [requireApproval, setRequireApproval] = useState(true)
+  const [message, setMessage] = useState('Revisa este pedido y prepara una respuesta técnica.')
+  const [sender, setSender] = useState('')
+  const [approved, setApproved] = useState(false)
+  const [sendToSolidSET, setSendToSolidSET] = useState(false)
+  const [evaluation, setEvaluation] = useState<AutomationEvaluation | null>(null)
+  const [output, setOutput] = useState('')
+
+  const load = useCallback(async () => {
+    if (!selectedInstance) { setRooms([]); setRules([]); return }
+    try {
+      const [roomData, ruleData] = await Promise.all([
+        api.workrooms(selectedInstance.Code), api.automationRules(selectedInstance.Code),
+      ])
+      setRooms(roomData.items); setRules(ruleData.items)
+      setRoomId(current => roomData.items.some(r => r.IDWorkRoom === current) ? current : roomData.items[0]?.IDWorkRoom || '')
+      setRuleId(current => ruleData.items.some(r => r.ID === current && r.active) ? current : ruleData.items.find(r => r.active)?.ID || '')
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible cargar la automatización.') }
+  }, [selectedInstance, notify])
+
+  useEffect(() => { void load() }, [load])
+  useEffect(() => { if (!agents.some(a => a.IDResource === agentId)) setAgentId(agents[0]?.IDResource || '') }, [agents, agentId])
+
+  const selectedRoom = rooms.find(room => room.IDWorkRoom === roomId)
+  const selectedRule = rules.find(rule => rule.ID === ruleId)
+  const activeAssignment = selectedRoom?.agents.find(a => a.IDResource === agentId)
+  const agentCapabilities = Array.from(new Set(agents.find(a => a.IDResource === agentId)?.models.flatMap(m => m.Capabilities) || [])).sort()
+
+  const saveAssignment = async (resourceId: string, active: boolean, order: number) => {
+    if (!selectedInstance || !roomId) return
+    setBusy(true)
+    try {
+      await api.configureWorkroomAgent(selectedInstance.Code, roomId, resourceId, { active, response_order: order })
+      await load(); notify('success', 'Asignación del canal actualizada.')
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible configurar el canal.') }
+    finally { setBusy(false) }
+  }
+
+  const toggleCap = (cap: string) => setRequiredCaps(old => old.includes(cap) ? old.filter(v => v !== cap) : [...old, cap])
+  const createRule = async () => {
+    if (!selectedInstance || !roomId || !agentId || !name.trim()) return
+    setBusy(true)
+    try {
+      const result = await api.createAutomationRule(selectedInstance.Code, {
+        IDResource: agentId, IDWorkRoom: roomId, Name: name.trim(), TriggerType: trigger,
+        Instruction: instruction.trim(), RequiredCapabilities: requiredCaps,
+        MaxRunsPerHour: maxRuns, RequireApproval: requireApproval, active: true,
+      })
+      await load(); setRuleId(result.rule.ID); notify('success', 'Regla controlada creada.')
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible crear la regla.') }
+    finally { setBusy(false) }
+  }
+
+  const removeRule = async (rule: AutomationRule) => {
+    if (!selectedInstance || !window.confirm(`¿Desactivar “${rule.Name}”?`)) return
+    setBusy(true)
+    try { await api.deactivateAutomationRule(selectedInstance.Code, rule.ID); await load(); notify('success', 'Regla desactivada.') }
+    catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible desactivar la regla.') }
+    finally { setBusy(false) }
+  }
+
+  const evaluate = async () => {
+    if (!selectedInstance || !ruleId || !message.trim()) return
+    setBusy(true); setOutput('')
+    try { setEvaluation(await api.evaluateAutomationRule(selectedInstance.Code, ruleId, message.trim(), approved)) }
+    catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible evaluar la regla.') }
+    finally { setBusy(false) }
+  }
+
+  const execute = async () => {
+    if (!selectedInstance || !ruleId || !message.trim()) return
+    setBusy(true); setOutput('')
+    try {
+      const body: Record<string, unknown> = { Message: message.trim(), Approved: approved, SendToSolidSET: sendToSolidSET }
+      if (sender.trim()) body.SenderResourceId = sender.trim()
+      const response = await api.executeAutomationRule(selectedInstance.Code, ruleId, body)
+      setEvaluation(response.evaluation)
+      setOutput(response.dialogue?.responses.map(item => `${item.AgentName}\n${item.response}`).join('\n\n') || '')
+      notify(response.status === 'completed' ? 'success' : 'error', response.status === 'completed' ? 'Tarea controlada completada.' : 'La política bloqueó la ejecución.')
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'La ejecución controlada falló.') }
+    finally { setBusy(false) }
+  }
+
+  if (!selectedInstance) return <><PageHeader eyebrow="Control" title="Automatización" copy="Canales, reglas y tareas con permisos explícitos." /><Empty title="Selecciona una instancia" copy="Toda automatización pertenece a una instancia SolidSET." /></>
+  return <>
+    <PageHeader eyebrow="Control" title="Automatización" copy="Configura agentes por canal y ejecuta tareas con capacidades, límites y aprobación verificables." />
+    <div className="knowledge-tabs"><button className={tab === 'channels' ? 'active' : ''} onClick={() => setTab('channels')}><Layers3 size={16} /> Canales</button><button className={tab === 'rules' ? 'active' : ''} onClick={() => setTab('rules')}><Workflow size={16} /> Reglas</button><button className={tab === 'execute' ? 'active' : ''} onClick={() => setTab('execute')}><Play size={16} /> Tareas controladas</button></div>
+
+    {tab === 'channels' && <div className="channel-layout"><section className="panel form-panel"><span className="eyebrow">Ámbito</span><h2>Canal seleccionado</h2><label>Canal<select value={roomId} onChange={e => setRoomId(e.target.value)}>{rooms.map(room => <option key={room.IDWorkRoom} value={room.IDWorkRoom}>{room.Name || room.Code || shortId(room.IDWorkRoom)}</option>)}</select></label>{selectedRoom && <><dl className="detail-list"><div><dt>Código</dt><dd>{selectedRoom.Code || '—'}</dd></div><div><dt>ID</dt><dd><code>{selectedRoom.IDWorkRoom}</code></dd></div><div><dt>Estado</dt><dd>{selectedRoom.active ? 'Activo' : 'Inactivo'}</dd></div></dl><p className="section-copy">{selectedRoom.Description || 'Sin descripción sincronizada.'}</p></>}</section><section className="panel"><span className="eyebrow">Asignaciones</span><h2>Agentes del canal</h2><div className="assignment-list">{agents.map(agent => { const assignment = selectedRoom?.agents.find(item => item.IDResource === agent.IDResource); return <article key={agent.IDResource}><div className="agent-name"><span>{initials(agent.Name)}</span><div><strong>{agent.Name}</strong><small>{agent.models.flatMap(m => m.Capabilities).join(', ') || 'Sin capacidades'}</small></div></div><label className="inline-check"><input type="checkbox" checked={Boolean(assignment?.active)} disabled={busy || !selectedRoom?.active} onChange={e => void saveAssignment(agent.IDResource, e.target.checked, assignment?.response_order || 0)} /> Activo</label><label>Orden<input type="number" min="0" max="1000" value={assignment?.response_order || 0} disabled={busy || !assignment?.active} onChange={e => void saveAssignment(agent.IDResource, true, Number(e.target.value))} /></label></article>})}</div></section></div>}
+
+    {tab === 'rules' && <div className="automation-layout"><section className="panel form-panel"><span className="eyebrow">Nueva política</span><h2>Regla de respuesta</h2><label>Canal<select value={roomId} onChange={e => setRoomId(e.target.value)}>{rooms.filter(r => r.active).map(room => <option key={room.IDWorkRoom} value={room.IDWorkRoom}>{room.Name || room.Code}</option>)}</select></label><label>Agente<select value={agentId} onChange={e => setAgentId(e.target.value)}>{agents.map(agent => <option key={agent.IDResource} value={agent.IDResource}>{agent.Name}</option>)}</select></label>{!activeAssignment?.active && <div className="error-box">Activa primero este agente en el canal seleccionado.</div>}<Field label="Nombre" value={name} onChange={setName} /><label>Disparador<select value={trigger} onChange={e => setTrigger(e.target.value as 'manual' | 'selected_message')}><option value="manual">Solo ejecución manual</option><option value="selected_message">Mensaje dirigido al agente</option></select></label><Field label="Instrucción operativa" value={instruction} onChange={setInstruction} area /><label>Capacidades requeridas</label><div className="chips">{['general', 'coding', 'reasoning', 'sql', 'external_web'].map(cap => <button key={cap} className={requiredCaps.includes(cap) ? 'selected' : ''} onClick={() => toggleCap(cap)}>{cap}</button>)}</div><div className="form-row"><label>Máximo por hora<input type="number" min="1" max="1000" value={maxRuns} onChange={e => setMaxRuns(Number(e.target.value))} /></label><label className="inline-check approval-check"><input type="checkbox" checked={requireApproval} onChange={e => setRequireApproval(e.target.checked)} /> Requiere aprobación</label></div><button className="primary" disabled={busy || !activeAssignment?.active} onClick={() => void createRule()}><Save size={17} /> Crear regla</button><small className="safe-note"><ShieldCheck size={14} /> Las capacidades se validan nuevamente antes de cada ejecución.</small></section><section className="panel"><span className="eyebrow">Políticas registradas</span><h2>{rules.filter(r => r.active).length} reglas activas</h2><div className="rule-list">{rules.length === 0 ? <div className="preview-placeholder"><Workflow size={30} /><p>No existen reglas para esta instancia.</p></div> : rules.map(rule => <article key={rule.ID} className={!rule.active ? 'inactive' : ''}><div><span className={`status-pill ${rule.active ? 'success' : ''}`}>{rule.active ? 'Activa' : 'Inactiva'}</span><span className="source-tag">{rule.TriggerType}</span></div><h3>{rule.Name}</h3><p>{rule.Instruction || 'Sin instrucción adicional.'}</p><div className="chips">{rule.RequiredCapabilities.map(cap => <span key={cap}>{cap}</span>)}</div><footer><span>{rule.MaxRunsPerHour}/hora</span><span>{rule.RequireApproval ? 'Con aprobación' : 'Sin aprobación previa'}</span><button className="icon-button danger-button" disabled={!rule.active || busy} onClick={() => void removeRule(rule)}><Trash2 size={15} /></button></footer></article>)}</div></section></div>}
+
+    {tab === 'execute' && <div className="lab-grid"><section className="panel form-panel"><span className="eyebrow">Ejecución</span><h2>Tarea controlada</h2><label>Regla<select value={ruleId} onChange={e => { setRuleId(e.target.value); setEvaluation(null); setOutput('') }}>{rules.filter(r => r.active).map(rule => <option key={rule.ID} value={rule.ID}>{rule.Name}</option>)}</select></label>{selectedRule && <div className="rule-summary"><strong>{selectedRule.TriggerType}</strong><span>{selectedRule.MaxRunsPerHour} ejecuciones/hora</span></div>}<Field label="ID del remitente · opcional" value={sender} onChange={setSender} /><Field label="Pedido" value={message} onChange={setMessage} area /><label className="inline-check"><input type="checkbox" checked={approved} onChange={e => setApproved(e.target.checked)} /> Aprobación concedida para esta ejecución</label><label className="inline-check"><input type="checkbox" checked={sendToSolidSET} onChange={e => setSendToSolidSET(e.target.checked)} /> Enviar resultado a SolidSET</label><div className="button-row"><button className="secondary" disabled={busy || !ruleId} onClick={() => void evaluate()}><ShieldCheck size={16} /> Evaluar</button><button className="primary" disabled={busy || !ruleId} onClick={() => void execute()}><Play size={16} /> Ejecutar</button></div><small className="safe-note"><ShieldCheck size={14} /> El envío siempre exige aprobación explícita, aunque la regla permita vistas previas automáticas.</small></section><section className="panel automation-result"><div className="panel-title"><div><span className="eyebrow">Decisión</span><h2>{evaluation ? (evaluation.eligible ? 'Ejecución permitida' : 'Ejecución bloqueada') : 'Sin evaluar'}</h2></div>{evaluation && <span className={`status-pill ${evaluation.eligible ? 'success' : 'danger'}`}>{evaluation.runsLastHour}/{evaluation.maxRunsPerHour}</span>}</div>{evaluation ? <><div className="capability-compare"><div><strong>Requeridas</strong><p>{evaluation.requiredCapabilities.join(', ') || 'Ninguna'}</p></div><div><strong>Disponibles</strong><p>{evaluation.configuredCapabilities.join(', ') || 'Ninguna'}</p></div></div>{evaluation.reasons.length > 0 && <div className="error-box">{evaluation.reasons.join('\n')}</div>}{output && <div className="answer">{output}</div>}</> : <div className="preview-placeholder"><ShieldCheck size={32} /><p>Evalúa la regla antes de ejecutar para conocer permisos, aprobación y límites.</p></div>}</section></div>}
+  </>
 }
 
 function Lab({ selectedInstance, agents, notify }: Shared) {

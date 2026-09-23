@@ -13,7 +13,7 @@ prompts, asignaciones de modelos y pruebas aisladas sobre la API existente.
 | --- | --- | --- |
 | 1. Base operativa | Aplicación web, selección de instancia, dashboard, agentes, prompts, modelos y laboratorio | Completada |
 | 2. Conocimiento | Fuentes, colecciones, ingestión, estado y pruebas de recuperación por agente e instancia | Completada |
-| 3. Automatización | Canales, reglas de respuesta, capacidades, límites y tareas controladas | Pendiente |
+| 3. Automatización | Canales, reglas de respuesta, capacidades, límites y tareas controladas | Completada |
 | 4. Observabilidad | Trazas, tiempos por etapa, consumo, errores, auditoría y exportación | Pendiente |
 | 5. Gobierno | Autenticación, roles, permisos, aprobación, historial y restauración | Pendiente |
 
@@ -126,3 +126,51 @@ prompts, asignaciones de modelos y pruebas aisladas sobre la API existente.
 Diseñar la administración de canales, capacidades y reglas de respuesta con
 validación previa de permisos, límites de ejecución y trazabilidad de cada
 automatización.
+
+## Fase 3: módulos entregados
+
+### Canales y agentes
+
+- Inventario de canales sincronizados por instancia.
+- Visualización de descripción, código, estado y asignaciones.
+- Activación y desactivación de agentes por canal.
+- Orden de respuesta configurable.
+- La escritura utiliza `SysSolidSETInstanceChatIAResource`; se mantiene la
+  relación de compatibilidad solamente dentro de la misma instancia.
+
+### Reglas de respuesta
+
+- Reglas manuales o aplicables a mensajes dirigidos al agente.
+- Instrucción operativa acotada, capacidades requeridas y límite horario.
+- Aprobación configurable para la generación.
+- Desactivación lógica para conservar historial.
+- Las reglas automáticas se comprueban durante el enrutamiento real; una regla
+  con aprobación pendiente, capacidades ausentes o límite agotado no responde.
+
+### Tareas controladas
+
+- Evaluación previa sin ejecutar el modelo.
+- Comparación visible de capacidades requeridas y disponibles.
+- Registro de motivos de bloqueo y consumo horario.
+- Ejecución reutilizando el diálogo aislado del agente.
+- Vista previa sin publicación como comportamiento predeterminado.
+- Todo envío a SolidSET requiere aprobación explícita para esa ejecución.
+
+### Persistencia y auditoría técnica
+
+- Nueva tabla `SysAgentIAAutomationRule` aislada por instancia, agente y canal.
+- Nueva tabla `SysAgentIAAutomationRun` para bloqueos, ejecuciones, salidas,
+  aprobaciones y estado de entrega.
+- Inicialización compatible con bases nuevas y volúmenes PostgreSQL existentes.
+
+## Validación adicional de la fase 3
+
+- Trece pruebas unitarias superadas en los módulos enfocados.
+- Casos específicos para aislamiento de canal, asignación activa, capacidades,
+  aprobación y bloqueo del envío sin autorización.
+- Compilación Python y compilación de producción React/TypeScript.
+
+## Criterio para iniciar la fase 4
+
+Unificar auditorías, tiempos por etapa, consumo, ejecuciones de automatización y
+errores en vistas consultables y exportables sin exponer información sensible.

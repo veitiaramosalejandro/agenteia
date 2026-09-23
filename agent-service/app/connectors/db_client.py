@@ -18,6 +18,8 @@ _solidset_location_schema_lock = threading.Lock()
 _solidset_location_schema_ready = False
 _agent_default_model_schema_lock = threading.Lock()
 _agent_default_model_schema_ready = False
+_agent_automation_schema_lock = threading.Lock()
+_agent_automation_schema_ready = False
 
 
 def _postgres_connection(max_retries: int = 10, retry_delay: float = 1.5) -> psycopg.Connection:
@@ -53,6 +55,46 @@ def _postgres_connection(max_retries: int = 10, retry_delay: float = 1.5) -> psy
                 raise exc
     if last_exc:
         raise last_exc
+
+
+def ensure_agent_automation_schema() -> None:
+    """Creates phase-3 tables for existing PostgreSQL volumes as well as new ones."""
+    global _agent_automation_schema_ready
+    if _agent_automation_schema_ready:
+        return
+    with _agent_automation_schema_lock:
+        if _agent_automation_schema_ready:
+            return
+        sql_path = Path(__file__).resolve().parents[3] / "database" / "init" / "028_create_agent_automation.sql"
+        if sql_path.exists():
+            ddl = sql_path.read_text(encoding="utf-8")
+        else:
+            ddl = '''
+            CREATE TABLE IF NOT EXISTS public."SysAgentIAAutomationRule" (
+              "ID" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              "IDSolidSETInstance" uuid NOT NULL REFERENCES public."SysSolidSETInstance"("ID") ON DELETE CASCADE,
+              "IDResource" uuid NOT NULL, "IDWorkRoom" uuid NOT NULL,
+              "Name" varchar(160) NOT NULL, "TriggerType" varchar(30) NOT NULL DEFAULT 'manual',
+              "Instruction" text NOT NULL DEFAULT '', "RequiredCapabilities" jsonb NOT NULL DEFAULT '[]'::jsonb,
+              "MaxRunsPerHour" integer NOT NULL DEFAULT 10, "RequireApproval" boolean NOT NULL DEFAULT true,
+              active boolean NOT NULL DEFAULT true, "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY ("IDSolidSETInstance", "IDResource") REFERENCES public."SysSolidSETInstanceResource"("IDSolidSETInstance", "IDResource") ON DELETE CASCADE,
+              FOREIGN KEY ("IDSolidSETInstance", "IDWorkRoom") REFERENCES public."SysSolidSETInstanceWorkRoom"("IDSolidSETInstance", "IDWorkRoom") ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS "IX_AutomationRule_Instance_Agent_Room" ON public."SysAgentIAAutomationRule" ("IDSolidSETInstance", "IDResource", "IDWorkRoom", active);
+            CREATE TABLE IF NOT EXISTS public."SysAgentIAAutomationRun" (
+              "ID" uuid PRIMARY KEY DEFAULT gen_random_uuid(), "IDRule" uuid NOT NULL REFERENCES public."SysAgentIAAutomationRule"("ID") ON DELETE CASCADE,
+              "Status" varchar(30) NOT NULL, "InputText" text NOT NULL, "OutputText" text,
+              "Approved" boolean NOT NULL DEFAULT false, "SentToSolidSET" boolean NOT NULL DEFAULT false,
+              "Error" text, "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, "CompletedAt" timestamptz
+            );
+            CREATE INDEX IF NOT EXISTS "IX_AutomationRun_Rule_CreatedAt" ON public."SysAgentIAAutomationRun" ("IDRule", "CreatedAt" DESC);
+            '''
+        with _postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(ddl)
+        _agent_automation_schema_ready = True
 
 
 def ensure_solidset_instance_location_schema() -> None:
@@ -1211,6 +1253,7 @@ def get_active_agents_for_workroom(
     instance_id: UUID | str | None = None,
 ) -> list[dict[str, Any]]:
     """Devuelve únicamente agentes activos, seleccionados y asignados al canal."""
+    ensure_agent_automation_schema()
     selected = list(dict.fromkeys(UUID(str(value)) for value in selected_resource_ids))
     if not selected:
         return []
@@ -1226,7 +1269,11 @@ def get_active_agents_for_workroom(
                        c."IDWorkRoom",
                        CASE WHEN %s::uuid IS NULL THEN c.response_order
                             ELSE ic.response_order END AS response_order,
-                       login."FullName"
+                       login."FullName",
+                       automation."ID" AS "AutomationRuleID",
+                       automation."RequiredCapabilities" AS "AutomationRequiredCapabilities",
+                       automation."MaxRunsPerHour" AS "AutomationMaxRunsPerHour",
+                       automation."RequireApproval" AS "AutomationRequireApproval"
                 FROM public."SysResourceIA" r
                 INNER JOIN public."SysChatIAResource" c
                     ON c."IDResource" = r."IDResource"
@@ -1254,6 +1301,17 @@ def get_active_agents_for_workroom(
                         l."IDLogin"
                     LIMIT 1
                 ) login ON true
+                LEFT JOIN LATERAL (
+                    SELECT rule."ID", rule."RequiredCapabilities",
+                           rule."MaxRunsPerHour", rule."RequireApproval"
+                    FROM public."SysAgentIAAutomationRule" rule
+                    WHERE rule."IDSolidSETInstance"=%s::uuid
+                      AND rule."IDResource"=r."IDResource"
+                      AND rule."IDWorkRoom"=c."IDWorkRoom"
+                      AND rule."TriggerType"='selected_message'
+                      AND rule.active=true
+                    ORDER BY rule."UpdatedAt" DESC LIMIT 1
+                ) automation ON true
                 WHERE c."IDWorkRoom" = %s
                   AND r.active = true
                   AND c.active = true
@@ -1263,7 +1321,7 @@ def get_active_agents_for_workroom(
                 ORDER BY response_order ASC, r."Name" ASC, r."IDResource" ASC
                 ''',
                 (
-                    instance, instance, instance, instance,
+                    instance, instance, instance, instance, instance,
                     UUID(str(workroom_id)), selected, instance, instance,
                 ),
             )
@@ -1515,6 +1573,182 @@ def configure_agent_workroom(
     if saved is None:
         raise RuntimeError("PostgreSQL no devolvió la asignación guardada.")
     return dict(saved)
+
+
+def list_instance_workrooms(instance_id: UUID | str) -> list[dict[str, Any]]:
+    """Lists channels and their agent assignments within one instance."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT w."IDWorkRoom", w."Code", w."Name", w."Description", w.active,
+                       COALESCE(jsonb_agg(jsonb_build_object(
+                         'IDResource', a."IDResource", 'active', a.active,
+                         'response_order', a.response_order
+                       ) ORDER BY a.response_order, a."IDResource")
+                       FILTER (WHERE a."IDResource" IS NOT NULL), '[]'::jsonb) AS agents
+                FROM public."SysSolidSETInstanceWorkRoom" w
+                LEFT JOIN public."SysSolidSETInstanceChatIAResource" a
+                  ON a."IDSolidSETInstance"=w."IDSolidSETInstance"
+                 AND a."IDWorkRoom"=w."IDWorkRoom"
+                WHERE w."IDSolidSETInstance"=%s
+                GROUP BY w."IDWorkRoom", w."Code", w."Name", w."Description", w.active
+                ORDER BY w.active DESC, COALESCE(w."Name", w."Code"), w."IDWorkRoom"
+                ''',
+                (UUID(str(instance_id)),),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+
+def configure_instance_agent_workroom(
+    instance_id: UUID | str,
+    resource_id: UUID | str,
+    workroom_id: UUID | str,
+    *,
+    active: bool,
+    response_order: int,
+) -> dict[str, Any]:
+    """Stores the effective assignment in the instance-scoped relation."""
+    instance = UUID(str(instance_id))
+    resource = UUID(str(resource_id))
+    workroom = UUID(str(workroom_id))
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                INSERT INTO public."SysSolidSETInstanceChatIAResource"
+                  ("IDSolidSETInstance", "IDResource", "IDWorkRoom", active, response_order)
+                VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT ("IDSolidSETInstance", "IDResource", "IDWorkRoom")
+                DO UPDATE SET active=EXCLUDED.active,
+                  response_order=EXCLUDED.response_order,
+                  "UpdatedAt"=CURRENT_TIMESTAMP
+                RETURNING *
+                ''',
+                (instance, resource, workroom, active, response_order),
+            )
+            saved = cursor.fetchone()
+            cursor.execute(
+                '''
+                INSERT INTO public."SysChatIAResource"
+                  ("IDResource", "IDWorkRoom", "IDSolidSETInstance", active, response_order)
+                VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT ("IDResource", "IDWorkRoom") DO UPDATE SET
+                  active=EXCLUDED.active, response_order=EXCLUDED.response_order
+                WHERE public."SysChatIAResource"."IDSolidSETInstance" IS NULL
+                   OR public."SysChatIAResource"."IDSolidSETInstance"=EXCLUDED."IDSolidSETInstance"
+                ''',
+                (resource, workroom, instance, active, response_order),
+            )
+    if saved is None:
+        raise RuntimeError("PostgreSQL no devolvió la asignación por instancia.")
+    return dict(saved)
+
+
+def list_automation_rules(instance_id: UUID | str) -> list[dict[str, Any]]:
+    ensure_agent_automation_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT * FROM public."SysAgentIAAutomationRule"
+                   WHERE "IDSolidSETInstance"=%s
+                   ORDER BY active DESC, "UpdatedAt" DESC''',
+                (UUID(str(instance_id)),),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+
+def save_automation_rule(instance_id: UUID | str, data: dict[str, Any]) -> dict[str, Any]:
+    ensure_agent_automation_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''INSERT INTO public."SysAgentIAAutomationRule"
+                  ("IDSolidSETInstance","IDResource","IDWorkRoom","Name","TriggerType",
+                   "Instruction","RequiredCapabilities","MaxRunsPerHour","RequireApproval",active)
+                  VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s) RETURNING *''',
+                (
+                    UUID(str(instance_id)), UUID(str(data["IDResource"])),
+                    UUID(str(data["IDWorkRoom"])), data["Name"], data["TriggerType"],
+                    data.get("Instruction") or "", json.dumps(data.get("RequiredCapabilities") or []),
+                    data.get("MaxRunsPerHour", 10), data.get("RequireApproval", True),
+                    data.get("active", True),
+                ),
+            )
+            return dict(cursor.fetchone())
+
+
+def get_automation_rule(rule_id: UUID | str, instance_id: UUID | str) -> dict[str, Any] | None:
+    ensure_agent_automation_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT * FROM public."SysAgentIAAutomationRule"
+                   WHERE "ID"=%s AND "IDSolidSETInstance"=%s LIMIT 1''',
+                (UUID(str(rule_id)), UUID(str(instance_id))),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+
+def get_active_automatic_rule(
+    instance_id: UUID | str, resource_id: UUID | str, workroom_id: UUID | str,
+) -> dict[str, Any] | None:
+    ensure_agent_automation_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT * FROM public."SysAgentIAAutomationRule"
+                   WHERE "IDSolidSETInstance"=%s AND "IDResource"=%s
+                     AND "IDWorkRoom"=%s AND "TriggerType"='selected_message'
+                     AND active=true ORDER BY "UpdatedAt" DESC LIMIT 1''',
+                (UUID(str(instance_id)), UUID(str(resource_id)), UUID(str(workroom_id))),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+
+def deactivate_automation_rule(rule_id: UUID | str, instance_id: UUID | str) -> bool:
+    ensure_agent_automation_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''UPDATE public."SysAgentIAAutomationRule" SET active=false,
+                   "UpdatedAt"=CURRENT_TIMESTAMP WHERE "ID"=%s AND "IDSolidSETInstance"=%s AND active=true''',
+                (UUID(str(rule_id)), UUID(str(instance_id))),
+            )
+            return cursor.rowcount > 0
+
+
+def automation_runs_last_hour(rule_id: UUID | str) -> int:
+    ensure_agent_automation_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''SELECT COUNT(*) AS total FROM public."SysAgentIAAutomationRun"
+                   WHERE "IDRule"=%s AND "Status"='completed'
+                     AND "CreatedAt">=CURRENT_TIMESTAMP-INTERVAL '1 hour' ''',
+                (UUID(str(rule_id)),),
+            )
+            return int(cursor.fetchone()["total"])
+
+
+def record_automation_run(
+    rule_id: UUID | str, *, status: str, input_text: str, output_text: str = "",
+    approved: bool = False, sent: bool = False, error: str = "",
+) -> dict[str, Any]:
+    ensure_agent_automation_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''INSERT INTO public."SysAgentIAAutomationRun"
+                  ("IDRule","Status","InputText","OutputText","Approved","SentToSolidSET","Error","CompletedAt")
+                  VALUES (%s,%s,%s,%s,%s,%s,%s,CASE WHEN %s IN ('completed','failed','blocked') THEN CURRENT_TIMESTAMP ELSE NULL END)
+                  RETURNING *''',
+                (UUID(str(rule_id)), status, input_text, output_text or None, approved, sent,
+                 error or None, status),
+            )
+            return dict(cursor.fetchone())
 
 
 def touch_agent_session(

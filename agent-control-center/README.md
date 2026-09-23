@@ -31,6 +31,9 @@ La consola queda disponible en `http://localhost:4173`.
 - Inventario, alta, reindexación y desactivación de fuentes privadas.
 - Ingestión observable del catálogo SolidSET por instancia.
 - Prueba RAG aislada por instancia, agente y canal opcional.
+- Administración de agentes y orden de respuesta por canal.
+- Reglas con capacidades requeridas, aprobación y límites horarios.
+- Evaluación y ejecución controlada con vista previa antes de publicar.
 
 La ingestión del catálogo requiere la clave configurada en
 `HISTORICAL_INGESTION_ADMIN_KEY`. La consola la solicita al operador y la
