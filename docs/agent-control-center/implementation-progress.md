@@ -14,7 +14,7 @@ prompts, asignaciones de modelos y pruebas aisladas sobre la API existente.
 | 1. Base operativa | Aplicación web, selección de instancia, dashboard, agentes, prompts, modelos y laboratorio | Completada |
 | 2. Conocimiento | Fuentes, colecciones, ingestión, estado y pruebas de recuperación por agente e instancia | Completada |
 | 3. Automatización | Canales, reglas de respuesta, capacidades, límites y tareas controladas | Completada |
-| 4. Observabilidad | Trazas, tiempos por etapa, consumo, errores, auditoría y exportación | Pendiente |
+| 4. Observabilidad | Trazas, tiempos por etapa, consumo, errores, auditoría y exportación | Completada |
 | 5. Gobierno | Autenticación, roles, permisos, aprobación, historial y restauración | Pendiente |
 
 ## Fase 1: módulos entregados
@@ -174,3 +174,60 @@ automatización.
 
 Unificar auditorías, tiempos por etapa, consumo, ejecuciones de automatización y
 errores en vistas consultables y exportables sin exponer información sensible.
+
+## Fase 4: módulos entregados
+
+### Vista operativa unificada
+
+- Eventos de respuestas automáticas, herramientas, ingestiones y reglas.
+- Aislamiento por instancia y filtro opcional por agente.
+- Ventanas de una hora, 24 horas, siete días y 30 días.
+- Filtros por tipo y estado.
+- Actualización manual o automática cada 15 segundos.
+
+### Métricas
+
+- Volumen de eventos y distribución por tipo.
+- Completados, fallos, bloqueos y tasa de éxito.
+- Duración media y percentil 95 de los eventos cargados.
+- Métricas en memoria del diálogo: cantidad, última duración, máxima duración
+  y aciertos de caché.
+- Los conteos representan consumo operativo. No se presentan tokens o costes
+  cuando el proveedor no los registra de forma verificable.
+
+### Auditoría segura
+
+- Las respuestas nuevas guardan explícitamente `IDSolidSETInstance`.
+- Los registros visibles omiten payloads, mensajes, prompts, argumentos de
+  herramientas, credenciales y respuestas generadas.
+- Los errores se limitan a 500 caracteres.
+- Los registros históricos sin instancia explícita no se atribuyen por
+  inferencia a una instancia.
+
+### Exportación
+
+- Exportación CSV con los mismos filtros de la vista.
+- Límite máximo de 1000 eventos por exportación.
+- Neutralización de valores que podrían interpretarse como fórmulas por una
+  hoja de cálculo.
+
+### Persistencia
+
+- Migración `029_scope_response_audit_by_instance.sql`.
+- Índice por instancia y fecha para la auditoría de respuestas.
+- Compatibilidad con volúmenes PostgreSQL existentes mediante actualización
+  idempotente del esquema.
+
+## Validación adicional de la fase 4
+
+- Quince pruebas unitarias enfocadas superadas.
+- Pruebas de aislamiento por instancia y protección de la exportación CSV.
+- Veintisiete pruebas de enrutamiento multiagente superadas dentro del
+  contenedor, incluyendo auditoría, selección por instancia y entrega.
+- Esquemas idempotentes y consulta agregada verificados contra PostgreSQL local.
+- Compilación Python y compilación de producción React/TypeScript.
+
+## Criterio para iniciar la fase 5
+
+Incorporar autenticación administrativa, roles, permisos por operación,
+aprobaciones durables, historial de cambios y restauración controlada.

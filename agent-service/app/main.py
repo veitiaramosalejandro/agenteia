@@ -21,6 +21,7 @@ from app.interactive_priority import (
 from app.api.controllers.agent_prompts import router as agent_prompts_router
 from app.api.controllers.ingestion import router as ingestion_router
 from app.api.controllers.automation import router as automation_router
+from app.api.controllers.observability import router as observability_router
 from app.api.controllers.synchronization import router as synchronization_router
 from app.api.controllers.llm_configuration import router as llm_configuration_router
 from app.api.controllers.nvidia import router as nvidia_router
@@ -185,6 +186,7 @@ app.state.agent = agent
 app.include_router(agent_prompts_router)
 app.include_router(ingestion_router)
 app.include_router(automation_router)
+app.include_router(observability_router)
 app.include_router(synchronization_router)
 app.include_router(llm_configuration_router)
 app.include_router(nvidia_router)

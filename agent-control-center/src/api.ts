@@ -1,4 +1,4 @@
-import type { Agent, AutomationEvaluation, AutomationRule, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, PromptDraft, Provider, WorkRoom } from './types'
+import type { Agent, AutomationEvaluation, AutomationRule, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
 
 const API_BASE = (import.meta.env.VITE_AGENT_API_URL || '').replace(/\/$/, '')
 
@@ -44,4 +44,6 @@ export const api = {
   deactivateAutomationRule: (instanceCode: string, ruleId: string) => request(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}`, { method: 'DELETE' }),
   evaluateAutomationRule: (instanceCode: string, ruleId: string, message: string, approved: boolean) => request<AutomationEvaluation>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}/evaluate`, { method: 'POST', body: JSON.stringify({ Message: message, Approved: approved }) }),
   executeAutomationRule: (instanceCode: string, ruleId: string, body: Record<string, unknown>) => request<{ status: string; evaluation: AutomationEvaluation; dialogue?: { responses: Array<{ AgentName: string; response: string; sent: boolean }> } }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}/execute`, { method: 'POST', body: JSON.stringify(body) }),
+  observability: (instanceCode: string, params: URLSearchParams) => request<ObservabilitySnapshot>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability?${params}`),
+  observabilityExportUrl: (instanceCode: string, params: URLSearchParams) => `${API_BASE}/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability/export.csv?${params}`,
 }

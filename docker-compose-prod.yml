@@ -511,7 +511,7 @@ services:
     build:
       context: ./agent-control-center
       dockerfile: Dockerfile
-    image: agent-control-center:0.3.0
+    image: agent-control-center:0.4.0
     container_name: agent_control_center
     hostname: agent-control-center
     restart: always

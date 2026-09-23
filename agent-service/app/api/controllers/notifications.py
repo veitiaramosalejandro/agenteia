@@ -184,10 +184,20 @@ async def receive_framework_notification(
     request: Request,
 ):
     """Recibe desde Notification un FrameworkMessage ya capturado y lo aprende en Qdrant."""
+    try:
+        raw_payload = await request.json()
+    except RuntimeError:
+        # Direct controller tests and internal calls may not expose an ASGI
+        # receive channel; the validated DTO remains the source of truth.
+        raw_payload = (
+            message.model_dump(mode="json")
+            if hasattr(message, "model_dump")
+            else message.dict()
+        )
     print(
         "📨 FRAMEWORK_MESSAGE_PAYLOAD "
         + json.dumps(
-            _redact_framework_payload(await request.json()),
+            _redact_framework_payload(raw_payload),
             ensure_ascii=False,
             default=str,
         ),
@@ -252,6 +262,7 @@ async def receive_framework_notification(
             None,
             payload,
             None,
+            instance.get("ID"),
         )
     except psycopg.Error as exc:
         # Redis Stream ya aceptó el trabajo. No se devuelve 503 porque el

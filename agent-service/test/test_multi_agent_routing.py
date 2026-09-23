@@ -452,15 +452,16 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["Chat"]["Destiny"][1]["IDResource"], "human-resource")
 
     def setUp(self):
+        self.instance = {
+            "ID": str(uuid4()),
+            "Code": "test",
+            "BaseUrl": "http://solidset",
+            "DataAPI": "http://solidset-data-api",
+            "Database": {"Host": "sql", "DatabaseName": "solidset", "active": True},
+        }
         self.instance_resolver = patch(
             "app.services.auto_reply.get_solidset_instance",
-            return_value={
-                "ID": str(uuid4()),
-                "Code": "test",
-                "BaseUrl": "http://solidset",
-                "DataAPI": "http://solidset-data-api",
-                "Database": {"Host": "sql", "DatabaseName": "solidset", "active": True},
-            },
+            return_value=self.instance,
         )
         self.instance_resolver.start()
         self.addCleanup(self.instance_resolver.stop)
@@ -600,7 +601,9 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             routed = _route_candidates_to_selected_agents([candidate])
 
         assign.assert_called_once_with(str(room_id), [str(selected_agent)])
-        registry.assert_called_once_with(str(room_id), [str(selected_agent)])
+        registry.assert_called_once_with(
+            str(room_id), [str(selected_agent)], self.instance["ID"]
+        )
         self.assertEqual(
             [str(selected_agent)], [item["agent_resource_id"] for item in routed]
         )
@@ -760,7 +763,9 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             routed = _route_candidates_to_selected_agents([candidate])
 
         assign.assert_called_once_with(str(room_id), [str(requested_agent)])
-        registry.assert_called_once_with(str(room_id), [str(requested_agent)])
+        registry.assert_called_once_with(
+            str(room_id), [str(requested_agent)], self.instance["ID"]
+        )
         self.assertEqual(1, len(routed))
         self.assertEqual(str(requested_agent), routed[0]["agent_resource_id"])
         self.assertEqual("Victor Vargas", routed[0]["agent_name"])

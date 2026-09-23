@@ -1245,8 +1245,11 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             selected_resource_id = str(configured_agent["IDResource"])
             expected_agent_id = configured_agent.get("IDAgentResource")
             validation_instance = dict(instance)
+            configured_data_api = instance.get("DataAPI")
+            if not isinstance(configured_data_api, dict):
+                configured_data_api = {}
             validation_instance["DataAPI"] = {
-                **(instance.get("DataAPI") or {}),
+                **configured_data_api,
                 "TimeoutSeconds": settings.SOLIDSET_INTERACTIVE_VALIDATION_TIMEOUT_SECONDS,
             }
             try:

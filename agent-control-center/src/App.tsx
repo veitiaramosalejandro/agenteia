@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Activity, Bot, BrainCircuit, CheckCircle2, ChevronDown, CircleAlert,
-  Database, FileSearch, FlaskConical, Gauge, Layers3, LoaderCircle, Menu, Network, PanelLeftClose,
+  Database, Download, FileSearch, FlaskConical, Gauge, Layers3, LoaderCircle, Menu, Network, PanelLeftClose,
   Play, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
   Sparkles, Trash2, UploadCloud, Waypoints, Workflow, X,
 } from 'lucide-react'
 import { api } from './api'
-import type { Agent, AutomationEvaluation, AutomationRule, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, PromptDraft, Provider, WorkRoom } from './types'
+import type { Agent, AutomationEvaluation, AutomationRule, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
 
-type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'lab'
+type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'observability' | 'lab'
 type Notice = { type: 'success' | 'error'; text: string } | null
 
 const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
@@ -19,6 +19,7 @@ const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
   { id: 'models', label: 'Modelos', icon: Network },
   { id: 'knowledge', label: 'Conocimiento', icon: Database },
   { id: 'automation', label: 'Automatización', icon: Workflow },
+  { id: 'observability', label: 'Observabilidad', icon: Activity },
   { id: 'lab', label: 'Laboratorio', icon: FlaskConical },
 ]
 
@@ -100,6 +101,7 @@ function App() {
     if (view === 'models') return <Models {...shared} />
     if (view === 'knowledge') return <Knowledge {...shared} />
     if (view === 'automation') return <Automation {...shared} />
+    if (view === 'observability') return <Observability {...shared} />
     if (view === 'lab') return <Lab {...shared} />
     return <Overview health={health} instances={instances} agents={agents} providers={providers} selected={selectedInstance} />
   }, [view, health, instances, agents, providers, selectedInstance, instanceCode, notify, loadAgents])
@@ -467,6 +469,62 @@ function Automation({ selectedInstance, agents, notify }: Shared) {
   </>
 }
 
+function Observability({ selectedInstance, agents, notify }: Shared) {
+  const [snapshot, setSnapshot] = useState<ObservabilitySnapshot | null>(null)
+  const [hours, setHours] = useState(24)
+  const [eventType, setEventType] = useState('')
+  const [status, setStatus] = useState('')
+  const [resourceId, setResourceId] = useState('')
+  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState('')
+
+  const params = useCallback((exporting = false) => {
+    const value = new URLSearchParams({ hours: String(hours), limit: exporting ? '1000' : '250' })
+    if (eventType) value.set('eventType', eventType)
+    if (status) value.set('status', status)
+    if (resourceId) value.set('resourceId', resourceId)
+    return value
+  }, [hours, eventType, status, resourceId])
+
+  const load = useCallback(async (silent = false) => {
+    if (!selectedInstance) return setSnapshot(null)
+    if (!silent) setBusy(true)
+    try { setSnapshot(await api.observability(selectedInstance.Code, params())) }
+    catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible cargar las métricas.') }
+    finally { if (!silent) setBusy(false) }
+  }, [selectedInstance, params, notify])
+
+  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    if (!autoRefresh) return
+    const timer = window.setInterval(() => void load(true), 15000)
+    return () => window.clearInterval(timer)
+  }, [autoRefresh, load])
+
+  const exportCsv = () => {
+    if (!selectedInstance) return
+    window.location.assign(api.observabilityExportUrl(selectedInstance.Code, params(true)))
+  }
+
+  if (!selectedInstance) return <><PageHeader eyebrow="Operación" title="Observabilidad" copy="Métricas y auditorías aisladas por instancia." /><Empty title="Selecciona una instancia" copy="El panel nunca mezcla eventos de instancias diferentes." /></>
+  const metrics = snapshot?.metrics
+  const runtime = snapshot?.runtime.dialogue || {}
+  const eventTypes = Object.entries(metrics?.byType || {})
+  const maxType = Math.max(1, ...eventTypes.map(([, count]) => count))
+  return <>
+    <PageHeader eyebrow="Operación" title="Observabilidad" copy="Rendimiento, fallos y trazabilidad sin exponer contenido sensible." action={<div className="button-row"><button className="secondary" disabled={busy} onClick={() => void load()}><RefreshCw className={busy ? 'spin' : ''} size={16} /> Actualizar</button><button className="primary" onClick={exportCsv}><Download size={16} /> Exportar CSV</button></div>} />
+    <section className="observability-filters panel"><label>Ventana<select value={hours} onChange={e => setHours(Number(e.target.value))}><option value="1">Última hora</option><option value="24">24 horas</option><option value="168">7 días</option><option value="720">30 días</option></select></label><label>Tipo<select value={eventType} onChange={e => setEventType(e.target.value)}><option value="">Todos</option><option value="response">Respuestas</option><option value="automation">Automatización</option><option value="ingestion">Ingestión</option><option value="tool">Herramientas</option></select></label><label>Estado<select value={status} onChange={e => setStatus(e.target.value)}><option value="">Todos</option><option value="completed">Completado</option><option value="failed">Fallido</option><option value="blocked">Bloqueado</option><option value="queued">En cola</option><option value="running">En ejecución</option></select></label><label>Agente<select value={resourceId} onChange={e => setResourceId(e.target.value)}><option value="">Todos</option>{agents.map(agent => <option key={agent.IDResource} value={agent.IDResource}>{agent.Name}</option>)}</select></label><label className="inline-check"><input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} /> Actualizar cada 15 s</label></section>
+
+    <div className="metric-grid observability-metrics"><article className="metric"><div className="metric-icon"><Activity size={21} /></div><span>Eventos</span><strong>{metrics?.total ?? '—'}</strong><small>{snapshot?.windowHours || hours} horas</small></article><article className="metric"><div className="metric-icon"><CheckCircle2 size={21} /></div><span>Tasa de éxito</span><strong>{metrics ? `${metrics.successRate}%` : '—'}</strong><small>{metrics?.successful || 0} completados</small></article><article className="metric"><div className="metric-icon"><Gauge size={21} /></div><span>Duración media</span><strong>{metrics ? formatDuration(metrics.averageDurationMs) : '—'}</strong><small>P95 {metrics ? formatDuration(metrics.p95DurationMs) : '—'}</small></article><article className="metric"><div className="metric-icon"><CircleAlert size={21} /></div><span>Fallos y bloqueos</span><strong>{metrics?.failed ?? '—'}</strong><small>{Number(runtime.count || 0)} diálogos en runtime</small></article></div>
+
+    <div className="split-grid observability-summary"><section className="panel"><span className="eyebrow">Distribución</span><h2>Eventos por tipo</h2><div className="type-bars">{eventTypes.length === 0 ? <p className="section-copy">No hay eventos para estos filtros.</p> : eventTypes.map(([type, count]) => <div key={type}><span>{eventLabel(type)}</span><div><i style={{ width: `${count * 100 / maxType}%` }} /></div><strong>{count}</strong></div>)}</div></section><section className="panel"><span className="eyebrow">Runtime</span><h2>Diálogo interactivo</h2><dl className="detail-list"><div><dt>Ejecuciones</dt><dd>{runtime.count ?? '—'}</dd></div><div><dt>Última duración</dt><dd>{runtime.last_seconds != null ? `${runtime.last_seconds}s` : '—'}</dd></div><div><dt>Máxima duración</dt><dd>{runtime.max_seconds != null ? `${runtime.max_seconds}s` : '—'}</dd></div><div><dt>Cache hits</dt><dd>{runtime.cache_hits ?? '—'}</dd></div></dl></section></div>
+
+    <section className="panel events-panel"><div className="panel-title"><div><span className="eyebrow">Auditoría</span><h2>Eventos recientes</h2></div><span className="status-pill">Metadatos seguros</span></div>{!snapshot?.events.length ? <div className="preview-placeholder"><Activity size={32} /><p>No existen eventos dentro de la ventana y filtros seleccionados.</p></div> : <div className="events-table"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Duración</th><th>Agente</th><th>Referencia</th><th>Detalle</th></tr></thead><tbody>{snapshot.events.map(event => <tr key={`${event.type}-${event.reference}`}><td>{new Date(event.timestamp).toLocaleString()}</td><td><span className="event-type">{eventLabel(event.type)}</span>{event.operation && <small>{event.operation}</small>}</td><td><span className={`status-pill ${statusClass(event.status)}`}>{event.status}</span></td><td>{formatDuration(event.duration_ms)}</td><td><code>{shortId(event.resourceId)}</code></td><td><code title={event.reference}>{shortId(event.reference)}</code></td><td>{event.error ? <button className="secondary compact" onClick={() => setExpanded(expanded === event.reference ? '' : event.reference)}><CircleAlert size={13} /> Ver error</button> : '—'}{expanded === event.reference && event.error && <div className="event-error">{event.error}</div>}</td></tr>)}</tbody></table></div>}</section>
+    <p className="privacy-note"><ShieldCheck size={14} /> La vista y el CSV omiten mensajes, prompts, argumentos de herramientas, credenciales y respuestas generadas.</p>
+  </>
+}
+
 function Lab({ selectedInstance, agents, notify }: Shared) {
   const [agentId, setAgentId] = useState('')
   const [workRoom, setWorkRoom] = useState('')
@@ -487,5 +545,8 @@ function Field({ label, value, onChange, area = false }: { label: string; value:
 function lines(value: string) { return value.split('\n').map(v => v.trim()).filter(Boolean) }
 function shortId(value?: string | null) { return value ? `${value.slice(0, 8)}…${value.slice(-4)}` : 'No asignado' }
 function initials(value: string) { return value.split(/\s+/).slice(0, 2).map(v => v[0]).join('').toUpperCase() }
+function formatDuration(ms: number) { return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${Math.round(ms)} ms` }
+function eventLabel(value: string) { return ({ response: 'Respuesta', automation: 'Automatización', ingestion: 'Ingestión', tool: 'Herramienta' } as Record<string, string>)[value] || value }
+function statusClass(value: string) { return value === 'completed' ? 'success' : ['failed', 'blocked', 'cancelled'].includes(value) ? 'danger' : value === 'queued' ? 'warning' : '' }
 
 export default App

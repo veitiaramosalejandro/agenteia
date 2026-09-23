@@ -76,6 +76,7 @@ async def run_worker() -> None:
                         None,
                         {"responseCount": int(final_status.get("responseCount", int(result))),
                          "acceptedCount": int(result)},
+                        instance.get("ID"),
                     )
                 except Exception as audit_exc:
                     # Una respuesta ya enviada nunca se reintenta por un fallo
@@ -110,6 +111,7 @@ async def run_worker() -> None:
                             str(exc),
                             None,
                             {"attempts": attempt + 1},
+                            instance.get("ID"),
                         )
                     except Exception as audit_exc:
                         print(f"⚠️ No se pudo auditar fallo terminal: {audit_exc}")

@@ -146,3 +146,32 @@ export type AutomationEvaluation = {
   runsLastHour: number
   maxRunsPerHour: number
 }
+
+export type ObservabilityEvent = {
+  timestamp: string
+  type: 'response' | 'automation' | 'ingestion' | 'tool'
+  status: string
+  duration_ms: number
+  resourceId?: string | null
+  reference: string
+  operation?: string | null
+  count?: number
+  error?: string | null
+}
+
+export type ObservabilitySnapshot = {
+  instanceCode: string
+  instanceId: string
+  windowHours: number
+  metrics: {
+    total: number
+    successful: number
+    failed: number
+    successRate: number
+    averageDurationMs: number
+    p95DurationMs: number
+    byType: Record<string, number>
+  }
+  runtime: { dialogue: Record<string, number | null> }
+  events: ObservabilityEvent[]
+}

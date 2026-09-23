@@ -34,6 +34,8 @@ La consola queda disponible en `http://localhost:4173`.
 - Administración de agentes y orden de respuesta por canal.
 - Reglas con capacidades requeridas, aprobación y límites horarios.
 - Evaluación y ejecución controlada con vista previa antes de publicar.
+- Panel unificado de respuestas, herramientas, ingestiones y automatizaciones.
+- Métricas de rendimiento, errores, filtros y exportación CSV segura.
 
 La ingestión del catálogo requiere la clave configurada en
 `HISTORICAL_INGESTION_ADMIN_KEY`. La consola la solicita al operador y la

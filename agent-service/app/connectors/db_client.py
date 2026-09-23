@@ -272,7 +272,10 @@ def ensure_agent_response_audit_schema() -> None:
                   ON public."SysAgentIAResponseAudit" ("IDChat2");
                 ALTER TABLE public."SysAgentIAResponseAudit"
                   ADD COLUMN IF NOT EXISTS "RequestPayload" jsonb,
-                  ADD COLUMN IF NOT EXISTS "Result" jsonb;
+                  ADD COLUMN IF NOT EXISTS "Result" jsonb,
+                  ADD COLUMN IF NOT EXISTS "IDSolidSETInstance" uuid;
+                CREATE INDEX IF NOT EXISTS "IX_ResponseAudit_Instance_CreatedAt"
+                  ON public."SysAgentIAResponseAudit" ("IDSolidSETInstance", "CreatedAt" DESC);
             ''')
 
 
@@ -321,6 +324,7 @@ def save_agent_response_audit(
     error: str | None = None,
     request_payload: dict[str, Any] | None = None,
     result: dict[str, Any] | None = None,
+    instance_id: UUID | str | None = None,
 ) -> None:
     codes = {
         "queued": 0, "processing": 1, "searching": 2, "thinking": 3,
@@ -333,7 +337,8 @@ def save_agent_response_audit(
                 INSERT INTO public."SysAgentIAResponseAudit" (
                     "RequestID", "IDChat2", "Status", "Code", "ResponseCount",
                     "Error", "RequestPayload", "Result"
-                ) VALUES (%s, NULLIF(%s, ''), %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                    , "IDSolidSETInstance"
+                ) VALUES (%s, NULLIF(%s, ''), %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::uuid)
                 ON CONFLICT ("RequestID") DO UPDATE SET
                     "IDChat2" = COALESCE(EXCLUDED."IDChat2", public."SysAgentIAResponseAudit"."IDChat2"),
                     "Status" = EXCLUDED."Status",
@@ -342,6 +347,7 @@ def save_agent_response_audit(
                     "Error" = EXCLUDED."Error",
                     "RequestPayload" = COALESCE(EXCLUDED."RequestPayload", public."SysAgentIAResponseAudit"."RequestPayload"),
                     "Result" = COALESCE(EXCLUDED."Result", public."SysAgentIAResponseAudit"."Result"),
+                    "IDSolidSETInstance" = COALESCE(EXCLUDED."IDSolidSETInstance", public."SysAgentIAResponseAudit"."IDSolidSETInstance"),
                     "UpdatedAt" = CURRENT_TIMESTAMP,
                     "CompletedAt" = CASE
                         WHEN EXCLUDED."Status" IN ('completed', 'failed', 'cancelled')
@@ -354,6 +360,7 @@ def save_agent_response_audit(
                     if request_payload is not None else None,
                     __import__("json").dumps(result, ensure_ascii=False, default=str)
                     if result is not None else None,
+                    str(instance_id) if instance_id else None,
                 ),
             )
 
@@ -1749,6 +1756,125 @@ def record_automation_run(
                  error or None, status),
             )
             return dict(cursor.fetchone())
+
+
+def get_observability_snapshot(
+    instance_id: UUID | str,
+    *,
+    hours: int = 24,
+    limit: int = 200,
+    event_type: str | None = None,
+    status: str | None = None,
+    resource_id: UUID | str | None = None,
+) -> dict[str, Any]:
+    """Returns metadata-only operational events for one SolidSET instance."""
+    instance = UUID(str(instance_id))
+    hours = max(1, min(int(hours), 24 * 90))
+    per_source = max(50, min(int(limit), 1000))
+    resource = UUID(str(resource_id)) if resource_id else None
+    events: list[dict[str, Any]] = []
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            if event_type in {None, "response"} and resource is None:
+                cursor.execute(
+                    '''SELECT "RequestID" AS reference, "Status" AS status,
+                       "CreatedAt" AS timestamp, "CompletedAt",
+                       EXTRACT(EPOCH FROM (COALESCE("CompletedAt","UpdatedAt")-"CreatedAt"))*1000 AS duration_ms,
+                       "ResponseCount" AS count, "Error" AS error
+                       FROM public."SysAgentIAResponseAudit"
+                       WHERE "IDSolidSETInstance"=%s
+                         AND "CreatedAt">=CURRENT_TIMESTAMP-(%s*INTERVAL '1 hour')
+                       ORDER BY "CreatedAt" DESC LIMIT %s''',
+                    (instance, hours, per_source),
+                )
+                for row in cursor.fetchall():
+                    events.append({"type": "response", "resourceId": None, **dict(row)})
+            if event_type in {None, "automation"}:
+                params: list[Any] = [instance, hours]
+                resource_clause = ""
+                if resource:
+                    resource_clause = ' AND rule."IDResource"=%s'
+                    params.append(resource)
+                params.append(per_source)
+                cursor.execute(
+                    f'''SELECT run."ID"::text AS reference, run."Status" AS status,
+                        run."CreatedAt" AS timestamp, run."CompletedAt",
+                        EXTRACT(EPOCH FROM (COALESCE(run."CompletedAt",run."CreatedAt")-run."CreatedAt"))*1000 AS duration_ms,
+                        1 AS count, run."Error" AS error, rule."IDResource" AS "resourceId"
+                        FROM public."SysAgentIAAutomationRun" run
+                        JOIN public."SysAgentIAAutomationRule" rule ON rule."ID"=run."IDRule"
+                        WHERE rule."IDSolidSETInstance"=%s
+                          AND run."CreatedAt">=CURRENT_TIMESTAMP-(%s*INTERVAL '1 hour')
+                          {resource_clause}
+                        ORDER BY run."CreatedAt" DESC LIMIT %s''',
+                    params,
+                )
+                for row in cursor.fetchall():
+                    events.append({"type": "automation", **dict(row)})
+            if event_type in {None, "ingestion"} and resource is None:
+                cursor.execute(
+                    '''SELECT "ID"::text AS reference, "Status" AS status,
+                       "StartedAt" AS timestamp, "CompletedAt",
+                       EXTRACT(EPOCH FROM (COALESCE("CompletedAt","UpdatedAt")-"StartedAt"))*1000 AS duration_ms,
+                       "RowsIndexed" AS count, "Error" AS error
+                       FROM public."SysAgentIASystemIngestionRun"
+                       WHERE "IDSolidSETInstance"=%s
+                         AND "StartedAt">=CURRENT_TIMESTAMP-(%s*INTERVAL '1 hour')
+                       ORDER BY "StartedAt" DESC LIMIT %s''',
+                    (instance, hours, per_source),
+                )
+                for row in cursor.fetchall():
+                    events.append({"type": "ingestion", "resourceId": None, **dict(row)})
+            if event_type in {None, "tool"}:
+                params = [instance, hours]
+                resource_clause = ""
+                if resource:
+                    resource_clause = ' AND audit."IDResource"=%s'
+                    params.append(resource)
+                params.append(per_source)
+                cursor.execute(
+                    f'''SELECT audit."ID"::text AS reference,
+                        CASE WHEN audit."Success" THEN 'completed' ELSE 'failed' END AS status,
+                        audit."CreatedAt" AS timestamp, audit."CreatedAt" AS "CompletedAt",
+                        audit."ElapsedSeconds"*1000 AS duration_ms, 1 AS count,
+                        audit."ErrorType" AS error, audit."IDResource" AS "resourceId",
+                        audit."ToolName" AS operation
+                        FROM public."SysAgentIAToolAudit" audit
+                        WHERE EXISTS (SELECT 1 FROM public."SysSolidSETInstanceResource" ir
+                                      WHERE ir."IDSolidSETInstance"=%s
+                                        AND ir."IDResource"=audit."IDResource")
+                          AND audit."CreatedAt">=CURRENT_TIMESTAMP-(%s*INTERVAL '1 hour')
+                          {resource_clause}
+                        ORDER BY audit."CreatedAt" DESC LIMIT %s''',
+                    params,
+                )
+                for row in cursor.fetchall():
+                    events.append({"type": "tool", **dict(row)})
+    if status:
+        events = [row for row in events if str(row.get("status") or "") == status]
+    events.sort(key=lambda row: row.get("timestamp"), reverse=True)
+    events = events[: max(1, min(int(limit), 1000))]
+    terminal = [row for row in events if row.get("status") in {"completed", "failed", "blocked", "cancelled"}]
+    durations = sorted(float(row.get("duration_ms") or 0) for row in terminal)
+    success = sum(1 for row in terminal if row.get("status") == "completed")
+    failed = sum(1 for row in terminal if row.get("status") in {"failed", "blocked", "cancelled"})
+    p95_index = max(0, min(len(durations) - 1, int((len(durations) - 1) * 0.95))) if durations else 0
+    by_type: dict[str, int] = {}
+    for row in events:
+        by_type[row["type"]] = by_type.get(row["type"], 0) + 1
+        row["error"] = str(row.get("error") or "")[:500] or None
+        row["duration_ms"] = round(float(row.get("duration_ms") or 0), 2)
+    return {
+        "windowHours": hours,
+        "metrics": {
+            "total": len(events), "successful": success, "failed": failed,
+            "successRate": round(success * 100 / len(terminal), 2) if terminal else 0.0,
+            "averageDurationMs": round(sum(durations) / len(durations), 2) if durations else 0.0,
+            "p95DurationMs": round(durations[p95_index], 2) if durations else 0.0,
+            "byType": by_type,
+        },
+        "events": events,
+    }
 
 
 def touch_agent_session(
