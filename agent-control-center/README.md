@@ -19,7 +19,7 @@ docker compose -f docker-compose-dev.yml up -d --build agent-control-center
 
 La consola queda disponible en `http://localhost:4173`.
 
-## Alcance de la fase 1
+## Alcance implementado
 
 - Selector persistente y obligatorio de instancia.
 - Panel de estado del runtime.
@@ -28,5 +28,13 @@ La consola queda disponible en `http://localhost:4173`.
 - Generación, previsualización y publicación de prompts.
 - Asignación de modelos y capacidades.
 - Laboratorio de diálogo sin publicación en SolidSET.
+- Inventario, alta, reindexación y desactivación de fuentes privadas.
+- Ingestión observable del catálogo SolidSET por instancia.
+- Prueba RAG aislada por instancia, agente y canal opcional.
+
+La ingestión del catálogo requiere la clave configurada en
+`HISTORICAL_INGESTION_ADMIN_KEY`. La consola la solicita al operador y la
+mantiene solo en memoria; no se guarda en `localStorage` ni se envía al backend
+del frontend.
 
 Las credenciales de proveedores nunca se muestran. La autenticación administrativa y auditoría completa pertenecen a la fase de gobierno.

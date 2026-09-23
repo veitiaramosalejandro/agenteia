@@ -1,4 +1,4 @@
-import type { Agent, Health, Instance, PromptDraft, Provider } from './types'
+import type { Agent, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, PromptDraft, Provider } from './types'
 
 const API_BASE = (import.meta.env.VITE_AGENT_API_URL || '').replace(/\/$/, '')
 
@@ -30,4 +30,11 @@ export const api = {
   generatePrompt: (resourceId: string, instanceCode: string, body: Record<string, unknown>) => request<PromptDraft>(`/api/v1/agent/solidset/agents/${resourceId}/prompt/generate?instanceCode=${encodeURIComponent(instanceCode)}`, { method: 'POST', body: JSON.stringify(body) }),
   publishPrompt: (resourceId: string, promptId: string, instanceCode: string) => request<PromptDraft>(`/api/v1/agent/solidset/agents/${resourceId}/prompt/${promptId}/publish?instanceCode=${encodeURIComponent(instanceCode)}`, { method: 'POST' }),
   dialogue: (body: Record<string, unknown>) => request<{ IDSession: string; responses: Array<{ AgentName: string; response: string; sent: boolean }> }>('/api/v1/agent/solidset/multi-agent/dialogue', { method: 'POST', body: JSON.stringify(body) }),
+  knowledge: (resourceId: string, instanceCode: string, activeOnly = true) => request<{ total: number; items: KnowledgeRecord[] }>(`/api/v1/agent/solidset/agents/${resourceId}/knowledge?instanceCode=${encodeURIComponent(instanceCode)}&activeOnly=${activeOnly}`),
+  createKnowledge: (resourceId: string, body: Record<string, unknown>) => request<KnowledgeRecord & { indexed: boolean }>(`/api/v1/agent/solidset/agents/${resourceId}/knowledge`, { method: 'POST', body: JSON.stringify(body) }),
+  deactivateKnowledge: (resourceId: string, knowledgeId: string, instanceCode: string) => request(`/api/v1/agent/solidset/agents/${resourceId}/knowledge/${knowledgeId}?instanceCode=${encodeURIComponent(instanceCode)}`, { method: 'DELETE' }),
+  reindexKnowledge: (resourceId: string, knowledgeId: string, instanceCode: string) => request(`/api/v1/agent/solidset/agents/${resourceId}/knowledge/${knowledgeId}/index?instanceCode=${encodeURIComponent(instanceCode)}`, { method: 'POST' }),
+  searchKnowledge: (resourceId: string, body: Record<string, unknown>) => request<KnowledgeSearchResult>(`/api/v1/agent/solidset/agents/${resourceId}/knowledge/search`, { method: 'POST', body: JSON.stringify(body) }),
+  startSystemIngestion: (instanceCode: string, tables: string[], adminKey: string) => request<{ status: string; runId: string; statusUrl: string }>('/api/v1/agent/system-knowledge-ingestion/start', { method: 'POST', headers: { 'X-Agent-Admin-Key': adminKey }, body: JSON.stringify({ instanceCode, tables: tables.length ? tables : null }) }),
+  ingestionStatus: (instanceCode: string, adminKey: string) => request<IngestionRun>(`/api/v1/agent/system-knowledge-ingestion/status?instanceCode=${encodeURIComponent(instanceCode)}`, { headers: { 'X-Agent-Admin-Key': adminKey } }),
 }

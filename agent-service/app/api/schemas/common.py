@@ -233,6 +233,28 @@ class AgentKnowledgeResponse(BaseModel):
     indexed: bool
 
 
+class AgentKnowledgeSearchRequest(BaseModel):
+    SolidSETInstanceCode: str = Field(..., min_length=1, max_length=80)
+    Query: str = Field(..., min_length=2, max_length=5000)
+    IDWorkRoom: Optional[uuid.UUID] = None
+    Limit: int = Field(3, ge=1, le=10)
+    MinScore: float = Field(0.0, ge=0.0, le=1.0)
+    IncludeSystemKnowledge: bool = True
+
+    class Config:
+        extra = "forbid"
+
+
+class AgentKnowledgeSearchResponse(BaseModel):
+    IDSolidSETInstance: uuid.UUID
+    IDResource: uuid.UUID
+    Query: str
+    privateContext: str
+    systemContext: str
+    privateMatchCount: int
+    systemMatchCount: int
+
+
 class AgentWorkRoomConfiguration(BaseModel):
     active: bool = True
     response_order: int = Field(0, ge=0, le=1000)

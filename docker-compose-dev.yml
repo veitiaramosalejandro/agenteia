@@ -485,7 +485,7 @@ services:
     build:
       context: ./agent-control-center
       dockerfile: Dockerfile
-    image: agent-control-center:0.1.0
+    image: agent-control-center:0.2.0
     container_name: agent_control_center
     hostname: agent-control-center
     restart: unless-stopped
@@ -542,4 +542,3 @@ networks:
   machining-network:
     driver: bridge
     name: machining-network
-

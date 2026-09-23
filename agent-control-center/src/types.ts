@@ -76,3 +76,40 @@ export type PromptDraft = {
   BehaviorConfig: Record<string, unknown>
   Status: string
 }
+
+export type KnowledgeRecord = {
+  ID: string
+  IDSolidSETInstance: string
+  IDResource: string
+  IDWorkRoom?: string | null
+  Title?: string | null
+  KnowledgeText: string
+  Source: string
+  Stamp: string
+  active: boolean
+}
+
+export type KnowledgeSearchResult = {
+  IDSolidSETInstance: string
+  IDResource: string
+  Query: string
+  privateContext: string
+  systemContext: string
+  privateMatchCount: number
+  systemMatchCount: number
+}
+
+export type IngestionRun = {
+  ID?: string
+  Status?: string
+  ExecutionState?: string
+  ProgressPercentage?: number
+  TablesTotal?: number
+  TablesCompleted?: number
+  RowsProcessed?: number
+  PointsIndexed?: number
+  Error?: string | null
+  Alive?: boolean
+  Complete?: boolean
+  UpdatedAt?: string
+}

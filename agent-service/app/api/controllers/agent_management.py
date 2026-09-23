@@ -8,10 +8,13 @@ from typing import Any
 
 import psycopg
 from fastapi import APIRouter, HTTPException, status
+from qdrant_client.models import PointIdsList
 
 from app.api.schemas.common import (
     AgentKnowledgeRequest,
     AgentKnowledgeResponse,
+    AgentKnowledgeSearchRequest,
+    AgentKnowledgeSearchResponse,
     AgentWorkRoomConfiguration,
     AgentWorkRoomConfigurationResponse,
     MultiAgentAnswer,
@@ -22,6 +25,9 @@ from app.agent.tools import solidset_send_chat_message
 from app.connectors.db_client import (
     configure_agent_workroom,
     get_agent_knowledge,
+    get_agent_knowledge_record,
+    list_agent_knowledge_records,
+    deactivate_agent_knowledge,
     get_active_agent_identity_for_resource,
     get_solidset_instance,
     get_agent_scope_profile,
@@ -157,6 +163,142 @@ async def create_agent_knowledge(
         agent.sistema_aprendizaje.aprender_conocimiento_agente, saved
     )
     return AgentKnowledgeResponse(**saved, indexed=indexed)
+
+
+def _knowledge_instance(code: str, agent_resource_id: uuid.UUID) -> dict[str, Any]:
+    instance = get_solidset_instance(code=str(code or "").strip(), source_ip=None)
+    if instance is None:
+        raise HTTPException(status_code=404, detail="A instância SolidSET não existe ou está inativa.")
+    identity = get_active_agent_identity_for_resource(agent_resource_id, instance["ID"])
+    if identity is None:
+        raise HTTPException(status_code=404, detail="O agente não pertence à instância SolidSET ativa.")
+    return instance
+
+
+@router.get("/api/v1/agent/solidset/agents/{agent_resource_id}/knowledge")
+def read_agent_knowledge(
+    agent_resource_id: uuid.UUID,
+    instanceCode: str,
+    activeOnly: bool = True,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Lists one agent's sources in one explicit SolidSET instance."""
+    instance = _knowledge_instance(instanceCode, agent_resource_id)
+    try:
+        items = list_agent_knowledge_records(
+            agent_resource_id, instance["ID"], active_only=activeOnly, limit=limit
+        )
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="Não foi possível consultar o conhecimento.") from exc
+    return {
+        "instanceCode": instance["Code"],
+        "instanceId": instance["ID"],
+        "agentResourceId": agent_resource_id,
+        "total": len(items),
+        "items": items,
+    }
+
+
+@router.delete("/api/v1/agent/solidset/agents/{agent_resource_id}/knowledge/{knowledge_id}")
+def remove_agent_knowledge(
+    agent_resource_id: uuid.UUID,
+    knowledge_id: uuid.UUID,
+    instanceCode: str,
+) -> dict[str, Any]:
+    """Deactivates the SQL source and removes its indexed Qdrant point."""
+    instance = _knowledge_instance(instanceCode, agent_resource_id)
+    try:
+        record = get_agent_knowledge_record(
+            knowledge_id, agent_resource_id, instance["ID"]
+        )
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="Não foi possível consultar o conhecimento.") from exc
+    if not record or not record.get("active"):
+        raise HTTPException(status_code=404, detail="Conhecimento ativo não encontrado.")
+    try:
+        agent.sistema_aprendizaje.qdrant.delete(
+            collection_name=agent.sistema_aprendizaje.collection,
+            points_selector=PointIdsList(points=[str(knowledge_id)]),
+            wait=True,
+        )
+    except Exception as exc:
+        print(f"AGENT_KNOWLEDGE_VECTOR_DELETE_FAILED id={knowledge_id} type={type(exc).__name__}", flush=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível retirar o conhecimento do índice vetorial.",
+        ) from exc
+    try:
+        changed = deactivate_agent_knowledge(knowledge_id, agent_resource_id, instance["ID"])
+    except psycopg.Error as exc:
+        # Restore the point if the audit record could not be updated.
+        agent.sistema_aprendizaje.aprender_conocimiento_agente(record)
+        raise HTTPException(status_code=503, detail="Não foi possível desativar o conhecimento.") from exc
+    if not changed:
+        agent.sistema_aprendizaje.aprender_conocimiento_agente(record)
+        raise HTTPException(status_code=409, detail="O conhecimento já não está ativo.")
+    return {"status": "deactivated", "ID": knowledge_id, "vectorRemoved": True}
+
+
+@router.post("/api/v1/agent/solidset/agents/{agent_resource_id}/knowledge/{knowledge_id}/index")
+async def reindex_agent_knowledge(
+    agent_resource_id: uuid.UUID,
+    knowledge_id: uuid.UUID,
+    instanceCode: str,
+) -> dict[str, Any]:
+    instance = _knowledge_instance(instanceCode, agent_resource_id)
+    record = await asyncio.to_thread(
+        get_agent_knowledge_record, knowledge_id, agent_resource_id, instance["ID"]
+    )
+    if not record or not record.get("active"):
+        raise HTTPException(status_code=404, detail="Conhecimento ativo não encontrado.")
+    indexed = await asyncio.to_thread(agent.sistema_aprendizaje.aprender_conocimiento_agente, record)
+    if not indexed:
+        raise HTTPException(status_code=503, detail="Não foi possível indexar o conhecimento.")
+    return {"status": "indexed", "ID": knowledge_id, "indexed": True}
+
+
+@router.post(
+    "/api/v1/agent/solidset/agents/{agent_resource_id}/knowledge/search",
+    response_model=AgentKnowledgeSearchResponse,
+)
+async def test_agent_knowledge_retrieval(
+    agent_resource_id: uuid.UUID,
+    request: AgentKnowledgeSearchRequest,
+) -> AgentKnowledgeSearchResponse:
+    """Runs isolated retrieval only; it does not call an LLM or publish a reply."""
+    instance = _knowledge_instance(request.SolidSETInstanceCode, agent_resource_id)
+    private_context = await asyncio.to_thread(
+        agent.sistema_aprendizaje.consultar_conocimiento_agente,
+        request.Query,
+        agent_resource_id=str(agent_resource_id),
+        solidset_instance_id=str(instance["ID"]),
+        canal_id=str(request.IDWorkRoom) if request.IDWorkRoom else None,
+        limit=request.Limit,
+        min_score=request.MinScore,
+    )
+    system_context = ""
+    if request.IncludeSystemKnowledge:
+        system_context = await asyncio.to_thread(
+            agent.sistema_aprendizaje.consultar_conocimiento_sistema,
+            request.Query,
+            solidset_instance_id=str(instance["ID"]),
+            agent_resource_id=str(agent_resource_id),
+            limit=request.Limit,
+            min_score=request.MinScore,
+        )
+    return AgentKnowledgeSearchResponse(
+        IDSolidSETInstance=instance["ID"],
+        IDResource=agent_resource_id,
+        Query=request.Query,
+        privateContext=private_context,
+        systemContext=system_context,
+        privateMatchCount=_context_match_count(private_context),
+        systemMatchCount=_context_match_count(system_context),
+    )
+
+
+def _context_match_count(context: str) -> int:
+    return len([part for part in str(context or "").split("\n---\n") if part.strip()])
 
 
 @router.put(

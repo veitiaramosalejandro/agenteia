@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Activity, Bot, BrainCircuit, CheckCircle2, ChevronDown, CircleAlert,
-  FlaskConical, Gauge, Layers3, LoaderCircle, Menu, Network, PanelLeftClose,
-  Play, RefreshCw, Save, Search, Send, ServerCog, Settings2, ShieldCheck,
-  Sparkles, Waypoints, X,
+  Database, FileSearch, FlaskConical, Gauge, Layers3, LoaderCircle, Menu, Network, PanelLeftClose,
+  Play, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
+  Sparkles, Trash2, UploadCloud, Waypoints, X,
 } from 'lucide-react'
 import { api } from './api'
-import type { Agent, Health, Instance, PromptDraft, Provider } from './types'
+import type { Agent, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, PromptDraft, Provider } from './types'
 
-type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'lab'
+type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'lab'
 type Notice = { type: 'success' | 'error'; text: string } | null
 
 const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
@@ -17,6 +17,7 @@ const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
   { id: 'agents', label: 'Agentes', icon: Bot },
   { id: 'prompts', label: 'Prompts', icon: BrainCircuit },
   { id: 'models', label: 'Modelos', icon: Network },
+  { id: 'knowledge', label: 'Conocimiento', icon: Database },
   { id: 'lab', label: 'Laboratorio', icon: FlaskConical },
 ]
 
@@ -96,6 +97,7 @@ function App() {
     if (view === 'agents') return <Agents {...shared} />
     if (view === 'prompts') return <Prompts {...shared} />
     if (view === 'models') return <Models {...shared} />
+    if (view === 'knowledge') return <Knowledge {...shared} />
     if (view === 'lab') return <Lab {...shared} />
     return <Overview health={health} instances={instances} agents={agents} providers={providers} selected={selectedInstance} />
   }, [view, health, instances, agents, providers, selectedInstance, instanceCode, notify, loadAgents])
@@ -196,6 +198,162 @@ function Models({ selectedInstance, agents, providers, notify, refreshAgents }: 
   return <><PageHeader eyebrow="Enrutamiento" title="Modelos y capacidades" copy="Asigna conexiones reutilizables a un agente dentro de la instancia seleccionada." />
     <div className="split-grid model-layout"><section className="panel"><span className="eyebrow">Conexiones disponibles</span><h2>Proveedores LLM</h2><div className="provider-list">{providers.map(p => <div key={p.ID}><div className={`provider-dot ${p.active ? 'on' : ''}`} /><div><strong>{p.Name}</strong><small>{p.Provider} · {p.Model}</small></div>{p.IsDefault && <span className="status-pill">Global</span>}</div>)}</div></section><section className="panel form-panel"><span className="eyebrow">Nueva asignación</span><h2>Configurar agente</h2><label>Agente<select value={agentId} onChange={e => setAgentId(e.target.value)}>{agents.map(a => <option key={a.IDResource} value={a.IDResource}>{a.Name}</option>)}</select></label><label>Conexión<select value={providerCode} onChange={e => setProviderCode(e.target.value)}>{providers.filter(p => p.active).map(p => <option key={p.ID} value={p.Code}>{p.Name} · {p.Model}</option>)}</select></label><div className="form-row"><Field label="Rol" value={role} onChange={setRole} /><label>Prioridad<input type="number" value={priority} onChange={e => setPriority(Number(e.target.value))} min="0" max="10000" /></label></div><label>Capacidades</label><div className="chips">{['general', 'coding', 'reasoning', 'sql', 'external_web'].map(cap => <button key={cap} className={capabilities.includes(cap) ? 'selected' : ''} onClick={() => toggle(cap)}>{cap}</button>)}</div><button className="primary" onClick={() => void save()} disabled={busy || !selectedInstance}><Save size={17} /> Guardar asignación</button></section></div>
   </>
+}
+
+function Knowledge({ selectedInstance, agents, notify }: Shared) {
+  const [tab, setTab] = useState<'sources' | 'ingestion' | 'test'>('sources')
+  const [agentId, setAgentId] = useState('')
+  const [records, setRecords] = useState<KnowledgeRecord[]>([])
+  const [showInactive, setShowInactive] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [title, setTitle] = useState('')
+  const [source, setSource] = useState('manual')
+  const [workRoom, setWorkRoom] = useState('')
+  const [knowledgeText, setKnowledgeText] = useState('')
+  const [adminKey, setAdminKey] = useState('')
+  const [tables, setTables] = useState('')
+  const [run, setRun] = useState<IngestionRun | null>(null)
+  const [query, setQuery] = useState('')
+  const [ragWorkRoom, setRagWorkRoom] = useState('')
+  const [minScore, setMinScore] = useState(0.6)
+  const [includeSystem, setIncludeSystem] = useState(true)
+  const [result, setResult] = useState<KnowledgeSearchResult | null>(null)
+
+  useEffect(() => {
+    if (!agents.some(a => a.IDResource === agentId)) setAgentId(agents[0]?.IDResource || '')
+  }, [agents, agentId])
+
+  const loadRecords = useCallback(async () => {
+    if (!selectedInstance || !agentId) return setRecords([])
+    try {
+      const data = await api.knowledge(agentId, selectedInstance.Code, !showInactive)
+      setRecords(data.items)
+    } catch (error) {
+      setRecords([])
+      notify('error', error instanceof Error ? error.message : 'No fue posible cargar el conocimiento.')
+    }
+  }, [selectedInstance, agentId, showInactive, notify])
+
+  useEffect(() => { void loadRecords() }, [loadRecords])
+
+  const create = async () => {
+    if (!selectedInstance || !agentId || !knowledgeText.trim()) return
+    setBusy(true)
+    try {
+      const body: Record<string, unknown> = {
+        SolidSETInstanceCode: selectedInstance.Code,
+        Title: title.trim() || null,
+        KnowledgeText: knowledgeText.trim(),
+        Source: source,
+        active: true,
+      }
+      if (workRoom.trim()) body.IDWorkRoom = workRoom.trim()
+      const saved = await api.createKnowledge(agentId, body)
+      setTitle(''); setWorkRoom(''); setKnowledgeText('')
+      await loadRecords()
+      notify(saved.indexed ? 'success' : 'error', saved.indexed ? 'Fuente guardada e indexada.' : 'Fuente guardada, pero falta indexarla.')
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : 'No fue posible guardar la fuente.')
+    } finally { setBusy(false) }
+  }
+
+  const deactivate = async (record: KnowledgeRecord) => {
+    if (!selectedInstance || !window.confirm(`¿Desactivar “${record.Title || record.Source}”?`)) return
+    setBusy(true)
+    try {
+      await api.deactivateKnowledge(agentId, record.ID, selectedInstance.Code)
+      await loadRecords()
+      notify('success', 'Fuente desactivada y retirada del índice.')
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible desactivar la fuente.') }
+    finally { setBusy(false) }
+  }
+
+  const reindex = async (record: KnowledgeRecord) => {
+    if (!selectedInstance) return
+    setBusy(true)
+    try {
+      await api.reindexKnowledge(agentId, record.ID, selectedInstance.Code)
+      notify('success', 'Fuente reindexada en Qdrant.')
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible reindexar.') }
+    finally { setBusy(false) }
+  }
+
+  const refreshRun = async () => {
+    if (!selectedInstance || !adminKey) return notify('error', 'Introduce la clave administrativa de ingestión.')
+    setBusy(true)
+    try { setRun(await api.ingestionStatus(selectedInstance.Code, adminKey)) }
+    catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible consultar la ingestión.') }
+    finally { setBusy(false) }
+  }
+
+  const startIngestion = async () => {
+    if (!selectedInstance || !adminKey) return notify('error', 'Introduce la clave administrativa de ingestión.')
+    setBusy(true)
+    try {
+      await api.startSystemIngestion(selectedInstance.Code, lines(tables), adminKey)
+      setRun(await api.ingestionStatus(selectedInstance.Code, adminKey))
+      notify('success', 'Ingestión del conocimiento del sistema encolada.')
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible iniciar la ingestión.') }
+    finally { setBusy(false) }
+  }
+
+  const searchRag = async () => {
+    if (!selectedInstance || !agentId || !query.trim()) return
+    setBusy(true); setResult(null)
+    try {
+      const body: Record<string, unknown> = {
+        SolidSETInstanceCode: selectedInstance.Code,
+        Query: query.trim(), Limit: 5, MinScore: minScore,
+        IncludeSystemKnowledge: includeSystem,
+      }
+      if (ragWorkRoom.trim()) body.IDWorkRoom = ragWorkRoom.trim()
+      setResult(await api.searchKnowledge(agentId, body))
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'La prueba RAG falló.') }
+    finally { setBusy(false) }
+  }
+
+  const agentPicker = <label>Agente<select value={agentId} onChange={e => { setAgentId(e.target.value); setResult(null) }}>{agents.map(a => <option key={a.IDResource} value={a.IDResource}>{a.Name}</option>)}</select></label>
+  if (!selectedInstance || agents.length === 0) return <><PageHeader eyebrow="RAG" title="Conocimiento" copy="Fuentes, ingestión y recuperación aisladas por instancia y agente." /><Empty title="No hay un agente disponible" copy="Selecciona una instancia con agentes sincronizados." /></>
+
+  return <>
+    <PageHeader eyebrow="RAG" title="Conocimiento" copy={`Administra fuentes y valida la recuperación en ${selectedInstance.Name}.`} />
+    <div className="knowledge-tabs">
+      <button className={tab === 'sources' ? 'active' : ''} onClick={() => setTab('sources')}><Database size={16} /> Fuentes</button>
+      <button className={tab === 'ingestion' ? 'active' : ''} onClick={() => setTab('ingestion')}><UploadCloud size={16} /> Ingestión</button>
+      <button className={tab === 'test' ? 'active' : ''} onClick={() => setTab('test')}><FileSearch size={16} /> Prueba RAG</button>
+    </div>
+
+    {tab === 'sources' && <div className="knowledge-layout">
+      <section className="panel form-panel">
+        <span className="eyebrow">Nueva fuente</span><h2>Texto verificado</h2>
+        {agentPicker}
+        <Field label="Título" value={title} onChange={setTitle} />
+        <label>Procedencia<select value={source} onChange={e => setSource(e.target.value)}><option value="manual">Manual</option><option value="manual_policy">Política interna</option><option value="documentation">Documentación verificada</option></select></label>
+        <Field label="ID del canal · opcional" value={workRoom} onChange={setWorkRoom} />
+        <Field label="Contenido" value={knowledgeText} onChange={setKnowledgeText} area />
+        <button className="primary" onClick={() => void create()} disabled={busy || !knowledgeText.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />} Guardar e indexar</button>
+        <small className="safe-note"><ShieldCheck size={14} /> Solo se aceptan fuentes explícitas; una respuesta generada no se registra aquí automáticamente.</small>
+      </section>
+      <section className="panel knowledge-list-panel">
+        <div className="panel-title"><div><span className="eyebrow">Inventario</span><h2>{records.length} fuentes</h2></div><label className="inline-check"><input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} /> Incluir inactivas</label></div>
+        <div className="knowledge-list">{records.length === 0 ? <div className="preview-placeholder"><Database size={30} /><p>Este agente todavía no tiene fuentes registradas.</p></div> : records.map(record => <article key={record.ID} className={!record.active ? 'inactive' : ''}><div><span className={`status-pill ${record.active ? 'success' : ''}`}>{record.active ? 'Activa' : 'Inactiva'}</span><span className="source-tag">{record.Source}</span></div><h3>{record.Title || 'Sin título'}</h3><p>{record.KnowledgeText}</p><footer><span>{new Date(record.Stamp).toLocaleString()}</span>{record.IDWorkRoom && <code>Canal {shortId(record.IDWorkRoom)}</code>}<div><button className="icon-button" title="Reindexar" disabled={!record.active || busy} onClick={() => void reindex(record)}><RefreshCw size={15} /></button><button className="icon-button danger-button" title="Desactivar" disabled={!record.active || busy} onClick={() => void deactivate(record)}><Trash2 size={15} /></button></div></footer></article>)}</div>
+      </section>
+    </div>}
+
+    {tab === 'ingestion' && <div className="split-grid ingestion-layout">
+      <section className="panel form-panel"><span className="eyebrow">Catálogo SolidSET</span><h2>Nueva ejecución</h2><p className="section-copy">Materializa tablas autorizadas de la Data API como conocimiento del sistema de esta instancia.</p><label>Clave administrativa<input type="password" value={adminKey} onChange={e => setAdminKey(e.target.value)} autoComplete="off" /></label><Field label="Tablas · una por línea; vacío usa la selección predeterminada" value={tables} onChange={setTables} area /><button className="primary" disabled={busy || !adminKey} onClick={() => void startIngestion()}><UploadCloud size={17} /> Iniciar ingestión</button><small className="safe-note"><ShieldCheck size={14} /> La clave permanece únicamente en memoria durante esta sesión de la página.</small></section>
+      <section className="panel"><div className="panel-title"><div><span className="eyebrow">Última ejecución</span><h2>{run?.ExecutionState || run?.Status || 'Sin consultar'}</h2></div><button className="secondary" disabled={busy || !adminKey} onClick={() => void refreshRun()}><RefreshCw size={15} /> Actualizar</button></div><div className="progress-track"><span style={{ width: `${run?.ProgressPercentage || 0}%` }} /></div><strong className="progress-value">{run?.ProgressPercentage || 0}%</strong><dl className="detail-list"><div><dt>Tablas</dt><dd>{run ? `${run.TablesCompleted || 0} / ${run.TablesTotal || 0}` : '—'}</dd></div><div><dt>Filas procesadas</dt><dd>{run?.RowsProcessed ?? '—'}</dd></div><div><dt>Puntos indexados</dt><dd>{run?.PointsIndexed ?? '—'}</dd></div><div><dt>Worker activo</dt><dd>{run ? (run.Alive ? 'Sí' : 'No') : '—'}</dd></div></dl>{run?.Error && <div className="error-box">{run.Error}</div>}</section>
+    </div>}
+
+    {tab === 'test' && <div className="lab-grid">
+      <section className="panel form-panel"><span className="eyebrow">Recuperación aislada</span><h2>Consulta semántica</h2>{agentPicker}<Field label="ID del canal · opcional" value={ragWorkRoom} onChange={setRagWorkRoom} /><Field label="Consulta" value={query} onChange={setQuery} area /><label>Puntuación mínima · {minScore.toFixed(2)}<input type="range" min="0" max="1" step="0.05" value={minScore} onChange={e => setMinScore(Number(e.target.value))} /></label><label className="inline-check"><input type="checkbox" checked={includeSystem} onChange={e => setIncludeSystem(e.target.checked)} /> Incluir conocimiento del sistema</label><button className="primary" disabled={busy || !query.trim()} onClick={() => void searchRag()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Probar recuperación</button><small className="safe-note"><ShieldCheck size={14} /> Esta prueba no invoca al LLM y no envía mensajes a SolidSET.</small></section>
+      <section className="panel rag-results"><div className="panel-title"><div><span className="eyebrow">Contexto recuperado</span><h2>Resultados RAG</h2></div>{result && <span className="status-pill">{result.privateMatchCount + result.systemMatchCount} coincidencias</span>}</div>{!result ? <div className="preview-placeholder"><FileSearch size={32} /><p>Ejecuta una consulta para inspeccionar exactamente el contexto disponible para el agente.</p></div> : <><ResultContext title="Fuentes privadas" count={result.privateMatchCount} text={result.privateContext} /><ResultContext title="Conocimiento del sistema" count={result.systemMatchCount} text={result.systemContext} /></>}</section>
+    </div>}
+  </>
+}
+
+function ResultContext({ title, count, text }: { title: string; count: number; text: string }) {
+  return <div className="result-context"><div><strong>{title}</strong><span>{count}</span></div>{text ? <pre>{text}</pre> : <p>Sin coincidencias por encima del umbral.</p>}</div>
 }
 
 function Lab({ selectedInstance, agents, notify }: Shared) {

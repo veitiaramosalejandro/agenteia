@@ -1373,6 +1373,85 @@ def get_agent_knowledge(
     )[:20000]
 
 
+def list_agent_knowledge_records(
+    resource_id: UUID | str,
+    instance_id: UUID | str,
+    *,
+    active_only: bool = True,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Lists persisted knowledge without crossing agent or instance boundaries."""
+    clauses = [
+        '"IDSolidSETInstance" = %s',
+        '"IDResource" = %s',
+    ]
+    params: list[Any] = [UUID(str(instance_id)), UUID(str(resource_id))]
+    if active_only:
+        clauses.append('active = true')
+    params.append(max(1, min(int(limit), 500)))
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'''
+                SELECT "ID", "IDSolidSETInstance", "IDResource", "IDWorkRoom",
+                       "Title", "KnowledgeText", "Source", "Stamp", active
+                FROM public."SysResourceIAKnowledge"
+                WHERE {' AND '.join(clauses)}
+                ORDER BY "Stamp" DESC
+                LIMIT %s
+                ''',
+                params,
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+
+def get_agent_knowledge_record(
+    knowledge_id: UUID | str,
+    resource_id: UUID | str,
+    instance_id: UUID | str,
+) -> dict[str, Any] | None:
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT * FROM public."SysResourceIAKnowledge"
+                WHERE "ID"=%s AND "IDResource"=%s AND "IDSolidSETInstance"=%s
+                LIMIT 1
+                ''',
+                (
+                    UUID(str(knowledge_id)),
+                    UUID(str(resource_id)),
+                    UUID(str(instance_id)),
+                ),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+
+def deactivate_agent_knowledge(
+    knowledge_id: UUID | str,
+    resource_id: UUID | str,
+    instance_id: UUID | str,
+) -> bool:
+    """Soft-deletes a knowledge source while preserving its audit record."""
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                UPDATE public."SysResourceIAKnowledge"
+                SET active=false
+                WHERE "ID"=%s AND "IDResource"=%s
+                  AND "IDSolidSETInstance"=%s AND active=true
+                ''',
+                (
+                    UUID(str(knowledge_id)),
+                    UUID(str(resource_id)),
+                    UUID(str(instance_id)),
+                ),
+            )
+            return cursor.rowcount > 0
+
+
 def quarantine_legacy_generated_knowledge() -> int:
     """Deactivates legacy AI drafts misclassified as user assertions.
 
