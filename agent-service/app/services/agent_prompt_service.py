@@ -14,6 +14,7 @@ from app.api.schemas.agent_prompts import (
 from app.connectors.db_client import (
     create_agent_prompt_draft,
     get_agent_scope_profile,
+    get_active_agent_prompt,
     get_latest_agent_prompt,
     get_solidset_instance,
     list_active_agent_resource_ids,
@@ -27,6 +28,20 @@ class AgentPromptNotFound(LookupError):
 
 class AgentPromptPersistenceError(RuntimeError):
     pass
+
+
+def get_published_prompt(
+    instance_code: str, resource_id: UUID,
+) -> dict[str, Any]:
+    """Return the active prompt only within the explicitly selected instance."""
+    instance = _instance(instance_code)
+    try:
+        prompt = get_active_agent_prompt(instance["ID"], resource_id)
+    except psycopg.Error as exc:
+        raise AgentPromptPersistenceError("Não foi possível consultar o prompt publicado.") from exc
+    if not prompt:
+        raise AgentPromptNotFound("O agente não tem um prompt publicado nesta instância.")
+    return prompt
 
 
 def _instance(instance_code: str) -> dict[str, Any]:

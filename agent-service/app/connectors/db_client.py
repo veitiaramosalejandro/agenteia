@@ -991,7 +991,8 @@ def get_active_agent_prompt(
             cursor.execute(
                 '''
                 SELECT "ID", "IDSolidSETInstance", "IDResource", "Version", "Name",
-                       "SystemPrompt", "BehaviorConfig", "SourceHash", "PublishedAt"
+                       "SystemPrompt", "BehaviorConfig", "SourceHash", "Status",
+                       "CreatedBy", "CreatedAt", "PublishedAt", "RetiredAt"
                 FROM public."SysAgentIAPrompt"
                 WHERE "IDSolidSETInstance" = %s
                   AND "IDResource" = %s

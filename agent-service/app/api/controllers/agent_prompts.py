@@ -12,6 +12,7 @@ from app.services.agent_prompt_service import (
     AgentPromptPersistenceError,
     generate_active_prompt_drafts,
     generate_prompt_draft,
+    get_published_prompt,
     publish_prompt_draft,
 )
 
@@ -23,6 +24,23 @@ def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, AgentPromptNotFound):
         return HTTPException(status_code=404, detail=str(exc))
     return HTTPException(status_code=503, detail=str(exc))
+
+
+@router.get(
+    "/{agent_resource_id}/prompt/published",
+    response_model=AgentPromptStoredResponse,
+    summary="Read the latest published prompt for an agent in one SolidSET instance",
+)
+def read_published_agent_prompt(
+    agent_resource_id: UUID,
+    instanceCode: str = Query(..., min_length=1),
+) -> AgentPromptStoredResponse:
+    try:
+        return AgentPromptStoredResponse(
+            **get_published_prompt(instanceCode, agent_resource_id)
+        )
+    except (AgentPromptNotFound, AgentPromptPersistenceError) as exc:
+        raise _http_error(exc) from exc
 
 
 @router.post(

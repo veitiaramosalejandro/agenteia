@@ -34,6 +34,7 @@ export const api = {
   providers: () => request<Provider[]>('/api/v1/agent/llm/providers'),
   saveModel: (resourceId: string, body: Record<string, unknown>) => request(`/api/v1/agent/solidset/agents/${resourceId}/model`, { method: 'PUT', body: JSON.stringify(body) }),
   generatePrompt: (resourceId: string, instanceCode: string, body: Record<string, unknown>) => request<PromptDraft>(`/api/v1/agent/solidset/agents/${resourceId}/prompt/generate?instanceCode=${encodeURIComponent(instanceCode)}`, { method: 'POST', body: JSON.stringify(body) }),
+  publishedPrompt: (resourceId: string, instanceCode: string) => request<PromptDraft>(`/api/v1/agent/solidset/agents/${resourceId}/prompt/published?instanceCode=${encodeURIComponent(instanceCode)}`),
   publishPrompt: (resourceId: string, promptId: string, instanceCode: string) => request<PromptDraft>(`/api/v1/agent/solidset/agents/${resourceId}/prompt/${promptId}/publish?instanceCode=${encodeURIComponent(instanceCode)}`, { method: 'POST' }),
   dialogue: (body: Record<string, unknown>) => request<{ IDSession: string; responses: Array<{ AgentName: string; response: string; sent: boolean }> }>('/api/v1/agent/solidset/multi-agent/dialogue', { method: 'POST', body: JSON.stringify(body) }),
   knowledge: (resourceId: string, instanceCode: string, activeOnly = true) => request<{ total: number; items: KnowledgeRecord[] }>(`/api/v1/agent/solidset/agents/${resourceId}/knowledge?instanceCode=${encodeURIComponent(instanceCode)}&activeOnly=${activeOnly}`),
