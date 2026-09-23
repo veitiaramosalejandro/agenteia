@@ -30,6 +30,8 @@ export const api = {
   health: () => request<Health>('/api/v1/agent/health'),
   instances: () => request<{ total: number; items: Instance[] }>('/api/v1/agent/solidset/instances'),
   testInstance: (code: string) => request<Record<string, unknown>>(`/api/v1/agent/solidset/instances/${encodeURIComponent(code)}/test-connection`, { method: 'POST' }),
+  solidsetCatalog: (dataset: 'workrooms' | 'resources', code: string, limit = 20) => request<{ instanceCode: string; rows: Array<Record<string, unknown>>; rowCount: number; hasMore: boolean }>(`/api/v1/agent/solidset/${dataset}?instanceCode=${encodeURIComponent(code)}&offset=0&limit=${limit}`),
+  syncSolidset: (operation: 'workrooms' | 'logins' | 'resources' | 'chat-workroom' | 'agent-scopes' | 'agent-models', code: string) => request<Record<string, unknown>>(`/api/v1/agent/solidset/${operation}/sync?instanceCode=${encodeURIComponent(code)}`, { method: 'POST' }),
   agents: (code: string) => request<{ total: number; items: Agent[] }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(code)}/agents`),
   providers: () => request<Provider[]>('/api/v1/agent/llm/providers'),
   saveModel: (resourceId: string, body: Record<string, unknown>) => request(`/api/v1/agent/solidset/agents/${resourceId}/model`, { method: 'PUT', body: JSON.stringify(body) }),

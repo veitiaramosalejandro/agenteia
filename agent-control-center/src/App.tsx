@@ -8,12 +8,13 @@ import {
 import { api } from './api'
 import type { AdminUser, Agent, Approval, AutomationEvaluation, AutomationRule, ChangeRecord, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
 
-type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'observability' | 'governance' | 'lab'
+type View = 'overview' | 'instances' | 'synchronization' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'observability' | 'governance' | 'lab'
 type Notice = { type: 'success' | 'error'; text: string } | null
 
 const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
   { id: 'overview', label: 'Visión general', icon: Gauge },
   { id: 'instances', label: 'Instancias', icon: Layers3 },
+  { id: 'synchronization', label: 'Sincronización', icon: RefreshCw },
   { id: 'agents', label: 'Agentes', icon: Bot },
   { id: 'prompts', label: 'Prompts', icon: BrainCircuit },
   { id: 'models', label: 'Modelos', icon: Network },
@@ -111,6 +112,7 @@ function App() {
   const content = useMemo(() => {
     const shared = { selectedInstance, agents, providers, notify, refreshAgents: loadAgents }
     if (view === 'instances') return <Instances instances={instances} selected={instanceCode} notify={notify} />
+    if (view === 'synchronization') return <SolidsetSynchronization selectedInstance={selectedInstance} notify={notify} refreshAgents={loadAgents} />
     if (view === 'agents') return <Agents {...shared} />
     if (view === 'prompts') return <Prompts {...shared} />
     if (view === 'models') return <Models {...shared} />
@@ -592,6 +594,73 @@ function Observability({ selectedInstance, agents, notify }: Shared) {
   </>
 }
 
+type SyncOperation = 'workrooms' | 'logins' | 'resources' | 'chat-workroom' | 'agent-scopes' | 'agent-models'
+type SyncRunState = { status: 'idle' | 'running' | 'success' | 'error'; duration?: number; result?: Record<string, unknown>; error?: string }
+
+const syncSteps: Array<{ id: SyncOperation; title: string; copy: string }> = [
+  { id: 'workrooms', title: 'Canales', copy: 'Importa los workrooms disponibles en la instancia.' },
+  { id: 'logins', title: 'Usuarios', copy: 'Actualiza las cuentas y sus identidades de acceso.' },
+  { id: 'resources', title: 'Recursos', copy: 'Sincroniza recursos humanos y recursos de IA.' },
+  { id: 'chat-workroom', title: 'Relaciones de chat', copy: 'Relaciona recursos con sus canales de conversación.' },
+  { id: 'agent-scopes', title: 'Ámbitos de agentes', copy: 'Actualiza en qué canales puede actuar cada agente.' },
+  { id: 'agent-models', title: 'Modelos predeterminados', copy: 'Completa asignaciones faltantes sin reemplazar configuraciones personalizadas.' },
+]
+
+function SolidsetSynchronization({ selectedInstance, notify, refreshAgents }: { selectedInstance: Instance | null; notify: Shared['notify']; refreshAgents: () => Promise<void> }) {
+  const emptyStates = () => Object.fromEntries(syncSteps.map(step => [step.id, { status: 'idle' }])) as Record<SyncOperation, SyncRunState>
+  const [states, setStates] = useState<Record<SyncOperation, SyncRunState>>(emptyStates)
+  const [catalog, setCatalog] = useState<{ workrooms?: number; resources?: number }>({})
+  const [catalogBusy, setCatalogBusy] = useState(false)
+  const running = syncSteps.some(step => states[step.id].status === 'running')
+  useEffect(() => { setStates(emptyStates()); setCatalog({}) }, [selectedInstance?.Code])
+  const runStep = async (operation: SyncOperation, quiet = false) => {
+    if (!selectedInstance) return false
+    const started = performance.now()
+    setStates(current => ({ ...current, [operation]: { status: 'running' } }))
+    try {
+      const result = await api.syncSolidset(operation, selectedInstance.Code)
+      setStates(current => ({ ...current, [operation]: { status: 'success', duration: performance.now() - started, result } }))
+      if (!quiet) notify('success', `${syncSteps.find(step => step.id === operation)?.title} sincronizados.`)
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'La sincronización falló.'
+      setStates(current => ({ ...current, [operation]: { status: 'error', duration: performance.now() - started, error: message } }))
+      if (!quiet) notify('error', message)
+      return false
+    }
+  }
+  const runAll = async () => {
+    if (!selectedInstance || running) return
+    setStates(emptyStates())
+    for (const step of syncSteps) {
+      if (!await runStep(step.id, true)) {
+        notify('error', `La sincronización se detuvo en «${step.title}». Revisa el detalle antes de continuar.`)
+        return
+      }
+    }
+    await refreshAgents()
+    notify('success', 'Sincronización completa finalizada correctamente.')
+  }
+  const inspectCatalog = async () => {
+    if (!selectedInstance) return
+    setCatalogBusy(true)
+    try {
+      const [rooms, resources] = await Promise.all([api.solidsetCatalog('workrooms', selectedInstance.Code, 20), api.solidsetCatalog('resources', selectedInstance.Code, 20)])
+      setCatalog({ workrooms: rooms.rowCount, resources: resources.rowCount })
+      notify('success', 'La Data API respondió correctamente.')
+    } catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible consultar la Data API.') }
+    finally { setCatalogBusy(false) }
+  }
+  if (!selectedInstance) return <><PageHeader eyebrow="Integración" title="Sincronización SolidSET" copy="Importa la configuración operativa desde la Data API de una instancia." /><Empty title="Selecciona una instancia" copy="La sincronización siempre se ejecuta de forma aislada para la instancia activa." /></>
+  const configured = Boolean(selectedInstance.DataAPI?.active && selectedInstance.DataAPI?.BaseUrl)
+  return <>
+    <PageHeader eyebrow="Integración" title="Sincronización SolidSET" copy="Actualiza canales, usuarios, recursos, relaciones, ámbitos y modelos en el orden requerido." action={<button className="primary" disabled={!configured || running} onClick={() => void runAll()}>{running ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />} Sincronizar todo</button>} />
+    <div className="sync-summary"><section className="panel accent-panel"><span className="eyebrow">Instancia activa</span><h2>{selectedInstance.Name}</h2><code>{selectedInstance.Code}</code><dl className="detail-list"><div><dt>Data API</dt><dd><span className={`status-pill ${configured ? 'success' : 'danger'}`}>{configured ? 'Configurada' : 'No disponible'}</span></dd></div><div><dt>URL</dt><dd>{selectedInstance.DataAPI?.BaseUrl || '—'}</dd></div><div><dt>Timeout</dt><dd>{selectedInstance.DataAPI?.TimeoutSeconds ?? '—'} s</dd></div></dl></section><section className="panel"><div className="panel-title"><div><span className="eyebrow">Comprobación</span><h2>Catálogo remoto</h2></div><button className="secondary" disabled={!configured || catalogBusy || running} onClick={() => void inspectCatalog()}>{catalogBusy ? <LoaderCircle className="spin" size={15} /> : <Search size={15} />} Consultar</button></div><p className="section-copy">Lee una muestra sin modificar datos locales.</p><dl className="detail-list"><div><dt>Canales recibidos</dt><dd>{catalog.workrooms ?? 'Sin consultar'}</dd></div><div><dt>Recursos recibidos</dt><dd>{catalog.resources ?? 'Sin consultar'}</dd></div></dl></section></div>
+    {!configured && <div className="error-box sync-warning">Esta instancia no tiene una Data API activa con URL base. Configúrala antes de sincronizar.</div>}
+    <section className="panel sync-panel"><div className="panel-title"><div><span className="eyebrow">Proceso ordenado</span><h2>Etapas de sincronización</h2></div><span className="status-pill">Origen de solo lectura</span></div><p className="section-copy">Cada etapa lee SolidSET y actualiza el catálogo local del agente. Si una etapa falla, la ejecución completa se detiene para no procesar dependencias incompletas.</p><div className="sync-steps">{syncSteps.map((step, index) => { const state = states[step.id]; const result = state.result || {}; const synchronized = result.synchronized; const sourceRows = result.sourceRows; return <article key={step.id} className={state.status}><div className="sync-order">{state.status === 'running' ? <LoaderCircle className="spin" size={17} /> : state.status === 'success' ? <CheckCircle2 size={17} /> : state.status === 'error' ? <CircleAlert size={17} /> : index + 1}</div><div><strong>{step.title}</strong><p>{step.copy}</p>{state.status === 'success' && <small>{String(synchronized ?? 0)} sincronizados de {String(sourceRows ?? 0)} registros · {formatDuration(state.duration || 0)}</small>}{state.error && <small className="sync-error">{state.error}</small>}</div><button className="secondary compact" disabled={!configured || running} onClick={() => void runStep(step.id)}>{state.status === 'success' ? 'Repetir' : 'Ejecutar'}</button></article> })}</div></section>
+  </>
+}
+
 function Governance({ selectedInstance, currentUser, notify, authEnabled }: { selectedInstance: Instance | null; currentUser: AdminUser; notify: Shared['notify']; authEnabled: boolean }) {
   const [tab, setTab] = useState<'approvals' | 'history' | 'users'>('approvals')
   const [approvals, setApprovals] = useState<Approval[]>([]); const [changes, setChanges] = useState<ChangeRecord[]>([]); const [users, setUsers] = useState<AdminUser[]>([])
@@ -604,11 +673,13 @@ function Governance({ selectedInstance, currentUser, notify, authEnabled }: { se
   const requestRestore = async (change: ChangeRecord) => { try { await api.requestApproval({ instanceCode: selectedInstance?.Code, operation: 'restore', resourceType: change.ResourceType, resourceId: change.ID, reason: `Restaurar el estado anterior del cambio ${change.ID}.` }); notify('success', 'Solicitud de restauración creada.'); await load() } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible solicitar la restauración.') } }
   const restore = async (change: ChangeRecord) => { const approval = approvals.find(item => item.Operation === 'restore' && item.ResourceID === change.ID && item.Status === 'approved'); if (!approval) return notify('error', 'Este cambio no tiene una aprobación vigente.'); try { await api.restoreChange(change.ID, approval.ID); notify('success', 'Configuración restaurada.'); await load() } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible restaurar el cambio.') } }
   const createUser = async (event: React.FormEvent) => { event.preventDefault(); try { await api.createAdminUser(form); setForm({ username: '', displayName: '', password: '', role: 'operator' }); notify('success', 'Usuario administrativo creado.'); await load() } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible crear el usuario.') } }
+  const usernameValid = /^[A-Za-z0-9._-]{3,}$/.test(form.username); const displayNameValid = form.displayName.trim().length >= 2; const passwordValid = form.password.length >= 12
+  const userFormValid = usernameValid && displayNameValid && passwordValid
   return <><PageHeader eyebrow="Seguridad" title="Gobierno administrativo" copy="Accesos, decisiones durables e historial de cambios de configuración." action={<button className="secondary" onClick={() => void load()} disabled={busy}><RefreshCw className={busy ? 'spin' : ''} size={16} /> Actualizar</button>} />
     <div className="knowledge-tabs"><button className={tab === 'approvals' ? 'active' : ''} onClick={() => setTab('approvals')}><ShieldCheck size={15} /> Aprobaciones</button><button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}><History size={15} /> Historial</button>{canUsers && <button className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}><UserCog size={15} /> Usuarios</button>}</div>
-    {tab === 'approvals' && <section className="panel governance-panel"><div className="panel-title"><div><span className="eyebrow">Decisiones</span><h2>Aprobaciones persistentes</h2></div></div><div className="table-wrap"><table><thead><tr><th>Operación</th><th>Recurso</th><th>Solicitud</th><th>Estado</th><th>Acción</th></tr></thead><tbody>{approvals.map(item => <tr key={item.ID}><td><strong>{item.Operation}</strong><small>{new Date(item.CreatedAt).toLocaleString()}</small></td><td>{item.ResourceType}<code>{item.ResourceID}</code></td><td>{item.Reason}<small>{item.RequestedByName}</small></td><td><span className={`status-pill ${item.Status === 'approved' || item.Status === 'consumed' ? 'success' : item.Status === 'rejected' ? 'danger' : 'warning'}`}>{item.Status}</span></td><td>{canApprove && item.Status === 'pending' ? <div className="button-row"><button className="secondary compact" onClick={() => void decide(item.ID, 'approved')}>Aprobar</button><button className="secondary compact danger-button" onClick={() => void decide(item.ID, 'rejected')}>Rechazar</button></div> : '—'}</td></tr>)}</tbody></table></div></section>}
+    {tab === 'approvals' && <><section className="approval-guide"><article><span>1</span><div><strong>Solicitar</strong><p>Desde Historial, un usuario solicita restaurar una configuración anterior.</p></div></article><article><span>2</span><div><strong>Decidir</strong><p>Un administrador revisa el motivo y aprueba o rechaza la solicitud.</p></div></article><article><span>3</span><div><strong>Consumir</strong><p>La aprobación se usa una sola vez al ejecutar la restauración y queda auditada.</p></div></article></section><section className="panel governance-panel"><div className="panel-title"><div><span className="eyebrow">Control de cambios</span><h2>Aprobaciones de restauración</h2></div><span className="status-pill">{approvals.filter(item => item.Status === 'pending').length} pendientes</span></div><p className="governance-copy">Este listado no crea tareas automáticamente. Las solicitudes nacen en la pestaña Historial al pulsar «Solicitar» sobre un cambio restaurable.</p>{approvals.length === 0 ? <div className="approval-empty"><ShieldCheck size={30} /><strong>No hay solicitudes de aprobación</strong><p>Ve a Historial para solicitar la restauración de un cambio que tenga estado anterior.</p><button className="secondary" onClick={() => setTab('history')}><History size={15} /> Abrir historial</button></div> : <div className="table-wrap"><table><thead><tr><th>Operación</th><th>Recurso</th><th>Solicitud</th><th>Estado</th><th>Acción</th></tr></thead><tbody>{approvals.map(item => <tr key={item.ID}><td><strong>{item.Operation === 'restore' ? 'Restaurar' : item.Operation}</strong><small>{new Date(item.CreatedAt).toLocaleString()}</small></td><td>{item.ResourceType}<code>{item.ResourceID}</code></td><td>{item.Reason}<small>{item.RequestedByName}</small></td><td><span className={`status-pill ${item.Status === 'approved' || item.Status === 'consumed' ? 'success' : item.Status === 'rejected' ? 'danger' : 'warning'}`}>{({ pending: 'Pendiente', approved: 'Aprobada', rejected: 'Rechazada', consumed: 'Utilizada' } as Record<string, string>)[item.Status]}</span></td><td>{canApprove && item.Status === 'pending' ? <div className="button-row"><button className="secondary compact" onClick={() => void decide(item.ID, 'approved')}>Aprobar</button><button className="secondary compact danger-button" onClick={() => void decide(item.ID, 'rejected')}>Rechazar</button></div> : '—'}</td></tr>)}</tbody></table></div>}</section></>}
     {tab === 'history' && <section className="panel governance-panel"><span className="eyebrow">Trazabilidad</span><h2>Historial de cambios</h2><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Actor</th><th>Cambio</th><th>Resultado</th><th>Restauración</th></tr></thead><tbody>{changes.map(change => { const approved = approvals.some(item => item.Operation === 'restore' && item.ResourceID === change.ID && item.Status === 'approved'); return <tr key={change.ID}><td>{new Date(change.CreatedAt).toLocaleString()}</td><td>{change.UserName || 'Sistema'}</td><td><strong>{change.Action} · {change.ResourceType}</strong><code>{change.Path}</code></td><td><span className={`status-pill ${change.StatusCode < 400 ? 'success' : 'danger'}`}>HTTP {change.StatusCode}</span></td><td>{change.BeforeState ? approved && canRestore ? <button className="primary compact" onClick={() => void restore(change)}>Restaurar</button> : <button className="secondary compact" onClick={() => void requestRestore(change)}>Solicitar</button> : <span className="status-pill">Solo auditoría</span>}</td></tr> })}</tbody></table></div></section>}
-    {tab === 'users' && canUsers && <div className="governance-users"><form className="panel form-panel" onSubmit={createUser}><span className="eyebrow">Acceso</span><h2>Nuevo usuario</h2><label>Usuario<input value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} /></label><label>Nombre visible<input value={form.displayName} onChange={e => setForm({ ...form, displayName: e.target.value })} /></label><label>Contraseña temporal<input type="password" minLength={12} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label><label>Rol<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="operator">Operador</option><option value="auditor">Auditor</option><option value="administrator">Administrador</option></select></label><button className="primary" disabled={!form.username || !form.displayName || form.password.length < 12}>Crear usuario</button></form><section className="panel"><span className="eyebrow">RBAC</span><h2>Usuarios administrativos</h2><div className="user-list">{users.map(user => <article key={user.ID}><div><strong>{user.displayName}</strong><small>{user.username} · {user.role}</small></div><span className={`status-pill ${user.active ? 'success' : 'danger'}`}>{user.active ? 'Activo' : 'Inactivo'}</span><button className="secondary compact" disabled={user.ID === currentUser.ID} onClick={() => void api.setAdminUserActive(user.ID, !user.active).then(load)}>{user.active ? 'Desactivar' : 'Activar'}</button></article>)}</div></section></div>}
+    {tab === 'users' && canUsers && <div className="governance-users"><form className="panel form-panel" onSubmit={createUser}><span className="eyebrow">Acceso</span><h2>Nuevo usuario</h2><label>Usuario<input minLength={3} pattern="[A-Za-z0-9._-]+" autoComplete="off" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} /><small className={form.username && !usernameValid ? 'validation-error' : 'field-help'}>Mínimo 3 caracteres: letras, números, punto, guion o guion bajo.</small></label><label>Nombre visible<input minLength={2} autoComplete="name" value={form.displayName} onChange={e => setForm({ ...form, displayName: e.target.value })} /><small className={form.displayName && !displayNameValid ? 'validation-error' : 'field-help'}>Mínimo 2 caracteres.</small></label><label>Contraseña temporal<input type="password" minLength={12} autoComplete="new-password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /><small className={form.password && !passwordValid ? 'validation-error' : 'field-help'}>{passwordValid ? 'Longitud válida.' : `Faltan ${Math.max(0, 12 - form.password.length)} caracteres; se requieren al menos 12.`}</small></label><label>Rol<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="operator">Operador</option><option value="auditor">Auditor</option><option value="administrator">Administrador</option></select></label><button className="primary" disabled={!userFormValid}>Crear usuario</button>{!userFormValid && <small className="form-status"><CircleAlert size={13} /> Completa los requisitos indicados para activar el botón.</small>}</form><section className="panel"><span className="eyebrow">RBAC</span><h2>Usuarios administrativos</h2><div className="user-list">{users.map(user => <article key={user.ID}><div><strong>{user.displayName}</strong><small>{user.username} · {user.role}</small></div><span className={`status-pill ${user.active ? 'success' : 'danger'}`}>{user.active ? 'Activo' : 'Inactivo'}</span><button className="secondary compact" disabled={user.ID === currentUser.ID} onClick={() => void api.setAdminUserActive(user.ID, !user.active).then(load)}>{user.active ? 'Desactivar' : 'Activar'}</button></article>)}</div></section></div>}
   </>
 }
 
