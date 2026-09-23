@@ -40,12 +40,17 @@ class TestSistemaAprendizaje(unittest.TestCase):
         result = sistema.consultar_conocimiento_agente(
             "pregunta",
             agent_resource_id="resource-1",
+            solidset_instance_id="instance-1",
             canal_id="room-1",
             min_score=0.6,
         )
 
         self.assertEqual(
-            {"agent_resource_id": "resource-1", "scope": "agent"},
+            {
+                "agent_resource_id": "resource-1",
+                "solidset_instance_id": "instance-1",
+                "scope": "agent",
+            },
             captured["filter"],
         )
         self.assertEqual("Hecho privado verificado.", result)

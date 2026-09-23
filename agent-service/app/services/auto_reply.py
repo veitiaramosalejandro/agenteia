@@ -1760,13 +1760,17 @@ async def _process_auto_replies_impl(
         agent_resource_id = str(candidate.get("agent_resource_id") or "").strip()
         agent_identity_id = str(candidate.get("agent_identity_id") or "").strip()
         agent_name = str(candidate.get("agent_name") or agent_resource_id).strip()
+        solidset_instance_id = str(
+            candidate.get("solidset_instance_id") or ""
+        ).strip()
         relevant_agent_knowledge = ""
-        if agent_resource_id:
+        if agent_resource_id and solidset_instance_id:
             try:
                 relevant_agent_knowledge = await asyncio.to_thread(
                     agent.sistema_aprendizaje.consultar_conocimiento_agente,
                     incoming_text,
                     agent_resource_id=agent_resource_id,
+                    solidset_instance_id=solidset_instance_id,
                     canal_id=channel_id,
                     min_score=settings.BUSINESS_RAG_MIN_SCORE,
                 )
