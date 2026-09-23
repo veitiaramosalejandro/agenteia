@@ -221,11 +221,14 @@ async def handle_multi_agent_dialogue(
             f"agent:{agent_resource_id}:room:{request.IDWorkRoom}:"
             f"conversation:{conversation_id}"
         )
-        private_knowledge = await asyncio.to_thread(
-            get_agent_knowledge,
-            agent_resource_id,
-            request.IDWorkRoom,
-        )
+        private_knowledge = ""
+        if solidset_instance is not None:
+            private_knowledge = await asyncio.to_thread(
+                get_agent_knowledge,
+                agent_resource_id,
+                request.IDWorkRoom,
+                solidset_instance["ID"],
+            )
         reinforcement = await asyncio.to_thread(
             get_agent_reinforcement_context,
             agent_resource_id,

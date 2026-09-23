@@ -1,0 +1,353 @@
+{
+  "name": "SolidSET Agent - Chat y tareas controladas",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "solidset-agent-tasks",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7b05b4cc-6abe-4ff3-91b1-d0c3267ca1b4",
+      "name": "Entrada segura",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        180
+      ],
+      "webhookId": "5e90c305-e438-4a80-94eb-dacdc3edc424"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst operation = String(input.operation ?? 'ask').trim().toLowerCase();\nconst allowed = new Set(['ask', 'teach', 'health']);\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst errors = [];\n\nif (!allowed.has(operation)) errors.push('operation debe ser ask, teach o health.');\n\nconst instanceCode = String(input.instanceCode ?? '').trim();\nconst agentResourceId = String(input.agentResourceId ?? '').trim();\nconst workRoomId = String(input.workRoomId ?? '').trim();\nconst senderResourceId = String(input.senderResourceId ?? '').trim();\nconst sessionId = String(input.sessionId ?? '').trim();\n\nif (operation === 'ask' || operation === 'teach') {\n  if (!uuid.test(agentResourceId)) errors.push('agentResourceId debe ser un UUID válido.');\n}\nif (operation === 'ask') {\n  if (!uuid.test(workRoomId)) errors.push('workRoomId debe ser un UUID válido.');\n  if (!String(input.message ?? '').trim()) errors.push('message es obligatorio.');\n  if (String(input.message ?? '').length > 5000) errors.push('message no puede superar 5000 caracteres.');\n  if (senderResourceId && !uuid.test(senderResourceId)) errors.push('senderResourceId debe ser un UUID válido.');\n  if (sessionId && !uuid.test(sessionId)) errors.push('sessionId debe ser un UUID válido.');\n  if (input.sendToSolidSET === true && !instanceCode) errors.push('instanceCode es obligatorio si sendToSolidSET=true.');\n}\nif (operation === 'teach') {\n  if (!String(input.knowledge ?? '').trim()) errors.push('knowledge es obligatorio.');\n  if (String(input.knowledge ?? '').length > 50000) errors.push('knowledge no puede superar 50000 caracteres.');\n  if (workRoomId && !uuid.test(workRoomId)) errors.push('workRoomId debe ser un UUID válido.');\n}\n\nlet requestBody = {};\nif (operation === 'ask') {\n  requestBody = {\n    IDWorkRoom: workRoomId,\n    RawMessage: String(input.message).trim(),\n    SelectedAgentResourceIds: [agentResourceId],\n    SendToSolidSET: input.sendToSolidSET === true\n  };\n  if (sessionId) requestBody.IDSession = sessionId;\n  if (senderResourceId) requestBody.SenderResourceId = senderResourceId;\n  if (instanceCode) requestBody.SolidSETInstanceCode = instanceCode;\n}\nif (operation === 'teach') {\n  requestBody = {\n    KnowledgeText: String(input.knowledge).trim(),\n    Source: String(input.source ?? 'n8n').trim() || 'n8n',\n    active: input.active !== false\n  };\n  if (workRoomId) requestBody.IDWorkRoom = workRoomId;\n  if (String(input.title ?? '').trim()) requestBody.Title = String(input.title).trim();\n}\n\nreturn [{ json: {\n  valid: errors.length === 0,\n  operation,\n  errors,\n  agentResourceId,\n  requestBody\n} }];"
+      },
+      "id": "7097b68d-ff7d-41e9-aab4-c9bd28d75834",
+      "name": "Validar y preparar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -540,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "59993d29-a76a-4fe2-973f-072de0aff6d5",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "726309c9-8b67-4d0e-b3a0-60ef38a9a6cc",
+      "name": "Solicitud valida",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -320,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "ask",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ask"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "teach",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "teach"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "health",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "health"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "42e5815d-ad57-4395-a2c2-0809201b2be5",
+      "name": "Seleccionar tarea",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -80,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent-service:8000/api/v1/agent/solidset/multi-agent/dialogue",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.requestBody }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "f553ac8c-73b0-40a9-b3fb-449e9ac8ff46",
+      "name": "Consultar agente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        180,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://agent-service:8000/api/v1/agent/solidset/agents/' + $json.agentResourceId + '/knowledge' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.requestBody }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "06fd7b0c-4d8e-483a-85aa-2777a675b0b6",
+      "name": "Ensenar conocimiento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        180,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://agent-service:8000/api/v1/agent/health",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "aff88644-167c-4efe-92de-1ce68457de1e",
+      "name": "Comprobar servicio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        180,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, operation: $('Validar y preparar').item.json.operation, result: $json } }}",
+        "options": {}
+      },
+      "id": "26ad00e8-8194-4f8d-a145-ab567692c8bd",
+      "name": "Responder resultado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        460,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, errors: $json.errors } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "7aeecac4-c261-49f2-8b66-890853f25064",
+      "name": "Responder error de validacion",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -60,
+        340
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Entrada segura": {
+      "main": [
+        [
+          {
+            "node": "Validar y preparar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar y preparar": {
+      "main": [
+        [
+          {
+            "node": "Solicitud valida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solicitud valida": {
+      "main": [
+        [
+          {
+            "node": "Seleccionar tarea",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder error de validacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seleccionar tarea": {
+      "main": [
+        [
+          {
+            "node": "Consultar agente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ensenar conocimiento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Comprobar servicio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar agente": {
+      "main": [
+        [
+          {
+            "node": "Responder resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensenar conocimiento": {
+      "main": [
+        [
+          {
+            "node": "Responder resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comprobar servicio": {
+      "main": [
+        [
+          {
+            "node": "Responder resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "af24eafd-c547-4aca-80c0-7a62c42f00a0",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

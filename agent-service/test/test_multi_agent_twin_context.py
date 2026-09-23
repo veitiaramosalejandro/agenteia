@@ -51,7 +51,11 @@ class TwinEndpointTests(unittest.IsolatedAsyncioTestCase):
             SolidSETInstanceCode='local', SendToSolidSET=False)
         with patch.object(controller, 'get_solidset_instance', return_value=instance) as lookup, \
                 patch.object(controller.auto_reply_service, 'get_active_agents_for_workroom', return_value=configured), \
-                patch.object(controller, 'get_agent_knowledge', side_effect=lambda owner, room: 'Private ' + owner), \
+                patch.object(
+                    controller,
+                    'get_agent_knowledge',
+                    side_effect=lambda owner, room, instance: 'Private ' + owner,
+                ) as knowledge, \
                 patch.object(controller, 'get_agent_reinforcement_context', return_value=''), \
                 patch.object(controller, 'get_agent_scope_profile', side_effect=lambda inst, owner: {'FullName': owner}) as profile, \
                 patch.object(controller, 'get_active_agent_prompt', return_value={'SystemPrompt': 'Behavior'}) as prompt, \
@@ -64,8 +68,12 @@ class TwinEndpointTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(controller, 'solidset_send_chat_message') as send:
             result = await controller.handle_multi_agent_dialogue(request)
         self.assertEqual(len(result.responses), 2)
-        self.assertTrue(all('https://example.org/source' in row.response for row in result.responses))
+        self.assertTrue(all(row.response == 'Reply' for row in result.responses))
+        self.assertTrue(all('https://example.org/source' not in row.response for row in result.responses))
         lookup.assert_called_once_with(code='local', source_ip=None)
+        self.assertEqual(knowledge.call_count, 2)
+        for call in knowledge.call_args_list:
+            self.assertEqual(call.args[2], instance_id)
         self.assertEqual(profile.call_count, 2)
         self.assertEqual(prompt.call_count, 2)
         for call in invoke.call_args_list:
