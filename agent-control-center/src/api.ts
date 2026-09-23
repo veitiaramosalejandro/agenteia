@@ -1,12 +1,14 @@
-import type { Agent, AutomationEvaluation, AutomationRule, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
+import type { AdminUser, Agent, Approval, AutomationEvaluation, AutomationRule, ChangeRecord, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
 
 const API_BASE = (import.meta.env.VITE_AGENT_API_URL || '').replace(/\/$/, '')
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = sessionStorage.getItem('acc-token')
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers || {}),
     },
   })
@@ -21,6 +23,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  authStatus: () => request<{ enabled: boolean; configured: boolean }>('/api/v1/control-center/auth/status'),
+  login: (username: string, password: string) => request<{ token: string; expiresAt: string; user: AdminUser }>('/api/v1/control-center/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  me: () => request<AdminUser>('/api/v1/control-center/auth/me'),
+  logout: () => request<void>('/api/v1/control-center/auth/logout', { method: 'POST' }),
   health: () => request<Health>('/api/v1/agent/health'),
   instances: () => request<{ total: number; items: Instance[] }>('/api/v1/agent/solidset/instances'),
   testInstance: (code: string) => request<Record<string, unknown>>(`/api/v1/agent/solidset/instances/${encodeURIComponent(code)}/test-connection`, { method: 'POST' }),
@@ -45,5 +51,19 @@ export const api = {
   evaluateAutomationRule: (instanceCode: string, ruleId: string, message: string, approved: boolean) => request<AutomationEvaluation>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}/evaluate`, { method: 'POST', body: JSON.stringify({ Message: message, Approved: approved }) }),
   executeAutomationRule: (instanceCode: string, ruleId: string, body: Record<string, unknown>) => request<{ status: string; evaluation: AutomationEvaluation; dialogue?: { responses: Array<{ AgentName: string; response: string; sent: boolean }> } }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}/execute`, { method: 'POST', body: JSON.stringify(body) }),
   observability: (instanceCode: string, params: URLSearchParams) => request<ObservabilitySnapshot>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability?${params}`),
-  observabilityExportUrl: (instanceCode: string, params: URLSearchParams) => `${API_BASE}/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability/export.csv?${params}`,
+  exportObservability: async (instanceCode: string, params: URLSearchParams) => {
+    const token = sessionStorage.getItem('acc-token')
+    const response = await fetch(`${API_BASE}/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability/export.csv?${params}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    if (!response.ok) throw new Error(`Error HTTP ${response.status}`)
+    const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement('a')
+    anchor.href = url; anchor.download = `agent-observability-${instanceCode}.csv`; anchor.click(); URL.revokeObjectURL(url)
+  },
+  adminUsers: () => request<{ items: AdminUser[] }>('/api/v1/control-center/users'),
+  createAdminUser: (body: Record<string, unknown>) => request<AdminUser>('/api/v1/control-center/users', { method: 'POST', body: JSON.stringify(body) }),
+  setAdminUserActive: (id: string, active: boolean) => request<AdminUser>(`/api/v1/control-center/users/${id}`, { method: 'PATCH', body: JSON.stringify({ active }) }),
+  approvals: (instanceCode?: string) => request<{ items: Approval[] }>(`/api/v1/control-center/approvals${instanceCode ? `?instanceCode=${encodeURIComponent(instanceCode)}` : ''}`),
+  requestApproval: (body: Record<string, unknown>) => request<Approval>('/api/v1/control-center/approvals', { method: 'POST', body: JSON.stringify(body) }),
+  decideApproval: (id: string, decision: 'approved' | 'rejected', note = '') => request<Approval>(`/api/v1/control-center/approvals/${id}/decision`, { method: 'POST', body: JSON.stringify({ decision, note }) }),
+  changes: (instanceCode?: string) => request<{ items: ChangeRecord[] }>(`/api/v1/control-center/changes${instanceCode ? `?instanceCode=${encodeURIComponent(instanceCode)}` : ''}`),
+  restoreChange: (id: string, approvalId: string) => request(`/api/v1/control-center/changes/${id}/restore`, { method: 'POST', body: JSON.stringify({ approvalId }) }),
 }

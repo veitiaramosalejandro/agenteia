@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Activity, Bot, BrainCircuit, CheckCircle2, ChevronDown, CircleAlert,
   Database, Download, FileSearch, FlaskConical, Gauge, Layers3, LoaderCircle, Menu, Network, PanelLeftClose,
-  Play, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
-  Sparkles, Trash2, UploadCloud, Waypoints, Workflow, X,
+  History, LogOut, Play, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
+  Sparkles, Trash2, UploadCloud, UserCog, Waypoints, Workflow, X,
 } from 'lucide-react'
 import { api } from './api'
-import type { Agent, AutomationEvaluation, AutomationRule, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
+import type { AdminUser, Agent, Approval, AutomationEvaluation, AutomationRule, ChangeRecord, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
 
-type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'observability' | 'lab'
+type View = 'overview' | 'instances' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'observability' | 'governance' | 'lab'
 type Notice = { type: 'success' | 'error'; text: string } | null
 
 const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
@@ -20,6 +20,7 @@ const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
   { id: 'knowledge', label: 'Conocimiento', icon: Database },
   { id: 'automation', label: 'Automatización', icon: Workflow },
   { id: 'observability', label: 'Observabilidad', icon: Activity },
+  { id: 'governance', label: 'Gobierno', icon: UserCog },
   { id: 'lab', label: 'Laboratorio', icon: FlaskConical },
 ]
 
@@ -48,6 +49,10 @@ function App() {
   const [health, setHealth] = useState<Health | null>(null)
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState<Notice>(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [authEnabled, setAuthEnabled] = useState(true)
+  const [authConfigured, setAuthConfigured] = useState(true)
+  const [currentUser, setCurrentUser] = useState<AdminUser | null>(null)
 
   const selectedInstance = instances.find((item) => item.Code === instanceCode) || null
 
@@ -85,7 +90,17 @@ function App() {
     }
   }, [instanceCode, notify])
 
-  useEffect(() => { void loadBase() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    void (async () => {
+      try {
+        const status = await api.authStatus(); setAuthEnabled(status.enabled); setAuthConfigured(status.configured)
+        if (!status.enabled) setCurrentUser({ ID: 'disabled', username: 'local', displayName: 'Modo local', role: 'administrator', active: true, permissions: ['read', 'configure', 'operate', 'approve', 'restore', 'manage_users'] })
+        else if (sessionStorage.getItem('acc-token')) setCurrentUser(await api.me())
+      } catch { sessionStorage.removeItem('acc-token') }
+      finally { setAuthReady(true) }
+    })()
+  }, [])
+  useEffect(() => { if (authReady && currentUser) void loadBase() }, [authReady, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (instanceCode) {
       localStorage.setItem('acc-instance', instanceCode)
@@ -102,9 +117,16 @@ function App() {
     if (view === 'knowledge') return <Knowledge {...shared} />
     if (view === 'automation') return <Automation {...shared} />
     if (view === 'observability') return <Observability {...shared} />
+    if (view === 'governance') return <Governance selectedInstance={selectedInstance} currentUser={currentUser!} notify={notify} authEnabled={authEnabled} />
     if (view === 'lab') return <Lab {...shared} />
     return <Overview health={health} instances={instances} agents={agents} providers={providers} selected={selectedInstance} />
-  }, [view, health, instances, agents, providers, selectedInstance, instanceCode, notify, loadAgents])
+  }, [view, health, instances, agents, providers, selectedInstance, instanceCode, notify, loadAgents, currentUser, authEnabled])
+
+  if (!authReady) return <Loading />
+  if (authEnabled && !authConfigured) return <AuthSetupRequired />
+  if (authEnabled && !currentUser) return <Login onLogin={(user) => { setCurrentUser(user); void loadBase() }} />
+
+  const logout = async () => { try { await api.logout() } catch { /* revoke locally even if the API is unavailable */ } sessionStorage.removeItem('acc-token'); setCurrentUser(null) }
 
   return (
     <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
@@ -122,6 +144,8 @@ function App() {
             <div className="select-wrap"><select value={instanceCode} onChange={(e) => setInstanceCode(e.target.value)}><option value="">Selecciona una instancia</option>{instances.map((item) => <option key={item.ID} value={item.Code}>{item.Name} · {item.Code}</option>)}</select><ChevronDown size={16} /></div>
           </div>
           <div className={`api-state ${health?.status === 'healthy' ? 'ok' : ''}`}><span /> API {health?.status === 'healthy' ? 'operativa' : 'sin conexión'}</div>
+          <div className="current-user"><strong>{currentUser?.displayName}</strong><small>{currentUser?.role}</small></div>
+          {authEnabled && <button className="icon-button" onClick={() => void logout()} title="Cerrar sesión"><LogOut size={17} /></button>}
           <button className="icon-button" onClick={() => void loadBase()} title="Actualizar"><RefreshCw size={18} /></button>
         </header>
         <section className="workspace">{loading ? <Loading /> : content}</section>
@@ -129,6 +153,17 @@ function App() {
       {notice && <div className={`toast ${notice.type}`}>{notice.type === 'success' ? <CheckCircle2 size={19} /> : <CircleAlert size={19} />}{notice.text}<button onClick={() => setNotice(null)}><X size={16} /></button></div>}
     </div>
   )
+}
+
+function AuthSetupRequired() {
+  return <div className="login-shell"><div className="login-card"><div className="brand-mark"><ShieldCheck size={25} /></div><span className="eyebrow">Configuración requerida</span><h1>Crea el administrador inicial</h1><p>Define las variables siguientes en el archivo .env y recrea el servicio agent-service.</p><pre>CONTROL_CENTER_BOOTSTRAP_USERNAME=admin{`\n`}CONTROL_CENTER_BOOTSTRAP_PASSWORD=tu-clave-de-al-menos-12-caracteres</pre><div className="safe-note"><CircleAlert size={15} /> No se incluye una contraseña predeterminada.</div></div></div>
+}
+
+function Login({ onLogin }: { onLogin: (user: AdminUser) => void }) {
+  const [username, setUsername] = useState(''); const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false); const [error, setError] = useState('')
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(''); try { const result = await api.login(username, password); sessionStorage.setItem('acc-token', result.token); onLogin(result.user) } catch (e) { setError(e instanceof Error ? e.message : 'No fue posible iniciar sesión.') } finally { setBusy(false) } }
+  return <div className="login-shell"><form className="login-card" onSubmit={submit}><div className="brand-mark"><Waypoints size={25} /></div><span className="eyebrow">Agent Control Center</span><h1>Acceso administrativo</h1><p>Inicia sesión para administrar agentes y configuraciones.</p><label>Usuario<input autoFocus autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} /></label><label>Contraseña<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>{error && <div className="error-box">{error}</div>}<button className="primary" disabled={busy || !username || !password}>{busy ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />} Entrar</button></form></div>
 }
 
 function PageHeader({ eyebrow, title, copy, action }: { eyebrow: string; title: string; copy: string; action?: React.ReactNode }) {
@@ -502,9 +537,10 @@ function Observability({ selectedInstance, agents, notify }: Shared) {
     return () => window.clearInterval(timer)
   }, [autoRefresh, load])
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     if (!selectedInstance) return
-    window.location.assign(api.observabilityExportUrl(selectedInstance.Code, params(true)))
+    try { await api.exportObservability(selectedInstance.Code, params(true)) }
+    catch (error) { notify('error', error instanceof Error ? error.message : 'No fue posible exportar los eventos.') }
   }
 
   if (!selectedInstance) return <><PageHeader eyebrow="Operación" title="Observabilidad" copy="Métricas y auditorías aisladas por instancia." /><Empty title="Selecciona una instancia" copy="El panel nunca mezcla eventos de instancias diferentes." /></>
@@ -513,7 +549,7 @@ function Observability({ selectedInstance, agents, notify }: Shared) {
   const eventTypes = Object.entries(metrics?.byType || {})
   const maxType = Math.max(1, ...eventTypes.map(([, count]) => count))
   return <>
-    <PageHeader eyebrow="Operación" title="Observabilidad" copy="Rendimiento, fallos y trazabilidad sin exponer contenido sensible." action={<div className="button-row"><button className="secondary" disabled={busy} onClick={() => void load()}><RefreshCw className={busy ? 'spin' : ''} size={16} /> Actualizar</button><button className="primary" onClick={exportCsv}><Download size={16} /> Exportar CSV</button></div>} />
+    <PageHeader eyebrow="Operación" title="Observabilidad" copy="Rendimiento, fallos y trazabilidad sin exponer contenido sensible." action={<div className="button-row"><button className="secondary" disabled={busy} onClick={() => void load()}><RefreshCw className={busy ? 'spin' : ''} size={16} /> Actualizar</button><button className="primary" onClick={() => void exportCsv()}><Download size={16} /> Exportar CSV</button></div>} />
     <section className="observability-filters panel"><label>Ventana<select value={hours} onChange={e => setHours(Number(e.target.value))}><option value="1">Última hora</option><option value="24">24 horas</option><option value="168">7 días</option><option value="720">30 días</option></select></label><label>Tipo<select value={eventType} onChange={e => setEventType(e.target.value)}><option value="">Todos</option><option value="response">Respuestas</option><option value="automation">Automatización</option><option value="ingestion">Ingestión</option><option value="tool">Herramientas</option></select></label><label>Estado<select value={status} onChange={e => setStatus(e.target.value)}><option value="">Todos</option><option value="completed">Completado</option><option value="failed">Fallido</option><option value="blocked">Bloqueado</option><option value="queued">En cola</option><option value="running">En ejecución</option></select></label><label>Agente<select value={resourceId} onChange={e => setResourceId(e.target.value)}><option value="">Todos</option>{agents.map(agent => <option key={agent.IDResource} value={agent.IDResource}>{agent.Name}</option>)}</select></label><label className="inline-check"><input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} /> Actualizar cada 15 s</label></section>
 
     <div className="metric-grid observability-metrics"><article className="metric"><div className="metric-icon"><Activity size={21} /></div><span>Eventos</span><strong>{metrics?.total ?? '—'}</strong><small>{snapshot?.windowHours || hours} horas</small></article><article className="metric"><div className="metric-icon"><CheckCircle2 size={21} /></div><span>Tasa de éxito</span><strong>{metrics ? `${metrics.successRate}%` : '—'}</strong><small>{metrics?.successful || 0} completados</small></article><article className="metric"><div className="metric-icon"><Gauge size={21} /></div><span>Duración media</span><strong>{metrics ? formatDuration(metrics.averageDurationMs) : '—'}</strong><small>P95 {metrics ? formatDuration(metrics.p95DurationMs) : '—'}</small></article><article className="metric"><div className="metric-icon"><CircleAlert size={21} /></div><span>Fallos y bloqueos</span><strong>{metrics?.failed ?? '—'}</strong><small>{Number(runtime.count || 0)} diálogos en runtime</small></article></div>
@@ -522,6 +558,26 @@ function Observability({ selectedInstance, agents, notify }: Shared) {
 
     <section className="panel events-panel"><div className="panel-title"><div><span className="eyebrow">Auditoría</span><h2>Eventos recientes</h2></div><span className="status-pill">Metadatos seguros</span></div>{!snapshot?.events.length ? <div className="preview-placeholder"><Activity size={32} /><p>No existen eventos dentro de la ventana y filtros seleccionados.</p></div> : <div className="events-table"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Duración</th><th>Agente</th><th>Referencia</th><th>Detalle</th></tr></thead><tbody>{snapshot.events.map(event => <tr key={`${event.type}-${event.reference}`}><td>{new Date(event.timestamp).toLocaleString()}</td><td><span className="event-type">{eventLabel(event.type)}</span>{event.operation && <small>{event.operation}</small>}</td><td><span className={`status-pill ${statusClass(event.status)}`}>{event.status}</span></td><td>{formatDuration(event.duration_ms)}</td><td><code>{shortId(event.resourceId)}</code></td><td><code title={event.reference}>{shortId(event.reference)}</code></td><td>{event.error ? <button className="secondary compact" onClick={() => setExpanded(expanded === event.reference ? '' : event.reference)}><CircleAlert size={13} /> Ver error</button> : '—'}{expanded === event.reference && event.error && <div className="event-error">{event.error}</div>}</td></tr>)}</tbody></table></div>}</section>
     <p className="privacy-note"><ShieldCheck size={14} /> La vista y el CSV omiten mensajes, prompts, argumentos de herramientas, credenciales y respuestas generadas.</p>
+  </>
+}
+
+function Governance({ selectedInstance, currentUser, notify, authEnabled }: { selectedInstance: Instance | null; currentUser: AdminUser; notify: Shared['notify']; authEnabled: boolean }) {
+  const [tab, setTab] = useState<'approvals' | 'history' | 'users'>('approvals')
+  const [approvals, setApprovals] = useState<Approval[]>([]); const [changes, setChanges] = useState<ChangeRecord[]>([]); const [users, setUsers] = useState<AdminUser[]>([])
+  const [busy, setBusy] = useState(false); const [form, setForm] = useState({ username: '', displayName: '', password: '', role: 'operator' })
+  const canApprove = currentUser.permissions.includes('approve'); const canRestore = currentUser.permissions.includes('restore'); const canUsers = currentUser.permissions.includes('manage_users')
+  const load = useCallback(async () => { setBusy(true); try { const [approvalData, changeData] = await Promise.all([api.approvals(selectedInstance?.Code), api.changes(selectedInstance?.Code)]); setApprovals(approvalData.items); setChanges(changeData.items); if (canUsers) setUsers((await api.adminUsers()).items) } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible cargar el gobierno administrativo.') } finally { setBusy(false) } }, [selectedInstance?.Code, canUsers, notify])
+  useEffect(() => { if (authEnabled) void load() }, [load, authEnabled])
+  if (!authEnabled) return <><PageHeader eyebrow="Seguridad" title="Gobierno administrativo" copy="Activa CONTROL_CENTER_AUTH_ENABLED y configura el usuario inicial para habilitar este módulo." /><Empty title="Autenticación deshabilitada" copy="El modo local conserva compatibilidad, pero no proporciona control de acceso ni aprobaciones." /></>
+  const decide = async (id: string, decision: 'approved' | 'rejected') => { try { await api.decideApproval(id, decision); notify('success', decision === 'approved' ? 'Aprobación concedida.' : 'Solicitud rechazada.'); await load() } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible decidir la solicitud.') } }
+  const requestRestore = async (change: ChangeRecord) => { try { await api.requestApproval({ instanceCode: selectedInstance?.Code, operation: 'restore', resourceType: change.ResourceType, resourceId: change.ID, reason: `Restaurar el estado anterior del cambio ${change.ID}.` }); notify('success', 'Solicitud de restauración creada.'); await load() } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible solicitar la restauración.') } }
+  const restore = async (change: ChangeRecord) => { const approval = approvals.find(item => item.Operation === 'restore' && item.ResourceID === change.ID && item.Status === 'approved'); if (!approval) return notify('error', 'Este cambio no tiene una aprobación vigente.'); try { await api.restoreChange(change.ID, approval.ID); notify('success', 'Configuración restaurada.'); await load() } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible restaurar el cambio.') } }
+  const createUser = async (event: React.FormEvent) => { event.preventDefault(); try { await api.createAdminUser(form); setForm({ username: '', displayName: '', password: '', role: 'operator' }); notify('success', 'Usuario administrativo creado.'); await load() } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible crear el usuario.') } }
+  return <><PageHeader eyebrow="Seguridad" title="Gobierno administrativo" copy="Accesos, decisiones durables e historial de cambios de configuración." action={<button className="secondary" onClick={() => void load()} disabled={busy}><RefreshCw className={busy ? 'spin' : ''} size={16} /> Actualizar</button>} />
+    <div className="knowledge-tabs"><button className={tab === 'approvals' ? 'active' : ''} onClick={() => setTab('approvals')}><ShieldCheck size={15} /> Aprobaciones</button><button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}><History size={15} /> Historial</button>{canUsers && <button className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}><UserCog size={15} /> Usuarios</button>}</div>
+    {tab === 'approvals' && <section className="panel governance-panel"><div className="panel-title"><div><span className="eyebrow">Decisiones</span><h2>Aprobaciones persistentes</h2></div></div><div className="table-wrap"><table><thead><tr><th>Operación</th><th>Recurso</th><th>Solicitud</th><th>Estado</th><th>Acción</th></tr></thead><tbody>{approvals.map(item => <tr key={item.ID}><td><strong>{item.Operation}</strong><small>{new Date(item.CreatedAt).toLocaleString()}</small></td><td>{item.ResourceType}<code>{item.ResourceID}</code></td><td>{item.Reason}<small>{item.RequestedByName}</small></td><td><span className={`status-pill ${item.Status === 'approved' || item.Status === 'consumed' ? 'success' : item.Status === 'rejected' ? 'danger' : 'warning'}`}>{item.Status}</span></td><td>{canApprove && item.Status === 'pending' ? <div className="button-row"><button className="secondary compact" onClick={() => void decide(item.ID, 'approved')}>Aprobar</button><button className="secondary compact danger-button" onClick={() => void decide(item.ID, 'rejected')}>Rechazar</button></div> : '—'}</td></tr>)}</tbody></table></div></section>}
+    {tab === 'history' && <section className="panel governance-panel"><span className="eyebrow">Trazabilidad</span><h2>Historial de cambios</h2><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Actor</th><th>Cambio</th><th>Resultado</th><th>Restauración</th></tr></thead><tbody>{changes.map(change => { const approved = approvals.some(item => item.Operation === 'restore' && item.ResourceID === change.ID && item.Status === 'approved'); return <tr key={change.ID}><td>{new Date(change.CreatedAt).toLocaleString()}</td><td>{change.UserName || 'Sistema'}</td><td><strong>{change.Action} · {change.ResourceType}</strong><code>{change.Path}</code></td><td><span className={`status-pill ${change.StatusCode < 400 ? 'success' : 'danger'}`}>HTTP {change.StatusCode}</span></td><td>{change.BeforeState ? approved && canRestore ? <button className="primary compact" onClick={() => void restore(change)}>Restaurar</button> : <button className="secondary compact" onClick={() => void requestRestore(change)}>Solicitar</button> : <span className="status-pill">Solo auditoría</span>}</td></tr> })}</tbody></table></div></section>}
+    {tab === 'users' && canUsers && <div className="governance-users"><form className="panel form-panel" onSubmit={createUser}><span className="eyebrow">Acceso</span><h2>Nuevo usuario</h2><label>Usuario<input value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} /></label><label>Nombre visible<input value={form.displayName} onChange={e => setForm({ ...form, displayName: e.target.value })} /></label><label>Contraseña temporal<input type="password" minLength={12} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label><label>Rol<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="operator">Operador</option><option value="auditor">Auditor</option><option value="administrator">Administrador</option></select></label><button className="primary" disabled={!form.username || !form.displayName || form.password.length < 12}>Crear usuario</button></form><section className="panel"><span className="eyebrow">RBAC</span><h2>Usuarios administrativos</h2><div className="user-list">{users.map(user => <article key={user.ID}><div><strong>{user.displayName}</strong><small>{user.username} · {user.role}</small></div><span className={`status-pill ${user.active ? 'success' : 'danger'}`}>{user.active ? 'Activo' : 'Inactivo'}</span><button className="secondary compact" disabled={user.ID === currentUser.ID} onClick={() => void api.setAdminUserActive(user.ID, !user.active).then(load)}>{user.active ? 'Desactivar' : 'Activar'}</button></article>)}</div></section></div>}
   </>
 }
 

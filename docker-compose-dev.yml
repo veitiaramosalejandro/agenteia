@@ -39,6 +39,11 @@ services:
       - .env
     environment:
       ENVIRONMENT: development
+      CONTROL_CENTER_AUTH_ENABLED: ${CONTROL_CENTER_AUTH_ENABLED:-true}
+      CONTROL_CENTER_BOOTSTRAP_USERNAME: ${CONTROL_CENTER_BOOTSTRAP_USERNAME:-}
+      CONTROL_CENTER_BOOTSTRAP_PASSWORD: ${CONTROL_CENTER_BOOTSTRAP_PASSWORD:-}
+      CONTROL_CENTER_BOOTSTRAP_DISPLAY_NAME: ${CONTROL_CENTER_BOOTSTRAP_DISPLAY_NAME:-Administrator}
+      CONTROL_CENTER_SESSION_HOURS: ${CONTROL_CENTER_SESSION_HOURS:-8}
       RUNNING_IN_DOCKER: "1"
       OLLAMA_CHAT_CONTEXT_LENGTH: ${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       OLLAMA_BASE_URL: http://ollama-chat:11434
@@ -485,7 +490,7 @@ services:
     build:
       context: ./agent-control-center
       dockerfile: Dockerfile
-    image: agent-control-center:0.4.0
+    image: agent-control-center:0.5.0
     container_name: agent_control_center
     hostname: agent-control-center
     restart: unless-stopped

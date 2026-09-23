@@ -4,7 +4,7 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.agent.capabilities import normalize_capabilities
 from app.api.controllers.agent_management import handle_multi_agent_dialogue
@@ -28,6 +28,7 @@ from app.connectors.db_client import (
     record_automation_run,
     save_automation_rule,
 )
+from app.services.control_center_governance import record_change
 
 
 router = APIRouter(tags=["Agent Automation"])
@@ -91,7 +92,7 @@ def read_automation_rules(code: str) -> dict[str, Any]:
 
 
 @router.post("/api/v1/agent/solidset/instances/{code}/automation-rules", status_code=201)
-def create_automation_rule(code: str, request: AutomationRuleRequest) -> dict[str, Any]:
+def create_automation_rule(code: str, request: AutomationRuleRequest, http_request: Request = None) -> dict[str, Any]:
     instance = _instance(code)
     room = _workroom(instance["ID"], request.IDWorkRoom)
     if not get_active_agent_identity_for_resource(request.IDResource, instance["ID"]):
@@ -106,14 +107,29 @@ def create_automation_rule(code: str, request: AutomationRuleRequest) -> dict[st
         saved = save_automation_rule(instance["ID"], request.model_dump())
     except psycopg.Error as exc:
         raise HTTPException(status_code=503, detail="Não foi possível guardar a regra.") from exc
+    actor = getattr(http_request.state, "control_center_user", None) if http_request else None
+    if actor:
+        record_change(
+            user_id=actor["ID"], action="create", resource_type="automation_rule",
+            resource_id=str(saved["ID"]), method="POST", path=str(http_request.url.path),
+            status_code=201, instance_id=instance["ID"], after=saved,
+        )
     return {"status": "created", "rule": saved}
 
 
 @router.delete("/api/v1/agent/solidset/instances/{code}/automation-rules/{rule_id}")
-def remove_automation_rule(code: str, rule_id: UUID) -> dict[str, Any]:
+def remove_automation_rule(code: str, rule_id: UUID, request: Request = None) -> dict[str, Any]:
     instance = _instance(code)
+    previous = get_automation_rule(rule_id, instance["ID"])
     if not deactivate_automation_rule(rule_id, instance["ID"]):
         raise HTTPException(status_code=404, detail="Regra ativa não encontrada.")
+    actor = getattr(request.state, "control_center_user", None) if request else None
+    if actor and previous:
+        record_change(
+            user_id=actor["ID"], action="deactivate", resource_type="automation_rule",
+            resource_id=str(rule_id), method="DELETE", path=str(request.url.path), status_code=200,
+            instance_id=instance["ID"], before=previous, after={**previous, "active": False},
+        )
     return {"status": "deactivated", "ID": rule_id}
 
 

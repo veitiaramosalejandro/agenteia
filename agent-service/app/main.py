@@ -22,6 +22,7 @@ from app.api.controllers.agent_prompts import router as agent_prompts_router
 from app.api.controllers.ingestion import router as ingestion_router
 from app.api.controllers.automation import router as automation_router
 from app.api.controllers.observability import router as observability_router
+from app.api.controllers.governance import router as governance_router
 from app.api.controllers.synchronization import router as synchronization_router
 from app.api.controllers.llm_configuration import router as llm_configuration_router
 from app.api.controllers.nvidia import router as nvidia_router
@@ -58,6 +59,12 @@ from app.services.instance_resolution import (
 )
 from app.services.dialogue_runtime import (
     active_count as _get_active_dialogues,
+)
+from app.services.control_center_governance import (
+    auth_enabled as control_center_auth_enabled,
+    ensure_governance_schema,
+    record_change as record_control_center_change,
+    resolve_session as resolve_control_center_session,
 )
 from app.historical.store import (
     ensure_schema as ensure_historical_schema,
@@ -141,6 +148,70 @@ app.add_middleware(
 )
 
 
+_CONTROL_CENTER_PUBLIC = {
+    "/api/v1/control-center/auth/status",
+    "/api/v1/control-center/auth/login",
+}
+_CONTROL_CENTER_ADMIN_PREFIXES = (
+    "/api/v1/control-center",
+    "/api/v1/agent/solidset/instances",
+    "/api/v1/agent/solidset/agents",
+    "/api/v1/agent/solidset/agent-models",
+    "/api/v1/agent/solidset/workrooms",
+    "/api/v1/agent/solidset/resources",
+    "/api/v1/agent/solidset/logins",
+    "/api/v1/agent/solidset/chat-workroom",
+    "/api/v1/agent/solidset/agent-scopes",
+    "/api/v1/agent/llm/providers",
+    "/api/v1/agent/system/knowledge",
+    "/api/v1/agent/system-knowledge-ingestion",
+    "/api/v1/agent/historical-ingestion",
+)
+
+
+def _control_center_permission(method: str, path: str) -> str:
+    if path.startswith("/api/v1/control-center/auth/"):
+        return "read"
+    if method == "GET":
+        return "read"
+    if "/observability" in path:
+        return "read"
+    if "/execute" in path or "/ingest" in path or "/sync" in path or "/test-connection" in path:
+        return "operate"
+    return "configure"
+
+
+@app.middleware("http")
+async def protect_control_center(request: Request, call_next):
+    path = request.url.path.rstrip("/") or "/"
+    if not control_center_auth_enabled() or path in _CONTROL_CENTER_PUBLIC:
+        return await call_next(request)
+    protected = any(path.startswith(prefix) for prefix in _CONTROL_CENTER_ADMIN_PREFIXES)
+    if not protected:
+        return await call_next(request)
+    authorization = request.headers.get("authorization", "")
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    user = resolve_control_center_session(token)
+    if not user:
+        return JSONResponse(status_code=401, content={"detail": "Autenticación administrativa requerida."})
+    required = _control_center_permission(request.method, path)
+    if required not in user.get("permissions", []):
+        return JSONResponse(status_code=403, content={"detail": f"Permiso requerido: {required}."})
+    request.state.control_center_user = user
+    response = await call_next(request)
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and path != "/api/v1/control-center/auth/logout":
+        try:
+            parts = [part for part in path.split("/") if part]
+            record_control_center_change(
+                user_id=user["ID"], action=request.method.lower(), resource_type=parts[-2] if len(parts) > 1 else "configuration",
+                resource_id=parts[-1] if parts else None, method=request.method, path=path,
+                status_code=response.status_code,
+            )
+        except Exception as exc:
+            print(f"CONTROL_CENTER_AUDIT_FAILED type={type(exc).__name__}", flush=True)
+    return response
+
+
 @app.middleware("http")
 async def log_request_origin_ip(request: Request, call_next):
     """Muestra en consola el origen y resultado de cada petición HTTP."""
@@ -187,6 +258,7 @@ app.include_router(agent_prompts_router)
 app.include_router(ingestion_router)
 app.include_router(automation_router)
 app.include_router(observability_router)
+app.include_router(governance_router)
 app.include_router(synchronization_router)
 app.include_router(llm_configuration_router)
 app.include_router(nvidia_router)

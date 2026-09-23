@@ -175,3 +175,44 @@ export type ObservabilitySnapshot = {
   runtime: { dialogue: Record<string, number | null> }
   events: ObservabilityEvent[]
 }
+
+export type AdminUser = {
+  ID: string
+  username: string
+  displayName: string
+  role: 'administrator' | 'operator' | 'auditor'
+  active: boolean
+  permissions: string[]
+  createdAt?: string
+  lastLoginAt?: string | null
+}
+
+export type Approval = {
+  ID: string
+  IDSolidSETInstance?: string | null
+  Operation: string
+  ResourceType: string
+  ResourceID: string
+  Reason: string
+  Status: 'pending' | 'approved' | 'rejected' | 'consumed' | 'cancelled'
+  RequestedByName: string
+  DecidedByName?: string | null
+  DecisionNote?: string | null
+  CreatedAt: string
+}
+
+export type ChangeRecord = {
+  ID: string
+  IDSolidSETInstance?: string | null
+  Action: string
+  ResourceType: string
+  ResourceID?: string | null
+  Method: string
+  Path: string
+  StatusCode: number
+  BeforeState?: Record<string, unknown> | null
+  AfterState?: Record<string, unknown> | null
+  RestoredFrom?: string | null
+  UserName?: string | null
+  CreatedAt: string
+}

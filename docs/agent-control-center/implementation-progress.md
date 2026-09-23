@@ -231,3 +231,68 @@ errores en vistas consultables y exportables sin exponer información sensible.
 
 Incorporar autenticación administrativa, roles, permisos por operación,
 aprobaciones durables, historial de cambios y restauración controlada.
+
+## Fase 5: módulos entregados
+
+### Autenticación administrativa
+
+- Inicio y cierre de sesión mediante tokens aleatorios revocables.
+- En PostgreSQL se conserva solamente el hash SHA-256 del token.
+- Contraseñas derivadas con PBKDF2-SHA256, 310 000 iteraciones y sal individual.
+- Caducidad configurable y revocación de todas las sesiones al desactivar un usuario.
+- Creación segura del primer administrador mediante variables de entorno, únicamente
+  cuando no existe ningún usuario administrativo.
+
+### Roles y permisos
+
+- `administrator`: configuración, operación, aprobaciones, restauración y usuarios.
+- `operator`: lectura, configuración, operación y solicitud de aprobaciones.
+- `auditor`: acceso de solo lectura.
+- La API aplica los permisos a instancias, agentes, prompts, modelos, conocimiento,
+  automatizaciones, ingestión y observabilidad cuando el control de acceso está activo.
+
+### Aprobaciones durables
+
+- Solicitudes ligadas a instancia, operación, tipo de recurso, identificador y motivo.
+- Estados pendiente, aprobado, rechazado, consumido y cancelado.
+- Registro del solicitante, decisor, nota y fechas de decisión y consumo.
+- Una aprobación de restauración solo puede consumirse una vez y debe referirse
+  exactamente al cambio solicitado.
+
+### Historial y restauración
+
+- Auditoría de las mutaciones administrativas con actor, método, ruta y resultado HTTP.
+- Instantáneas explícitas antes y después de desactivar reglas de automatización.
+- Restauración limitada a campos permitidos de reglas y ejecutada en una transacción.
+- No se almacenan contraseñas, tokens, claves, prompts, mensajes ni cuerpos de petición
+  en el historial genérico.
+
+### Consola web
+
+- Pantalla de acceso y sesión mantenida únicamente durante la pestaña del navegador.
+- Vista de aprobaciones con decisión según permisos.
+- Historial por instancia y flujo de solicitud, aprobación y restauración.
+- Administración de usuarios, roles y activación de cuentas.
+- Exportación de observabilidad autenticada mediante descarga con cabecera Bearer.
+
+### Persistencia
+
+- Migración `030_create_control_center_governance.sql`.
+- Tablas de usuarios, sesiones, aprobaciones e historial, con índices de consulta.
+- Inicialización idempotente para bases nuevas y volúmenes existentes.
+
+## Validación adicional de la fase 5
+
+- Veintiuna pruebas enfocadas de gobierno y módulos administrativos superadas.
+- Treinta y tres pruebas de gobierno y enrutamiento ejecutadas dentro del contenedor.
+- Verificación HTTP 401 de una ruta administrativa sin sesión válida.
+- Creación idempotente de las cuatro tablas comprobada contra PostgreSQL local.
+- Compilación React/TypeScript y construcción de la imagen `agent-control-center:0.5.0`.
+- Configuración Compose validada para desarrollo y producción con GPU.
+- La validación no creó usuarios, sesiones ni contraseñas de prueba.
+
+## Criterio para iniciar la fase 6
+
+Incorporar políticas por instancia y recurso, autenticación corporativa mediante OIDC,
+rotación obligatoria de credenciales, segundo aprobador configurable y alertas de
+seguridad integradas con la infraestructura de la organización.
