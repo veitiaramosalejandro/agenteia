@@ -715,6 +715,7 @@ def _store_web_search_knowledge(
     query: str,
     results: list[dict[str, str]],
     agent_resource_id: str | None = None,
+    solidset_instance_id: str | None = None,
 ) -> bool:
     """Index web results with deterministic IDs and full provenance."""
     client = QdrantClient(url=settings.VECTOR_DB_URL)
@@ -737,7 +738,10 @@ def _store_web_search_knowledge(
         )
         vector = probe_vector if index == 0 and probe_vector is not None else embeddings.embed_query(content)
         digest = hashlib.md5(
-            f"web:{agent_resource_id or 'unscoped'}:{result['url']}:{content}".encode("utf-8")
+            (
+                f"web:{solidset_instance_id or 'unscoped'}:"
+                f"{agent_resource_id or 'unscoped'}:{result['url']}:{content}"
+            ).encode("utf-8")
         ).hexdigest()
         points.append(PointStruct(
             id=str(uuid.UUID(digest)),
@@ -750,6 +754,7 @@ def _store_web_search_knowledge(
                 "source_title": result["title"],
                 "search_query": query,
                 "agent_resource_id": str(agent_resource_id or ""),
+                "solidset_instance_id": str(solidset_instance_id or ""),
                 "answer": str(result.get("answer") or result.get("snippet") or "")[:5000],
                 "external_unverified": True,
                 "learned_at": learned_at,
@@ -763,11 +768,14 @@ def _schedule_web_search_learning(
     query: str,
     results: list[dict[str, str]],
     agent_resource_id: str | None = None,
+    solidset_instance_id: str | None = None,
 ) -> None:
     """Difiere la indexación para que embeddings y chat no compitan en Ollama."""
     def _learn() -> None:
         try:
-            _store_web_search_knowledge(query, results, agent_resource_id)
+            _store_web_search_knowledge(
+                query, results, agent_resource_id, solidset_instance_id
+            )
             print(f"🧠 Resultados web indexados en background; query={query[:80]!r}")
         except Exception as exc:
             print(f"⚠️ No se pudieron indexar resultados web en background: {exc}")
@@ -785,6 +793,11 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
         clean_query = " ".join((query or "").split())
         configurable = config.get("configurable") or {}
         agent_resource_id = configurable.get("agent_resource_id")
+        solidset_instance_id = str(
+            configurable.get("solidset_instance_id")
+            or (current_instance() or {}).get("ID")
+            or ""
+        )
         learning_managed = bool(configurable.get("learning_managed"))
         if not clean_query:
             return "Error: la consulta de búsqueda no puede estar vacía."
@@ -799,7 +812,7 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
             for item in search_with_openai(
                 clean_query,
                 resource_id=agent_resource_id,
-                instance_id=str((current_instance() or {}).get("ID") or "") or None,
+                instance_id=solidset_instance_id or None,
             )
         ]
 
@@ -830,7 +843,9 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
         if settings.WEB_SEARCH_AUTO_LEARN and not learning_managed:
             # Indexar puede requerir varios embeddings de Ollama. Se desacopla de la
             # respuesta para no añadir minutos de espera al usuario.
-            _schedule_web_search_learning(clean_query, results, agent_resource_id)
+            _schedule_web_search_learning(
+                clean_query, results, agent_resource_id, solidset_instance_id
+            )
             learning_scheduled = True
 
         payload = {

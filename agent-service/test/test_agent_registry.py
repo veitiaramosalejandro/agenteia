@@ -33,11 +33,16 @@ class ToolRegistryTests(unittest.TestCase):
         regular = FakeTool()
         registry = ToolRegistry({"contextual": web, "regular": regular})
         registry.set_policy("contextual", ToolPolicy(requires_agent_context=True))
-        context = AgentContext(agent_resource_id="agent-a")
+        context = AgentContext(
+            agent_resource_id="agent-a", solidset_instance_id="instance-a"
+        )
 
         self.assertEqual(registry.invoke("contextual", {"query": "x"}, context=context), "ok")
         self.assertEqual(registry.invoke("regular", {"value": 1}, context=context), "ok")
         self.assertEqual(web.calls[0][1]["configurable"]["agent_resource_id"], "agent-a")
+        self.assertEqual(
+            web.calls[0][1]["configurable"]["solidset_instance_id"], "instance-a"
+        )
         self.assertIsNone(regular.calls[0][1])
 
     def test_invoke_result_keeps_content_and_adds_provenance(self):

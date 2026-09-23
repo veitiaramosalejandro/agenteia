@@ -47,11 +47,13 @@ class AgentKnowledge:
         self,
         query: str,
         *,
+        solidset_instance_id: str,
         agent_resource_id: Optional[str] = None,
         limit: int = 5,
     ) -> str:
         return self.backend.consultar_investigacion_web_reciente(
             query,
+            solidset_instance_id=solidset_instance_id,
             agent_resource_id=agent_resource_id,
             limit=limit,
         )

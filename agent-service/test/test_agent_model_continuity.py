@@ -38,7 +38,10 @@ class AgentModelContinuityTests(unittest.TestCase):
             self.assertEqual(answer, "Respuesta comprobada.")
             search.invoke.assert_called_with(
                 {"query": "consulta publica"},
-                config={"configurable": {"agent_resource_id": resource}},
+                config={"configurable": {
+                    "agent_resource_id": resource,
+                    "solidset_instance_id": "",
+                }},
             )
             model.invoke.assert_called_once()
         self.agent.llm.invoke.assert_not_called()

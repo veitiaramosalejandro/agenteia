@@ -60,7 +60,9 @@ class TestWebSearch(unittest.TestCase):
         self.assertEqual(payload["source_type"], "openai_web_search")
         self.assertEqual(payload["answer"], "Hecho actualizado con evidencia.")
         self.assertEqual(payload["results"][0]["title"], "Fuente oficial")
-        search.assert_called_once_with("dato actual", resource_id=None)
+        search.assert_called_once_with(
+            "dato actual", resource_id=None, instance_id=None
+        )
         schedule.assert_called_once()
 
     def test_empty_query_is_rejected(self):
@@ -74,7 +76,9 @@ class TestWebSearch(unittest.TestCase):
                 {"query": "consulta pública"},
                 config={"configurable": {"agent_resource_id": "agent-a"}},
             )
-        search.assert_called_once_with("consulta pública", resource_id="agent-a")
+        search.assert_called_once_with(
+            "consulta pública", resource_id="agent-a", instance_id=None
+        )
         self.assertEqual(set(google_web_search.tool_call_schema.model_fields), {"query"})
 
     @patch("app.services.external_search.search_with_openai", side_effect=RuntimeError("secret-key-private"))
@@ -269,8 +273,17 @@ class TestWebSearch(unittest.TestCase):
         agent = MachiningAgent.__new__(MachiningAgent)
         agent.web_knowledge_cache = {}
         query = "plantilla Real Madrid temporada 2026-2027"
-        agent._cache_web_knowledge(query, '{"results": [{"title": "Plantilla"}]}')
-        self.assertIn("Plantilla", agent._get_cached_web_knowledge(query))
+        agent._cache_web_knowledge(
+            query, '{"results": [{"title": "Plantilla"}]}',
+            "agent-a", "instance-a",
+        )
+        self.assertIn(
+            "Plantilla",
+            agent._get_cached_web_knowledge(query, "agent-a", "instance-a"),
+        )
+        self.assertEqual(
+            "", agent._get_cached_web_knowledge(query, "agent-a", "instance-b")
+        )
 
 
 if __name__ == "__main__":

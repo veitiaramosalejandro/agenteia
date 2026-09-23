@@ -10,7 +10,11 @@ class AgentWebTests(unittest.TestCase):
         tool.invoke.return_value = '{"answer":"resultado"}'
         web = AgentWeb(tool)
 
-        result = web.search("consulta", agent_resource_id="agent-a")
+        result = web.search(
+            "consulta",
+            agent_resource_id="agent-a",
+            solidset_instance_id="instance-a",
+        )
 
         self.assertEqual(result, '{"answer":"resultado"}')
         tool.invoke.assert_called_once_with(
@@ -18,6 +22,7 @@ class AgentWebTests(unittest.TestCase):
             config={
                 "configurable": {
                     "agent_resource_id": "agent-a",
+                    "solidset_instance_id": "instance-a",
                     "learning_managed": False,
                 }
             },

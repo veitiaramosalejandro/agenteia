@@ -22,6 +22,7 @@ from app.agent.tools import solidset_send_chat_message
 from app.connectors.db_client import (
     configure_agent_workroom,
     get_agent_knowledge,
+    get_active_agent_identity_for_resource,
     get_solidset_instance,
     get_agent_scope_profile,
     get_active_agent_prompt,
@@ -85,7 +86,11 @@ def _dialogue_public_research(
                         for row in results
                     ],
                 }),
-                AgentContext(agent_resource_id=resource_id),
+                AgentContext(
+                    agent_resource_id=resource_id,
+                    solidset_instance_id=instance_id,
+                    metadata={"solidset_instance_id": instance_id},
+                ),
             )
         except Exception as exc:
             print(f"DIALOGUE_PUBLIC_LEARNING_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
@@ -119,6 +124,24 @@ async def create_agent_knowledge(
 ) -> AgentKnowledgeResponse:
     """Persiste e indexa conocimiento exclusivo de un agente IA."""
     payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    instance_code = str(payload.pop("SolidSETInstanceCode", "") or "").strip()
+    solidset_instance = get_solidset_instance(code=instance_code, source_ip=None)
+    if solidset_instance is None:
+        raise HTTPException(
+            status_code=404,
+            detail="A instância SolidSET não existe ou está inativa.",
+        )
+    active_agent = await asyncio.to_thread(
+        get_active_agent_identity_for_resource,
+        agent_resource_id,
+        solidset_instance["ID"],
+    )
+    if active_agent is None:
+        raise HTTPException(
+            status_code=404,
+            detail="O agente não pertence à instância SolidSET ativa.",
+        )
+    payload["IDSolidSETInstance"] = solidset_instance["ID"]
     payload["IDResource"] = agent_resource_id
     try:
         saved = await asyncio.to_thread(save_agent_knowledge, payload)

@@ -33,6 +33,7 @@ Para publicar la respuesta en el canal, usa `sendToSolidSET: true`. En ese caso,
 ```json
 {
   "operation": "teach",
+  "instanceCode": "local-developer",
   "agentResourceId": "RECURSO-HUMANO-DEL-GEMELO",
   "workRoomId": "CANAL-SOLIDSET",
   "title": "Convenciones del proyecto",

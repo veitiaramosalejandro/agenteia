@@ -77,6 +77,7 @@ class ToolRegistry(dict[str, Any]):
                 config={
                     "configurable": {
                         "agent_resource_id": context.agent_resource_id,
+                        "solidset_instance_id": context.solidset_instance_id,
                         "learning_managed": policy.learn_result,
                     }
                 },

@@ -20,6 +20,7 @@ class AgentWeb:
         query: str,
         *,
         agent_resource_id: Optional[str] = None,
+        solidset_instance_id: Optional[str] = None,
         tool_permissions: Any = None,
     ) -> Any:
         permissions = None if tool_permissions is None else resolve_tool_permissions(tool_permissions)
@@ -27,13 +28,18 @@ class AgentWeb:
             raise PermissionError("Permission required for tool google_web_search: external_web")
         context = AgentContext(
             agent_resource_id=agent_resource_id,
-            metadata={"tool_permissions": permissions} if permissions is not None else {},
+            solidset_instance_id=solidset_instance_id,
+            metadata={
+                "tool_permissions": permissions,
+                "solidset_instance_id": solidset_instance_id,
+            },
         )
         result = self.tool.invoke(
             {"query": query},
             config={
                 "configurable": {
                     "agent_resource_id": context.agent_resource_id,
+                    "solidset_instance_id": solidset_instance_id,
                     "learning_managed": self.learner is not None,
                 }
             },

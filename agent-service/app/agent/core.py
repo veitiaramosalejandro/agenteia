@@ -1849,8 +1849,14 @@ class MachiningAgent:
             return f"{previous} {current}".strip()
         return current
 
-    def _get_cached_web_knowledge(self, query: str, agent_resource_id: str | None = None) -> str:
-        key = f"{agent_resource_id or 'unscoped'}:" + " ".join((query or "").lower().split())
+    def _get_cached_web_knowledge(
+        self, query: str, agent_resource_id: str | None = None,
+        solidset_instance_id: str | None = None,
+    ) -> str:
+        key = (
+            f"{solidset_instance_id or 'unscoped'}:{agent_resource_id or 'unscoped'}:"
+            + " ".join((query or "").lower().split())
+        )
         cached = self.web_knowledge_cache.get(key)
         if not cached:
             return ""
@@ -1862,9 +1868,13 @@ class MachiningAgent:
         return content
 
     def _cache_web_knowledge(
-        self, query: str, content: Any, agent_resource_id: str | None = None
+        self, query: str, content: Any, agent_resource_id: str | None = None,
+        solidset_instance_id: str | None = None,
     ) -> None:
-        key = f"{agent_resource_id or 'unscoped'}:" + " ".join((query or "").lower().split())
+        key = (
+            f"{solidset_instance_id or 'unscoped'}:{agent_resource_id or 'unscoped'}:"
+            + " ".join((query or "").lower().split())
+        )
         value = str(content or "").strip()
         if key and value:
             self.web_knowledge_cache[key] = (datetime.now().astimezone(), value)
@@ -2402,13 +2412,21 @@ class MachiningAgent:
                 web_result = web_adapter.search(
                     query,
                     agent_resource_id=agent_resource_id,
+                    solidset_instance_id=str(
+                        (message_metadata or {}).get("solidset_instance_id") or ""
+                    ),
                     tool_permissions=tool_permissions,
                 )
             else:
                 # Compatibility for lightweight/test instances built without __init__.
                 web_result = google_web_search.invoke(
                     {"query": query},
-                    config={"configurable": {"agent_resource_id": agent_resource_id}},
+                    config={"configurable": {
+                        "agent_resource_id": agent_resource_id,
+                        "solidset_instance_id": str(
+                            (message_metadata or {}).get("solidset_instance_id") or ""
+                        ),
+                    }},
                 )
             if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
                 return None
@@ -3562,13 +3580,14 @@ class MachiningAgent:
             force_fresh_web = self._requires_fresh_web_search(user_text)
             memoria_web_reciente = (
                 "" if force_fresh_web else self._get_cached_web_knowledge(
-                    memoria_query, agent_resource_id
+                    memoria_query, agent_resource_id, solidset_instance_id
                 )
             )
             try:
                 if not memoria_web_reciente and not force_fresh_web:
                     memoria_web_reciente = self.knowledge.search_web_memory(
                         memoria_query,
+                        solidset_instance_id=solidset_instance_id,
                         agent_resource_id=agent_resource_id,
                         limit=settings.WEB_SEARCH_MAX_RESULTS,
                     )
@@ -4219,6 +4238,7 @@ class MachiningAgent:
                     prefetched_web_result = self.web.search(
                         search_query,
                         agent_resource_id=agent_resource_id,
+                        solidset_instance_id=solidset_instance_id,
                         tool_permissions=message_metadata.get("tool_permissions")
                         if message_metadata else None,
                     )
@@ -4233,7 +4253,8 @@ class MachiningAgent:
                         last_tool_result = prefetched_web_result
                         herramientas_usadas.append("google_web_search")
                         self._cache_web_knowledge(
-                            search_query, prefetched_web_result, agent_resource_id
+                            search_query, prefetched_web_result, agent_resource_id,
+                            solidset_instance_id,
                         )
                         messages.append(SystemMessage(
                             content=f"RESULTADOS WEB PARA RESPONDER EL TURNO ACTUAL:\n{prefetched_web_result}",

@@ -14,11 +14,18 @@ class AgentLearningTests(unittest.TestCase):
         }
 
         learned = AgentLearning().learn(
-            "google_web_search", __import__("json").dumps(payload), AgentContext(agent_resource_id="agent-a")
+            "google_web_search",
+            __import__("json").dumps(payload),
+            AgentContext(
+                agent_resource_id="agent-a",
+                metadata={"solidset_instance_id": "instance-a"},
+            ),
         )
 
         self.assertTrue(learned)
-        schedule.assert_called_once_with("dato actual", payload["results"], "agent-a")
+        schedule.assert_called_once_with(
+            "dato actual", payload["results"], "agent-a", "instance-a"
+        )
 
     def test_ignores_non_web_or_invalid_results(self):
         learner = AgentLearning()

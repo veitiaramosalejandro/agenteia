@@ -1442,7 +1442,10 @@ def _learn_global_user_fact(
     if not normalized or _is_relative_temporal_assertion(normalized):
         return False
     digest = hashlib.sha256(
-        f"{resource_id}|{workroom_id}|{normalized.casefold()}".encode("utf-8")
+        (
+            f"{solidset_instance_id}|{resource_id}|{workroom_id}|"
+            f"{normalized.casefold()}"
+        ).encode("utf-8")
     ).hexdigest()[:32]
     return bool(
         agent.sistema_aprendizaje.aprender_actividad(

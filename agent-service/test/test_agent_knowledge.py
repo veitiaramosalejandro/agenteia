@@ -28,7 +28,10 @@ class AgentKnowledgeTests(unittest.TestCase):
         backend = Mock()
         knowledge = AgentKnowledge(backend)
 
-        knowledge.search_web_memory("web", agent_resource_id="agent-a", limit=4)
+        knowledge.search_web_memory(
+            "web", solidset_instance_id="instance-a",
+            agent_resource_id="agent-a", limit=4,
+        )
         knowledge.search_system_snapshot(
             "system",
             solidset_instance_id="instance-a",
@@ -38,7 +41,8 @@ class AgentKnowledgeTests(unittest.TestCase):
         )
 
         backend.consultar_investigacion_web_reciente.assert_called_once_with(
-            "web", agent_resource_id="agent-a", limit=4
+            "web", solidset_instance_id="instance-a",
+            agent_resource_id="agent-a", limit=4,
         )
         backend.consultar_conocimiento_sistema.assert_called_once_with(
             "system",

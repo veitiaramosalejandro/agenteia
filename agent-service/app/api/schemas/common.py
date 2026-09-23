@@ -209,6 +209,7 @@ class MultiAgentDialogueResponse(BaseModel):
 
 
 class AgentKnowledgeRequest(BaseModel):
+    SolidSETInstanceCode: str = Field(..., min_length=1, max_length=80)
     IDWorkRoom: Optional[uuid.UUID] = None
     Title: Optional[str] = Field(None, max_length=255)
     KnowledgeText: str = Field(..., min_length=1, max_length=50000)
@@ -221,6 +222,7 @@ class AgentKnowledgeRequest(BaseModel):
 
 class AgentKnowledgeResponse(BaseModel):
     ID: uuid.UUID
+    IDSolidSETInstance: uuid.UUID
     IDResource: uuid.UUID
     IDWorkRoom: Optional[uuid.UUID] = None
     Title: Optional[str] = None

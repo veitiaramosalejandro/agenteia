@@ -1296,18 +1296,20 @@ class SistemaAprendizaje:
         self,
         query: str,
         *,
+        solidset_instance_id: str,
         agent_resource_id: Optional[str] = None,
         limit: int = 5,
     ) -> str:
         """Recupera únicamente búsquedas web aprendidas, relevantes y aún vigentes."""
         query_vector = self._embed_query_safe(query, context="consultar_memoria_web")
-        if query_vector is None:
+        if query_vector is None or not solidset_instance_id:
             return ""
         resultados = self._search_aprendizaje(
             query_vector,
             query_filter={
                 "category": "web_research",
                 "agent_resource_id": str(agent_resource_id or ""),
+                "solidset_instance_id": str(solidset_instance_id),
             },
             limit=limit,
         )

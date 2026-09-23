@@ -24,7 +24,16 @@ class AgentLearning:
             return False
         from app.agent.tools import _schedule_web_search_learning
 
-        _schedule_web_search_learning(query, results, context.agent_resource_id)
+        _schedule_web_search_learning(
+            query,
+            results,
+            context.agent_resource_id,
+            str(
+                context.solidset_instance_id
+                or context.metadata.get("solidset_instance_id")
+                or ""
+            ),
+        )
         return True
 
     def learn_manual(self, content: str, category: str = "general") -> bool:
