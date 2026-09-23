@@ -26,3 +26,7 @@ skills-lock.json
 .ruff_cache/
 .venv-1/
 venv_machining/
+node_modules/
+agent-control-center/node_modules/
+agent-control-center/yarn.lock
+agent-control-center/dist/

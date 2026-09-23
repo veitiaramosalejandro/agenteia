@@ -12,3 +12,7 @@ audio/
 data/
 .agents/
 skills-lock.json
+node_modules/
+agent-control-center/node_modules/
+agent-control-center/yarn.lock
+agent-control-center/dist/

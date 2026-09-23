@@ -18,9 +18,14 @@ from app.api.schemas.common import (
     SysResourceIAConfigurationStored,
 )
 from app.connectors.db_client import (
+    get_active_agent_identity_for_resource,
+    get_active_agent_prompt,
+    get_agent_model_configurations,
+    get_agent_scope_profile,
     get_solidset_instance,
     get_solidset_schema_snapshot,
     list_active_solidset_instances,
+    list_active_agent_resource_ids,
     save_solidset_instance,
     save_solidset_schema_snapshot,
     save_sys_resource_ia,
@@ -215,6 +220,59 @@ def read_solidset_instance(code: str) -> SolidSETInstanceStored:
     if not instance:
         raise HTTPException(status_code=404, detail="A instância SolidSET não existe.")
     return SolidSETInstanceStored(**_public_solidset_instance(instance))
+
+
+@router.get(
+    "/api/v1/agent/solidset/instances/{code}/agents",
+    summary="List configured AI agents for one SolidSET instance",
+)
+def read_solidset_instance_agents(code: str) -> dict[str, Any]:
+    """Builds the administration view from instance-scoped local data."""
+    instance = get_solidset_instance(
+        code=code.strip(), source_ip=None, active_only=False
+    )
+    if not instance:
+        raise HTTPException(status_code=404, detail="A instância SolidSET não existe.")
+    try:
+        resource_ids = list_active_agent_resource_ids(instance["ID"])
+        items: list[dict[str, Any]] = []
+        for resource_id in resource_ids:
+            identity = get_active_agent_identity_for_resource(
+                resource_id, instance["ID"]
+            ) or {}
+            profile = get_agent_scope_profile(instance["ID"], resource_id) or {}
+            prompt = get_active_agent_prompt(instance["ID"], resource_id)
+            models = get_agent_model_configurations(resource_id, instance["ID"])
+            items.append(
+                {
+                    "IDResource": resource_id,
+                    "IDAgentResource": identity.get("IDAgentResource"),
+                    "Name": identity.get("Name") or profile.get("DisplayName")
+                    or profile.get("FullName") or str(resource_id),
+                    "FullName": profile.get("FullName"),
+                    "OrganizationName": profile.get("OrganizationName"),
+                    "ScopeCount": int(profile.get("ScopeCount") or 0),
+                    "prompt": {
+                        "ID": prompt.get("ID"),
+                        "Version": prompt.get("Version"),
+                        "Name": prompt.get("Name"),
+                        "Status": "active",
+                        "PublishedAt": prompt.get("PublishedAt"),
+                    } if prompt else None,
+                    "models": models,
+                }
+            )
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível consultar os agentes desta instância.",
+        ) from exc
+    return {
+        "instanceCode": str(instance["Code"]),
+        "instanceId": instance["ID"],
+        "total": len(items),
+        "items": items,
+    }
 
 
 @router.post(
