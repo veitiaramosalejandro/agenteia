@@ -12,7 +12,8 @@ PromptListItem = Annotated[
 
 class AgentPromptGenerateRequest(BaseModel):
     name: str = Field("Plantilla del agente", min_length=1, max_length=255)
-    role: str = Field("asistente general", min_length=1, max_length=200)
+    # A role is a bounded professional identity, not merely a short role code.
+    role: str = Field("asistente general", min_length=1, max_length=1000)
     objective: str = Field(
         "Ayudar a los usuarios autorizados de SolidSET.", min_length=1, max_length=2000
     )

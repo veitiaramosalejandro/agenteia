@@ -8,6 +8,17 @@ from app.api.schemas.agent_prompts import AgentPromptGenerateRequest
 
 
 class AgentPromptTests(unittest.TestCase):
+    def test_long_professional_role_is_accepted_up_to_schema_limit(self):
+        role = "Director ejecutivo senior " + ("con experiencia internacional " * 20)
+        request = AgentPromptGenerateRequest(role=role)
+        self.assertEqual(role, request.role)
+
+    def test_professional_role_over_limit_is_rejected(self):
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            AgentPromptGenerateRequest(role="x" * 1001)
+
     def test_generated_prompt_contains_security_and_learning_policy(self):
         prompt = generate_agent_system_prompt(
             {"DisplayName": "Dev17", "OrganizationName": "ROBOTEA"},
