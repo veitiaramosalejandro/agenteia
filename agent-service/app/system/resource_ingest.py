@@ -244,12 +244,13 @@ def ingest_solidset_resources(instance: dict[str, object]) -> dict[str, int]:
                     '''
                     INSERT INTO public."SysResourceIA" (
                         "Name", "Stamp", "IDResource", "ActiveIDLogin2Resource", "IDAgentResource",
-                        "IDSolidSETInstance"
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                        "IDSolidSETInstance", active
+                    ) VALUES (%s, %s, %s, %s, %s, %s, true)
                     ON CONFLICT ("IDResource") DO UPDATE SET
                         "Name" = EXCLUDED."Name",
                         "Stamp" = EXCLUDED."Stamp",
                         "ActiveIDLogin2Resource" = EXCLUDED."ActiveIDLogin2Resource",
+                        active = true,
                         "IDAgentResource" = CASE
                           WHEN public."SysResourceIA"."IDAgentResource" =
                                public."SysResourceIA"."IDResource"
