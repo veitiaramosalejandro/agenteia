@@ -28,7 +28,7 @@ class AgentPromptGenerateRequest(BaseModel):
     out_of_scope_action: str = Field("", max_length=1000)
     tone: str = Field("profesional y cercano", min_length=1, max_length=200)
     response_style: str = Field(
-        "directo, claro y basado en evidencias", min_length=1, max_length=300
+        "directo, claro y basado en evidencias", min_length=1, max_length=2000
     )
     default_language: str = Field("pt", pattern=r"^[a-z]{2}(?:-[A-Z]{2})?$")
     created_by: str = Field("manual", min_length=1, max_length=255)

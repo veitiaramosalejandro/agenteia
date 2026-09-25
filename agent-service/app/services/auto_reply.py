@@ -1319,7 +1319,6 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                         "ID": configured_agent["AutomationRuleID"],
                         "RequiredCapabilities": configured_agent.get("AutomationRequiredCapabilities") or [],
                         "MaxRunsPerHour": configured_agent.get("AutomationMaxRunsPerHour") or 1,
-                        "RequireApproval": configured_agent.get("AutomationRequireApproval", True),
                     }
                 if automation_rule:
                     from app.agent.capabilities import normalize_capabilities
@@ -1329,9 +1328,9 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                         if model.get("active", True):
                             available.update(normalize_capabilities(model.get("Capabilities") or []))
                     required = normalize_capabilities(automation_rule.get("RequiredCapabilities") or [])
-                    if automation_rule.get("RequireApproval"):
-                        print(f"AUTOMATION_AUTO_BLOCKED rule={automation_rule['ID']} reason=approval_required", flush=True)
-                        continue
+                    # SolidSET notifications are automatic. RequireApproval is
+                    # enforced by the Control Center automation endpoints only;
+                    # it must not prevent replies to selected incoming messages.
                     if required - available:
                         print(f"AUTOMATION_AUTO_BLOCKED rule={automation_rule['ID']} reason=missing_capabilities", flush=True)
                         continue

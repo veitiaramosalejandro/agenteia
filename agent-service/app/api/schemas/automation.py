@@ -24,7 +24,10 @@ class AutomationRuleRequest(BaseModel):
     Instruction: str = Field("", max_length=5000)
     RequiredCapabilities: list[str] = Field(default_factory=list, max_length=30)
     MaxRunsPerHour: int = Field(10, ge=1, le=1000)
-    RequireApproval: bool = True
+    RequireApproval: bool = Field(
+        True,
+        description="Requiere aprobación en Agent Control Center; no se aplica a notificaciones de SolidSET.",
+    )
     active: bool = True
 
     @model_validator(mode="after")

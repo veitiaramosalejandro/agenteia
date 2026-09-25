@@ -120,7 +120,7 @@ function App() {
     if (view === 'automation') return <Automation {...shared} />
     if (view === 'observability') return <Observability {...shared} />
     if (view === 'governance') return <Governance selectedInstance={selectedInstance} currentUser={currentUser!} notify={notify} authEnabled={authEnabled} />
-    if (view === 'lab') return <Lab {...shared} />
+    if (view === 'lab') return <Lab key={selectedInstance?.Code || 'no-instance'} {...shared} />
     return <Overview health={health} instances={instances} agents={agents} providers={providers} selected={selectedInstance} />
   }, [view, health, instances, agents, providers, selectedInstance, instanceCode, notify, loadAgents, currentUser, authEnabled])
 
@@ -253,7 +253,7 @@ function Prompts({ selectedInstance, agents, notify, refreshAgents }: Shared) {
   const generate = async () => { if (!selectedInstance || !agentId) return; setBusy(true); try { const payload = { ...form, specialties: lines(form.specialties), code_review_instructions: lines(form.code_review_instructions), response_format: lines(form.response_format), restrictions: lines(form.restrictions) }; const result = await api.generatePrompt(agentId, selectedInstance.Code, payload); setDraft(result); notify('success', `Borrador v${result.Version} generado.`) } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible generar el prompt.') } finally { setBusy(false) } }
   const publish = async () => { if (!selectedInstance || !agentId || !draft) return; setBusy(true); try { const result = await api.publishPrompt(agentId, draft.ID, selectedInstance.Code); setDraft(result); await refreshAgents(); notify('success', `Prompt v${result.Version} publicado.`) } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible publicar.') } finally { setBusy(false) } }
   return <><PageHeader eyebrow="Comportamiento" title="Editor de prompts" copy="Genera una versión revisable y publícala solo cuando el contenido sea correcto." />
-    {!selectedInstance || agents.length === 0 ? <Empty title="No hay un agente disponible" copy="Selecciona una instancia con agentes y alcances sincronizados." /> : <div className="editor-grid"><section className="panel form-panel"><label>Agente<SearchSelect value={agentId} onChange={value => { setAgentId(value); setDraft(null) }} ariaLabel="Agente" searchPlaceholder="Buscar agente…" options={agents.map(a => ({ value: a.IDResource, label: a.Name, detail: a.FullName || shortId(a.IDResource) }))} /></label><div className="form-row"><Field label="Nombre" value={form.name} onChange={v => setForm({ ...form, name: v })} /><Field label="Idioma" value={form.default_language} onChange={v => setForm({ ...form, default_language: v })} /></div><Field label="Rol" value={form.role} onChange={v => setForm({ ...form, role: v })} area maxLength={1000} /><Field label="Objetivo" value={form.objective} onChange={v => setForm({ ...form, objective: v })} area /><Field label="Especialidades · una por línea" value={form.specialties} onChange={v => setForm({ ...form, specialties: v })} area /><Field label="Instrucciones de revisión · una por línea" value={form.code_review_instructions} onChange={v => setForm({ ...form, code_review_instructions: v })} area /><Field label="Formato de respuesta · uno por línea" value={form.response_format} onChange={v => setForm({ ...form, response_format: v })} area /><Field label="Restricciones · una por línea" value={form.restrictions} onChange={v => setForm({ ...form, restrictions: v })} area /><Field label="Acción fuera de alcance" value={form.out_of_scope_action} onChange={v => setForm({ ...form, out_of_scope_action: v })} area /><div className="form-row"><Field label="Tono" value={form.tone} onChange={v => setForm({ ...form, tone: v })} /><Field label="Estilo" value={form.response_style} onChange={v => setForm({ ...form, response_style: v })} /></div><button className="primary" onClick={() => void generate()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />} Generar borrador</button></section><section className="panel preview"><div className="panel-title"><div><span className="eyebrow">Previsualización</span><h2>{draft?.Name || 'Sin borrador'}</h2></div>{draft && <span className={`status-pill ${draft.Status === 'active' ? 'success' : 'warning'}`}>{draft.Status}</span>}</div>{draft ? <><div className="prompt-meta"><span>Versión {draft.Version}</span><span>{draft.IDResource === agentId ? 'Agente correcto' : 'Revisar recurso'}</span></div><pre>{draft.SystemPrompt}</pre><button className="primary" onClick={() => void publish()} disabled={busy || draft.Status === 'active'}><Save size={17} /> Publicar esta versión</button></> : <div className="preview-placeholder"><BrainCircuit size={32} /><p>Completa el formulario para generar una versión persistida y revisable.</p></div>}</section></div>}
+    {!selectedInstance || agents.length === 0 ? <Empty title="No hay un agente disponible" copy="Selecciona una instancia con agentes y alcances sincronizados." /> : <div className="editor-grid"><section className="panel form-panel"><label>Agente<SearchSelect value={agentId} onChange={value => { setAgentId(value); setDraft(null) }} ariaLabel="Agente" searchPlaceholder="Buscar agente…" options={agents.map(a => ({ value: a.IDResource, label: a.Name, detail: a.FullName || shortId(a.IDResource) }))} /></label><div className="form-row"><Field label="Nombre" value={form.name} onChange={v => setForm({ ...form, name: v })} /><Field label="Idioma" value={form.default_language} onChange={v => setForm({ ...form, default_language: v })} /></div><Field label="Rol" value={form.role} onChange={v => setForm({ ...form, role: v })} area maxLength={1000} /><Field label="Objetivo" value={form.objective} onChange={v => setForm({ ...form, objective: v })} area /><Field label="Especialidades · una por línea" value={form.specialties} onChange={v => setForm({ ...form, specialties: v })} area /><Field label="Instrucciones de revisión · una por línea" value={form.code_review_instructions} onChange={v => setForm({ ...form, code_review_instructions: v })} area /><Field label="Formato de respuesta · uno por línea" value={form.response_format} onChange={v => setForm({ ...form, response_format: v })} area /><Field label="Restricciones · una por línea" value={form.restrictions} onChange={v => setForm({ ...form, restrictions: v })} area /><Field label="Acción fuera de alcance" value={form.out_of_scope_action} onChange={v => setForm({ ...form, out_of_scope_action: v })} area /><div className="form-row"><Field label="Tono" value={form.tone} onChange={v => setForm({ ...form, tone: v })} /><Field label="Estilo" value={form.response_style} onChange={v => setForm({ ...form, response_style: v })} area maxLength={2000} /></div><button className="primary" onClick={() => void generate()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />} Generar borrador</button></section><section className="panel preview"><div className="panel-title"><div><span className="eyebrow">Previsualización</span><h2>{draft?.Name || 'Sin borrador'}</h2></div>{draft && <span className={`status-pill ${draft.Status === 'active' ? 'success' : 'warning'}`}>{draft.Status}</span>}</div>{draft ? <><div className="prompt-meta"><span>Versión {draft.Version}</span><span>{draft.IDResource === agentId ? 'Agente correcto' : 'Revisar recurso'}</span></div><pre>{draft.SystemPrompt}</pre><button className="primary" onClick={() => void publish()} disabled={busy || draft.Status === 'active'}><Save size={17} /> Publicar esta versión</button></> : <div className="preview-placeholder"><BrainCircuit size={32} /><p>Completa el formulario para generar una versión persistida y revisable.</p></div>}</section></div>}
   </>
 }
 
@@ -686,16 +686,74 @@ function Governance({ selectedInstance, currentUser, notify, authEnabled }: { se
 function Lab({ selectedInstance, agents, notify }: Shared) {
   const [agentId, setAgentId] = useState('')
   const [workRoom, setWorkRoom] = useState('')
+  const [rooms, setRooms] = useState<WorkRoom[]>([])
+  const [roomsLoading, setRoomsLoading] = useState(true)
+  const [roomsError, setRoomsError] = useState('')
+  const [reload, setReload] = useState(0)
   const [sender, setSender] = useState('')
   const [message, setMessage] = useState('Explica la complejidad temporal del algoritmo de Floyd-Warshall.')
   const [session, setSession] = useState('')
   const [answer, setAnswer] = useState('')
   const [elapsed, setElapsed] = useState(0)
   const [busy, setBusy] = useState(false)
-  useEffect(() => { if (!agents.some(a => a.IDResource === agentId)) setAgentId(agents[0]?.IDResource || '') }, [agents, agentId])
-  const run = async () => { if (!selectedInstance || !agentId || !workRoom || !message.trim()) return notify('error', 'Completa agente, canal y pregunta.'); setBusy(true); setAnswer(''); const start = performance.now(); try { const body: Record<string, unknown> = { IDWorkRoom: workRoom, RawMessage: message, SelectedAgentResourceIds: [agentId], SendToSolidSET: false, SolidSETInstanceCode: selectedInstance.Code }; if (sender) body.SenderResourceId = sender; if (session) body.IDSession = session; const result = await api.dialogue(body); setSession(result.IDSession); setAnswer(result.responses.map(r => `${r.AgentName}\n${r.response}`).join('\n\n')); setElapsed((performance.now() - start) / 1000) } catch (e) { notify('error', e instanceof Error ? e.message : 'La prueba falló.') } finally { setBusy(false) } }
+  const execution = useRef(0)
+  const resetConversation = useCallback(() => {
+    execution.current += 1
+    setSession(''); setAnswer(''); setElapsed(0); setBusy(false)
+  }, [])
+  useEffect(() => () => { execution.current += 1 }, [])
+  useEffect(() => {
+    let cancelled = false
+    setRooms([]); setWorkRoom(''); setRoomsError(''); resetConversation()
+    if (!selectedInstance) { setRoomsLoading(false); return }
+    setRoomsLoading(true)
+    api.workrooms(selectedInstance.Code).then(result => {
+      if (!cancelled) setRooms(result.items)
+    }).catch(error => {
+      if (!cancelled) setRoomsError(error instanceof Error ? error.message : 'No fue posible cargar los canales.')
+    }).finally(() => { if (!cancelled) setRoomsLoading(false) })
+    return () => { cancelled = true }
+  }, [selectedInstance?.Code, reload, resetConversation])
+  useEffect(() => {
+    if (!agents.some(a => a.IDResource === agentId)) {
+      setAgentId(agents[0]?.IDResource || ''); setWorkRoom(''); resetConversation()
+    }
+  }, [agents, agentId, resetConversation])
+  const availableRooms = rooms.filter(room => room.active && room.agents.some(agent => agent.IDResource === agentId && agent.active))
+  const validRoom = availableRooms.some(room => room.IDWorkRoom === workRoom)
+  const canRun = !!selectedInstance && !!agentId && validRoom && !roomsLoading && !roomsError && !!message.trim()
+  const run = async () => {
+    if (!canRun || busy || !selectedInstance) return
+    const runId = ++execution.current
+    setBusy(true); setAnswer(''); setElapsed(0)
+    const start = performance.now()
+    try {
+      const body: Record<string, unknown> = { IDWorkRoom: workRoom, RawMessage: message, SelectedAgentResourceIds: [agentId], SendToSolidSET: false, SolidSETInstanceCode: selectedInstance.Code }
+      if (sender.trim()) body.SenderResourceId = sender.trim()
+      if (session) body.IDSession = session
+      const result = await api.dialogue(body)
+      if (runId !== execution.current) return
+      setSession(result.IDSession)
+      setAnswer(result.responses.map(r => `${r.AgentName}\n${r.response}`).join('\n\n'))
+      setElapsed((performance.now() - start) / 1000)
+    } catch (error) {
+      if (runId === execution.current) notify('error', error instanceof Error ? error.message : 'La prueba falló.')
+    } finally { if (runId === execution.current) setBusy(false) }
+  }
   return <><PageHeader eyebrow="Validación" title="Laboratorio de agentes" copy="Ejecuta una conversación aislada y revisa la respuesta antes de publicarla en SolidSET." />
-    <div className="lab-grid"><section className="panel form-panel"><label>Agente<SearchSelect value={agentId} onChange={setAgentId} ariaLabel="Agente" searchPlaceholder="Buscar agente…" options={agents.map(a => ({ value: a.IDResource, label: a.Name, detail: a.FullName || shortId(a.IDResource) }))} /></label><Field label="ID del canal" value={workRoom} onChange={setWorkRoom} /><Field label="ID del remitente · opcional" value={sender} onChange={setSender} /><Field label="Pregunta" value={message} onChange={setMessage} area /><button className="primary" onClick={() => void run()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />} Ejecutar prueba</button><small className="safe-note"><ShieldCheck size={14} /> La respuesta no será enviada a SolidSET.</small></section><section className="panel lab-result"><div className="panel-title"><div><span className="eyebrow">Resultado</span><h2>Respuesta del agente</h2></div>{elapsed > 0 && <span className="status-pill">{elapsed.toFixed(2)} s</span>}</div>{answer ? <div className="answer">{answer}</div> : <div className="preview-placeholder"><FlaskConical size={32} /><p>La respuesta y la sesión aparecerán aquí.</p></div>}{session && <div className="session"><span>Sesión</span><code>{session}</code></div>}</section></div>
+    <div className="lab-grid">
+      <section className="panel form-panel">
+        <label>Agente<SearchSelect value={agentId} onChange={value => { setAgentId(value); setWorkRoom(''); resetConversation() }} ariaLabel="Agente" searchPlaceholder="Buscar agente…" options={agents.map(a => ({ value: a.IDResource, label: a.Name, detail: a.FullName || shortId(a.IDResource) }))} /></label>
+        <label>Canal<SearchSelect value={workRoom} onChange={value => { setWorkRoom(value); resetConversation() }} ariaLabel="Canal" placeholder={roomsLoading ? 'Cargando canales…' : 'Seleccionar canal…'} searchPlaceholder="Buscar canal…" options={availableRooms.map(room => ({ value: room.IDWorkRoom, label: room.Name || room.Code || 'Canal sin nombre', detail: room.Code || undefined }))} /></label>
+        {roomsError ? <div className="error-box">{roomsError}</div> : !roomsLoading && agentId && availableRooms.length === 0 ? <small className="field-help">Este agente no tiene canales activos asignados en esta instancia. Revisa las asignaciones en Automatización y la sincronización de canales.</small> : <small className="field-help">Solo se muestran canales activos asignados al agente seleccionado.</small>}
+        <button className="secondary compact" disabled={roomsLoading} onClick={() => setReload(value => value + 1)}><RefreshCw size={14} /> Actualizar canales</button>
+        <details><summary>Opciones avanzadas</summary><Field label="ID del remitente · opcional" value={sender} onChange={value => { setSender(value); resetConversation() }} /><small className="field-help">Permite simular una pregunta de otro recurso y su contexto como interlocutor. Déjalo vacío para una prueba sin remitente identificado.</small></details>
+        <Field label="Pregunta" value={message} onChange={setMessage} area />
+        <button className="primary" onClick={() => void run()} disabled={busy || !canRun}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />} Ejecutar prueba</button>
+        <small className="safe-note"><ShieldCheck size={14} /> La respuesta no será enviada a SolidSET.</small>
+      </section>
+      <section className="panel lab-result"><div className="panel-title"><div><span className="eyebrow">Resultado</span><h2>Respuesta del agente</h2></div>{elapsed > 0 && <span className="status-pill">{elapsed.toFixed(2)} s</span>}</div>{answer ? <div className="answer">{answer}</div> : <div className="preview-placeholder"><FlaskConical size={32} /><p>La respuesta y la sesión aparecerán aquí.</p></div>}{session && <div className="session"><span>Sesión</span><code>{session}</code></div>}</section>
+    </div>
   </>
 }
 
