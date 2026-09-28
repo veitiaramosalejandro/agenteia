@@ -7,10 +7,47 @@ from app.response_queue import AgentResponseQueue
 
 
 class AgentResponseQueueTests(unittest.TestCase):
+    def test_heartbeat_refreshes_while_job_runs_and_stops_on_exit(self):
+        queue = AgentResponseQueue.__new__(AgentResponseQueue)
+        queue.refresh_pending = MagicMock(return_value=True)
+        with (
+            patch("app.response_queue.threading.Event") as event_type,
+            patch("app.response_queue.threading.Thread") as thread_type,
+        ):
+            event_type.return_value.wait.side_effect = [False, True]
+            with queue.keep_pending_alive("worker-1", "1-0") as owned:
+                self.assertTrue(owned)
+                thread_type.call_args.kwargs["target"]()
+                self.assertEqual(2, queue.refresh_pending.call_count)
+                event_type.return_value.set.assert_not_called()
+            event_type.return_value.set.assert_called_once()
+            thread_type.return_value.join.assert_called_once()
+
+    def test_stale_worker_does_not_start_processing(self):
+        queue = AgentResponseQueue.__new__(AgentResponseQueue)
+        queue.refresh_pending = MagicMock(return_value=False)
+        with patch("app.response_queue.threading.Thread") as thread_type:
+            with queue.keep_pending_alive("worker-1", "1-0") as owned:
+                self.assertFalse(owned)
+            thread_type.assert_not_called()
+
+    def test_heartbeat_stops_after_processing_exception(self):
+        queue = AgentResponseQueue.__new__(AgentResponseQueue)
+        queue.refresh_pending = MagicMock(return_value=True)
+        with (
+            patch("app.response_queue.threading.Event") as event_type,
+            patch("app.response_queue.threading.Thread") as thread_type,
+        ):
+            with self.assertRaises(RuntimeError):
+                with queue.keep_pending_alive("worker-1", "1-0"):
+                    raise RuntimeError("processing failed")
+            event_type.return_value.set.assert_called_once()
+            thread_type.return_value.join.assert_called_once()
+
     @patch("app.response_queue.redis.Redis.from_url")
     def test_enqueue_uses_chat_id_and_framework_payload(self, from_url):
         client = MagicMock()
-        client.xadd.return_value = "1-0"
+        client.eval.return_value = "1-0"
         from_url.return_value = client
         queue = AgentResponseQueue()
 
@@ -22,7 +59,8 @@ class AgentResponseQueueTests(unittest.TestCase):
         )
 
         self.assertEqual(stream_id, "1-0")
-        fields = client.xadd.call_args.args[1]
+        arguments = client.eval.call_args.args[4:]
+        fields = dict(zip(arguments[::2], arguments[1::2]))
         self.assertEqual(fields["request_id"], "1824918")
         self.assertEqual(json.loads(fields["payload"])["Chat"]["idChat2"], 1824918)
         self.assertEqual(json.loads(fields["instance"])["ID"], "instance-1")

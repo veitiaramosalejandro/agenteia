@@ -4,6 +4,8 @@ from app.redis_runtime import redis_client
 
 import json
 import socket
+import threading
+from contextlib import contextmanager
 from typing import Any
 
 import redis
@@ -97,6 +99,51 @@ class AgentResponseQueue:
 
     def acknowledge(self, message_id: str) -> None:
         acknowledge_stream(self.client, self.stream, self.group, message_id)
+
+    def refresh_pending(self, consumer: str, message_id: str) -> bool:
+        """Refresh only our pending entry, atomically, without stealing it back."""
+        return bool(self.client.eval(
+            "local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[3],ARGV[3],1) "
+            "if #p == 0 or p[1][2] ~= ARGV[2] then return 0 end "
+            "local ids=redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[2],0,ARGV[3],'JUSTID') "
+            "return #ids",
+            1, self.stream, self.group, consumer, message_id,
+        ))
+
+    @contextmanager
+    def keep_pending_alive(self, consumer: str, message_id: str):
+        """Keep long-running jobs out of XAUTOCLAIM, even during blocking work.
+
+        A dead process stops renewing, so abandoned jobs remain recoverable.
+        The guard covers capture, inference, delivery, audit and acknowledgement.
+        """
+        try:
+            owned = self.refresh_pending(consumer, message_id)
+        except redis.RedisError as exc:
+            print(f"AGENT_RESPONSE_HEARTBEAT_ERROR message={message_id} type={type(exc).__name__}", flush=True)
+            owned = False
+        if not owned:
+            yield False
+            return
+        stopped = threading.Event()
+        interval = max(0.01, min(30.0, settings.AGENT_RESPONSE_CLAIM_IDLE_MS / 3000))
+
+        def renew() -> None:
+            while not stopped.wait(interval):
+                try:
+                    if not self.refresh_pending(consumer, message_id):
+                        print(f"AGENT_RESPONSE_OWNERSHIP_LOST message={message_id} consumer={consumer}", flush=True)
+                        return
+                except redis.RedisError as exc:
+                    print(f"AGENT_RESPONSE_HEARTBEAT_ERROR message={message_id} type={type(exc).__name__}", flush=True)
+
+        heartbeat = threading.Thread(target=renew, name="agent-response-heartbeat", daemon=True)
+        heartbeat.start()
+        try:
+            yield True
+        finally:
+            stopped.set()
+            heartbeat.join(timeout=settings.AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS + 2)
 
     def stats(self) -> dict[str, Any]:
         self.ensure_group()

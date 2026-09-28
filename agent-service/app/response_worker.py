@@ -35,87 +35,94 @@ async def run_worker() -> None:
             queue = AgentResponseQueue()
             continue
         for message_id, fields in messages:
-            request_id = str(fields.get("request_id") or "")
-            chat_id = str(fields.get("chat_id") or "")
-            attempt = int(fields.get("attempt") or 0)
-            payload = {}
-            instance = {}
-            candidates = []
-            try:
-                payload = json.loads(fields.get("payload") or "{}")
-                instance = json.loads(fields.get("instance") or "{}")
-                cached_candidates = fields.get("candidates") or ""
-                if cached_candidates:
-                    candidates = json.loads(cached_candidates)
-                else:
-                    async with async_interactive_work("notification-capture"):
-                        capture = await asyncio.to_thread(
-                            notification_listener.capture_realtime_payload, payload,
-                        )
-                    if capture.get("errors"):
-                        raise RuntimeError(
-                            f"Falló la captura: {capture['errors']} error(es)."
-                        )
-                    candidates = capture.get("auto_reply_candidates") or []
-                    _attach_solidset_instance(candidates, instance)
-                for candidate in candidates:
-                    candidate["response_request_id"] = request_id
-                async with async_interactive_work("agent-response-worker"):
-                    result = await _process_auto_replies(candidates)
-                if candidates and int(result) == 0:
-                    raise RuntimeError("Ningún agente pudo completar el envío.")
+            with queue.keep_pending_alive(consumer, message_id) as owned:
+                if not owned:
+                    continue
+                request_id = str(fields.get("request_id") or "")
+                print(
+                    f"AGENT_RESPONSE_PROCESSING request={request_id} "
+                    f"message={message_id} consumer={consumer}", flush=True,
+                )
+                chat_id = str(fields.get("chat_id") or "")
+                attempt = int(fields.get("attempt") or 0)
+                payload = {}
+                instance = {}
+                candidates = []
                 try:
-                    final_status = _load_response_status(request_id) or {}
-                    await asyncio.to_thread(
-                        save_agent_response_audit,
-                        request_id,
-                        chat_id,
-                        final_status.get("status") or ("completed" if int(result) > 0 or not candidates else "failed"),
-                        int(final_status.get("responseCount", int(result))),
-                        final_status.get("error"),
-                        None,
-                        {"responseCount": int(final_status.get("responseCount", int(result))),
-                         "acceptedCount": int(result)},
-                        instance.get("ID"),
-                    )
-                except Exception as audit_exc:
-                    # Una respuesta ya enviada nunca se reintenta por un fallo
-                    # exclusivo de auditoría, pues duplicaría el chat.
-                    print(f"⚠️ Auditoría PostgreSQL pendiente: {audit_exc}", flush=True)
-                await asyncio.to_thread(queue.acknowledge, message_id)
-            except Exception as exc:
-                if attempt < settings.AGENT_RESPONSE_MAX_RETRIES:
-                    _update_response_status(
-                        request_id,
-                        "queued",
-                        error=f"Reintento {attempt + 1}: {exc}",
-                    )
-                    await asyncio.to_thread(
-                        queue.enqueue,
-                        request_id,
-                        chat_id,
-                        payload,
-                        instance,
-                        attempt + 1,
-                        candidates,
-                    )
-                else:
-                    _update_response_status(request_id, "failed", error=str(exc))
+                    payload = json.loads(fields.get("payload") or "{}")
+                    instance = json.loads(fields.get("instance") or "{}")
+                    cached_candidates = fields.get("candidates") or ""
+                    if cached_candidates:
+                        candidates = json.loads(cached_candidates)
+                    else:
+                        async with async_interactive_work("notification-capture"):
+                            capture = await asyncio.to_thread(
+                                notification_listener.capture_realtime_payload, payload,
+                            )
+                        if capture.get("errors"):
+                            raise RuntimeError(
+                                f"Falló la captura: {capture['errors']} error(es)."
+                            )
+                        candidates = capture.get("auto_reply_candidates") or []
+                        _attach_solidset_instance(candidates, instance)
+                    for candidate in candidates:
+                        candidate["response_request_id"] = request_id
+                    async with async_interactive_work("agent-response-worker"):
+                        result = await _process_auto_replies(candidates)
+                    if candidates and int(result) == 0:
+                        raise RuntimeError("Ningún agente pudo completar el envío.")
                     try:
+                        final_status = _load_response_status(request_id) or {}
                         await asyncio.to_thread(
                             save_agent_response_audit,
                             request_id,
                             chat_id,
-                            "failed",
-                            0,
-                            str(exc),
+                            final_status.get("status") or ("completed" if int(result) > 0 or not candidates else "failed"),
+                            int(final_status.get("responseCount", int(result))),
+                            final_status.get("error"),
                             None,
-                            {"attempts": attempt + 1},
+                            {"responseCount": int(final_status.get("responseCount", int(result))),
+                             "acceptedCount": int(result)},
                             instance.get("ID"),
                         )
                     except Exception as audit_exc:
-                        print(f"⚠️ No se pudo auditar fallo terminal: {audit_exc}")
-                await asyncio.to_thread(queue.acknowledge, message_id)
+                        # Una respuesta ya enviada nunca se reintenta por un fallo
+                        # exclusivo de auditoría, pues duplicaría el chat.
+                        print(f"⚠️ Auditoría PostgreSQL pendiente: {audit_exc}", flush=True)
+                    await asyncio.to_thread(queue.acknowledge, message_id)
+                except Exception as exc:
+                    if attempt < settings.AGENT_RESPONSE_MAX_RETRIES:
+                        _update_response_status(
+                            request_id,
+                            "queued",
+                            error=f"Reintento {attempt + 1}: {exc}",
+                        )
+                        await asyncio.to_thread(
+                            queue.enqueue,
+                            request_id,
+                            chat_id,
+                            payload,
+                            instance,
+                            attempt + 1,
+                            candidates,
+                        )
+                    else:
+                        _update_response_status(request_id, "failed", error=str(exc))
+                        try:
+                            await asyncio.to_thread(
+                                save_agent_response_audit,
+                                request_id,
+                                chat_id,
+                                "failed",
+                                0,
+                                str(exc),
+                                None,
+                                {"attempts": attempt + 1},
+                                instance.get("ID"),
+                            )
+                        except Exception as audit_exc:
+                            print(f"⚠️ No se pudo auditar fallo terminal: {audit_exc}")
+                    await asyncio.to_thread(queue.acknowledge, message_id)
 
 
 if __name__ == "__main__":
