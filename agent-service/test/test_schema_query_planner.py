@@ -85,7 +85,8 @@ TASK_CATALOG = {
         "tableName": "SysTaskResourceRole",
         "columns": [
             {"name": "IDTaskResourceRole"}, {"name": "IDTask"},
-            {"name": "IDResource"}, {"name": "LinkState"},
+            {"name": "IDResource"}, {"name": "IDChannel"},
+            {"name": "LinkState"},
         ],
         "foreignKeys": [
             {"column": "IDTask", "referencedTable": "SysTask", "referencedColumn": "IDTask"},
@@ -231,10 +232,11 @@ class SchemaQueryPlannerTests(unittest.TestCase):
         self.assertIsNotNone(plan)
         self.assertTrue(plan.workroom_scoped)
         self.assertEqual("list", plan.response_mode)
-        self.assertIn("[operations].[SysTask2Channel]", plan.query)
-        self.assertIn("rel1_channel.[IDChannel] = %s", plan.query)
+        self.assertIn("[operations].[SysTaskResourceRole]", plan.query)
+        self.assertIn("rel0_scoped.[IDResource] = %s", plan.query)
+        self.assertIn("rel0_scoped.[IDChannel] = %s", plan.query)
         self.assertEqual(
-            [resource_id, resource_id, resource_id, workroom_id],
+            [resource_id, workroom_id],
             plan.parameters,
         )
         response = render_record_rows([
@@ -244,7 +246,14 @@ class SchemaQueryPlannerTests(unittest.TestCase):
         self.assertIn("**Tarea del canal**", response)
 
     def test_channel_task_query_fails_closed_without_channel_relationship(self):
-        catalog = {"tables": TASK_CATALOG["tables"][:2]}
+        relation_without_channel = {
+            **TASK_CATALOG["tables"][1],
+            "columns": [
+                column for column in TASK_CATALOG["tables"][1]["columns"]
+                if column["name"] != "IDChannel"
+            ],
+        }
+        catalog = {"tables": [TASK_CATALOG["tables"][0], relation_without_channel]}
         self.assertIsNone(plan_identity_record_query(
             "¿Cuáles son las tareas que tiene en el canal?",
             catalog,

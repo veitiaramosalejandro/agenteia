@@ -453,8 +453,8 @@ def plan_identity_record_query(
     # relación. Se descubren desde el catálogo y se incorporan al mismo filtro
     # de identidad; nunca se recuperan filas globales para filtrarlas después.
     task_key = columns.get("idtask")
-    channel_predicates: list[str] = []
-    channel_parameters: list[str] = []
+    scoped_resource_predicates: list[str] = []
+    scoped_resource_parameters: list[str] = []
     if task_key:
         relation_candidates: list[tuple[int, dict[str, Any], dict[str, str]]] = []
         for relation_table in catalog.get("tables") or []:
@@ -533,22 +533,26 @@ def plan_identity_record_query(
                 parameters.append(str(resource_id))
                 if channel_clause:
                     parameters.append(str(workroom_id))
-            if workroom_intent and relation_channel and _valid_identifier(relation_channel):
-                channel_predicates.append(
-                    f"EXISTS (SELECT 1 FROM [{relation_schema}].[{relation_name}] AS {alias}_channel "
-                    f"WHERE {alias}_channel.[{relation_task}] = src.[{task_key}] "
-                    f"AND {alias}_channel.[{relation_channel}] = %s{active_clause.replace(alias, alias + '_channel')})"
-                )
-                channel_parameters.append(str(workroom_id))
-
+                    scoped_resource_predicates.append(
+                        f"EXISTS (SELECT 1 FROM [{relation_schema}].[{relation_name}] AS {alias}_scoped "
+                        f"WHERE {alias}_scoped.[{relation_task}] = src.[{task_key}] "
+                        f"AND {alias}_scoped.[{relation_resource}] = %s "
+                        f"AND {alias}_scoped.[{relation_channel}] = %s"
+                        f"{active_clause.replace(alias, alias + '_scoped')})"
+                    )
+                    scoped_resource_parameters.extend((str(resource_id), str(workroom_id)))
     if not resource_predicates:
         return None
-    if workroom_intent and not channel_predicates:
+    if workroom_intent and not scoped_resource_predicates:
         return None
-    where = ["(" + " OR ".join(resource_predicates) + ")"]
-    if channel_predicates:
-        where.append("(" + " OR ".join(channel_predicates) + ")")
-        parameters.extend(channel_parameters)
+    if workroom_intent:
+        # Recurso y canal deben pertenecer a la misma asignación. Dos EXISTS
+        # independientes permitirían mezclar la asignación del recurso en un
+        # canal con la asignación de otro recurso en el canal actual.
+        where = ["(" + " OR ".join(scoped_resource_predicates) + ")"]
+        parameters = scoped_resource_parameters
+    else:
+        where = ["(" + " OR ".join(resource_predicates) + ")"]
     archived = columns.get("archived")
     if archived:
         where.append(f"ISNULL(src.[{archived}], 0) = 0")
