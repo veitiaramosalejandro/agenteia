@@ -20,6 +20,10 @@ from app.api.schemas.common import (
     MultiAgentAnswer,
     MultiAgentDialogueRequest,
     MultiAgentDialogueResponse,
+     # --- AÑADIR ESTOS TRES ---
+    SysResourceIAConfiguration,
+    SysResourceIAConfigurationResponse,
+    SysResourceIAConfigurationStored,
 )
 from app.agent.tools import solidset_send_chat_message
 from app.connectors.db_client import (
@@ -35,6 +39,7 @@ from app.connectors.db_client import (
     get_agent_model_configurations,
     save_agent_knowledge,
     touch_agent_session,
+    save_sys_resource_ia,
 )
 from app.services.auto_reply import (
     _agent_visible_name,
@@ -117,6 +122,35 @@ agent = None
 def configure(runtime_agent: Any) -> None:
     global agent
     agent = runtime_agent
+
+
+@router.post(
+    "/api/v1/agent/solidset/agents",
+    response_model=SysResourceIAConfigurationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_manual_agent(
+    configuration: SysResourceIAConfiguration,
+) -> SysResourceIAConfigurationResponse:
+    """Crea manualmente un recurso de IA en PostgreSQL."""
+    payload = (
+        configuration.model_dump()
+        if hasattr(configuration, "model_dump")
+        else configuration.dict()
+    )
+    try:
+        saved = save_sys_resource_ia(payload)
+    except psycopg.Error as exc:
+        print(f"❌ No se pudo crear el agente manual: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Não foi possível criar o agente no PostgreSQL.",
+        ) from exc
+
+    return SysResourceIAConfigurationResponse(
+        status="created",
+        configuration=SysResourceIAConfigurationStored(**saved),
+    )
 
 
 @router.post(
