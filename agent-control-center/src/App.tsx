@@ -210,16 +210,23 @@ function Agents({ selectedInstance, agents, notify, refreshAgents }: Shared) {
   const [filter, setFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [form, setForm] = useState({ Name: '', Stamp: '', active: true })
+  const [form, setForm] = useState({ Name: '', Stamp: new Date().toISOString().slice(0, 16), active: true })
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.Name.trim()) return
     setBusy(true)
     try {
-      await api.createAgent({ ...form, IDResource: crypto.randomUUID() })
-      setShowCreate(false); setForm({ Name: '', Stamp: '', active: true })
-      await refreshAgents(); notify('success', 'Agente de IA creado correctamente.')
+      await api.createAgent({ 
+        Name: form.Name.trim(), 
+        active: form.active,
+        IDResource: crypto.randomUUID(),
+        Stamp: new Date(form.Stamp).toISOString()
+      })
+      setShowCreate(false)
+      setForm({ Name: '', Stamp: new Date().toISOString().slice(0, 16), active: true })
+      await refreshAgents()
+      notify('success', 'Agente de IA creado correctamente.')
     } catch (error) {
       notify('error', error instanceof Error ? error.message : 'No fue posible crear el agente.')
     } finally {
@@ -230,9 +237,10 @@ function Agents({ selectedInstance, agents, notify, refreshAgents }: Shared) {
   const shown = agents.filter(a => `${a.Name} ${a.FullName} ${a.IDResource}`.toLowerCase().includes(filter.toLowerCase()))
   return <><PageHeader eyebrow="Identidades" title="Agentes especializados" copy={`Recursos activos y asignaciones de ${selectedInstance?.Name || 'la instancia seleccionada'}.`} action={<div className="button-row"><label className="search"><Search size={17} /><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Buscar agente" /></label><button className="primary" onClick={() => setShowCreate(true)}><Plus size={17} /> Crear agente</button></div>} />
     {!selectedInstance ? <Empty title="Selecciona una instancia" copy="La lista de agentes siempre está aislada por instancia." /> : shown.length === 0 ? <Empty title="No hay agentes sincronizados" copy="Sincroniza recursos y alcances de esta instancia desde la API." /> : <div className="table-wrap"><table><thead><tr><th>Agente</th><th>Identidades</th><th>Prompt</th><th>Modelos</th><th>Ámbitos</th></tr></thead><tbody>{shown.map(a => <tr key={a.IDResource}><td><div className="agent-name"><span>{initials(a.Name)}</span><div><strong>{a.Name}</strong><small>{a.OrganizationName || 'Sin organización'}</small></div></div></td><td><code title={a.IDResource}>Humano · {shortId(a.IDResource)}</code><code title={a.IDAgentResource || ''}>IA · {shortId(a.IDAgentResource)}</code></td><td>{a.prompt ? <><span className="status-pill success">Publicado</span><small>v{a.prompt.Version} · {a.prompt.Name}</small></> : <span className="status-pill warning">Sin publicar</span>}</td><td><strong>{a.models.length}</strong><small>{a.models.find(m => m.IsDefault)?.Model || 'Sin predeterminado'}</small></td><td><strong>{a.ScopeCount}</strong><small>canales sincronizados</small></td></tr>)}</tbody></table></div>}
-    {showCreate && <div className="modal-overlay"><form className="panel modal-content form-panel" onSubmit={create}><div className="panel-title"><div><span className="eyebrow">Configuración</span><h2>Nuevo agente único</h2></div><button type="button" className="icon-button" onClick={() => setShowCreate(false)}><X size={18} /></button></div><p className="section-copy">Este agente será una identidad única en el sistema, permitiendo pruebas directas en el laboratorio sin dependencia de canales de SolidSET.</p><Field label="Nombre del agente" value={form.Name} onChange={v => setForm({ ...form, Name: v })} /><Field label="Stamp / Identificador" value={form.Stamp} onChange={v => setForm({ ...form, Stamp: v })} /><label className="inline-check"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} /> Agente activo</label><div className="button-row"><button type="button" className="secondary" onClick={() => setShowCreate(false)}>Cancelar</button><button type="submit" className="primary" disabled={busy || !form.Name.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />} Crear agente</button></div></form></div>}
+    {showCreate && <div className="modal-overlay"><form className="panel modal-content form-panel" onSubmit={create}><div className="panel-title"><div><span className="eyebrow">Configuración</span><h2>Nuevo agente único</h2></div><button type="button" className="icon-button" onClick={() => setShowCreate(false)}><X size={18} /></button></div><p className="section-copy">Este agente será una identidad única en el sistema, permitiendo pruebas directas en el laboratorio sin dependencia de canales de SolidSET.</p><Field label="Nombre del agente" value={form.Name} onChange={v => setForm({ ...form, Name: v })} /><label>Fecha de creación (Stamp)<input type="datetime-local" value={form.Stamp} onChange={e => setForm({ ...form, Stamp: e.target.value })} /></label><label className="inline-check"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} /> Agente activo</label><div className="button-row"><button type="button" className="secondary" onClick={() => setShowCreate(false)}>Cancelar</button><button type="submit" className="primary" disabled={busy || !form.Name.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />} Crear agente</button></div></form></div>}
   </>
 }
+
 
 
 function Prompts({ selectedInstance, agents, notify, refreshAgents }: Shared) {
