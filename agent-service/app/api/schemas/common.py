@@ -88,10 +88,11 @@ class SolidSETReactionCaptureResponse(BaseModel):
 
 class SysResourceIAConfiguration(BaseModel):
     Name: Optional[str] = Field(None, max_length=255)
-    Stamp: Optional[datetime] = None
+    Stamp: Optional[str] = Field(None, description="ISO format date string or technical identifier")
     IDResource: uuid.UUID
     IDAgentResource: Optional[uuid.UUID] = None
     active: bool = False
+
 
     class Config:
         extra = "forbid"
