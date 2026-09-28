@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity, Bot, BrainCircuit, CheckCircle2, ChevronDown, CircleAlert,
   Database, Download, FileSearch, FlaskConical, Gauge, Layers3, LoaderCircle, Menu, Network, PanelLeftClose,
-  History, LogOut, Play, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
+  History, LogOut, Play, Plus, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
   Sparkles, Trash2, UploadCloud, UserCog, Waypoints, Workflow, X,
 } from 'lucide-react'
+
 import { api } from './api'
 import type { AdminUser, Agent, Approval, AutomationEvaluation, AutomationRule, ChangeRecord, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
 
@@ -205,13 +206,34 @@ function Instances({ instances, selected, notify }: { instances: Instance[]; sel
 
 type Shared = { selectedInstance: Instance | null; agents: Agent[]; providers: Provider[]; notify: (t: 'success' | 'error', m: string) => void; refreshAgents: () => Promise<void> }
 
-function Agents({ selectedInstance, agents }: Shared) {
+function Agents({ selectedInstance, agents, notify, refreshAgents }: Shared) {
   const [filter, setFilter] = useState('')
+  const [showCreate, setShowCreate] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState({ Name: '', Stamp: '', active: true })
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.Name.trim()) return
+    setBusy(true)
+    try {
+      await api.createAgent({ ...form, IDResource: crypto.randomUUID() })
+      setShowCreate(false); setForm({ Name: '', Stamp: '', active: true })
+      await refreshAgents(); notify('success', 'Agente de IA creado correctamente.')
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : 'No fue posible crear el agente.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const shown = agents.filter(a => `${a.Name} ${a.FullName} ${a.IDResource}`.toLowerCase().includes(filter.toLowerCase()))
-  return <><PageHeader eyebrow="Identidades" title="Agentes especializados" copy={`Recursos activos y asignaciones de ${selectedInstance?.Name || 'la instancia seleccionada'}.`} action={<label className="search"><Search size={17} /><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Buscar agente" /></label>} />
+  return <><PageHeader eyebrow="Identidades" title="Agentes especializados" copy={`Recursos activos y asignaciones de ${selectedInstance?.Name || 'la instancia seleccionada'}.`} action={<div className="button-row"><label className="search"><Search size={17} /><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Buscar agente" /></label><button className="primary" onClick={() => setShowCreate(true)}><Plus size={17} /> Crear agente</button></div>} />
     {!selectedInstance ? <Empty title="Selecciona una instancia" copy="La lista de agentes siempre está aislada por instancia." /> : shown.length === 0 ? <Empty title="No hay agentes sincronizados" copy="Sincroniza recursos y alcances de esta instancia desde la API." /> : <div className="table-wrap"><table><thead><tr><th>Agente</th><th>Identidades</th><th>Prompt</th><th>Modelos</th><th>Ámbitos</th></tr></thead><tbody>{shown.map(a => <tr key={a.IDResource}><td><div className="agent-name"><span>{initials(a.Name)}</span><div><strong>{a.Name}</strong><small>{a.OrganizationName || 'Sin organización'}</small></div></div></td><td><code title={a.IDResource}>Humano · {shortId(a.IDResource)}</code><code title={a.IDAgentResource || ''}>IA · {shortId(a.IDAgentResource)}</code></td><td>{a.prompt ? <><span className="status-pill success">Publicado</span><small>v{a.prompt.Version} · {a.prompt.Name}</small></> : <span className="status-pill warning">Sin publicar</span>}</td><td><strong>{a.models.length}</strong><small>{a.models.find(m => m.IsDefault)?.Model || 'Sin predeterminado'}</small></td><td><strong>{a.ScopeCount}</strong><small>canales sincronizados</small></td></tr>)}</tbody></table></div>}
+    {showCreate && <div className="modal-overlay"><form className="panel modal-content form-panel" onSubmit={create}><div className="panel-title"><div><span className="eyebrow">Configuración</span><h2>Nuevo agente único</h2></div><button type="button" className="icon-button" onClick={() => setShowCreate(false)}><X size={18} /></button></div><p className="section-copy">Este agente será una identidad única en el sistema, permitiendo pruebas directas en el laboratorio sin dependencia de canales de SolidSET.</p><Field label="Nombre del agente" value={form.Name} onChange={v => setForm({ ...form, Name: v })} /><Field label="Stamp / Identificador" value={form.Stamp} onChange={v => setForm({ ...form, Stamp: v })} /><label className="inline-check"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} /> Agente activo</label><div className="button-row"><button type="button" className="secondary" onClick={() => setShowCreate(false)}>Cancelar</button><button type="submit" className="primary" disabled={busy || !form.Name.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />} Crear agente</button></div></form></div>}
   </>
 }
+
 
 function Prompts({ selectedInstance, agents, notify, refreshAgents }: Shared) {
   const [agentId, setAgentId] = useState('')
@@ -719,16 +741,22 @@ function Lab({ selectedInstance, agents, notify }: Shared) {
       setAgentId(agents[0]?.IDResource || ''); setWorkRoom(''); resetConversation()
     }
   }, [agents, agentId, resetConversation])
-  const availableRooms = rooms.filter(room => room.active && room.agents.some(agent => agent.IDResource === agentId && agent.active))
+    const availableRooms = rooms.filter(room => room.active && room.agents.some(agent => agent.IDResource === agentId && agent.active))
   const validRoom = availableRooms.some(room => room.IDWorkRoom === workRoom)
-  const canRun = !!selectedInstance && !!agentId && validRoom && !roomsLoading && !roomsError && !!message.trim()
+  const canRun = !!selectedInstance && !!agentId && !roomsLoading && !roomsError && !!message.trim()
   const run = async () => {
     if (!canRun || busy || !selectedInstance) return
     const runId = ++execution.current
     setBusy(true); setAnswer(''); setElapsed(0)
     const start = performance.now()
     try {
-      const body: Record<string, unknown> = { IDWorkRoom: workRoom, RawMessage: message, SelectedAgentResourceIds: [agentId], SendToSolidSET: false, SolidSETInstanceCode: selectedInstance.Code }
+      const body: Record<string, unknown> = {
+        IDWorkRoom: workRoom || '00000000-0000-0000-0000-000000000000',
+        RawMessage: message,
+        SelectedAgentResourceIds: [agentId],
+        SendToSolidSET: false,
+        SolidSETInstanceCode: selectedInstance.Code
+      }
       if (sender.trim()) body.SenderResourceId = sender.trim()
       if (session) body.IDSession = session
       const result = await api.dialogue(body)
@@ -744,8 +772,9 @@ function Lab({ selectedInstance, agents, notify }: Shared) {
     <div className="lab-grid">
       <section className="panel form-panel">
         <label>Agente<SearchSelect value={agentId} onChange={value => { setAgentId(value); setWorkRoom(''); resetConversation() }} ariaLabel="Agente" searchPlaceholder="Buscar agente…" options={agents.map(a => ({ value: a.IDResource, label: a.Name, detail: a.FullName || shortId(a.IDResource) }))} /></label>
-        <label>Canal<SearchSelect value={workRoom} onChange={value => { setWorkRoom(value); resetConversation() }} ariaLabel="Canal" placeholder={roomsLoading ? 'Cargando canales…' : 'Seleccionar canal…'} searchPlaceholder="Buscar canal…" options={availableRooms.map(room => ({ value: room.IDWorkRoom, label: room.Name || room.Code || 'Canal sin nombre', detail: room.Code || undefined }))} /></label>
-        {roomsError ? <div className="error-box">{roomsError}</div> : !roomsLoading && agentId && availableRooms.length === 0 ? <small className="field-help">Este agente no tiene canales activos asignados en esta instancia. Revisa las asignaciones en Automatización y la sincronización de canales.</small> : <small className="field-help">Solo se muestran canales activos asignados al agente seleccionado.</small>}
+        <label>Canal · opcional<SearchSelect value={workRoom} onChange={value => { setWorkRoom(value); resetConversation() }} ariaLabel="Canal" placeholder={roomsLoading ? 'Cargando canales…' : 'Seleccionar canal (opcional)…'} searchPlaceholder="Buscar canal…" options={availableRooms.map(room => ({ value: room.IDWorkRoom, label: room.Name || room.Code || 'Canal sin nombre', detail: room.Code || undefined }))} /></label>
+        {roomsError ? <div className="error-box">{roomsError}</div> : !roomsLoading && agentId && availableRooms.length === 0 ? <small className="field-help">Este agente no tiene canales activos. Puede probarse sin canal usando un contexto vacío.</small> : <small className="field-help">Muestra canales activos asignados o permite diálogo directo.</small>}
+
         <button className="secondary compact" disabled={roomsLoading} onClick={() => setReload(value => value + 1)}><RefreshCw size={14} /> Actualizar canales</button>
         <details><summary>Opciones avanzadas</summary><Field label="ID del remitente · opcional" value={sender} onChange={value => { setSender(value); resetConversation() }} /><small className="field-help">Permite simular una pregunta de otro recurso y su contexto como interlocutor. Déjalo vacío para una prueba sin remitente identificado.</small></details>
         <Field label="Pregunta" value={message} onChange={setMessage} area />

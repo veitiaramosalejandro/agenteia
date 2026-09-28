@@ -59,11 +59,14 @@ def compact_system(output_contract: str, *, language: str, identity: dict,
         f"Agente seleccionado: {agent_id or 'predeterminado'}.\n"
     )
     person = (identity.get("temporal_state") or {}).get("conversation_identity") or {}
+    channel_id = person.get('workroom_id') or 'no disponible'
+    channel_name = person.get('workroom_name') or person.get('channel_name') or 'no disponible'
+
     policy += (
-        f"Nombre del gemelo: {clipped((identity.get('identity') or {}).get('name'), 100)}. "
+        f"Nombre del gemelo (tú): {clipped((identity.get('identity') or {}).get('name'), 100)}. "
         f"Interlocutor autenticado: {person.get('resource_id') or 'no disponible'}; "
-        f"nombre: {clipped(person.get('full_name') or person.get('display_name'), 100)}; "
-        f"canal: {person.get('workroom_id') or 'no disponible'}. "
+        f"nombre del usuario: {clipped(person.get('full_name') or person.get('display_name'), 100)}; "
+        f"canal actual: {channel_name} (ID: {channel_id}). "
         "Esta identidad prevalece sobre alias e historial.\n"
     )
     if business_query:

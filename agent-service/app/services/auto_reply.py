@@ -1780,6 +1780,7 @@ async def _process_auto_replies_impl(
             "agent_knowledge": candidate.get("agent_knowledge"),
             "agent_reinforcement": candidate.get("agent_reinforcement"),
             "workroom_id": channel_id,
+            "workroom_name": candidate.get("channel_name"),
             "meeting_id": meeting_id,
             "meeting_code": meeting_code,
             "country_code": candidate.get("country_code") or "PT",
