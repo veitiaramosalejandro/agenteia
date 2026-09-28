@@ -1776,7 +1776,14 @@ async def _process_auto_replies_impl(
             "recipient_count": int(candidate.get("recipient_count", 0)),
             "importance": importance,
             "agent_resource_id": candidate.get("agent_resource_id"),
+            "agent_identity_id": candidate.get("agent_identity_id"),
             "agent_name": candidate.get("agent_name"),
+            # The requester and the selected twin are different identities.
+            # Keep both in every execution context, even when SQL tools are not
+            # enabled for the selected model.
+            "resource_id": candidate.get("sender_resource"),
+            "requester_resource_id": candidate.get("sender_resource"),
+            "requester_name": candidate.get("sender_name"),
             "agent_knowledge": candidate.get("agent_knowledge"),
             "agent_reinforcement": candidate.get("agent_reinforcement"),
             "workroom_id": channel_id,

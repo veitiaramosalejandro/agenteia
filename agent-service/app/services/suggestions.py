@@ -30,6 +30,7 @@ from app.connectors.db_client import (
     get_active_agent_identity_for_resource,
     get_agent_knowledge,
     get_solidset_schema_snapshot,
+    list_instance_workrooms,
     save_agent_knowledge,
 )
 from app.connectors.solidset_sql import (
@@ -134,6 +135,9 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, Any]
     requester_login = _valid_framework_identifier(
         _get_payload_value(chat, "idSender", "IDSender")
     ) or _valid_framework_identifier(_get_payload_value(sender, "login", "IDLogin"))
+    requester_name = str(
+        _get_payload_value(sender, "resourceName", "ResourceName", "name", "Name") or ""
+    ).strip()
     quoted_resource = _valid_framework_identifier(
         _get_payload_value(quoted, "idSenderResource", "IDSenderResource")
     )
@@ -174,6 +178,7 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, Any]
         "quoted_message": quoted_message,
         "requester_resource": requester_resource or "",
         "requester_login": requester_login or "",
+        "requester_name": requester_name,
         "quoted_resource": quoted_resource or "",
         "quoted_login": quoted_login or "",
         "workroom_id": workroom_id or "",
@@ -1712,6 +1717,23 @@ async def _process_chat_question_response_suggestion(
             verification.get("IDAgentResource") or identity.get("IDAgentResource") or ""
         ).strip()
         agent_name = _agent_visible_name(identity)
+        workroom_name = ""
+        try:
+            workroom = next((
+                row for row in await asyncio.to_thread(
+                    list_instance_workrooms, solidset_instance["ID"]
+                )
+                if str(row.get("IDWorkRoom") or "") == context["workroom_id"]
+                and row.get("active", True)
+            ), None)
+            workroom_name = str(
+                (workroom or {}).get("Name") or (workroom or {}).get("Code") or ""
+            ).strip()
+        except psycopg.Error as exc:
+            print(
+                f"SUGGESTION_WORKROOM_CONTEXT_UNAVAILABLE request_id={request_id} "
+                f"type={type(exc).__name__}", flush=True,
+            )
         _update_response_status(
             request_id,
             "searching",
@@ -2019,6 +2041,9 @@ async def _process_chat_question_response_suggestion(
             "quoted_sender_resource": context["quoted_resource"],
             "quoted_sender_login": context["quoted_login"],
             "requester_resource": context["requester_resource"],
+            "requester_resource_id": context["requester_resource"],
+            "requester_name": context["requester_name"]
+            or str(identity.get("FullName") or identity.get("Name") or "").strip(),
             "requester_login": context["requester_login"],
             "resource_id": context["requester_resource"],
             "login_id": context["requester_login"],
@@ -2034,6 +2059,7 @@ async def _process_chat_question_response_suggestion(
             if learned_fact or concrete_answer_mode or advice_refine
             else reinforcement,
             "workroom_id": context["workroom_id"],
+            "workroom_name": workroom_name,
             "recipient_count": 1,
             "importance": int(message.Importance or 0),
             "country_code": str(

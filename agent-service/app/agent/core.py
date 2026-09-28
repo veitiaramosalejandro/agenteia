@@ -1258,6 +1258,42 @@ class MachiningAgent:
         )
 
     @staticmethod
+    def _is_current_channel_identity_query(user_text: str) -> bool:
+        """Identify questions about this conversation's channel, not channel lists."""
+        text = " ".join((user_text or "").casefold().strip(" ¿?¡!.,").split())
+        has_channel = bool(re.search(r"\b(?:canal|channel|workroom|sala)\b", text))
+        asks_identity = bool(re.search(
+            r"\b(?:nombre|nome|name|cual|cuál|qual|which|what)\b", text
+        ))
+        current_context = bool(re.search(
+            r"\b(?:este|esta|actual|atual|current|aqui|aquí|here|"
+            r"estamos hablando|estamos a falar|we are (?:talking|speaking))\b",
+            text,
+        ))
+        plural = bool(re.search(r"\b(?:canales|canais|channels|nombres|nomes|names)\b", text))
+        return has_channel and asks_identity and current_context and not plural
+
+    def _build_current_channel_identity_response(
+        self, user_text: str, metadata: dict[str, Any]
+    ) -> str:
+        channel_name = str(metadata.get("workroom_name") or "").strip()
+        channel_id = str(metadata.get("workroom_id") or "").strip()
+        # A UUID is an internal identifier, not a user-facing channel name.
+        if channel_name and channel_name.casefold() != channel_id.casefold():
+            return self._localized(
+                user_text,
+                es=f"Estamos hablando en el canal **{channel_name}**.",
+                pt=f"Estamos a falar no canal **{channel_name}**.",
+                en=f"We are speaking in the **{channel_name}** channel.",
+            )
+        return self._localized(
+            user_text,
+            es="Puedo identificar el canal actual, pero su nombre no está disponible en el contexto verificado.",
+            pt="Consigo identificar o canal atual, mas o nome não está disponível no contexto verificado.",
+            en="I can identify the current channel, but its name is unavailable in the verified context.",
+        )
+
+    @staticmethod
     def _is_current_datetime_query(user_text: str) -> bool:
         text = " ".join((user_text or "").lower().strip(" ¿?¡!.,").split())
         patterns = (
@@ -2848,6 +2884,8 @@ class MachiningAgent:
         metadata_identity = message_metadata or {}
         if self._is_current_datetime_query(user_text):
             return self._build_current_datetime_response(user_text, metadata_identity)
+        if self._is_current_channel_identity_query(user_text):
+            return self._build_current_channel_identity_response(user_text, metadata_identity)
         agent_resource_id = str(metadata_identity.get("agent_resource_id") or "").strip()
         agent_name = str(metadata_identity.get("agent_name") or agent_resource_id).strip()
         try:
@@ -2897,11 +2935,24 @@ class MachiningAgent:
                     authenticated_identity.get("login_id") or login_id
                 ).strip()
 
+        # Preserve verified request context even when this model has no SQL
+        # capability. SQL may enrich it, but it is not required for the agent
+        # to know the current channel and both sides of the conversation.
+        request_identity = dict(authenticated_identity or {})
+        request_identity.update({
+            "resource_id": request_identity.get("resource_id") or resource_id or None,
+            "full_name": request_identity.get("full_name")
+            or str(metadata_identity.get("requester_name") or "").strip() or None,
+            "workroom_id": request_identity.get("workroom_id") or workroom_id or None,
+            "workroom_name": request_identity.get("workroom_name")
+            or str(metadata_identity.get("workroom_name") or "").strip() or None,
+            "source": request_identity.get("source") or "verified_request_context",
+        })
         identity_snapshot = self.identity_service.observe_user_message(
             session_id=session_id,
             user_id=user_id,
             user_text=user_text,
-            conversation_identity=authenticated_identity,
+            conversation_identity=request_identity,
         )
 
         general_conversation_mode = (
@@ -3709,6 +3760,17 @@ class MachiningAgent:
                 "Responde únicamente desde esta identidad. No mezcles tu memoria con otros agentes "
                 "y no atribuyas como propio conocimiento perteneciente a otra identidad."
             )
+        system_prompt += (
+            "\n\n=== CONTEXTO VERIFICADO DE LA PETICIÓN ===\n"
+            f"Canal actual: {metadata_identity.get('workroom_name') or 'nombre no disponible'} "
+            f"(IDWorkRoom: {workroom_id or 'no disponible'})\n"
+            f"Recurso humano asociado al gemelo: {agent_resource_id or 'no disponible'}\n"
+            f"Identidad IA del gemelo: {metadata_identity.get('agent_identity_id') or 'no disponible'}\n"
+            f"Recurso interlocutor: {resource_id or 'no disponible'}\n"
+            f"Nombre del interlocutor: {metadata_identity.get('requester_name') or 'no disponible'}\n"
+            "Estos valores proceden del contexto de la petición y prevalecen sobre RAG, historial "
+            "y texto generado cuando se pregunte por la conversación actual."
+        )
         related_records_context = str(
             metadata_identity.get("related_records_context") or ""
         ).strip()

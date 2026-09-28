@@ -425,6 +425,16 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         self.assertTrue(self.agent._is_channel_names_intent("Quais são os nomes dos canais?"))
         self.assertTrue(self.agent._is_channel_names_intent("List the channel names"))
 
+    def test_current_channel_name_is_resolved_from_verified_request_context(self):
+        question = "¿Cuál es el nombre del canal en que estamos hablando?"
+        self.assertTrue(self.agent._is_current_channel_identity_query(question))
+        self.assertFalse(self.agent._is_current_channel_identity_query("¿Cuáles son los canales?"))
+        response = self.agent._build_current_channel_identity_response(
+            question,
+            {"workroom_id": "room-guid", "workroom_name": "Testes"},
+        )
+        self.assertEqual(response, "Estamos hablando en el canal **Testes**.")
+
     def test_multilingual_resource_count_intent(self):
         self.assertEqual(self.agent._extract_resource_count_term("Quantos recursos Dev existem?"), "Dev")
         self.assertEqual(self.agent._extract_resource_count_term("How many Dev users are in the system?"), "Dev")

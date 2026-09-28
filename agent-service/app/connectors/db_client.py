@@ -1106,12 +1106,8 @@ def list_active_agent_resource_ids(instance_id: UUID | str) -> list[UUID]:
             cursor.execute(
                 '''SELECT DISTINCT r."IDResource"
                    FROM public."SysResourceIA" r
-                   INNER JOIN public."SysSolidSETInstanceResource" ir
-                     ON ir."IDResource"=r."IDResource"
-                    AND ir."IDSolidSETInstance"=%s AND ir.active=true
-                   INNER JOIN public."SysAgentIAScope" s
-                     ON s."IDResource"=r."IDResource"
-                    AND s."IDSolidSETInstance"=ir."IDSolidSETInstance" AND s.active=true
+                   INNER JOIN public."SysSolidSETInstanceResource" ir ON ir."IDResource"=r."IDResource" AND ir."IDSolidSETInstance"=%s AND ir.active=true
+                   INNER JOIN public."SysAgentIAScope" s ON s."IDResource"=r."IDResource" AND s."IDSolidSETInstance"=ir."IDSolidSETInstance" AND s.active=true
                    WHERE r.active=true AND r."IDAgentResource" IS NOT NULL
                    ORDER BY r."IDResource"''',
                 (instance,),

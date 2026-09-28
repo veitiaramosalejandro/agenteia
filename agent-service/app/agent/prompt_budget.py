@@ -64,6 +64,7 @@ def compact_system(output_contract: str, *, language: str, identity: dict,
 
     policy += (
         f"Nombre del gemelo (tú): {clipped((identity.get('identity') or {}).get('name'), 100)}. "
+        f"Recurso humano asociado al gemelo: {agent_id or 'no disponible'}. "
         f"Interlocutor autenticado: {person.get('resource_id') or 'no disponible'}; "
         f"nombre del usuario: {clipped(person.get('full_name') or person.get('display_name'), 100)}; "
         f"canal actual: {channel_name} (ID: {channel_id}). "
