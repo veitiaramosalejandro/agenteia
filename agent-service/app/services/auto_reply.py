@@ -456,6 +456,39 @@ def _is_safe_auto_reply_output(response_text: str) -> bool:
     return not any(marker in text for marker in forbidden)
 
 
+def _split_solidset_response(response_text: str, max_chars: int = 1800) -> list[str]:
+    """Divide respuestas sin superar RawMessage nvarchar(2000) ni cortar líneas."""
+    text = str(response_text or "").strip()
+    if not text:
+        return []
+    safe_limit = max(200, min(int(max_chars), 1800))
+    chunks: list[str] = []
+    current = ""
+    for original_line in text.splitlines() or [text]:
+        pending = original_line.strip()
+        line_parts: list[str] = []
+        while len(pending) > safe_limit:
+            cut = pending.rfind(" ", 0, safe_limit + 1)
+            if cut <= 0:
+                cut = safe_limit
+            line_parts.append(pending[:cut].rstrip())
+            pending = pending[cut:].lstrip()
+        line_parts.append(pending)
+        for line in line_parts:
+            candidate = line if not current else f"{current}\n{line}"
+            if current and len(candidate) > safe_limit:
+                chunks.append(current)
+                current = line
+            else:
+                current = candidate
+    if current:
+        chunks.append(current)
+    if len(chunks) == 1:
+        return chunks
+    total = len(chunks)
+    return [f"Parte {index}/{total}\n{chunk}" for index, chunk in enumerate(chunks, 1)]
+
+
 def _weather_location_prompt(raw_text: str) -> Optional[str]:
     """Devuelve una aclaración si se pide el tiempo sin indicar ubicación."""
     text = " ".join((raw_text or "").strip().lower().split())
@@ -2001,39 +2034,58 @@ async def _process_auto_replies_impl(
                 f"agent_resource={agent_resource_id} meeting={meeting_id or '-'}",
                 flush=True,
             )
-            send_result = await asyncio.to_thread(
-                solidset_send_chat_message.invoke,
-                {
-                    "canal_id": channel_id,
-                    "mensaje": f"{response_text}",
-                    "confirm": True,
-                    "recurso_id": reply_resource if is_direct else None,
-                    "recurso_login_id": reply_login if is_direct else None,
-                    "visibility_level": visibility_level,
-                    "kind": 7,
-                    "importance": importance,
-                    "meeting_id": meeting_id or None,
-                    "meeting_code": meeting_code or None,
-                    "meeting_mirror_general": bool(candidate.get("meeting_active")),
-                    "generated_by_ia": True,
-                    "agent_resource_id": agent_resource_id,
-                    "agent_identity_id": agent_identity_id,
-                    "agent_chat_resource_name": candidate.get(
-                        "agent_chat_resource_name"
-                    ),
-                    "agent_chat_login_id": candidate.get("agent_chat_login"),
-                    "human_chat_resource_name": candidate.get("reply_resource_name"),
-                    "solidset_base_url": candidate.get("solidset_base_url"),
-                    "preview_only": preview_only,
-                    "question_chat_id": int(candidate.get("chat_id") or 0) or None,
-                },
-            )
-            send_result_text = str(send_result)
+            response_parts = _split_solidset_response(response_text)
+            send_result: Any = ""
+            part_result_texts: list[str] = []
+            preview_part_payloads: list[dict[str, Any]] = []
+            for part_index, response_part in enumerate(response_parts):
+                send_result = await asyncio.to_thread(
+                    solidset_send_chat_message.invoke,
+                    {
+                        "canal_id": channel_id,
+                        "mensaje": response_part,
+                        "confirm": True,
+                        "recurso_id": reply_resource if is_direct else None,
+                        "recurso_login_id": reply_login if is_direct else None,
+                        "visibility_level": visibility_level,
+                        "kind": 7,
+                        "importance": importance,
+                        "meeting_id": meeting_id or None,
+                        "meeting_code": meeting_code or None,
+                        "meeting_mirror_general": bool(candidate.get("meeting_active")),
+                        "generated_by_ia": True,
+                        "agent_resource_id": agent_resource_id,
+                        "agent_identity_id": agent_identity_id,
+                        "agent_chat_resource_name": candidate.get(
+                            "agent_chat_resource_name"
+                        ),
+                        "agent_chat_login_id": candidate.get("agent_chat_login"),
+                        "human_chat_resource_name": candidate.get("reply_resource_name"),
+                        "solidset_base_url": candidate.get("solidset_base_url"),
+                        "preview_only": preview_only,
+                        "question_chat_id": (
+                            int(candidate.get("chat_id") or 0) or None
+                            if part_index == 0 else None
+                        ),
+                    },
+                )
+                part_result_text = str(send_result)
+                part_result_texts.append(part_result_text)
+                if preview_only:
+                    part_payload = json.loads(part_result_text)
+                    if not isinstance(part_payload, dict):
+                        raise ValueError("El preview no devolvió un objeto de payload válido.")
+                    preview_part_payloads.append(part_payload)
+                elif not part_result_text.startswith(("✅", "🕒")):
+                    break
+            send_result_text = next((
+                result for result in part_result_texts
+                if not result.startswith(("✅", "🕒"))
+            ), next((
+                result for result in part_result_texts if result.startswith("🕒")
+            ), str(send_result)))
             if preview_only:
-                preview_payload = json.loads(send_result_text)
-                if not isinstance(preview_payload, dict):
-                    raise ValueError("El preview no devolvió un objeto de payload válido.")
-                preview_payloads.append(preview_payload)
+                preview_payloads.extend(preview_part_payloads)
                 sent += 1
                 continue
             if send_result_text.startswith("✅"):
@@ -2049,6 +2101,7 @@ async def _process_auto_replies_impl(
                 _remember_auto_reply_followup(candidate)
                 print(
                     f"🤖 Auto-reply enviado channel={channel_id} "
+                    f"parts={len(response_parts)} "
                     f"visibility={visibility_level} "
                     f"importance={importance} "
                     f"meeting={meeting_code or '-'} "

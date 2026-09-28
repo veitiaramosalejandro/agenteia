@@ -9,6 +9,17 @@ from app.agent.orchestrator import SolidSETOrchestrator
 
 
 class ResponseTextPathTests(unittest.TestCase):
+    def test_long_solidset_response_is_split_without_cutting_list_lines(self):
+        from app.services.auto_reply import _split_solidset_response
+
+        lines = [f"- **Tarea {index}** ({'detalle ' * 20})" for index in range(10)]
+        parts = _split_solidset_response("\n".join(lines), max_chars=500)
+
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(part) < 550 for part in parts))
+        rebuilt = "\n".join(part.split("\n", 1)[1] for part in parts)
+        self.assertEqual("\n".join(lines), rebuilt)
+
     def test_graphql_tutorial_can_include_localhost(self):
         from app.services.auto_reply import _is_safe_auto_reply_output
         self.assertTrue(_is_safe_auto_reply_output(
