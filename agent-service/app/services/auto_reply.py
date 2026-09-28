@@ -26,14 +26,12 @@ from app.interactive_priority import async_interactive_work
 from app.knowledge_provenance import USER_ASSERTION_SOURCE
 from app.connectors.db_client import (
     agent_learning_enabled,
-    automation_runs_last_hour,
     ensure_payload_agent_workroom_assignments,
     get_active_agents_for_workroom,
     get_agent_knowledge,
     get_agent_model_configurations,
     get_solidset_instance,
     save_agent_knowledge,
-    record_automation_run,
     touch_agent_session,
 )
 from app.connectors.solidset_data_api import SolidSETDataAPIError
@@ -1334,9 +1332,6 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     if required - available:
                         print(f"AUTOMATION_AUTO_BLOCKED rule={automation_rule['ID']} reason=missing_capabilities", flush=True)
                         continue
-                    if automation_runs_last_hour(automation_rule["ID"]) >= int(automation_rule.get("MaxRunsPerHour") or 1):
-                        print(f"AUTOMATION_AUTO_BLOCKED rule={automation_rule['ID']} reason=hourly_limit", flush=True)
-                        continue
             except psycopg.Error as exc:
                 print(f"AUTOMATION_POLICY_UNAVAILABLE agent={agent_resource_id} type={type(exc).__name__}", flush=True)
                 automation_rule = None
@@ -2052,13 +2047,6 @@ async def _process_auto_replies_impl(
                 )
                 _remember_auto_reply_fingerprint(fingerprint)
                 _remember_auto_reply_followup(candidate)
-                if candidate.get("automation_rule_id"):
-                    await asyncio.to_thread(
-                        record_automation_run,
-                        candidate["automation_rule_id"],
-                        status="completed", input_text=incoming_text,
-                        output_text=response_text, approved=False, sent=True,
-                    )
                 print(
                     f"🤖 Auto-reply enviado channel={channel_id} "
                     f"visibility={visibility_level} "
@@ -2115,13 +2103,6 @@ async def _process_auto_replies_impl(
                     response_count=sent,
                 )
                 _remember_auto_reply_fingerprint(fingerprint)
-                if candidate.get("automation_rule_id"):
-                    await asyncio.to_thread(
-                        record_automation_run,
-                        candidate["automation_rule_id"],
-                        status="completed", input_text=incoming_text,
-                        output_text=response_text, approved=False, sent=False,
-                    )
                 print(
                     f"📮 Auto-reply pendiente de entrega channel={channel_id}",
                     flush=True,

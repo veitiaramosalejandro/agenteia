@@ -91,6 +91,16 @@ TASK_CATALOG = {
             {"column": "IDTask", "referencedTable": "SysTask", "referencedColumn": "IDTask"},
             {"column": "IDResource", "referencedTable": "SysResources", "referencedColumn": "ResourceId"},
         ],
+    }, {
+        "schemaName": "operations",
+        "tableName": "SysTask2Channel",
+        "columns": [
+            {"name": "IDTask2Channel"}, {"name": "IDTask"},
+            {"name": "IDChannel"}, {"name": "LinkState"},
+        ],
+        "foreignKeys": [
+            {"column": "IDTask", "referencedTable": "SysTask", "referencedColumn": "IDTask"},
+        ],
     }]
 }
 
@@ -208,6 +218,39 @@ class SchemaQueryPlannerTests(unittest.TestCase):
             [{"ShortName": "Tarea de Victor", "ProgressPercentage": 90}], plan, "es"
         )
         self.assertIn("última tarea relacionada", response)
+
+    def test_channel_tasks_require_verified_current_channel_relation_and_return_list(self):
+        resource_id = "ce0e837a-fe28-47ae-9ba0-8841fe042ca8"
+        workroom_id = "debf64b2-3b3e-eb11-870c-d850e63f5833"
+        plan = plan_identity_record_query(
+            "¿Cuáles son las tareas que tiene en el canal?",
+            TASK_CATALOG,
+            resource_id=resource_id,
+            workroom_id=workroom_id,
+        )
+        self.assertIsNotNone(plan)
+        self.assertTrue(plan.workroom_scoped)
+        self.assertEqual("list", plan.response_mode)
+        self.assertIn("[operations].[SysTask2Channel]", plan.query)
+        self.assertIn("rel1_channel.[IDChannel] = %s", plan.query)
+        self.assertEqual(
+            [resource_id, resource_id, resource_id, workroom_id],
+            plan.parameters,
+        )
+        response = render_record_rows([
+            {"ShortName": "Tarea del canal", "ProgressPercentage": 25},
+        ], plan, "es", perspective="agent")
+        self.assertIn("**1 tareas verificadas**", response)
+        self.assertIn("**Tarea del canal**", response)
+
+    def test_channel_task_query_fails_closed_without_channel_relationship(self):
+        catalog = {"tables": TASK_CATALOG["tables"][:2]}
+        self.assertIsNone(plan_identity_record_query(
+            "¿Cuáles son las tareas que tiene en el canal?",
+            catalog,
+            resource_id="victor-resource",
+            workroom_id="current-channel",
+        ))
 
     def test_task_summary_builds_aggregate_query_and_data_driven_response(self):
         plan = plan_identity_record_query(

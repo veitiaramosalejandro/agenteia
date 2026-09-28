@@ -1679,6 +1679,7 @@ class MachiningAgent:
         user_text: str,
         *,
         resource_id: Optional[str],
+        workroom_id: Optional[str] = None,
         perspective: str = "neutral",
         subject_label: str = "",
     ) -> Optional[str]:
@@ -1695,7 +1696,8 @@ class MachiningAgent:
             if not isinstance(catalog, dict):
                 return None
             plan = plan_identity_record_query(
-                user_text, catalog, resource_id=resource_id
+                user_text, catalog, resource_id=resource_id,
+                workroom_id=workroom_id,
             )
             if plan is None:
                 return None
@@ -3278,6 +3280,7 @@ class MachiningAgent:
             record_response = subject_error or self._resolve_schema_record_from_db(
                 user_text,
                 resource_id=business_subject_id,
+                workroom_id=workroom_id or None,
                 perspective=business_perspective,
                 subject_label=(
                     re.sub(r"\s*\[IA\]\s*$", "", agent_name, flags=re.IGNORECASE).strip()

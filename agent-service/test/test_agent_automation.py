@@ -34,7 +34,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
             ],
         }
 
-    def test_notifications_ignore_approval_but_enforce_capabilities_and_rate(self):
+    def test_notifications_ignore_control_center_approval_and_rate_limit(self):
         agent_identity = uuid4()
         candidate = {
             "fingerprint": "notification-approval",
@@ -52,15 +52,14 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
             "AutomationRequireApproval": True,
             "AutomationRequiredCapabilities": ["coding"], "AutomationMaxRunsPerHour": 5,
         }
-        for capabilities, runs, expected in [(["coding"], 0, 1), ([], 0, 0), (["coding"], 5, 0)]:
+        for capabilities, expected in [(["coding"], 1), ([], 0)]:
             with (
-                self.subTest(capabilities=capabilities, runs=runs),
+                self.subTest(capabilities=capabilities),
                 patch.object(auto_reply, "get_solidset_instance", return_value={**self.instance, "DataAPI": {"BaseUrl": "http://data-api"}}),
                 patch.object(auto_reply, "ensure_payload_agent_workroom_assignments", return_value=0),
                 patch.object(auto_reply, "get_active_agents_for_workroom", return_value=[configured]),
                 patch.object(auto_reply, "verify_and_sync_solidset_agent_mapping", return_value={"verified": True, "IDAgentResource": str(agent_identity)}),
                 patch.object(auto_reply, "get_agent_model_configurations", return_value=[{"Capabilities": capabilities, "active": True}]),
-                patch.object(auto_reply, "automation_runs_last_hour", return_value=runs),
                 patch.object(auto_reply, "get_agent_knowledge", return_value=""),
                 patch.object(auto_reply, "get_agent_reinforcement_context", return_value=""),
             ):

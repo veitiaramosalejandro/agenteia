@@ -50,6 +50,7 @@ class SchemaRecordPlan:
     selected_columns: tuple[str, ...]
     temporal_scope: str = "latest"
     response_mode: str = "single"
+    workroom_scoped: bool = False
 
 
 def plan_related_record_query(
@@ -375,6 +376,7 @@ def plan_identity_record_query(
     catalog: dict[str, Any],
     *,
     resource_id: Optional[str] = None,
+    workroom_id: Optional[str] = None,
 ) -> Optional[SchemaRecordPlan]:
     """Planifica registros actuales por semántica de columnas, sin nombres SQL fijos."""
     words = _words(user_text)
@@ -384,6 +386,14 @@ def plan_identity_record_query(
         return _plan_resource_activity_query(user_text, catalog, str(resource_id))
     if not words.intersection(task_terms) or not resource_id:
         return None
+    workroom_intent = bool(words.intersection({
+        "canal", "canales", "canais", "channel", "channels", "workroom",
+    }))
+    if workroom_intent and not workroom_id:
+        return None
+    list_intent = bool(words.intersection({
+        "tareas", "tarefas", "tasks", "cuales", "cuáles", "quais", "listar", "lista",
+    }))
     current_intent = bool(words.intersection({
         "actual", "atual", "current", "trabajando", "trabalhando", "trabalhar", "working",
     }))
@@ -443,6 +453,8 @@ def plan_identity_record_query(
     # relación. Se descubren desde el catálogo y se incorporan al mismo filtro
     # de identidad; nunca se recuperan filas globales para filtrarlas después.
     task_key = columns.get("idtask")
+    channel_predicates: list[str] = []
+    channel_parameters: list[str] = []
     if task_key:
         relation_candidates: list[tuple[int, dict[str, Any], dict[str, str]]] = []
         for relation_table in catalog.get("tables") or []:
@@ -459,7 +471,11 @@ def plan_identity_record_query(
                 actual for normalized, actual in relation_columns.items()
                 if normalized == "resourceid" or normalized.startswith("idresource")
             ), None)
-            if not relation_identity:
+            relation_channel = next((
+                actual for normalized, actual in relation_columns.items()
+                if normalized in {"idchannel", "idworkroom", "workroomid"}
+            ), None)
+            if not relation_identity and not (workroom_intent and relation_channel):
                 continue
             foreign_keys = [
                 fk for fk in relation_table.get("foreignKeys") or []
@@ -471,12 +487,12 @@ def plan_identity_record_query(
                 and str(fk.get("referencedColumn") or "").casefold() == task_key.casefold()
                 for fk in foreign_keys
             )
-            resource_fk_verified = any(
+            resource_fk_verified = bool(relation_identity) and any(
                 str(fk.get("column") or "").casefold() == relation_identity.casefold()
                 and str(fk.get("referencedTable") or "").casefold() == "sysresources"
                 for fk in foreign_keys
             )
-            if not (task_fk_verified and resource_fk_verified):
+            if not task_fk_verified or not (resource_fk_verified or (workroom_intent and relation_channel)):
                 continue
             score = (4 if "task" in relation_name.casefold() else 0) + (
                 2 if "role" in relation_name.casefold() else 0
@@ -488,29 +504,51 @@ def plan_identity_record_query(
         for index, (_score, relation_table, relation_columns) in enumerate(relation_candidates):
             relation_name = str(relation_table.get("tableName") or "")
             relation_schema = str(relation_table.get("schemaName") or "dbo")
-            relation_resource = next(
+            relation_resource = next((
                 actual for normalized, actual in relation_columns.items()
                 if normalized == "resourceid" or normalized.startswith("idresource")
-            )
+            ), None)
+            relation_channel = next((
+                actual for normalized, actual in relation_columns.items()
+                if normalized in {"idchannel", "idworkroom", "workroomid"}
+            ), None)
             relation_task = relation_columns["idtask"]
             if not all(_valid_identifier(value) for value in (
-                relation_name, relation_schema, relation_resource, relation_task,
+                relation_name, relation_schema, relation_task,
             )):
                 continue
             alias = f"rel{index}"
             active_clause = ""
             if "linkstate" in relation_columns:
                 active_clause = f" AND ISNULL({alias}.[{relation_columns['linkstate']}], 1) <> 0"
-            resource_predicates.append(
-                f"EXISTS (SELECT 1 FROM [{relation_schema}].[{relation_name}] AS {alias} "
-                f"WHERE {alias}.[{relation_task}] = src.[{task_key}] "
-                f"AND {alias}.[{relation_resource}] = %s{active_clause})"
-            )
-            parameters.append(str(resource_id))
+            if relation_resource and _valid_identifier(relation_resource):
+                channel_clause = ""
+                if workroom_intent and relation_channel and _valid_identifier(relation_channel):
+                    channel_clause = f" AND {alias}.[{relation_channel}] = %s"
+                resource_predicates.append(
+                    f"EXISTS (SELECT 1 FROM [{relation_schema}].[{relation_name}] AS {alias} "
+                    f"WHERE {alias}.[{relation_task}] = src.[{task_key}] "
+                    f"AND {alias}.[{relation_resource}] = %s{channel_clause}{active_clause})"
+                )
+                parameters.append(str(resource_id))
+                if channel_clause:
+                    parameters.append(str(workroom_id))
+            if workroom_intent and relation_channel and _valid_identifier(relation_channel):
+                channel_predicates.append(
+                    f"EXISTS (SELECT 1 FROM [{relation_schema}].[{relation_name}] AS {alias}_channel "
+                    f"WHERE {alias}_channel.[{relation_task}] = src.[{task_key}] "
+                    f"AND {alias}_channel.[{relation_channel}] = %s{active_clause.replace(alias, alias + '_channel')})"
+                )
+                channel_parameters.append(str(workroom_id))
 
     if not resource_predicates:
         return None
+    if workroom_intent and not channel_predicates:
+        return None
     where = ["(" + " OR ".join(resource_predicates) + ")"]
+    if channel_predicates:
+        where.append("(" + " OR ".join(channel_predicates) + ")")
+        parameters.extend(channel_parameters)
     archived = columns.get("archived")
     if archived:
         where.append(f"ISNULL(src.[{archived}], 0) = 0")
@@ -579,7 +617,8 @@ def plan_identity_record_query(
         selected_columns=selected,
         temporal_scope="current" if current_intent else "latest",
         response_mode=("overdue_count" if overdue_intent and columns.get("duedate")
-                       else "summary" if summary_intent else "single"),
+                       else "summary" if summary_intent else "list" if list_intent else "single"),
+        workroom_scoped=workroom_intent,
     )
 
 
@@ -709,6 +748,11 @@ def render_record_rows(
     subject_label: str = "",
 ) -> str:
     if not rows:
+        if plan.workroom_scoped:
+            return {
+                "pt": "Não encontrei tarefas verificáveis deste recurso no canal atual.",
+                "en": "I found no verifiable tasks for this resource in the current channel.",
+            }.get(language, "No encontré tareas verificables de este recurso en el canal actual.")
         if plan.temporal_scope == "latest":
             return {
                 "pt": "Não encontrei nenhuma tarefa verificável relacionada com este recurso.",
@@ -722,37 +766,64 @@ def render_record_rows(
     if plan.response_mode == "list":
         rendered = []
         for item in rows:
-            title = str(
-                item.get("subject") or item.get("Subject")
-                or item.get("activityCode") or item.get("ActivityCode")
-                or item.get("IDActivity") or "Actividad sin título"
-            ).strip()
+            if plan.concept == "task":
+                title = str(
+                    item.get("ShortName") or item.get("Code")
+                    or item.get("IDTask") or "Tarea sin título"
+                ).strip()
+            else:
+                title = str(
+                    item.get("subject") or item.get("Subject")
+                    or item.get("activityCode") or item.get("ActivityCode")
+                    or item.get("IDActivity") or "Actividad sin título"
+                ).strip()
             status = item.get("StatusDescription") or item.get("statusDescription")
             end_date = item.get("endDate") or item.get("EndDate")
             details = []
+            if plan.concept == "task" and item.get("ProgressPercentage") is not None:
+                details.append(f"progreso: {item['ProgressPercentage']}%")
             if status not in (None, ""):
                 details.append(f"estado: {status}")
             if end_date not in (None, ""):
                 details.append(f"fin: {end_date}")
             rendered.append(f"- **{title}**" + (f" ({'; '.join(details)})" if details else ""))
+        noun = "tareas" if plan.concept == "task" else "actividades"
         if perspective == "agent":
-            heading = {
-                "pt": f"Tenho **{len(rows)} atividades verificadas** pendentes:",
-                "en": f"I have **{len(rows)} verified pending activities**:",
-            }.get(language, f"Tengo **{len(rows)} actividades pendientes verificadas**:")
+            if plan.concept == "task":
+                heading = {
+                    "pt": f"Tenho **{len(rows)} tarefas verificadas**:",
+                    "en": f"I have **{len(rows)} verified tasks**:",
+                }.get(language, f"Tengo **{len(rows)} {noun} verificadas**:")
+            else:
+                heading = {
+                    "pt": f"Tenho **{len(rows)} atividades verificadas** pendentes:",
+                    "en": f"I have **{len(rows)} verified pending activities**:",
+                }.get(language, f"Tengo **{len(rows)} {noun} verificadas**:")
         elif perspective == "requester":
-            heading = {
-                "pt": f"Tem **{len(rows)} atividades verificadas** pendentes:",
-                "en": f"You have **{len(rows)} verified pending activities**:",
-            }.get(language, f"Tienes **{len(rows)} actividades pendientes verificadas**:")
+            if plan.concept == "task":
+                heading = {
+                    "pt": f"Tem **{len(rows)} tarefas verificadas**:",
+                    "en": f"You have **{len(rows)} verified tasks**:",
+                }.get(language, f"Tienes **{len(rows)} {noun} verificadas**:")
+            else:
+                heading = {
+                    "pt": f"Tem **{len(rows)} atividades verificadas** pendentes:",
+                    "en": f"You have **{len(rows)} verified pending activities**:",
+                }.get(language, f"Tienes **{len(rows)} {noun} verificadas**:")
         else:
             owner = subject_label or {
                 "pt": "Este recurso", "en": "This resource"
             }.get(language, "Este recurso")
-            heading = {
-                "pt": f"{owner} tem **{len(rows)} atividades verificadas** pendentes:",
-                "en": f"{owner} has **{len(rows)} verified pending activities**:",
-            }.get(language, f"{owner} tiene **{len(rows)} actividades pendientes verificadas**:")
+            if plan.concept == "task":
+                heading = {
+                    "pt": f"{owner} tem **{len(rows)} tarefas verificadas**:",
+                    "en": f"{owner} has **{len(rows)} verified tasks**:",
+                }.get(language, f"{owner} tiene **{len(rows)} {noun} verificadas**:")
+            else:
+                heading = {
+                    "pt": f"{owner} tem **{len(rows)} atividades verificadas** pendentes:",
+                    "en": f"{owner} has **{len(rows)} verified pending activities**:",
+                }.get(language, f"{owner} tiene **{len(rows)} {noun} verificadas**:")
         return heading + "\n" + "\n".join(rendered)
     if plan.response_mode == "overdue_count":
         count = int(row.get("OverdueCount") or 0)
