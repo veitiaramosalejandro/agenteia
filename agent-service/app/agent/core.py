@@ -2868,6 +2868,7 @@ class MachiningAgent:
                 return specialty_answer
             restricted_answer = answer_restricted_topic(
                 user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
+                scope_context=metadata,
             )
             if restricted_answer is not None:
                 return restricted_answer
@@ -4190,6 +4191,10 @@ class MachiningAgent:
                 }, 2000))
             # The compact context replaces the duplicate legacy context messages.
             chat_context_bd = canal_operativo_context = aprendizaje_relevante = ""
+        from app.services.agent_restrictions import SCOPED_RESPONSE_INSTRUCTION
+        system_prompt += "\n\n" + SCOPED_RESPONSE_INSTRUCTION
+        if metadata.get("_agent_scope_decision") == "scoped":
+            system_prompt += " Esta solicitud requiere una respuesta delimitada a la especialidad publicada."
         system_msg = SystemMessage(content=system_prompt)
         
         messages = [system_msg, *local_context_messages]

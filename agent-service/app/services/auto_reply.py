@@ -1896,6 +1896,7 @@ async def _process_auto_replies_impl(
                 response_text = await asyncio.to_thread(
                     answer_restricted_topic,
                     incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
+                    scope_context=message_metadata,
                 )
             if response_text is None:
                 # The dialogue core receives the same metadata. Record that the

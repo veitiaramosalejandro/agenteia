@@ -233,7 +233,7 @@ def answer_direct(user_text, metadata, session_id):
             print(f'OPENAI_RECHECK_CONTEXT_FAILED type={type(exc).__name__}', flush=True)
 
     # Resolve live questions before model assignment or historical answer reuse.
-    if (
+    if metadata.get('_agent_scope_decision') != 'scoped' and (
         metadata.get('external_information_mode')
         or metadata.get('public_research')
         or (
@@ -343,6 +343,10 @@ def answer_direct(user_text, metadata, session_id):
             )
         count = max(1, min(6, int(metadata.get('response_suggestion_count') or 1)))
         instructions += f' Return only a JSON array of {count} strings, ready to display as suggestions.'
+    from app.services.agent_restrictions import SCOPED_RESPONSE_INSTRUCTION
+    instructions += " " + SCOPED_RESPONSE_INSTRUCTION
+    if metadata.get('_agent_scope_decision') == 'scoped':
+        instructions += " Esta solicitud requiere una respuesta delimitada a la especialidad publicada."
     messages = [SystemMessage(content=instructions)]
     if twin_context:
         messages.append(SystemMessage(content=(

@@ -1,9 +1,72 @@
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
+import json
+import pytest
 
 import httpx
 
 from app.agent.prompt_budget import compact_system
 from app.services.agent_restrictions import _language, _request_instruction, answer_restricted_topic
+from app.services.agent_restrictions import _scope_decision
+
+
+@pytest.mark.parametrize("decision,reason", [
+    ("allow", "in_scope"), ("scoped", "scoped_interpretation"),
+    ("clarify", "insufficient_context"), ("decline", "explicit_restriction"),
+    ("decline", "out_of_scope"),
+])
+def test_classifier_parses_all_decisions(decision, reason):
+    assert _classify_output({"decision": decision, "reason_code": reason}) == decision
+
+
+def _classify_output(payload):
+    config = SimpleNamespace(timeout_seconds=30, provider="openai")
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(content=json.dumps(payload))
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        return _scope_decision("Ayúdame a evaluar una idea", {}, "instance", "agent")
+
+
+@pytest.mark.parametrize("payload", [
+    [], {"decision": []}, {"decision": "unknown"},
+    {"decision": "allow", "reason_code": "explicit_restriction"},
+    {"decision": "scoped"}, {"decision": "clarify", "reason_code": []},
+])
+def test_classifier_rejects_invalid_contract(payload):
+    with pytest.raises(ValueError):
+        _classify_output(payload)
+
+
+def test_scoped_request_continues_with_normal_context_and_tools():
+    context = {}
+    with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
+         patch("app.services.agent_restrictions._scope_decision", return_value="scoped"), \
+         patch("app.services.agent_restrictions._clarification") as clarify:
+        assert answer_restricted_topic("Evalúa mi idea", "instance", "agent", scope_context=context) is None
+        assert context["_agent_scope_decision"] == "scoped"
+        clarify.assert_not_called()
+
+
+def test_clarify_returns_only_clarification():
+    with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
+         patch("app.services.agent_restrictions._scope_decision", return_value="clarify"), \
+         patch("app.services.agent_restrictions._clarification", return_value="¿Qué tipo de modelo?"):
+        assert answer_restricted_topic("Ayúdame con un modelo", "instance", "agent") == "¿Qué tipo de modelo?"
+
+
+def test_clarification_failure_does_not_allow_ambiguous_task():
+    with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
+         patch("app.services.agent_restrictions._scope_decision", return_value="clarify"), \
+         patch("app.services.agent_restrictions._clarification", side_effect=httpx.ReadTimeout("timeout")):
+        assert "No puedo confirmar" in answer_restricted_topic("Ayúdame", "instance", "agent")
+
+
+def test_malformed_policy_fails_closed():
+    with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value={"BehaviorConfig": ["invalid"]}):
+        assert "No puedo confirmar" in answer_restricted_topic("Ayúdame", "instance", "agent")
 
 
 PUBLISHED = {
