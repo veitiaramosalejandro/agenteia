@@ -1,6 +1,7 @@
 """Orquestación LangGraph para las rutas de conversación del agente SolidSET."""
 
 import re
+import json
 from time import perf_counter
 from typing import Any, Optional, TypedDict
 
@@ -163,6 +164,26 @@ class SolidSETOrchestrator:
         permissions.add("external_web")
         metadata["tool_permissions"] = permissions
         metadata["external_information_mode"] = True
+        # Ejecutar la herramienta en el nodo externo, antes de entrar al
+        # generador general, evita que una ruta de contexto interno sustituya
+        # la investigación pública.
+        try:
+            print("AGENT_TOOL_ATTEMPT tool=google_web_search source=orchestrator", flush=True)
+            result = self.agent.web.search(
+                state.get("user_text", ""),
+                agent_resource_id=state.get("message_metadata", {}).get("agent_resource_id"),
+                solidset_instance_id=state.get("message_metadata", {}).get("solidset_instance_id"),
+                tool_permissions=permissions,
+            )
+            metadata["external_web_prefetched_result"] = result
+            print(
+                "AGENT_TOOL_STAGE tool=google_web_search source=orchestrator "
+                f"result_type={type(result).__name__} result_chars={len(str(result or ''))}",
+                flush=True,
+            )
+        except Exception as exc:
+            metadata["external_web_prefetch_error"] = type(exc).__name__
+            print(f"AGENT_TOOL_ERROR tool=google_web_search error={exc}", flush=True)
         response = self.agent.analyze_event_with_dialogue(
             session_id=state.get("session_id", ""),
             user_text=state.get("user_text", ""),
@@ -177,6 +198,29 @@ class SolidSETOrchestrator:
             auto_reply_mode=bool(state.get("auto_reply_mode")),
             external_query_mode=True,
         )
+        # Si la síntesis del modelo devuelve una negativa genérica, usar la
+        # evidencia ya obtenida por la herramienta como respuesta grounded.
+        try:
+            payload = json.loads(str(metadata.get("external_web_prefetched_result") or ""))
+            answer = str(payload.get("answer") or "").strip()
+            if not answer:
+                answer = "\n\n".join(
+                    str(item.get("snippet") or "").strip()
+                    for item in (payload.get("results") or [])[:3]
+                    if str(item.get("snippet") or "").strip()
+                )
+            if answer and (
+                not response
+                or "fuente interna" in str(response).casefold()
+                or (
+                    "intern" in str(response).casefold()
+                    and "coincid" in str(response).casefold()
+                )
+                or "no puedo confirmar" in str(response).casefold()
+            ):
+                response = answer
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
         return {"response": response}
 
     def _execute_general(self, state: AgentGraphState) -> AgentGraphState:

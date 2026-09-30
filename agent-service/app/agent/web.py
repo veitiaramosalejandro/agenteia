@@ -24,6 +24,13 @@ class AgentWeb:
         tool_permissions: Any = None,
     ) -> Any:
         permissions = None if tool_permissions is None else resolve_tool_permissions(tool_permissions)
+        print(
+            "AGENT_WEB_PERMISSION_EFFECTIVE "
+            f"agent={agent_resource_id or '-'} instance={solidset_instance_id or '-'} "
+            f"raw={tool_permissions!r} effective={sorted(permissions) if permissions is not None else None} "
+            f"granted={permissions is None or 'external_web' in permissions}",
+            flush=True,
+        )
         if permissions is not None and "external_web" not in permissions:
             raise PermissionError("Permission required for tool google_web_search: external_web")
         context = AgentContext(

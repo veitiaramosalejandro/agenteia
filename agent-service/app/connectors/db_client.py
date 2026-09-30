@@ -254,6 +254,10 @@ def ensure_agent_response_audit_schema() -> None:
     """Crea la auditoría durable de solicitudes y resultados del agente."""
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
+            # Varios workers pueden arrancar al mismo tiempo. El bloqueo
+            # transaccional evita que sus CREATE/ALTER concurrentes provoquen
+            # deadlocks durante la inicialización.
+            cursor.execute("SELECT pg_advisory_xact_lock(78120431)")
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS public."SysAgentIAResponseAudit" (
                     "RequestID" varchar(100) PRIMARY KEY,

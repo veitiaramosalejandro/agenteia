@@ -3501,6 +3501,8 @@ class MachiningAgent:
             )
 
         # --- 4. OBTENER CONTEXTOS ---
+        if external_query_mode:
+            print("AGENT_EXTERNAL_ROUTE_SQL_RAG_DISABLED", flush=True)
         record_focused = bool(response_suggestion_mode and metadata_identity.get("related_records_context"))
         context_started = perf_counter()
 
@@ -3511,6 +3513,7 @@ class MachiningAgent:
         if (
             business_knowledge_query
             and solidset_schema_allowed
+            and not external_query_mode
             and not vector_answers_business_query
             and not record_focused
         ):
@@ -4297,10 +4300,15 @@ class MachiningAgent:
         # En consultas externas se busca antes de invocar al LLM. La latencia de
         # respuesta ya no depende de que el modelo decida llamar a la herramienta.
         if external_query_mode:
+            prefetched_external = str(
+                (message_metadata or {}).get("external_web_prefetched_result") or ""
+            ).strip()
             search_query = self._contextual_web_query(
                 user_text,
                 previous_user_texts or previous_user_text,
             )
+            if prefetched_external:
+                memoria_web_reciente = prefetched_external
             if memoria_web_reciente:
                 last_tool_result = memoria_web_reciente
                 herramientas_usadas.append("web_memory")
@@ -4350,6 +4358,7 @@ class MachiningAgent:
                             "Sintetiza ahora la respuesta. No solicites otra búsqueda."
                         )))
                         llm_for_request = request_llm
+                        web_payload = {}
                         try:
                             web_payload = json.loads(str(prefetched_web_result))
                             openai_answer = str(web_payload.get("answer") or "").strip()

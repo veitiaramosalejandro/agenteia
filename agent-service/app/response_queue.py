@@ -100,6 +100,14 @@ class AgentResponseQueue:
     def acknowledge(self, message_id: str) -> None:
         acknowledge_stream(self.client, self.stream, self.group, message_id)
 
+    def claim_request(self, request_id: str) -> bool:
+        """Claim one logical request across duplicate stream entries."""
+        key = f"agent-response:done:{request_id}"
+        return bool(self.client.set(key, "1", nx=True, ex=86400))
+
+    def release_request(self, request_id: str) -> None:
+        self.client.delete(f"agent-response:done:{request_id}")
+
     def refresh_pending(self, consumer: str, message_id: str) -> bool:
         """Refresh only our pending entry, atomically, without stealing it back."""
         return bool(self.client.eval(

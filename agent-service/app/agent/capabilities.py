@@ -12,6 +12,7 @@ CAPABILITY_PERMISSIONS = {
     "tool:query_sql_server": frozenset({"solidset_sql"}),
     "tool:get_db_schema": frozenset({"solidset_schema"}),
     "tool:google_web_search": frozenset({"external_web"}),
+    "google_web_search": frozenset({"external_web"}),
 }
 
 

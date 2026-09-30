@@ -43,6 +43,10 @@ async def run_worker() -> None:
                     f"AGENT_RESPONSE_PROCESSING request={request_id} "
                     f"message={message_id} consumer={consumer}", flush=True,
                 )
+                if request_id and not await asyncio.to_thread(queue.claim_request, request_id):
+                    print(f"AGENT_RESPONSE_DUPLICATE_SKIPPED request={request_id} message={message_id}", flush=True)
+                    await asyncio.to_thread(queue.acknowledge, message_id)
+                    continue
                 chat_id = str(fields.get("chat_id") or "")
                 attempt = int(fields.get("attempt") or 0)
                 payload = {}
@@ -91,6 +95,8 @@ async def run_worker() -> None:
                         print(f"⚠️ Auditoría PostgreSQL pendiente: {audit_exc}", flush=True)
                     await asyncio.to_thread(queue.acknowledge, message_id)
                 except Exception as exc:
+                    if request_id:
+                        await asyncio.to_thread(queue.release_request, request_id)
                     if attempt < settings.AGENT_RESPONSE_MAX_RETRIES:
                         _update_response_status(
                             request_id,

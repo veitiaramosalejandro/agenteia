@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import threading
+import traceback
 import uuid
 from collections import OrderedDict
 from datetime import datetime
@@ -42,7 +43,7 @@ from app.response_queue import AgentResponseQueue
 from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.services.agent_specialty import answer_agent_specialty_question
-from app.services.agent_restrictions import answer_restricted_topic
+from app.services.agent_restrictions import answer_restricted_topic, _language, _uncertain_response
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.system.schema import Actividad
@@ -1640,6 +1641,9 @@ async def _process_auto_replies_impl(
     _finalize_status: bool = True,
     _preview_responses: list[dict[str, Any]] | None = None,
 ) -> int | list[dict[str, Any]]:
+    # Se usa en la validación final aunque una rama temprana no llegue a
+    # calcular el modo externo.
+    external_query = False
     print(
         f"🤖 Iniciando procesamiento de auto-respuesta; candidatos={len(candidates)}",
         flush=True,
@@ -1730,7 +1734,14 @@ async def _process_auto_replies_impl(
                     agent_name=str(candidate.get("agent_name") or ""),
                     error=f"La ejecución del agente falló ({type(result).__name__}).",
                 )
-                print(f"⚠️ Ejecución paralela de agente fallida: {type(result).__name__}", flush=True)
+                print(
+                    f"⚠️ Ejecución paralela de agente fallida: {type(result).__name__}: {result}",
+                    flush=True,
+                )
+                print(
+                    "".join(traceback.format_exception(type(result), result, result.__traceback__)),
+                    flush=True,
+                )
         if preview_only:
             flattened = [
                 payload
@@ -1950,7 +1961,6 @@ async def _process_auto_replies_impl(
                 try:
                     await asyncio.to_thread(prepare_capability_route, incoming_text, message_metadata)
                 except Exception as exc:
-                    from app.services.agent_restrictions import _language, _uncertain_response
                     print(f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__}", flush=True)
                     response_text = _uncertain_response(_language(incoming_text))
             if response_text is None:
