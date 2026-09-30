@@ -2057,6 +2057,12 @@ async def _process_auto_replies_impl(
                 continue
 
         response_text = (response_text or "").strip()
+        print(
+            "AGENT_FINAL_RESPONSE_GUARD "
+            f"external_query={external_query!r} capability={message_metadata.get('model_capability')!r} "
+            f"external_mode={message_metadata.get('external_information_mode')!r}",
+            flush=True,
+        )
         # Una ruta declarada como externa no puede publicar el rechazo de la
         # ruta interna, aunque el modelo lo haya generado durante la síntesis.
         if (

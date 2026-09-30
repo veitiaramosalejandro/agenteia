@@ -4315,6 +4315,11 @@ class MachiningAgent:
                 print(f"🧠 Reutilizando memoria web reciente; query={search_query[:80]!r}")
             else:
                 try:
+                    print(
+                        "AGENT_TOOL_ATTEMPT tool=google_web_search "
+                        f"permissions={message_metadata.get('tool_permissions')!r}",
+                        flush=True,
+                    )
                     web_started_at = perf_counter()
                     prefetched_web_result = self.web.search(
                         search_query,
@@ -4361,6 +4366,10 @@ class MachiningAgent:
                                 flush=True,
                             )
                 except Exception as exc:
+                    print(
+                        f"AGENT_TOOL_ERROR tool=google_web_search type={type(exc).__name__} error={exc}",
+                        flush=True,
+                    )
                     print(f"⚠️ Falló la búsqueda web previa: {exc}")
 
             if not last_tool_result:
