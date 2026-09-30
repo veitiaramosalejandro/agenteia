@@ -693,12 +693,42 @@ class NotificationApiListener:
         }
 
     @staticmethod
-    def _is_generated_by_ia(info: Any) -> bool:
+    def _is_generated_by_ia(
+        info: Any, *, sender_resource: str = "", extra_data: Any = None,
+        chat: Any = None,
+    ) -> bool:
+        """Use current-message metadata; quoted ChatQuestion metadata is context only."""
         if not isinstance(info, dict):
             return False
         lowered = {str(key).lower(): value for key, value in info.items()}
         value = str(lowered.get("generated_by_ia") or "").strip().lower()
-        return value in {"1", "true", "yes", "on"}
+        generated = value in {"1", "true", "yes", "on"}
+        if not generated:
+            return False
+        # SolidSET can propagate generated_by_ia from a quoted ChatQuestion.
+        # A feedback message authored by the resource owner is a new human
+        # request and must remain eligible for the addressed agent.
+        candidates = [extra_data]
+        if isinstance(chat, dict):
+            candidates.append(chat.get("ExtraData") or chat.get("extraData"))
+        for candidate in candidates:
+            parsed = candidate
+            if isinstance(candidate, str):
+                try:
+                    parsed = json.loads(candidate)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed = None
+            if not isinstance(parsed, dict):
+                continue
+            status = str(
+                parsed.get("ia_review_status") or parsed.get("IAReviewStatus") or ""
+            ).strip().casefold()
+            owner = str(
+                parsed.get("ia_owner_resource") or parsed.get("IAOwnerResource") or ""
+            ).strip()
+            if status == "feedback" and owner and owner == str(sender_resource or "").strip():
+                return False
+        return True
 
     @staticmethod
     def _normalize_message_kind(value: Any) -> Dict[str, Any]:
@@ -941,7 +971,12 @@ class NotificationApiListener:
             "meeting_active": meeting["active"],
             "meeting_id": meeting["meeting_id"],
             "meeting_code": meeting["meeting_code"],
-            "generated_by_ia": self._is_generated_by_ia(data.get("Info")),
+            "generated_by_ia": self._is_generated_by_ia(
+                data.get("Info"),
+                sender_resource=str(sender_resource or "").strip(),
+                extra_data=data.get("ExtraData"),
+                chat=chat_payload,
+            ),
             "message_kind": message_kind["name"] or str(message_kind["raw"] or ""),
             "message_kind_value": message_kind["value"],
             "kind_reply_eligible": message_kind["conversational"],

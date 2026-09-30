@@ -173,7 +173,11 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
             "capacidad declarada external_web y la solicitud pide verificar una entidad, "
             "producto, servicio, precio, sitio web o información pública actual, clasifica "
             "scoped para permitir esa investigación; no pidas aclaración solo porque falte "
-            "conocimiento previo."
+            "conocimiento previo. Esto también se aplica a preguntas factuales sobre una "
+            "entidad externa identificada, aunque no incluyan las palabras 'actual', 'web' "
+            "o 'verificar'. Por ejemplo, preguntar qué ofrece una herramienta o qué tipos "
+            "de modelos genera requiere investigar primero cuando external_web está disponible. "
+            "La síntesis final debe mantenerse dentro de la especialidad publicada."
         )),
         HumanMessage(content=json.dumps(
             {

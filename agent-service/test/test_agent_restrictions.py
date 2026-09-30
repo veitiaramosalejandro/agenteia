@@ -301,3 +301,18 @@ def test_scope_diagnostic_reports_pair_attempt_and_model(capsys):
 def test_single_decision_derives_reason_without_second_model_choice(decision, reason):
     from app.services.agent_restrictions import _parse_scope_output
     assert _parse_scope_output(json.dumps({'decision': decision})) == (decision, reason)
+
+
+def test_external_web_capability_instruction_covers_entity_facts():
+    from app.services.agent_restrictions import _scope_decision
+    config = SimpleNamespace(timeout_seconds=30, provider='openai', model='test')
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(content='{"decision":"scoped"}')
+    with patch('app.services.agent_restrictions.get_llm_provider_configuration', return_value={'id':'model'}), \
+         patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
+         patch('app.services.agent_restrictions.replace', return_value=config), \
+         patch('app.services.agent_restrictions.create_chat_model', return_value=model):
+        assert _scope_decision('¿Qué tipos de modelos genera FinModeler?', {}, 'instance', 'agent', {'external_web'}) == 'scoped'
+    prompt = model.invoke.call_args.args[0][0].content
+    assert 'entidad externa identificada' in prompt
+    assert 'external_web' in prompt
