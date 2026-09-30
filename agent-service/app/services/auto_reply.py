@@ -2057,6 +2057,23 @@ async def _process_auto_replies_impl(
                 continue
 
         response_text = (response_text or "").strip()
+        # Una ruta declarada como externa no puede publicar el rechazo de la
+        # ruta interna, aunque el modelo lo haya generado durante la síntesis.
+        if (
+            (
+                external_query
+                or message_metadata.get("external_information_mode")
+                or message_metadata.get("model_capability") == "external_web"
+            )
+            and (
+                "fuente interna" in response_text.casefold()
+                or (
+                    "intern" in response_text.casefold()
+                    and "coincid" in response_text.casefold()
+                )
+            )
+        ):
+            response_text = _uncertain_response(_language(incoming_text))
         if not _is_safe_auto_reply_output(response_text):
             response_text = (
                 "No pude procesar correctamente tu mensaje en este momento. "
