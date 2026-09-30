@@ -283,6 +283,16 @@ def answer_restricted_topic(
             decision = _scope_decision(message, behavior, instance_id, resource_id, capabilities)
         else:
             decision = _scope_decision(message, behavior, instance_id, resource_id)
+        # Public research is an explicitly declared response option. An
+        # ambiguous factual request must reach that planner instead of being
+        # converted into a clarification that prevents research entirely.
+        if decision == "clarify" and "external_web" in capabilities:
+            decision = "scoped"
+            print(
+                f"AGENT_SCOPE_DECISION agent={resource_id} decision=scoped "
+                "reason=external_web_capability",
+                flush=True,
+            )
     except httpx.TimeoutException as exc:
         # An unavailable classification is not permission to answer. Keep the
         # request unresolved instead of bypassing the published scope gate.
