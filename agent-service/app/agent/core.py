@@ -4823,6 +4823,16 @@ class MachiningAgent:
                         str(message_metadata.get("response_language") or "es")
                     )
 
+        # La ruta externa nunca debe publicar una negativa generada por el
+        # modelo cuando no hubo resultados web verificables.
+        if (
+            external_query_mode
+            and not {"google_web_search", "web_memory"}.intersection(herramientas_usadas)
+        ):
+            response_text = self._unverified_concrete_answer(
+                str(message_metadata.get("response_language") or "es")
+            )
+
         # Última barrera semántica: un modelo pequeño no puede publicar SQL no
         # solicitado ni continuar respondiendo el tema de un turno anterior.
         if self._response_drifted_from_query(user_text, response_text):
@@ -4847,6 +4857,14 @@ class MachiningAgent:
                     pt="Não consegui responder a essa pergunta com informação suficientemente confiável.",
                     en="I could not answer that question with sufficiently reliable information.",
                 )
+
+        if (
+            external_query_mode
+            and not {"google_web_search", "web_memory"}.intersection(herramientas_usadas)
+        ):
+            response_text = self._unverified_concrete_answer(
+                str(message_metadata.get("response_language") or "es")
+            )
 
         # --- 9. PERSISTIR CONVERSACIÓN ---
         if history:
