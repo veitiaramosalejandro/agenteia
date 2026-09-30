@@ -115,7 +115,8 @@ def _uncertain_response(language: str) -> str:
     }[language]
 
 
-def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id: str) -> str:
+def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id: str,
+                    available_capabilities: set[str] | None = None) -> str:
     record = get_llm_provider_configuration(resource_id, "general", instance_id=instance_id)
     if not record:
         raise RuntimeError("No hay un modelo configurado para evaluar el ámbito del agente.")
@@ -135,6 +136,7 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
         "response_format": behavior.get("response_format"),
         "restrictions": behavior.get("restrictions"),
         "out_of_scope_action": behavior.get("out_of_scope_action"),
+        "declared_capabilities": sorted(available_capabilities or set()),
     }
     if len(message) > 4000 or len(json.dumps(policy, ensure_ascii=False)) > 6000:
         raise ScopeOutputError("input_limit")
@@ -167,7 +169,11 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
             "y falta información para distinguirlas, es clarify; (5) usa decline por "
             "out_of_scope solo si está claramente fuera del ámbito y no corresponde aclarar. "
             "Mencionar un tema, herramienta o tecnología no equivale a solicitar una tarea "
-            "prohibida sobre ellos. Tampoco autoriza por sí solo la solicitud."
+            "prohibida sobre ellos. Tampoco autoriza por sí solo la solicitud. Si existe una "
+            "capacidad declarada external_web y la solicitud pide verificar una entidad, "
+            "producto, servicio, precio, sitio web o información pública actual, clasifica "
+            "scoped para permitir esa investigación; no pidas aclaración solo porque falte "
+            "conocimiento previo."
         )),
         HumanMessage(content=json.dumps(
             {
@@ -268,7 +274,11 @@ def answer_restricted_topic(
     ):
         return None
     try:
-        decision = _scope_decision(message, behavior, instance_id, resource_id)
+        capabilities = set((scope_context or {}).get("declared_capabilities") or ())
+        if capabilities:
+            decision = _scope_decision(message, behavior, instance_id, resource_id, capabilities)
+        else:
+            decision = _scope_decision(message, behavior, instance_id, resource_id)
     except httpx.TimeoutException as exc:
         # An unavailable classification is not permission to answer. Keep the
         # request unresolved instead of bypassing the published scope gate.

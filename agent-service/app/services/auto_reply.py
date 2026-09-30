@@ -1854,6 +1854,24 @@ async def _process_auto_replies_impl(
                     f"para enrutamiento: {exc}"
                 )
         message_metadata["agent_relevant_knowledge"] = relevant_agent_knowledge
+        try:
+            declared_capabilities = set()
+            for model_config in get_agent_model_configurations(
+                agent_resource_id, solidset_instance_id
+            ):
+                values = model_config.get("Capabilities") or []
+                if isinstance(values, str):
+                    try:
+                        values = json.loads(values)
+                    except ValueError:
+                        values = [values]
+                if isinstance(values, (list, tuple, set)):
+                    declared_capabilities.update(
+                        str(value).strip().lower() for value in values if str(value).strip()
+                    )
+            message_metadata["declared_capabilities"] = declared_capabilities
+        except Exception as exc:
+            print(f"AGENT_CAPABILITIES_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
         print(
             "🧠 Conocimiento privado preseleccionado "
             f"resource={agent_resource_id or '-'} workroom={channel_id or '-'} "
