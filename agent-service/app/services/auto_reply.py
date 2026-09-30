@@ -1248,11 +1248,29 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
     """Genera una ejecución por agente activo, seleccionado y asignado al canal."""
     routed: list[dict] = []
     for candidate in candidates:
+        print(
+            "AGENT_ROUTING_CANDIDATE "
+            f"generated_by_ia={bool(candidate.get('generated_by_ia'))} "
+            f"has_payload={isinstance(candidate.get('payload'), dict)}",
+            flush=True,
+        )
         if candidate.get("generated_by_ia"):
+            print("AGENT_ROUTING_SKIPPED reason=generated_by_ia", flush=True)
             continue
         channel_id = str(candidate.get("channel_id") or "").strip()
         selected = _selected_agent_resource_ids(candidate)
+        print(
+            "AGENT_ROUTING_INPUT "
+            f"channel_present={bool(channel_id)} selected_count={len(selected)} "
+            f"payload_type={type(candidate.get('payload')).__name__}",
+            flush=True,
+        )
         if not channel_id or not selected:
+            print(
+                "AGENT_ROUTING_SKIPPED "
+                f"reason={'missing_channel' if not channel_id else 'no_selected_agent'}",
+                flush=True,
+            )
             continue
         instance = get_solidset_instance(
             code=str(candidate.get("solidset_instance_code") or "") or None,
@@ -1265,6 +1283,13 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             ensure_payload_agent_workroom_assignments(channel_id, selected)
             configured_agents = get_active_agents_for_workroom(
                 channel_id, selected, instance.get("ID")
+            )
+            print(
+                "AGENT_ROUTING_RESOLUTION "
+                f"channel={channel_id} instance={instance.get('ID')} "
+                f"selected_count={len(selected)} configured_count={len(configured_agents)} "
+                f"selected_roles={'agent_resource' if selected else 'none'}",
+                flush=True,
             )
         except (ValueError, psycopg.Error) as exc:
             print(
