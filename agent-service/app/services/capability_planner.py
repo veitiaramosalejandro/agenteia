@@ -26,6 +26,15 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
     if metadata.get('tool_permissions') is not None:
         permissions &= tool_permissions(metadata['tool_permissions'])
     metadata['tool_permissions'] = permissions
+    if metadata.get('_scope_external_web_preferred') and 'external_web' in permissions:
+        metadata['model_capability'] = 'external_web'
+        metadata['external_information_mode'] = True
+        metadata['_capability_route_prepared'] = True
+        print(
+            f'AGENT_CAPABILITY_PLAN agent={resource} capability=external_web '
+            'reason=scope_external_web_preferred', flush=True,
+        )
+        return
     # General is a tool-free baseline, not a grant to perform another capability.
     choices = {'general'} | {
         capability for capability in capabilities

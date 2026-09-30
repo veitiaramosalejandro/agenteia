@@ -288,6 +288,8 @@ def answer_restricted_topic(
         # converted into a clarification that prevents research entirely.
         if decision == "clarify" and "external_web" in capabilities:
             decision = "scoped"
+            if scope_context is not None:
+                scope_context["_scope_external_web_preferred"] = True
             print(
                 f"AGENT_SCOPE_DECISION agent={resource_id} decision=scoped "
                 "reason=external_web_capability",
