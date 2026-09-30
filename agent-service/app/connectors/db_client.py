@@ -1319,14 +1319,17 @@ def get_active_agents_for_workroom(
                 WHERE c."IDWorkRoom" = %s
                   AND r.active = true
                   AND c.active = true
-                  AND r."IDResource" = ANY(%s)
+                  AND (
+                        r."IDResource" = ANY(%s)
+                        OR ir."IDAgentResource" = ANY(%s)
+                  )
                   AND (%s::uuid IS NULL OR ir."IDResource" IS NOT NULL)
                   AND (%s::uuid IS NULL OR ic."IDResource" IS NOT NULL)
                 ORDER BY response_order ASC, r."Name" ASC, r."IDResource" ASC
                 ''',
                 (
                     instance, instance, instance, instance, instance,
-                    UUID(str(workroom_id)), selected, instance, instance,
+                    UUID(str(workroom_id)), selected, selected, instance, instance,
                 ),
             )
             return [dict(row) for row in cursor.fetchall()]
