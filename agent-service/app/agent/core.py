@@ -4756,7 +4756,7 @@ class MachiningAgent:
         # Respaldo determinista: no depender únicamente de que el LLM decida usar la tool.
         if (
             not self._is_sql_business_query(user_text)
-            and not agent_rag_context
+            and (external_query_mode or not agent_rag_context)
             and (
                 external_query_mode
                 or self._response_needs_web_fallback(response_text, herramientas_usadas)
