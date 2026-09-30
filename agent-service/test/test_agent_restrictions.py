@@ -83,6 +83,7 @@ PUBLISHED = {
 
 def test_scope_decision_uses_published_agent_policy_for_any_question():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
+         patch("app.services.agent_restrictions._clarification", return_value="No puedo responder. Mi ámbito es finanzas corporativas.") as refusal, \
          patch("app.services.agent_restrictions._scope_decision", return_value="decline") as decide:
         answer = answer_restricted_topic(
             "¿Qué ejercicios son buenos para aliviar el dolor lumbar?", "instance", "agent"
@@ -93,6 +94,7 @@ def test_scope_decision_uses_published_agent_policy_for_any_question():
     )
     assert "finanzas corporativas" in answer
     assert "No puedo responder" in answer
+    assert refusal.call_args.kwargs == {"decline": True}
 
 
 def test_allowed_request_continues_to_agent():
@@ -115,7 +117,7 @@ def test_invalid_scope_decision_fails_closed():
     assert "No puedo confirmar ahora" in answer
 
 
-def test_scope_timeout_continues_with_published_prompt():
+def test_scope_timeout_does_not_bypass_published_scope():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
          patch(
              "app.services.agent_restrictions._scope_decision",
@@ -127,7 +129,7 @@ def test_scope_timeout_continues_with_published_prompt():
             "agent",
         )
 
-    assert answer is None
+    assert "No puedo confirmar" in answer
 
 
 def test_attached_code_does_not_change_request_language():
@@ -166,3 +168,63 @@ def test_compact_ollama_prompt_keeps_published_restrictions():
     assert "especialista en finanzas corporativas" in prompt
     assert "No cambies el lenguaje del código" in prompt
     assert "1. Problemas por severidad" in prompt
+
+
+@pytest.mark.parametrize('first,code', [
+    ('not json SECRET', 'invalid_json'),
+    ('[]', 'invalid_object'),
+    ('{"decision":"allow"}', 'invalid_fields'),
+    ('{"decision":"unknown","reason_code":"in_scope"}', 'invalid_decision'),
+    ('{"decision":"allow","reason_code":"out_of_scope"}', 'invalid_reason_pair'),
+])
+def test_invalid_output_is_repaired_once_without_logging_content(first, code, capsys):
+    from app.services.agent_restrictions import _SCOPE_SCHEMA
+    config = SimpleNamespace(timeout_seconds=30, provider='ollama')
+    model = Mock()
+    model.bind.return_value = model
+    model.invoke.side_effect = [
+        SimpleNamespace(content=first),
+        SimpleNamespace(content='{"decision":"clarify","reason_code":"insufficient_context"}'),
+    ]
+    with patch('app.services.agent_restrictions.get_llm_provider_configuration', return_value={'id': 'model'}), \
+         patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
+         patch('app.services.agent_restrictions.replace', return_value=config), \
+         patch('app.services.agent_restrictions.create_chat_model', return_value=model):
+        assert _scope_decision('Solicitud ambigua', {}, 'instance', 'agent') == 'clarify'
+    assert model.invoke.call_count == 2
+    model.bind.assert_called_once_with(format=_SCOPE_SCHEMA)
+    output = capsys.readouterr().out
+    assert code in output
+    assert 'SECRET' not in output
+    assert 'SECRET' not in str(model.invoke.call_args.args)
+
+
+@pytest.mark.parametrize('second', [
+    SimpleNamespace(content='invalid again'),
+    httpx.ReadTimeout('sensitive failure'),
+])
+def test_failed_repair_stops_without_authorizing(second):
+    config = SimpleNamespace(timeout_seconds=30, provider='openai')
+    model = Mock()
+    model.invoke.side_effect = [SimpleNamespace(content='invalid'), second]
+    with patch('app.services.agent_restrictions.get_active_agent_prompt', return_value=PUBLISHED), \
+         patch('app.services.agent_restrictions._language', return_value='es'), \
+         patch('app.services.agent_restrictions.get_llm_provider_configuration', return_value={'id': 'model'}), \
+         patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
+         patch('app.services.agent_restrictions.replace', return_value=config), \
+         patch('app.services.agent_restrictions.create_chat_model', return_value=model):
+        context = {}
+        answer = answer_restricted_topic('Solicitud', 'instance', 'agent', scope_context=context)
+    assert 'No puedo confirmar' in answer
+    assert model.invoke.call_count == 2
+    assert '_agent_scope_decision' not in context
+
+
+def test_refusal_failure_returns_localized_redirection():
+    with patch('app.services.agent_restrictions.get_active_agent_prompt', return_value=PUBLISHED), \
+         patch('app.services.agent_restrictions._language', return_value='pt'), \
+         patch('app.services.agent_restrictions._scope_decision', return_value='decline'), \
+         patch('app.services.agent_restrictions._clarification', side_effect=httpx.ReadTimeout('failed')):
+        answer = answer_restricted_topic('Pedido', 'instance', 'agent')
+    assert 'Posso ajudar' in answer
+    assert 'finanzas' not in answer
