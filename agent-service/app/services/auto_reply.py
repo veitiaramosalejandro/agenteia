@@ -1862,6 +1862,13 @@ async def _process_auto_replies_impl(
             "current_reference_time": datetime.now(ZoneInfo(candidate.get("time_zone") or "Europe/Lisbon")).isoformat(),
             "system_utc_time": datetime.utcnow().isoformat()
         }
+        print(
+            "AGENT_QUOTED_CONTEXT "
+            f"chat={candidate.get('chat_id')} quoted_chat={candidate.get('quoted_chat_id')} "
+            f"quoted={str(candidate.get('quoted_message') or '')[:180]!r} "
+            f"current={incoming_text[:120]!r}",
+            flush=True,
+        )
 
         if not incoming_text or (not channel_id and not reply_resource):
             continue

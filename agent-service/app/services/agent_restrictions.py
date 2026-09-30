@@ -279,7 +279,21 @@ def answer_restricted_topic(
         return None
     try:
         capabilities = set((scope_context or {}).get("declared_capabilities") or ())
-        if capabilities:
+        quoted_context = str((scope_context or {}).get("quoted_message") or "").strip()
+        if quoted_context:
+            # A ChatQuestion is explicit context for the current raw message;
+            # it must prevent a generic clarification from discarding the topic.
+            decision = "scoped"
+            if scope_context is not None:
+                scope_context["_scope_quoted_context"] = True
+                if "external_web" in capabilities:
+                    scope_context["_scope_external_web_preferred"] = True
+            print(
+                f"AGENT_SCOPE_DECISION agent={resource_id} decision=scoped "
+                "reason=quoted_chat_question_context",
+                flush=True,
+            )
+        elif capabilities:
             decision = _scope_decision(message, behavior, instance_id, resource_id, capabilities)
         else:
             decision = _scope_decision(message, behavior, instance_id, resource_id)

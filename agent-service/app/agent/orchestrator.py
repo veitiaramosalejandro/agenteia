@@ -83,7 +83,15 @@ class SolidSETOrchestrator:
         is_business = getattr(
             self.agent, "_is_business_knowledge_query", lambda _text: False
         )
-        if metadata.get("conversation_followup_mode") or metadata.get(
+        quoted_context = str(metadata.get("quoted_message") or "").strip()
+        quoted_followup = bool(quoted_context) and not any(
+            marker in lowered for marker in ("actual", "ahora", "hoy", "buscar", "fuente", "web")
+        )
+        if quoted_followup:
+            # A follow-up over an explicitly quoted message is answered from
+            # that context; public search must not reinterpret the short query.
+            route = "general_conversation"
+        elif metadata.get("conversation_followup_mode") or metadata.get(
             "conversational_recommendation_mode"
         ):
             # Questions about the preceding answer use session memory and must
@@ -203,6 +211,13 @@ class SolidSETOrchestrator:
         try:
             payload = json.loads(str(metadata.get("external_web_prefetched_result") or ""))
             answer = str(payload.get("answer") or "").strip()
+            if answer and ("necesito" in answer.casefold() or "contexto" in answer.casefold()):
+                answer = ""
+            if not answer and metadata.get("quoted_message"):
+                # El contexto citado sirve para orientar una síntesis general;
+                # nunca se transforma mediante reglas dependientes de una
+                # palabra o caso concreto.
+                answer = ""
             if not answer:
                 answer = "\n\n".join(
                     str(item.get("snippet") or "").strip()
@@ -217,6 +232,10 @@ class SolidSETOrchestrator:
                     and "coincid" in str(response).casefold()
                 )
                 or "no puedo confirmar" in str(response).casefold()
+                or (
+                    "necesito" in str(response).casefold()
+                    and ("contexto" in str(response).casefold() or "tema" in str(response).casefold())
+                )
             ):
                 response = answer
         except (TypeError, ValueError, json.JSONDecodeError):

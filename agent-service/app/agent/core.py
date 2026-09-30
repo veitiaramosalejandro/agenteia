@@ -1885,8 +1885,8 @@ class MachiningAgent:
         if is_source_only:
             domain = re.sub(r"^https?://", "", normalized).split("/")[0]
             return f"{previous} site:{domain}"
-        if is_confirmation or len(current.split()) <= 3:
-            return f"{previous} {current}".strip()
+        if is_confirmation or len(current.split()) <= 8:
+            return f"Contexto citado: {previous[:1400]}\nPregunta actual: {current}".strip()
         return current
 
     def _get_cached_web_knowledge(
@@ -3644,9 +3644,13 @@ class MachiningAgent:
         if external_query_mode:
             memoria_query = self._contextual_web_query(
                 user_text,
-                previous_user_texts or previous_user_text,
+                metadata_identity.get("quoted_message") or previous_user_texts or previous_user_text,
             )
-            force_fresh_web = self._requires_fresh_web_search(user_text)
+            # Un contexto citado cambia el referente de la consulta; no se
+            # puede reutilizar memoria web generada para otro turno.
+            force_fresh_web = bool(
+                str((message_metadata or {}).get("quoted_message") or "").strip()
+            ) or self._requires_fresh_web_search(user_text)
             memoria_web_reciente = (
                 "" if force_fresh_web else self._get_cached_web_knowledge(
                     memoria_query, agent_resource_id, solidset_instance_id
@@ -4305,7 +4309,7 @@ class MachiningAgent:
             ).strip()
             search_query = self._contextual_web_query(
                 user_text,
-                previous_user_texts or previous_user_text,
+                message_metadata.get("quoted_message") or previous_user_texts or previous_user_text,
             )
             if prefetched_external:
                 memoria_web_reciente = prefetched_external
@@ -4783,7 +4787,7 @@ class MachiningAgent:
         ):
             search_query = self._contextual_web_query(
                 user_text,
-                previous_user_texts or previous_user_text,
+                message_metadata.get("quoted_message") or previous_user_texts or previous_user_text,
             )
             web_answer = self._answer_with_web_fallback(
                 user_text,
