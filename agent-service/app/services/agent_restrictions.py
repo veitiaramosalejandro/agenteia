@@ -46,7 +46,21 @@ _SCOPE_SCHEMA = {
 
 
 class ScopeOutputError(ValueError):
-    """Fixed diagnostic code; never includes model output or user data."""
+    """Fixed error message with separately bounded field diagnostics."""
+
+    def __init__(self, code: str, *, decision=None, reason_code=None):
+        super().__init__(code)
+        self.decision = _diagnostic_value(decision)
+        self.reason_code = _diagnostic_value(reason_code)
+
+
+def _diagnostic_value(value) -> str:
+    """Escape control characters and never serialize nested model content."""
+    if value is None:
+        return "null"
+    if not isinstance(value, str):
+        return json.dumps(f"<{type(value).__name__}>")
+    return json.dumps(value[:80] + ("..." if len(value) > 80 else ""), ensure_ascii=True)
 
 
 def _parse_scope_output(raw: str) -> tuple[str, str]:
@@ -63,9 +77,9 @@ def _parse_scope_output(raw: str) -> tuple[str, str]:
         raise ScopeOutputError("invalid_fields")
     decision, reason = payload["decision"], payload["reason_code"]
     if not isinstance(decision, str) or decision not in _SCOPE_REASONS:
-        raise ScopeOutputError("invalid_decision")
+        raise ScopeOutputError("invalid_decision", decision=decision, reason_code=reason)
     if not isinstance(reason, str) or reason not in _SCOPE_REASONS[decision]:
-        raise ScopeOutputError("invalid_reason_pair")
+        raise ScopeOutputError("invalid_reason_pair", decision=decision, reason_code=reason)
     return decision, reason
 
 
@@ -108,7 +122,7 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
     config = provider_config_from_record(record)
     config = replace(
         config, temperature=0.0, max_output_tokens=128,
-        timeout_seconds=min(45, max(5, config.timeout_seconds)), max_retries=0,
+        timeout_seconds=max(5, config.timeout_seconds), max_retries=0,
     )
     model = create_chat_model(config)
     if config.provider == "ollama":
@@ -180,7 +194,9 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
         except ScopeOutputError as exc:
             print(
                 f"AGENT_SCOPE_OUTPUT_INVALID agent={resource_id} attempt={attempt + 1} "
-                f"code={exc}", flush=True,
+                f"code={exc} decision={exc.decision} reason_code={exc.reason_code} "
+                f"provider={_diagnostic_value(config.provider)} "
+                f"model={_diagnostic_value(getattr(config, 'model', None))}", flush=True,
             )
             if attempt:
                 raise
@@ -203,8 +219,9 @@ def _clarification(message: str, behavior: dict, instance_id: str, resource_id: 
     record = get_llm_provider_configuration(resource_id, "general", instance_id=instance_id)
     if not record:
         raise ValueError("No hay modelo para solicitar aclaración.")
-    config = replace(provider_config_from_record(record), temperature=0.0,
-                     max_output_tokens=256, timeout_seconds=30, max_retries=0)
+    config = provider_config_from_record(record)
+    config = replace(config, temperature=0.0, max_output_tokens=256,
+                     timeout_seconds=max(5, config.timeout_seconds), max_retries=0)
     instruction = (
         "La solicitud ya fue clasificada fuera del ámbito permitido. Recházala brevemente "
         "y aplica out_of_scope_action sin responder al contenido prohibido. Ofrece una "

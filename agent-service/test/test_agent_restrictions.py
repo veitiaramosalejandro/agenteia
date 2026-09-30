@@ -228,3 +228,67 @@ def test_refusal_failure_returns_localized_redirection():
         answer = answer_restricted_topic('Pedido', 'instance', 'agent')
     assert 'Posso ajudar' in answer
     assert 'finanzas' not in answer
+
+
+@pytest.mark.parametrize('timeout', [20, 180, 900])
+@pytest.mark.parametrize('stage', ['classification', 'clarification', 'refusal'])
+def test_scope_stages_respect_provider_timeout(timeout, stage):
+    from app.llm.providers import LLMProviderConfig
+    from app.services.agent_restrictions import _clarification
+    config = LLMProviderConfig(provider='ollama', model='test-model', timeout_seconds=timeout)
+    model = Mock()
+    model.bind.return_value = model
+    model.invoke.return_value = SimpleNamespace(content=(
+        '{"decision":"clarify","reason_code":"insufficient_context"}'
+        if stage == 'classification' else 'Respuesta breve'
+    ))
+    with patch('app.services.agent_restrictions.get_llm_provider_configuration', return_value={'id': 'model'}), \
+         patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
+         patch('app.services.agent_restrictions.create_chat_model', return_value=model) as create:
+        if stage == 'classification':
+            _scope_decision('Solicitud', {}, 'instance', 'agent')
+        else:
+            _clarification('Solicitud', {}, 'instance', 'agent', 'es', decline=stage == 'refusal')
+    effective = create.call_args.args[0]
+    assert effective.timeout_seconds == timeout
+    assert effective.max_retries == 0
+    assert model.invoke.call_count == 1
+
+
+def test_scope_diagnostic_escapes_and_bounds_fields():
+    from app.services.agent_restrictions import _parse_scope_output, ScopeOutputError
+    reason = 'bad\n\r\t\x1b' + 'x' * 100
+    with pytest.raises(ScopeOutputError) as caught:
+        _parse_scope_output(json.dumps({'decision': 'scoped', 'reason_code': reason}))
+    error = caught.value
+    assert str(error) == 'invalid_reason_pair'
+    assert error.decision == '"scoped"'
+    assert json.loads(error.reason_code) == reason[:80] + '...'
+    assert '\n' not in error.reason_code
+    assert '\r' not in error.reason_code
+    assert '\x1b' not in error.reason_code
+
+
+def test_scope_diagnostic_does_not_serialize_nested_values():
+    from app.services.agent_restrictions import _parse_scope_output, ScopeOutputError
+    with pytest.raises(ScopeOutputError) as caught:
+        _parse_scope_output(json.dumps({'decision': 'scoped', 'reason_code': {'secret': 'PRIVATE'}}))
+    assert caught.value.reason_code == '"<dict>"'
+    assert 'PRIVATE' not in str(vars(caught.value))
+
+
+def test_scope_diagnostic_reports_pair_attempt_and_model(capsys):
+    from app.llm.providers import LLMProviderConfig
+    config = LLMProviderConfig(provider='openai', model='diagnostic-test')
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(content='{"decision":"scoped","reason_code":"in_scope"}')
+    with patch('app.services.agent_restrictions.get_llm_provider_configuration', return_value={'id': 'model'}), \
+         patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
+         patch('app.services.agent_restrictions.create_chat_model', return_value=model), \
+         pytest.raises(ValueError):
+        _scope_decision('PRIVATE QUESTION', {}, 'instance', 'agent')
+    logs = capsys.readouterr().out
+    assert 'attempt=1' in logs and 'attempt=2' in logs
+    assert 'decision="scoped" reason_code="in_scope"' in logs
+    assert 'provider="openai" model="diagnostic-test"' in logs
+    assert 'PRIVATE QUESTION' not in logs
