@@ -2440,6 +2440,7 @@ class MachiningAgent:
         messages: list,
         search_query: Optional[str] = None,
         agent_resource_id: Optional[str] = None,
+        solidset_instance_id: Optional[str] = None,
         tool_permissions: Any = None,
         *,
         request_llm: Any,
@@ -2452,9 +2453,7 @@ class MachiningAgent:
                 web_result = web_adapter.search(
                     query,
                     agent_resource_id=agent_resource_id,
-                    solidset_instance_id=str(
-                        (message_metadata or {}).get("solidset_instance_id") or ""
-                    ),
+                    solidset_instance_id=str(solidset_instance_id or ""),
                     tool_permissions=tool_permissions,
                 )
             else:
@@ -2463,9 +2462,7 @@ class MachiningAgent:
                     {"query": query},
                     config={"configurable": {
                         "agent_resource_id": agent_resource_id,
-                        "solidset_instance_id": str(
-                            (message_metadata or {}).get("solidset_instance_id") or ""
-                        ),
+                        "solidset_instance_id": str(solidset_instance_id or ""),
                     }},
                 )
             if not web_result or str(web_result).startswith(("Error", "La búsqueda", "No se encontraron")):
@@ -4775,6 +4772,7 @@ class MachiningAgent:
                 messages,
                 search_query=search_query,
                 agent_resource_id=agent_resource_id,
+                solidset_instance_id=solidset_instance_id,
                 tool_permissions=message_metadata.get("tool_permissions")
                 if message_metadata else None,
                 request_llm=request_llm,
@@ -4782,6 +4780,12 @@ class MachiningAgent:
             if web_answer:
                 response_text = web_answer
                 herramientas_usadas.append("google_web_search")
+            elif external_query_mode:
+                # Nunca conservar una respuesta de RAG/SQL cuando la ruta
+                # explícita exige investigación externa y ésta no produjo datos.
+                response_text = self._unverified_concrete_answer(
+                    str(message_metadata.get("response_language") or "es")
+                )
         
         if iteration >= self.max_iterations:
             # Es un limite tecnico interno, no un problema de formulacion del usuario.
