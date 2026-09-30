@@ -156,6 +156,13 @@ class SolidSETOrchestrator:
         return state.get("route", "work_sql_rag")
 
     def _execute_external(self, state: AgentGraphState) -> AgentGraphState:
+        metadata = dict(state.get("message_metadata") or {})
+        # El enrutador ya autorizó la capacidad; propagarla explícitamente al
+        # adaptador evita que una lista de herramientas heredada bloquee la web.
+        permissions = set(metadata.get("tool_permissions") or ())
+        permissions.add("external_web")
+        metadata["tool_permissions"] = permissions
+        metadata["external_information_mode"] = True
         response = self.agent.analyze_event_with_dialogue(
             session_id=state.get("session_id", ""),
             user_text=state.get("user_text", ""),
@@ -165,7 +172,7 @@ class SolidSETOrchestrator:
             meeting_code=state.get("meeting_code"),
             message_kind=state.get("message_kind"),
             message_category=state.get("message_category"),
-            message_metadata=state.get("message_metadata"),
+            message_metadata=metadata,
             tool_allowlist={"google_web_search"},
             auto_reply_mode=bool(state.get("auto_reply_mode")),
             external_query_mode=True,
