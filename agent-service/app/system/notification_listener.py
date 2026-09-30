@@ -926,7 +926,16 @@ class NotificationApiListener:
             or "desconocido"
         )
         is_public = str(data.get("IsPublic") or "").lower() in {"1", "true"}
-        chat_id = data.get("IDChat") or data.get("IDChat2")
+        # ChatData.IDChat may point to the original question when the current
+        # message is a follow-up. Chat.IDChat2 identifies the current message
+        # and must anchor the generated reply.
+        raw_chat_payload = data.get("Chat") if isinstance(data.get("Chat"), dict) else {}
+        chat_id = (
+            raw_chat_payload.get("IDChat2")
+            or raw_chat_payload.get("idChat2")
+            or data.get("IDChat2")
+            or data.get("IDChat")
+        )
         destiny = data.get("FrameworkDestiny") if isinstance(data.get("FrameworkDestiny"), dict) else {}
         destiny_lower = {str(key).lower(): value for key, value in destiny.items()}
         destiny_resource = str(destiny_lower.get("resource") or destiny_lower.get("idresource") or "").strip()
@@ -935,7 +944,7 @@ class NotificationApiListener:
         meeting = self._extract_meeting_context(
             data.get("Info"), data.get("ExtraData"), data.get("Chat")
         )
-        chat_payload = data.get("Chat") if isinstance(data.get("Chat"), dict) else {}
+        chat_payload = raw_chat_payload
         chat_lower = {str(key).lower(): value for key, value in chat_payload.items()}
         quoted_payload = (
             chat_lower.get("chatquestion")
