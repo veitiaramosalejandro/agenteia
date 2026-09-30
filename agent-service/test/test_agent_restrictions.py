@@ -33,7 +33,7 @@ def _classify_output(payload):
 @pytest.mark.parametrize("payload", [
     [], {"decision": []}, {"decision": "unknown"},
     {"decision": "allow", "reason_code": "explicit_restriction"},
-    {"decision": "scoped"}, {"decision": "clarify", "reason_code": []},
+    {"decision": "scoped", "extra": True}, {"decision": "clarify", "reason_code": []},
 ])
 def test_classifier_rejects_invalid_contract(payload):
     with pytest.raises(ValueError):
@@ -173,7 +173,7 @@ def test_compact_ollama_prompt_keeps_published_restrictions():
 @pytest.mark.parametrize('first,code', [
     ('not json SECRET', 'invalid_json'),
     ('[]', 'invalid_object'),
-    ('{"decision":"allow"}', 'invalid_fields'),
+    ('{"decision":"allow","extra":true}', 'invalid_fields'),
     ('{"decision":"unknown","reason_code":"in_scope"}', 'invalid_decision'),
     ('{"decision":"allow","reason_code":"out_of_scope"}', 'invalid_reason_pair'),
 ])
@@ -292,3 +292,12 @@ def test_scope_diagnostic_reports_pair_attempt_and_model(capsys):
     assert 'decision="scoped" reason_code="in_scope"' in logs
     assert 'provider="openai" model="diagnostic-test"' in logs
     assert 'PRIVATE QUESTION' not in logs
+
+
+@pytest.mark.parametrize('decision,reason', [
+    ('allow', 'in_scope'), ('scoped', 'scoped_interpretation'),
+    ('clarify', 'insufficient_context'), ('decline', 'out_of_scope'),
+])
+def test_single_decision_derives_reason_without_second_model_choice(decision, reason):
+    from app.services.agent_restrictions import _parse_scope_output
+    assert _parse_scope_output(json.dumps({'decision': decision})) == (decision, reason)

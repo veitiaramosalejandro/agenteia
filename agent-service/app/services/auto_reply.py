@@ -1903,6 +1903,13 @@ async def _process_auto_replies_impl(
                 # published prompt scope was already evaluated so it does not
                 # perform the same model-backed classification a second time.
                 message_metadata["_agent_scope_prechecked"] = True
+                from app.services.capability_planner import prepare_capability_route
+                try:
+                    await asyncio.to_thread(prepare_capability_route, incoming_text, message_metadata)
+                except Exception as exc:
+                    from app.services.agent_restrictions import _language, _uncertain_response
+                    print(f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__}", flush=True)
+                    response_text = _uncertain_response(_language(incoming_text))
             if response_text is None:
                 response_text = await asyncio.to_thread(
                     answer_direct, incoming_text, message_metadata, session_id
@@ -1950,7 +1957,7 @@ async def _process_auto_replies_impl(
                 # La intención actual prevalece sobre recuerdos recuperados. Una
                 # memoria (incluso relevante) no debe impedir verificar noticias,
                 # clima, precios o titulares de cargos que pueden haber cambiado.
-                external_query = _is_external_information_query(incoming_text)
+                external_query = bool(message_metadata.get("external_information_mode")) or _is_external_information_query(incoming_text)
                 if external_query:
                     _update_response_status(
                         response_request_id,

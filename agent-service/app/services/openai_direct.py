@@ -138,10 +138,10 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
             WHERE m."IDResource"=%s
               AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
               AND m.active AND p.active AND r.active
-              AND (m."Capabilities" ? %s OR m."IsDefault")
+              AND (m."Capabilities" ? %s OR (%s='general' AND m."IsDefault"))
             ORDER BY CASE WHEN m."Capabilities" ? %s THEN 0 ELSE 1 END,
                      m."Priority", p."Code" LIMIT 1''',
-            (resource_id, instance_id, instance_id, capability, capability)).fetchone()
+            (resource_id, instance_id, instance_id, capability, capability, capability)).fetchone()
     if row:
         row = dict(row)
         print(f'AGENT_MODEL_ROUTE agent={resource_id} capability={capability} '
@@ -217,6 +217,11 @@ def answer_direct(user_text, metadata, session_id):
 
     from app.agent.semantic_text import normalized_text
 
+    # Scoped research must be synthesized by the policy-bound core, not returned
+    # verbatim from a public research provider.
+    if metadata.get('_agent_scope_decision') == 'scoped' and metadata.get('external_information_mode'):
+        return None
+
     if normalized_text(user_text) in {
         'tem a certeza', 'tem certeza', 'tens a certeza', 'tens certeza',
         'estas seguro', 'estas segura', 'seguro', 'are you sure',
@@ -278,7 +283,8 @@ def answer_direct(user_text, metadata, session_id):
                 else:
                     raw = google_web_search.invoke(
                         {'query': user_text},
-                        config={'configurable': {'agent_resource_id': resource_id}},
+                        config={'configurable': {'agent_resource_id': resource_id,
+                                                 'solidset_instance_id': metadata.get('solidset_instance_id')}},
                     )
                     payload = json.loads(str(raw))
                     if payload.get('answer') and payload.get('results'):

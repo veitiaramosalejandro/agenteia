@@ -803,15 +803,15 @@ def get_llm_provider_configuration(
                         AND m."IDResource"=%s::uuid
                         AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
                    WHERE p.active=true AND (%s::text IS NULL OR lower(p."Provider")=%s)
-                     AND ((m."ID" IS NOT NULL AND (m."Capabilities" ? %s OR m."IsDefault"))
-                     OR p."IsDefault"=true)
+                     AND ((m."ID" IS NOT NULL AND (m."Capabilities" ? %s OR (%s='general' AND m."IsDefault")))
+                     OR (%s='general' AND p."IsDefault"=true))
                    ORDER BY CASE WHEN m."ID" IS NOT NULL AND m."Capabilities" ? %s THEN 0
                                  WHEN m."ID" IS NOT NULL AND m."IsDefault" THEN 1
                                  ELSE 2 END,
                             m."Priority" NULLS LAST, p."Code" LIMIT 1''',
                 (
                     normalized, instance_id, instance_id, provider, provider,
-                    requested_capability, requested_capability,
+                    requested_capability, requested_capability, requested_capability, requested_capability,
                 ),
             )
             row = cursor.fetchone()

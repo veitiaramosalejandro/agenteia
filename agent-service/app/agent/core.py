@@ -217,6 +217,8 @@ class MachiningAgent:
         except Exception as exc:
             print(f"⚠️ No se pudo resolver proveedor LLM en PostgreSQL: {exc}")
             record = None
+        if resource_id and capability != "general" and not record:
+            raise ValueError("No active model assigned for the requested capability")
         config = (
             provider_config_from_record(record)
             if record else self.llm_provider_config
@@ -2874,6 +2876,15 @@ class MachiningAgent:
                 return restricted_answer
             metadata["_agent_scope_prechecked"] = True
 
+        if not metadata.get("_capability_route_prepared"):
+            from app.services.capability_planner import prepare_capability_route
+            try:
+                prepare_capability_route(user_text, metadata)
+            except Exception as exc:
+                from app.services.agent_restrictions import _language, _uncertain_response
+                print(f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__}", flush=True)
+                return _uncertain_response(_language(user_text))
+
         if not metadata.get("_assigned_direct_prechecked"):
             direct_answer = self.answer_with_assigned_openai(user_text, metadata, session_id)
             if direct_answer is not None:
@@ -3047,6 +3058,9 @@ class MachiningAgent:
             external_query_mode = tool_allowlist == {"google_web_search"}
             if tool_allowlist is None:
                 tool_allowlist = set()
+        elif metadata.get("_capability_route_prepared") and metadata.get("external_information_mode"):
+            external_query_mode = True
+            tool_allowlist = {"google_web_search"}
         elif general_conversation_mode:
             tool_allowlist = set()
         elif self._is_current_officeholder_query(user_text):
@@ -4341,6 +4355,7 @@ class MachiningAgent:
                             openai_answer = ""
                         if (
                             openai_answer
+                            and metadata.get("_agent_scope_decision") != "scoped"
                             and str(web_payload.get("source_type") or "").startswith("openai_")
                         ):
                             response_text = self._clean_web_answer(openai_answer)
