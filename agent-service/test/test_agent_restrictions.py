@@ -351,12 +351,13 @@ def test_external_web_capability_instruction_covers_entity_facts():
     assert 'external_web' in prompt
 
 
-def test_external_web_converts_ambiguous_scope_to_scoped():
+def test_external_web_does_not_change_scope_decision():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
          patch("app.services.agent_restrictions._scope_decision", return_value="clarify"):
         context = {"declared_capabilities": {"external_web"}}
-        assert answer_restricted_topic(
+        answer = answer_restricted_topic(
             "¿Qué ofrece una herramienta financiera?", "instance", "agent",
             scope_context=context,
-        ) is None
-    assert context["_agent_scope_decision"] == "scoped"
+        )
+    assert answer is not None
+    assert context["_agent_scope_decision"] == "clarify"
