@@ -150,8 +150,10 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
             "palabra o tecnología compartida no basta para autorizar una tarea. No inventes "
             "especialidades, permisos ni prohibiciones. Las "
             "restricciones explícitas prevalecen. Si la pregunta "
-            "está claramente fuera del rol/especialidades y out_of_scope_action indica declinar, "
-            "decide decline. Saludos y preguntas sobre la identidad del agente son allow salvo "
+            "está claramente fuera del rol/especialidades, decide decline, aunque "
+            "out_of_scope_action no esté informado; el rol y las especialidades publicadas "
+            "definen por sí mismos el ámbito permitido. Saludos y preguntas sobre la identidad "
+            "del agente son allow salvo "
             "prohibición explícita. Decide scoped si una solicitud amplia admite una respuesta "
             "útil desde la especialidad publicada sin cambiar su objetivo ni ejecutar partes "
             "prohibidas. Una tarea explícitamente prohibida es decline aunque su finalidad "
@@ -274,7 +276,10 @@ def answer_restricted_topic(
         return _uncertain_response(_language(message))
     language = _language(message, behavior.get("default_language"))
     if not isinstance(behavior, dict) or not (
-        behavior.get("restrictions") or behavior.get("out_of_scope_action")
+        behavior.get("role")
+        or behavior.get("specialties")
+        or behavior.get("restrictions")
+        or behavior.get("out_of_scope_action")
     ):
         return None
     try:

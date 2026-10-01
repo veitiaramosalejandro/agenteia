@@ -103,6 +103,39 @@ def test_allowed_request_continues_to_agent():
         assert answer_restricted_topic("¿Cómo valorar una empresa por DCF?", "instance", "agent") is None
 
 
+def test_role_and_specialties_alone_enforce_published_scope():
+    policy_without_explicit_restrictions = {
+        "BehaviorConfig": {
+            "role": "especialista financiero",
+            "specialties": ["Análisis financiero", "Mercados"],
+        }
+    }
+    with patch(
+        "app.services.agent_restrictions.get_active_agent_prompt",
+        return_value=policy_without_explicit_restrictions,
+    ), patch(
+        "app.services.agent_restrictions._scope_decision",
+        return_value="decline",
+    ) as decide, patch(
+        "app.services.agent_restrictions._clarification",
+        return_value="No puedo responder sobre programación; mi ámbito es financiero.",
+    ) as refusal:
+        answer = answer_restricted_topic(
+            "¿Qué sabes de algoritmos de programación?", "instance", "agent"
+        )
+
+    decide.assert_called_once()
+    refusal.assert_called_once_with(
+        "¿Qué sabes de algoritmos de programación?",
+        policy_without_explicit_restrictions["BehaviorConfig"],
+        "instance",
+        "agent",
+        "es",
+        decline=True,
+    )
+    assert "programación" in answer
+
+
 def test_unpublished_policy_does_not_trigger_model_call():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=None), \
          patch("app.services.agent_restrictions._scope_decision") as decide:
