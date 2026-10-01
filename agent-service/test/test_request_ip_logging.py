@@ -42,11 +42,11 @@ class RequestIpLoggingTests(unittest.TestCase):
         self.assertEqual(forwarded, "-")
 
     @patch("app.services.instance_resolution.get_solidset_instance")
-    def test_header_host_looks_up_source_ip(self, lookup):
+    def test_http_host_looks_up_source_ip(self, lookup):
         lookup.return_value = {"Code": "plant-a"}
         request = SimpleNamespace(
             client=SimpleNamespace(host="10.0.0.8"),
-            headers={"x-solidset-instance": "PLANT-A.EXAMPLE:52130"},
+            headers={"host": "PLANT-A.EXAMPLE:52130"},
         )
 
         result = _resolve_request_solidset_instance(request)
@@ -66,6 +66,21 @@ class RequestIpLoggingTests(unittest.TestCase):
         lookup.assert_not_called()
 
     @patch("app.services.instance_resolution.get_solidset_instance")
+    def test_ignores_legacy_instance_header_when_host_is_present(self, lookup):
+        lookup.return_value = {"Code": "host-instance"}
+        request = SimpleNamespace(
+            headers={
+                "host": "host.example",
+                "x-solidset-instance": "legacy.example",
+            }
+        )
+
+        result = _resolve_request_solidset_instance(request)
+
+        self.assertEqual(result["Code"], "host-instance")
+        lookup.assert_called_once_with(source_ip="host.example")
+
+    @patch("app.services.instance_resolution.get_solidset_instance")
     def test_missing_header_rejects_even_a_single_active_instance(self, lookup):
         request = SimpleNamespace(client=SimpleNamespace(host="10.0.0.8"), headers={})
 
@@ -73,9 +88,9 @@ class RequestIpLoggingTests(unittest.TestCase):
         lookup.assert_not_called()
 
     @patch("app.services.instance_resolution.get_solidset_instance")
-    def test_unknown_header_does_not_fall_back_to_only_instance(self, lookup):
+    def test_unknown_http_host_does_not_fall_back_to_only_instance(self, lookup):
         lookup.return_value = None
-        request = SimpleNamespace(headers={"x-solidset-instance": "unknown.example"})
+        request = SimpleNamespace(headers={"host": "unknown.example"})
 
         self.assertIsNone(_resolve_request_solidset_instance(request))
         lookup.assert_called_once_with(source_ip="unknown.example")
@@ -91,7 +106,7 @@ class RequestIpLoggingTests(unittest.TestCase):
         lookup.return_value = {"Code": "local", "SourceIP": "127.0.0.1"}
         for value in ("localhost", "127.0.0.1", "[::1]", "LOCALHOST:52130"):
             with self.subTest(header=value):
-                request = SimpleNamespace(headers={"x-solidset-instance": value})
+                request = SimpleNamespace(headers={"host": value})
                 self.assertEqual(_resolve_request_solidset_instance(request)["Code"], "local")
                 lookup.assert_called_with(source_ip="localhost")
 

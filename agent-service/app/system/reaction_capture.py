@@ -59,7 +59,7 @@ def resolve_agent_message(id_chat: int, instance: dict[str, Any]) -> dict[str, A
             (id_chat,),
         )
         message = cursor.fetchone()
-    if not message or not str(message.get("RawMessage") or "").strip().lower().startswith("asistente ia "):
+    if not message:
         return None
 
     try:
@@ -70,20 +70,31 @@ def resolve_agent_message(id_chat: int, instance: dict[str, Any]) -> dict[str, A
         with connection.cursor() as cursor:
             cursor.execute(
                 '''
-                SELECT r."IDResource", r."Name", l."FullName"
+                SELECT
+                    r."IDResource",
+                    r."IDAgentResource",
+                    r."Name",
+                    l."FullName"
                 FROM public."SysResourceIA" r
                 LEFT JOIN public."SysLogin" l
                   ON l."ActiveIDLogin2Resource" = r."ActiveIDLogin2Resource"
-                WHERE r."IDResource" = %s
-                ORDER BY l."IDLogin"
+                WHERE r.active = TRUE
+                  AND (
+                      r."IDResource" = %s
+                      OR r."IDAgentResource" = %s
+                  )
+                ORDER BY
+                    CASE WHEN r."IDResource" = %s THEN 0 ELSE 1 END,
+                    l."IDLogin"
                 LIMIT 1
                 ''',
-                (resource_id,),
+                (resource_id, resource_id, resource_id),
             )
             agent_row = cursor.fetchone()
     if agent_row is None:
         return None
-    return {**message, **dict(agent_row), "IDAgentResource": resource_id}
+    resolved_agent = agent_row.get("IDAgentResource") or agent_row.get("IDResource")
+    return {**message, **dict(agent_row), "IDAgentResource": resolved_agent}
 
 
 def save_agent_reaction(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class ChatConversationRequest(BaseModel):
@@ -65,14 +65,24 @@ class UserFeedbackResponse(BaseModel):
 
 
 class SolidSETReactionCaptureRequest(BaseModel):
-    IDChat: int = Field(..., gt=0)
-    IDUser: uuid.UUID
-    IDChannel: uuid.UUID
-    IDEmoji: str = Field(..., min_length=1, max_length=64)
-    Counter: int = Field(..., ge=0)
+    IDChat: int = Field(
+        ..., validation_alias=AliasChoices("IDChat", "idChat"), gt=0
+    )
+    IDUser: uuid.UUID = Field(validation_alias=AliasChoices("IDUser", "idUser"))
+    IDChannel: uuid.UUID = Field(
+        validation_alias=AliasChoices("IDChannel", "idChannel")
+    )
+    IDEmoji: str = Field(
+        ..., validation_alias=AliasChoices("IDEmoji", "idEmoji"),
+        min_length=1, max_length=64
+    )
+    Counter: int = Field(
+        ..., validation_alias=AliasChoices("Counter", "counter"), ge=0
+    )
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
+        populate_by_name = True
 
 
 class SolidSETReactionCaptureResponse(BaseModel):
