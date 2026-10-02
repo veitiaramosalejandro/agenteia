@@ -18,10 +18,13 @@ def is_agent_specialty_question(message: str) -> bool:
     return bool(re.search(
         r"\b(?:que tipo de especialista|cual es tu especialidad|"
         r"en que (?:eres|estas) especializado|en que eres especialista|"
-        r"que especialidad tienes|eres especialista en|"
+        r"que especialidad tienes|que habilidades tienes|que habilidades tecnicas tienes|"
+        r"cuales son tus habilidades|eres especialista en|"
         r"qual (?:e|eh) (?:a )?tua especialidade|em que es especialista|"
         r"em que es especializado|what is your special(?:ty|ity)|"
-        r"what kind of specialist are you|what are you specialized in)\b",
+        r"what kind of specialist are you|what are you specialized in|"
+        r"what skills do you have|what skills you have|what technical skills do you have|"
+        r"what are your skills|what can you do)\b",
         text,
     ))
 

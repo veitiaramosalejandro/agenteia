@@ -18,6 +18,14 @@ def test_specialty_question_reports_published_role_and_specialties():
     assert "Valuación DCF" in answer
 
 
+def test_english_skills_question_reports_published_role_and_specialties():
+    published = {"BehaviorConfig": {"role": "financial analyst", "specialties": ["DCF valuation"]}}
+    with patch("app.services.agent_specialty.get_active_agent_prompt", return_value=published):
+        answer = answer_agent_specialty_question("Tell me what skills you have", "instance", "agent")
+    assert "financial analyst" in answer
+    assert "DCF valuation" in answer
+
+
 def test_unrelated_question_does_not_read_agent_configuration():
     with patch("app.services.agent_specialty.get_active_agent_prompt") as lookup:
         assert answer_agent_specialty_question("¿Qué temperatura hace hoy?", "instance", "agent") is None
