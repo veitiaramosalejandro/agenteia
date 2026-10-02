@@ -15,13 +15,12 @@ def classify_reaction(emoji: str, counter: int) -> str:
         return "removed"
     normalized = (emoji or "").strip().upper()
     positive = {
-        "U+1F44D", "U+1F44C", "U+1F64F", "U+2764", "U+2764-FE0F",
-        "U+1F499", "U+1F49A", "U+1F49B", "U+1F49C", "U+1F60A",
-        "U+1F603", "U+1F604", "U+1F389", "U+1F525", "👍", "👌", "🙏", "❤️",
+        "U+1F44C", "U+1F64F", "U+1F44D", "U+1F499", "U+1F4A1","U+1F44F", "U+1F4AA", "U+2705", 
+        "👌", "🙏", "👍", "💙", "💡", "👏", "💪", "✅",
     }
     negative = {
-        "U+1F44E", "U+1F620", "U+1F621", "U+1F612", "U+1F61E",
-        "U+1F622", "U+1F641", "👎", "😠", "😡", "😞", "😢",
+        "U+1F44E", "U+1F6E0", "U+1F4DD", "U+1F6AB",
+        "👎", "🛠️", "📝", "🚫",
     }
     if normalized in positive:
         return "positive"
@@ -153,16 +152,25 @@ def get_agent_reinforcement_context(
                 '''
                 SELECT "AgentResponse", SUM("Reward") AS reward,
                        MAX("UpdatedAt") AS last_update
-                FROM public."SysAgentIAReaction"
-                WHERE "IDAgentResource" = %s
-                  AND "IDChannel" = %s
-                  AND "Counter" > 0
-                GROUP BY "IDChat", "AgentResponse"
-                HAVING SUM("Reward") <> 0
-                ORDER BY ABS(SUM("Reward")) DESC, MAX("UpdatedAt") DESC
+                FROM public."SysAgentIAReaction" reaction
+                INNER JOIN public."SysResourceIA" resource
+                  ON resource."IDResource" = reaction."IDAgentResource"
+                WHERE (
+                    resource."IDResource" = %s
+                    OR resource."IDAgentResource" = %s
+                )
+                  AND reaction."IDChannel" = %s
+                  AND reaction."Counter" > 0
+                GROUP BY reaction."IDChat", reaction."AgentResponse"
+                HAVING SUM(reaction."Reward") <> 0
+                ORDER BY ABS(SUM(reaction."Reward")) DESC,
+                         MAX(reaction."UpdatedAt") DESC
                 LIMIT %s
                 ''',
-                (UUID(str(resource_id)), UUID(str(channel_id)), max(1, limit * 2)),
+                (
+                    UUID(str(resource_id)), UUID(str(resource_id)),
+                    UUID(str(channel_id)), max(1, limit * 2),
+                ),
             )
             rows = cursor.fetchall()
     positive = [row for row in rows if float(row["reward"]) > 0][:limit]

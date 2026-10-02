@@ -17,6 +17,10 @@ from app.api.schemas.common import (
 from app.connectors.db_client import agent_learning_enabled
 from app.services.auto_reply import _agent_visible_name
 from app.services.instance_resolution import _resolve_request_solidset_instance
+from app.api.controllers.notifications import (
+    _trace_initial_request,
+    _trace_resolved_instance,
+)
 from app.system.reaction_capture import (
     classify_reaction,
     reaction_reward,
@@ -104,9 +108,14 @@ def capture_solidset_agent_reaction(
     """Captura una reacción ya registrada en SolidSET y la aprende para su agente."""
     try:
         print(req)
+        if request is not None:
+            payload = req.model_dump(mode="json") if hasattr(req, "model_dump") else req.dict()
+            _trace_initial_request(request, payload)
         instance = _resolve_request_solidset_instance(request) if request is not None else {}
         if request is not None and (not instance or not instance.get("DataAPI")):
             raise RuntimeError("A instância SolidSET não tem uma SolidSET Data API configurada.")
+        if instance:
+            _trace_resolved_instance(instance)
         message = resolve_agent_message(req.IDChat, instance)
     except (pymssql.Error, psycopg.Error, RuntimeError) as exc:
         raise HTTPException(
@@ -132,7 +141,9 @@ def capture_solidset_agent_reaction(
         "Counter": req.Counter,
         "Signal": signal,
         "Reward": reward,
-        "IDAgentResource": message["IDAgentResource"],
+        # SysAgentIAReaction.IDAgentResource references SysResourceIA.IDResource.
+        # Keep the logical agent identity separately in the resolved message.
+        "IDAgentResource": message["IDResource"],
         "AgentResponse": str(message.get("RawMessage") or ""),
     }
     try:
@@ -185,6 +196,7 @@ def capture_solidset_agent_reaction(
     agent_name = _agent_visible_name(message)
     return SolidSETReactionCaptureResponse(
         status="captured",
+        persisted=True,
         learned=learned,
         changed=changed,
         signal=signal,

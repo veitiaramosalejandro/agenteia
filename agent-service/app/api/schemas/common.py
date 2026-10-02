@@ -87,6 +87,7 @@ class SolidSETReactionCaptureRequest(BaseModel):
 
 class SolidSETReactionCaptureResponse(BaseModel):
     status: str
+    persisted: bool = True
     learned: bool
     changed: bool
     signal: str

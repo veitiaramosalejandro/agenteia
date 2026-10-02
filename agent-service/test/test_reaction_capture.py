@@ -38,6 +38,18 @@ class ReactionCaptureTests(unittest.TestCase):
         self.assertEqual(1.0, reaction_reward("positive", 1))
         self.assertEqual(-2.0, reaction_reward("negative", 2))
 
+    def test_classifies_frontend_reaction_catalog(self):
+        for code in (
+            "U+1F44C", "U+1F64F", "U+1F44D", "U+1F499", "U+1F4A1",
+            "U+1F44F", "U+1F4AA", "U+2705",
+        ):
+            with self.subTest(code=code):
+                self.assertEqual("positive", classify_reaction(code, 1))
+        for code in ("U+1F44E", "U+1F6E0", "U+1F4DD", "U+1F6AB"):
+            with self.subTest(code=code):
+                self.assertEqual("negative", classify_reaction(code, 1))
+        self.assertEqual("neutral", classify_reaction("U+1F50E", 1))
+
     @patch("app.system.reaction_capture._postgres_connection")
     @patch("app.system.reaction_capture.connect_solidset_sql")
     def test_resolves_agent_by_persisted_identity_without_message_prefix(
@@ -114,6 +126,7 @@ class ReactionCaptureTests(unittest.TestCase):
             "RawMessage": "Asistente IA Victor Vargas: respuesta",
             "IDSenderResource": agent_resource,
             "IDWorkRoom": channel,
+            "IDResource": agent_resource,
             "IDAgentResource": agent_resource,
             "Name": "Dev20",
             "FullName": "Victor Vargas",
@@ -134,6 +147,7 @@ class ReactionCaptureTests(unittest.TestCase):
         self.assertTrue(response.changed)
         self.assertEqual("positive", response.signal)
         self.assertEqual(1.0, response.reward)
+        self.assertTrue(response.persisted)
         self.assertEqual(agent_resource, response.IDAgentResource)
         self.assertEqual("Victor Vargas", response.AgentName)
         learn.assert_called_once()

@@ -99,12 +99,47 @@ class DataAPICursor:
             "parameters": [_json_parameter(value) for value in parameters],
             "maxRows": self.connection.max_rows,
         }
-        try:
-            response = self.connection.client.post(
-                "/api/v1/query/read", json=payload, **background_io_options(),
-            )
-        except httpx.HTTPError as exc:
-            raise SolidSETDataAPIError(f"SolidSET Data API indisponível: {exc}") from exc
+        response: httpx.Response | None = None
+        last_transport_error: httpx.HTTPError | None = None
+        for attempt in range(1, 4):
+            try:
+                request_options = background_io_options()
+                request_options["timeout"] = httpx.Timeout(
+                    min(self.connection.timeout_seconds, 30),
+                    connect=min(self.connection.timeout_seconds, 5),
+                )
+                response = self.connection.client.post(
+                    "/api/v1/query/read",
+                    json=payload,
+                    **request_options,
+                )
+                last_transport_error = None
+            except httpx.HTTPError as exc:
+                last_transport_error = exc
+                print(
+                    f"SOLIDSET_QUERY_REQUEST_FAILED attempt={attempt} "
+                    f"type={type(exc).__name__} destination={self.connection.base_origin}",
+                    flush=True,
+                )
+                if attempt < 3:
+                    time_module.sleep(0.5 * attempt)
+                    continue
+                raise SolidSETDataAPIError(
+                    "SolidSET Data API indisponível ao executar a consulta."
+                ) from exc
+            if response.status_code in {408, 429, 502, 503, 504} and attempt < 3:
+                print(
+                    f"SOLIDSET_QUERY_RETRY attempt={attempt} status={response.status_code} "
+                    f"destination={self.connection.base_origin}",
+                    flush=True,
+                )
+                time_module.sleep(0.5 * attempt)
+                continue
+            break
+        if response is None:
+            raise SolidSETDataAPIError(
+                "SolidSET Data API indisponível ao executar a consulta."
+            ) from last_transport_error
         _reject_redirect(response, "query-read")
         if response.status_code >= 400:
             try:
