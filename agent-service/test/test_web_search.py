@@ -256,6 +256,16 @@ class TestWebSearch(unittest.TestCase):
         self.assertNotIn("información obtenida", answer)
         self.assertEqual(answer, "hoy habrá 24 grados.")
 
+    def test_web_answer_removes_orphan_link_placeholders(self):
+        agent = MachiningAgent.__new__(MachiningAgent)
+        answer = agent._clean_web_answer(
+            "La inteligencia artificial está evolucionando.\n\nenlace relevante\n\n"
+            "La arquitectura híbrida también crece."
+        )
+        self.assertNotIn("enlace relevante", answer.lower())
+        self.assertIn("inteligencia artificial", answer)
+        self.assertIn("arquitectura híbrida", answer)
+
     def test_web_results_have_useful_fallback_without_llm(self):
         payload = json.dumps({
             "results": [{

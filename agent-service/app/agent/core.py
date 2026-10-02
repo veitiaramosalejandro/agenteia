@@ -2536,6 +2536,16 @@ class MachiningAgent:
             "",
             text,
         )
+        # Un modelo puede devolver una etiqueta de plantilla sin la URL que
+        # debía acompañarla. Nunca mostramos ese marcador como si fuera una
+        # fuente válida.
+        text = re.sub(
+            r"(?im)^\s*(?:enlace|enlaces?|link|links?|fuente|fuentes|source|sources)"
+            r"(?:\s+(?:relevante|relevantes|relevant|relevants|principal|principales|"
+            r"principal|supporting))?\s*$",
+            "",
+            text,
+        )
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r"[ \t]+\n", "\n", text)
         text = re.sub(r" {2,}", " ", text)
