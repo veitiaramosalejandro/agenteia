@@ -68,17 +68,36 @@ public void HandleChatMessage(FrameworkMessage message, ChatMessageKind kind)
 ```
 * **AIAgentClient.cs** : Implementação direta do cliente HTTP.
 ```csharp
+ /// <summary>
+ /// Captura uma reação já registrada no SolidSET e a aprende para seu agente
+ /// </summary>
 public async Task<SolidSETReactionCaptureResponse> CaptureSolidSETReactionAsync(ChatUpdateReactionRequest request)
 {
     // Implementação do cliente HTTP
 }
 
+/// <summary>
+/// Encola a FrameworkMessage no agente e, se a API o permitir, devolva-a.
+/// <c>requestId</c> / <c>statusUrl</c> para realizar pesquisas de progresso.
+/// </summary>
 public async Task<AgentFrameworkEnqueueResult> SendFrameworkMessageForQueueAsync(FrameworkMessage message)
 {
     // Implementação do cliente HTTP
 }
 
+/// <summary>
+/// Consulta o progresso de um pedido enfileirado. Em `{idchat}` utiliza-se o identificador devolvido como `requestId` (habitualmente `Chat.IDChat2`).  parâmetro `lang` é opcional e controla o idioma das mensagens de estado.
+/// POST /api/v1/agent/notification/chat-question/suggest-response
+/// </summary>
 public async Task<ChatQuestionSuggestionResponse> SuggestChatQuestionResponseAsync(FrameworkMessage frameworkMessage, CancellationToken cancellationToken = default)
+{
+    // Implementação do cliente HTTP
+}
+
+/// <summary>
+/// Estado da resposta automática do <c>IDChat2</c> à questão.
+/// </summary>
+public async Task<AgentResponseStatusDto> GetResponseStatusByChatIdAsync(string chatId, string language = "pt", CancellationToken cancellationToken = default)
 {
     // Implementação do cliente HTTP
 }
@@ -366,6 +385,140 @@ Solicita alternativas de resposta para `Chat.chatQuestion`. Recebe um
 mensagem como uma autorresposta. O texto que se quer contestar obtém-se de
 `Chat.chatQuestion.RawMessage` e `Chat.RawMessage` deve estar vazio; caso contrário,
 a API devolve `422` para evitar substituir texto escrito pelo utilizador.
+
+Exemplo de payload
+
+```json
+{
+  "Stamp": "2026-10-02T08:53:31.873929Z",
+  "Sender": {
+    "room": "00000000-0000-0000-0000-000000000000",
+    "session": "00000000-0000-0000-0000-000000000000",
+    "login": "00000000-0000-0000-0000-000000000000",
+    "resource": "00000000-0000-0000-0000-000000000000",
+    "team": "00000000-0000-0000-0000-000000000000",
+    "role": "00000000-0000-0000-0000-000000000000",
+    "conversationId": 0,
+    "workRoom": "00000000-0000-0000-0000-000000000000"
+  },
+  "Destiny": {
+    "room": "00000000-0000-0000-0000-000000000000",
+    "session": "00000000-0000-0000-0000-000000000000",
+    "login": "00000000-0000-0000-0000-000000000000",
+    "resource": "00000000-0000-0000-0000-000000000000",
+    "team": "00000000-0000-0000-0000-000000000000",
+    "role": "00000000-0000-0000-0000-000000000000",
+    "conversationId": 0,
+    "workRoom": "00000000-0000-0000-0000-000000000000"
+  },
+  "ExternalDestinations": null,
+  "ExcludeSenderUser": false,
+  "ExcludeSenderSession": false,
+  "IncludeSenderSession": false,
+  "Kind": 7,
+  "IDNotification": null,
+  "RawMessage": "",
+  "RawMessageHtml": null,
+  "Importance": 1,
+  "Priority": 0,
+  "Modifiers": 0,
+  "VisibilityLevel": 1,
+  "MaskMessage": 0,
+  "MessageMonitoring": 0,
+  "Args": [
+    470724875,
+    0,
+    "0"
+  ],
+  "PointData": null,
+  "Chat": {
+    "idChat2": 470724875,
+    "idSender": "00000000-0000-0000-0000-000000000000",
+    "idSenderResource": "00000000-0000-0000-0000-000000000000",
+    "rawMessage": "",
+    "stamp": "2026-10-02T08:53:31.8739248Z",
+    "importance": 0,
+    "editState": 0,
+    "isPublic": 0,
+    "attentionCallNotificationLevel": 0,
+    "readByCurrentResource": false,
+    "messageStateForCurrentResource": 0,
+    "isBookMarked": false,
+    "canBookMark": true,
+    "canUnBookmark": false,
+    "chatQuestion": {
+      "idChat2": 0,
+      "idSender": "00000000-0000-0000-0000-000000000000",
+      "idSenderResource": "00000000-0000-0000-0000-000000000000",
+      "rawMessage": "Hola como estas?",
+      "stamp": "2026-10-02T08:53:31.8739277Z",
+      "importance": 0,
+      "editState": 0,
+      "isPublic": 0,
+      "attentionCallNotificationLevel": 0,
+      "readByCurrentResource": false,
+      "messageStateForCurrentResource": 0,
+      "isBookMarked": false,
+      "canBookMark": true,
+      "canUnBookmark": false,
+      "idWorkRoom": "00000000-0000-0000-0000-000000000000",
+      "idChannelOrigin": "00000000-0000-0000-0000-000000000000",
+      "messageMonitoring": 0,
+      "maskMessage": 0,
+      "questionType": 0,
+      "questionStatus": 0,
+      "questionCloseRequested": 0,
+      "externalChannels": 0
+    },
+    "idWorkRoom": "00000000-0000-0000-0000-000000000000",
+    "idChannelOrigin": "00000000-0000-0000-0000-000000000000",
+    "messageMonitoring": 0,
+    "maskMessage": 0,
+    "questionType": 0,
+    "questionStatus": 0,
+    "questionCloseRequested": 0,
+    "externalChannels": 0
+  },
+  "UserData": null,
+  "ChatReadData": null,
+  "ImportanceSettingData": null,
+  "NotificationSettingsData": null,
+  "MailData": null,
+  "CompanyData": null,
+  "VideoCallData": null,
+  "MeetingData": null,
+  "TaskData": null,
+  "ActivityData": null,
+  "Task": null,
+  "ScheduleActivity": null,
+  "ChatData": null,
+  "ChatTransferingData": null,
+  "ScheduledData": null,
+  "WorkRoomData": {
+    "id": "00000000-0000-0000-0000-000000000000"
+  },
+  "RecordData": null,
+  "ObjectContent": null,
+  "IDChatExtVars": null,
+  "Info": {
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "advice_mode": "1",
+    "request_id": "470724875"
+  },
+  "ExtraData": null,
+  "LinkData": null,
+  "TimeData": null,
+  "FeatureFlagData": null,
+  "RelatedRecordsData": null,
+  "ReminderData": null,
+  "AttentionCallNotificationLevel": 0,
+  "AttentionCallNotify": false,
+  "NotifyDate": null,
+  "DebugData": null,
+  "TreatLaterNotifData": null,
+  "editState": 0
+}
+```
 
 A resposta contém normalmente três alternativas independentes, além do
 estado e da URL de acompanhamento:
