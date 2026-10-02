@@ -355,18 +355,19 @@ class SolidSETOrchestrator:
     ) -> str:
         """Garantiza ES/PT/EN también para respuestas deterministas construidas por código."""
         metadata = message_metadata or {}
-        forced_language = str(
-            metadata.get("response_language")
-            or metadata.get("resolved_language")
-            or ""
-        ).strip().lower()
-        expected = (
-            forced_language
-            if re.fullmatch(r"[a-z]{2,3}", forced_language)
-            else self.agent._detect_user_language(
-                user_text, str(metadata.get("locale") or "")
-            )
+        # El idioma del mensaje actual prevalece incluso para respuestas de
+        # restricción. El idioma por defecto del agente no debe imponerse al
+        # usuario que escribe en otro idioma.
+        detected_user_language = self.agent._detect_user_language(
+            user_text, str(metadata.get("locale") or "")
         )
+        expected = detected_user_language
+        if not re.fullmatch(r"[a-z]{2,3}", expected):
+            expected = str(
+                metadata.get("response_language")
+                or metadata.get("resolved_language")
+                or ""
+            ).strip().lower()
         detected = self.agent._detect_user_language(response)
         if expected == detected or len(response) < 8:
             return response
