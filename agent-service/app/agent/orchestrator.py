@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.language import LanguageResolver
+from app.api.translate_api import translate_response
 from app.llm.text import response_text
 
 
@@ -369,38 +370,14 @@ class SolidSETOrchestrator:
         detected = self.agent._detect_user_language(response)
         if expected == detected or len(response) < 8:
             return response
-        language_name = getattr(self.agent, "_language_name", None)
-        target = (
-            language_name(expected)
-            if callable(language_name)
-            else {
-                "es": "español",
-                "pt": "português europeu",
-                "en": "English",
-            }.get(expected, expected)
-        )
         try:
             selected_llm, _, _ = self.agent.get_llm_for_metadata(message_metadata)
-            candidate = response
-            for attempt in range(2):
-                translated = selected_llm.invoke([
-                    SystemMessage(content=(
-                        f"MANDATORY OUTPUT LANGUAGE: {target}. Translate the supplied response "
-                        f"entirely to {target}. Do not answer the original question again. Preserve "
-                        "names, figures, dates, Markdown and technical identifiers exactly. Return "
-                        f"only the translated text in {target}; no preface or explanation."
-                    )),
-                    HumanMessage(content=candidate),
-                ])
-                text = response_text(translated)
-                candidate = str(text or "").strip() or candidate
-                if self.agent._detect_user_language(candidate) == expected:
-                    return candidate
-                print(
-                    "⚠️ LangGraph language normalization returned the wrong language; "
-                    f"expected={expected} attempt={attempt + 1}"
-                )
-            return candidate
+            return translate_response(
+                response,
+                target_language=expected,
+                language_detector=self.agent._detect_user_language,
+                fallback_llm=selected_llm,
+            )
         except Exception as exc:
             print(f"⚠️ LangGraph language normalization failed: {exc}")
             return response
