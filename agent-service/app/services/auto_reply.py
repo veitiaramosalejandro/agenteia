@@ -42,7 +42,6 @@ from app.connectors.solidset_sql import (
 from app.response_queue import AgentResponseQueue
 from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
-from app.services.agent_specialty import answer_agent_specialty_question
 from app.services.agent_restrictions import answer_restricted_topic, _language, _uncertain_response
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
@@ -1950,15 +1949,10 @@ async def _process_auto_replies_impl(
         from app.services.openai_direct import answer_direct
         try:
             response_text = await asyncio.to_thread(
-                answer_agent_specialty_question,
+                answer_restricted_topic,
                 incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
+                scope_context=message_metadata,
             )
-            if response_text is None:
-                response_text = await asyncio.to_thread(
-                    answer_restricted_topic,
-                    incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
-                    scope_context=message_metadata,
-                )
             if response_text is None:
                 # The dialogue core receives the same metadata. Record that the
                 # published prompt scope was already evaluated so it does not

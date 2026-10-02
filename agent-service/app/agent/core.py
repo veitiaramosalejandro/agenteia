@@ -2855,16 +2855,10 @@ class MachiningAgent:
         if not is_valid:
             return f"⚠️ {error_msg}"
 
-        from app.services.agent_specialty import answer_agent_specialty_question
         from app.services.agent_restrictions import answer_restricted_topic
 
         metadata = message_metadata or {}
         if not metadata.get("_agent_scope_prechecked"):
-            specialty_answer = answer_agent_specialty_question(
-                user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
-            )
-            if specialty_answer is not None:
-                return specialty_answer
             restricted_answer = answer_restricted_topic(
                 user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),
                 scope_context=metadata,
