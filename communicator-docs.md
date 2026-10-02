@@ -73,33 +73,256 @@ public void HandleChatMessage(FrameworkMessage message, ChatMessageKind kind)
  /// </summary>
 public async Task<SolidSETReactionCaptureResponse> CaptureSolidSETReactionAsync(ChatUpdateReactionRequest request)
 {
-    // Implementação do cliente HTTP
-}
+  try
+  {
+    if (request == null)
+    {
+        Logging.Log(LogLevel.WARN, "Solicitação de captura de reação SolidSET é nula");
+        return new SolidSETReactionCaptureResponse
+        {
+            Status = "error",
+            Message = "A solicitação não pode ser nula."
+        };
+    }
 
+    var json = JsonSerializer.Serialize(request, new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    });
+
+    Logging.Log(LogLevel.INFO, $"Enviando captura de reação SolidSET - IDChat: {request.IDChat}, Emoji: {request.IDEmoji}");
+
+    var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(DEFAULT_TIMEOUT_SECONDS));
+
+    var response = await _httpClient.PostAsync("/api/v1/agent/solidset/reactions/capture", content, cts.Token);
+
+    if (!response.IsSuccessStatusCode)
+    {
+      var errorBody = await response.Content.ReadAsStringAsync();
+      Logging.Log(LogLevel.WARN, $"Erro ao capturar reação SolidSET: {response.StatusCode} - {errorBody}");
+
+      return new SolidSETReactionCaptureResponse
+      {
+          Status = "error",
+          Message = $"Erro ao capturar a reação: {response.StatusCode}",
+          ErrorDetails = errorBody
+      };
+    }
+
+    var responseJson = await response.Content.ReadAsStringAsync();
+
+    try
+    {
+      return JsonSerializer.Deserialize<SolidSETReactionCaptureResponse>(responseJson, new JsonSerializerOptions
+      {
+          PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+      });
+    }
+    catch (JsonException jsonEx)
+    {
+      Logging.Log(LogLevel.WARN, "Erro ao desserializar a resposta de captura da reação SolidSET", jsonEx);
+      return new SolidSETReactionCaptureResponse
+      {
+          Status = "error",
+          Message = "A resposta do servidor não tem um formato válido.",
+          ErrorDetails = responseJson
+      };
+    }
+  }
+  catch (OperationCanceledException)
+  {
+    Logging.Log(LogLevel.WARN, $"Tempo limite excedido ao capturar a reação SolidSET (IDChat: {request?.IDChat})");
+    return new SolidSETReactionCaptureResponse
+    {
+        Status = "timeout",
+        Message = "A operação demorou muito. Por favor, tente novamente."
+    };
+  }
+  catch (HttpRequestException httpEx)
+  {
+    Logging.Log(LogLevel.WARN, $"Erro HTTP ao capturar reação SolidSET: {httpEx.StatusCode}", httpEx);
+    string errorMessage = httpEx.StatusCode switch
+    {
+        System.Net.HttpStatusCode.NotFound => "O serviço de reações SolidSET não está disponível.",
+        System.Net.HttpStatusCode.ServiceUnavailable => "O serviço de reações SolidSET está sobrecarregado.",
+        System.Net.HttpStatusCode.GatewayTimeout => "O serviço de reações SolidSET não respondeu a tempo.",
+        System.Net.HttpStatusCode.Unauthorized => "Não autorizado para capturar reações.",
+        System.Net.HttpStatusCode.Forbidden => "Você não tem permissão para capturar esta reação.",
+        _ => $"Erro de comunicação com o serviço: {httpEx.StatusCode}"
+    };
+    return new SolidSETReactionCaptureResponse
+    {
+        Status = "error",
+        Message = errorMessage
+    };
+  }
+  catch (Exception ex)
+  {
+    Logging.Log(LogLevel.WARN, "Erro inesperado ao capturar reação SolidSET", ex);
+    return new SolidSETReactionCaptureResponse
+    {
+      Status = "error",
+      Message = "Desculpe, ocorreu um erro ao processar sua solicitação de captura."
+    };
+  }
+}
+```
+
+```csharp
 /// <summary>
 /// Encola a FrameworkMessage no agente e, se a API o permitir, devolva-a.
 /// <c>requestId</c> / <c>statusUrl</c> para realizar pesquisas de progresso.
 /// </summary>
 public async Task<AgentFrameworkEnqueueResult> SendFrameworkMessageForQueueAsync(FrameworkMessage message)
 {
-    // Implementação do cliente HTTP
-}
+  var result = new AgentFrameworkEnqueueResult();
+  try
+  {
+    StampTalkWithAgentForFrameworkMessage(message);
 
+    var json = JsonSerializer.Serialize(message, new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    });
+
+    var content = new StringContent(json, Encoding.UTF8, "application/json");
+    var response = await _httpClient.PostAsync("/api/v1/agent/notification/framework-message", content);
+    var body = await response.Content.ReadAsStringAsync();
+    result.HttpStatusCode = (int)response.StatusCode;
+    result.RawBody = body;
+
+    if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.Accepted)
+    {
+        Logging.Log(LogLevel.WARN, $"Erro ao enviar FrameworkMessage ao agente: {response.StatusCode} - {body}");
+        result.Success = false;
+        result.Error = body;
+        return result;
+    }
+
+    result.Success = true;
+    TryParseEnqueuePayload(body, result);
+    if (string.IsNullOrWhiteSpace(result.RequestId))
+    {
+        var chatId = message?.Chat?.IDChat2 ?? 0;
+        if (chatId > 0)
+            result.RequestId = chatId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    if (string.IsNullOrWhiteSpace(result.ChatId) && !string.IsNullOrWhiteSpace(result.RequestId))
+        result.ChatId = result.RequestId;
+
+    Logging.Log(LogLevel.INFO,
+        $"FrameworkMessage encolado no agente success={result.Success} requestId={result.RequestId} status={result.Status}");
+    return result;
+  }
+  catch (Exception ex)
+  {
+    Logging.Log(LogLevel.WARN, "Erro ao enviar FrameworkMessage ao agente", ex);
+    result.Success = false;
+    result.Error = ex.Message;
+    return result;
+  }
+}
+```
+
+```csharp
 /// <summary>
 /// Consulta o progresso de um pedido enfileirado. Em `{idchat}` utiliza-se o identificador devolvido como `requestId` (habitualmente `Chat.IDChat2`).  parâmetro `lang` é opcional e controla o idioma das mensagens de estado.
 /// POST /api/v1/agent/notification/chat-question/suggest-response
 /// </summary>
 public async Task<ChatQuestionSuggestionResponse> SuggestChatQuestionResponseAsync(FrameworkMessage frameworkMessage, CancellationToken cancellationToken = default)
 {
-    // Implementação do cliente HTTP
-}
+  try
+  {
+    if (frameworkMessage == null)
+    {
+        return CreateSuggestionErrorResponse(
+            "unknown",
+            "unknown",
+            "A mensagem não pode ser nula.");
+    }
 
+    StampTalkWithAgentForFrameworkMessage(frameworkMessage);
+
+    var json = JsonSerializer.Serialize(frameworkMessage, new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    });
+
+    var content = new StringContent(json, Encoding.UTF8, "application/json");
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    cts.CancelAfter(TimeSpan.FromSeconds(DEFAULT_TIMEOUT_SECONDS));
+
+    var response = await _httpClient
+        .PostAsync("/api/v1/agent/notification/chat-question/suggest-response", content, cts.Token)
+        .ConfigureAwait(false);
+
+    var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+    if (!response.IsSuccessStatusCode)
+    {
+        Logging.Log(LogLevel.WARN, $"Erro em suggest-response: {response.StatusCode} - {body}");
+        return CreateSuggestionErrorResponse(
+            frameworkMessage.Chat?.IDChat2.ToString(
+                System.Globalization.CultureInfo.InvariantCulture) ?? "unknown",
+            frameworkMessage.Chat?.ChatQuestion?.IDChat2.ToString(
+                System.Globalization.CultureInfo.InvariantCulture) ?? "unknown",
+            response.StatusCode == System.Net.HttpStatusCode.NotFound
+                ? "O agente próprio deste recurso não está ativo."
+                : response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity
+                    ? "Pedido inválido para sugerir respostas."
+                    : "O serviço de IA não respondeu corretamente.");
+    }
+
+    try
+    {
+        return JsonSerializer.Deserialize<ChatQuestionSuggestionResponse>(body, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
+    }
+    catch (JsonException jsonEx)
+    {
+        Logging.Log(LogLevel.WARN, "Erro ao desserializar suggest-response", jsonEx);
+        return CreateSuggestionErrorResponse("unknown", "unknown",
+            "A resposta do assistente não tem um formato válido.");
+    }
+  }
+  catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+  {
+    throw;
+  }
+  catch (OperationCanceledException)
+  {
+    Logging.Log(LogLevel.WARN, "Timeout em suggest-response");
+    return CreateSuggestionErrorResponse("unknown", "unknown",
+        "A consulta está a demorar muito. Tente novamente.");
+  }
+  catch (Exception ex)
+  {
+    Logging.Log(LogLevel.WARN, "Erro inesperado em suggest-response", ex);
+    return CreateSuggestionErrorResponse("unknown", "unknown",
+        "Não foi possível obter sugestões da IA.");
+  }
+}
+```
+
+```csharp
 /// <summary>
 /// Estado da resposta automática do <c>IDChat2</c> à questão.
 /// </summary>
 public async Task<AgentResponseStatusDto> GetResponseStatusByChatIdAsync(string chatId, string language = "pt", CancellationToken cancellationToken = default)
 {
-    // Implementação do cliente HTTP
+  if (string.IsNullOrWhiteSpace(chatId))
+    return null;
+
+  var lang = NormalizeStatusLanguage(language);
+  var url = $"/api/v1/agent/responses/status?chatId={Uri.EscapeDataString(chatId.Trim())}&lang={lang}";
+  return await GetResponseStatusAsync(url, cancellationToken).ConfigureAwait(false);
 }
 ```
 
