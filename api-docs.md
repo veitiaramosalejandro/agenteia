@@ -1,108 +1,105 @@
-# API del agente SolidSET
+#API do Agente SolidSET
 
-> Entorno Docker de desarrollo: la API se ejecuta con Python 3.11 y el código del servicio mantiene compatibilidad sintáctica con esa versión.
+> Ambiente de desenvolvimento Docker: a API corre com o Python 3.11 e o código do serviço mantém compatibilidade sintáctica com esta versão.
 
-El diagnóstico de inicio y el campo `runtime.startup_connectivity` de `GET /api/v1/agent/health` obtienen las instalaciones activas directamente de PostgreSQL `SysSolidSETInstance`. Para cada fila verifican `BaseUrl` y `NotificationUrl` e informan `Code`, `SourceIP`, URL configurada y URL efectiva. Dentro de Docker, una URL configurada con `localhost` se prueba mediante `host.docker.internal`, sin modificar el valor persistido. Las variables históricas `SOLIDSET_RESTAPI_BASE_URL` y `NOTIF_API_BASE_URL` no determinan este diagnóstico multiinstancia.
+O diagnóstico de arranque e o campo `runtime.startup_connectivity` do `GET /api/v1/agent/health` obtêm instalações ativas diretamente do PostgreSQL `SysSolidSETInstance`. Para cada linha verificam `BaseUrl` e `NotificationUrl` e reportam `Code` , `SourceIP` , URL configurado e URL efectivo. Dentro do Docker, é testado um URL configurado com `localhost` utilizando `host.docker.internal` , sem modificar o valor persistido. As variáveis ​​​​históricas `SOLIDSET_RESTAPI_BASE_URL` e `NOTIF_API_BASE_URL` não determinam este diagnóstico multi-instância.
 
-Los endpoints de notificación resuelven la instancia mediante el encabezado
-`X-SolidSET-Instance`. Su valor es el host de destino configurado en
-`SysSolidSETInstance.SourceIP`, no el `Code`. Se admite host o host:puerto;
-la comparación ignora mayúsculas y un punto final. `localhost`, `127.0.0.1` y
-`::1` se consideran equivalentes para esta búsqueda. Si falta, no coincide o
-coincide con varias instancias activas, la solicitud se rechaza con HTTP 400.
-La IP entrante, `X-Forwarded-For` y el host HTTP no se usan para identificar la
-instancia. El proceso que envía el `FrameworkMessage` desde SolidSET debe
-añadir el encabezado; el cliente WPF no puede hacer que aparezca en esa
-petición si la envía otro servicio.
-El log `API_REQUEST` registra `solidset_instance_header=present|missing` para
-comprobar si llegó, sin imprimir su valor. El encabezado selecciona la
-instancia y no sustituye la autenticación del emisor.
-Los endpoints de notificación registran `INITIAL_REQUEST_IDENTITY` antes de
-resolver la instancia, con `X-SolidSET-Instance`, cabeceras de red permitidas,
-`Sender.session`, `Info.session_id`, identidad del remitente y chat. El registro
-incluye los nombres de las demás cabeceras, sin valores de cookies ni de
-autorización. Tras resolverla, `INITIAL_REQUEST_DESTINATION` muestra el `Code`,
-`SourceIP`, los orígenes de las URL de respuesta y el acceso Data API, sin
-credenciales ni rutas.
+Os endpoints de notificação resolvem a instância utilizando o cabeçalho
+ `X-SolidSET-Instance`. O seu valor é o host de destino configurado em
+ `SysSolidSETInstance.SourceIP`, e não o `Code`. Host ou host:port é suportado;
+a comparação ignora as maiúsculas e um ponto final.  `localhost`, `127.0.0.1` e
+ `::1` são considerados equivalentes para esta pesquisa. Se estiver em falta, não corresponder ou
+corresponder a várias instâncias ativas, o pedido será rejeitado com HTTP 400.
+O IP de entrada, o `X-Forwarded-For` e o host HTTP não são utilizados para identificar o
+instância. O processo que envia o `FrameworkMessage` a partir do SolidSET deve
+adicionar cabeçalho; o cliente WPF não pode fazer com que apareça nesse
+pedido se enviado por outro serviço.
+Log `API_REQUEST` regista `solidset_instance_header=present|missing` para
+verifique se chegou, sem imprimir o seu valor. O cabeçalho seleciona o
+instância e não substitui a autenticação do emissor.
+Os endpoints de notificação registam o `INITIAL_REQUEST_IDENTITY` antes
+resolver a instância, com `X-SolidSET-Instance` , cabeçalhos de rede permitidos,
+ `Sender.session` , `Info.session_id` , identidade do remetente e chat. O recorde
+inclui os nomes dos outros cabeçalhos, sem valores de cookies ou palavras-passe.
+autorização. Após a sua resolução, `INITIAL_REQUEST_DESTINATION` exibe `Code`,
+ `SourceIP`, as fontes dos URLs de resposta e o acesso à API de dados, sem
+credenciais ou rotas.
 
-Los saludos directos (`hola`, `hola como estás` y equivalentes) se contestan de
-forma inmediata, respetuosa y usando únicamente el `FullName` del remitente;
-no se muestran perfiles ni canales y no se espera al LLM. Cuando una persona
-habla con su propio agente, incluida una conversación de meeting, el envío usa
-el UUID interno de `SysResourceIA` como identidad visual del agente para que la
-respuesta aparezca como interlocutor distinto. El log informa las fases
-`encolada`, `iniciando`, `enrutamiento completado` y el resultado del envío.
-El envío a SolidSET tiene prioridad sobre el aprendizaje de la interacción: la
-sesión y Qdrant se actualizan después de publicar, tienen tiempos máximos y sus fallos no impiden publicar la
-respuesta. Antes del login se registra `base=<BaseUrl>` para mostrar qué URL de
-`SysSolidSETInstance` está siendo utilizada. Dentro de Docker, un SolidSET
-ejecutado en el host debe configurarse como
-`http://host.docker.internal:52130`, no como `http://localhost:52130`.
-El método de envío registra su entrada antes de validar el meeting. Si recibe
-una URL localhost dentro de Docker, prueba primero su traducción a
-`host.docker.internal` y evita esperar un timeout contra el propio contenedor.
-La traducción conserva el binding HTTP original: conecta por TCP a
-`host.docker.internal`, pero envía `Host: localhost:52130`. Esto permite usar
-`BaseUrl=http://localhost:52130` en `SysSolidSETInstance` cuando IIS rechaza
-otros nombres con `400 Bad Request - Invalid Hostname`.
-Los intentos de envío registran la lectura de `SysLogin`, cada llamada a
-`LoginJson` y la respuesta HTTP de `/Chat/SendMessageForm`, sin imprimir
-contraseñas. El perfil de desarrollo utiliza `qwen2.5:3b` con contexto 2048
-para reducir el consumo de memoria; producción conserva su modelo configurable.
-El login contextual envía el hash persistido con `PasswordEncrypted=true` y el
-nombre exacto `TimezoneId`. No envía `Resources[0]`: en el controlador C# esa
-colección es opcional y el recurso vigente se selecciona mediante
-`SysLogin.LastIDResource`. Los rechazos HTTP muestran hasta 500 caracteres del
-cuerpo para diagnosticar ModelState sin registrar credenciales.
+As saudações diretas (`hola`, `hola como estás` e equivalentes) são respondidas
+imediatamente, com respeito e utilizando apenas o `FullName` do remetente;
+nenhum perfil ou canal é mostrado e nenhuma espera pelo LLM. Quando uma pessoa
+fale com o seu próprio agente, incluindo uma conversa em reunião, utilizações de remessa
+o UUID interno do `SysResourceIA` como identidade visual do agente para que o
+resposta surge como um interlocutor diferente. O log reporta as fases
+ `encolada` , `iniciando` , `enrutamiento completado` e o resultado do envio.
+O envio para o SolidSET tem prioridade sobre a aprendizagem da interação:
+session e Qdrant são atualizados após a publicação, têm tempos máximos e as suas falhas não impedem a publicação do
+resposta. Antes do login, o `base=<BaseUrl>` é registado para mostrar qual o URL
+ `SysSolidSETInstance` está a ser utilizado. Dentro do Docker, um SolidSET
+executado no host deve ser configurado como
+ `http://host.docker.internal:52130`, diferente de `http://localhost:52130`.
+O método de envio regista a sua entrada antes de validar a reunião. Se receber
+um URL localhost no Docker, teste primeiro a sua tradução para
+ `host.docker.internal` e evita esperar por um tempo limite no próprio contentor.
+A tradução preserva a ligação HTTP original: liga-se via TCP ao
+ `host.docker.internal` , mas envia `Host: localhost:52130` . Isso permite que use
+ `BaseUrl=http://localhost:52130` em `SysSolidSETInstance` quando o IIS rejeita
+outros nomes com `400 Bad Request - Invalid Hostname`.
+As tentativas de envio registam a leitura do `SysLogin`, cada chamada para
+ `LoginJson` e a resposta HTTP de `/Chat/SendMessageForm`, não impressa
+senhas. O perfil de desenvolvimento utiliza `qwen2.5:3b` com contexto 2048
+para reduzir o consumo de memória; a produção mantém o seu modelo configurável.
+O login contextual envia o hash persistente com o `PasswordEncrypted=true` e o
+nome exato `TimezoneId`. Não envia `Resources[0]`: no driver C# que
+a coleção é opcional e o recurso atual é selecionado utilizando
+ `SysLogin.LastIDResource`. As rejeições HTTP apresentam até 500 caracteres do
+body para diagnosticar o ModelState sem registar credenciais.
 
-En Docker, Nginx publica la API mediante `http://android.isicom.pt/` y reenvía internamente hacia `http://agent-service:8000`. Por tanto, los endpoints conservan sus rutas; por ejemplo, salud está disponible en `http://android.isicom.pt/api/v1/agent/health` y Swagger en `http://android.isicom.pt/docs`. La ruta técnica `GET /nginx-health` comprueba únicamente el proxy.
+No Docker, o Nginx publica a API utilizando o `http://android.isicom.pt/` e encaminha internamente para o `http://agent-service:8000`. Portanto, os terminais mantêm as suas rotas; Por exemplo, o Health está disponível em `http://android.isicom.pt/api/v1/agent/health` e o Swagger em `http://android.isicom.pt/docs`. O caminho técnico `GET /nginx-health` verifica apenas o proxy.
+Para HTTPS, o `scripts/issue-letsencrypt.ps1 -Email <correo>` executa o Certbot via webroot, emite o certificado de `android.isicom.pt` e ativa o host virtual TLS na porta 443. O desafio `/.well-known/acme-challenge/` continua acessível por HTTP para renovações.  `scripts/renew-letsencrypt.ps1` renova os certificados expirados e recarrega o Nginx. O DNS público deve apontar para o servidor e o NAT/firewall deve suportar a entrada TCP 80 e 443.
 
-Para HTTPS, `scripts/issue-letsencrypt.ps1 -Email <correo>` ejecuta Certbot mediante webroot, emite el certificado de `android.isicom.pt` y activa el virtual host TLS en el puerto 443. El desafío `/.well-known/acme-challenge/` permanece accesible por HTTP para renovaciones. `scripts/renew-letsencrypt.ps1` renueva los certificados próximos a vencer y recarga Nginx. El DNS público debe apuntar al servidor y el NAT/firewall debe admitir entrada TCP 80 y 443.
+Caso o HTTP-01 não consiga atravessar o NAT/firewall, o `scripts/issue-letsencrypt-dns.ps1 -Email <correo>` permite a emissão via DNS-01 manual criando um TXT em `_acme-challenge.android.isicom.pt` . Esta variante não tem renovação autónoma: deve ser repetida antes de expirar ou substituída por um plugin/API do fornecedor de DNS.
 
-Si HTTP-01 no puede atravesar el NAT/firewall, `scripts/issue-letsencrypt-dns.ps1 -Email <correo>` permite emitir mediante DNS-01 manual creando un TXT en `_acme-challenge.android.isicom.pt`. Esta variante no tiene renovación desatendida: debe repetirse antes del vencimiento o sustituirse por un plugin/API del proveedor DNS.
+Como alternativa apenas interna, o `scripts/issue-internal-certificate.ps1` cria uma CA privada `ISICOM Internal Root CA`, emite um certificado com SAN `android.isicom.pt` e activa o HTTPS no Nginx. Os clientes devem instalar o `certbot/internal/isicom-internal-ca.crt` no seu armazenamento de autoridade raiz. A chave `isicom-internal-ca.key` é sensível, não deve ser distribuída e deve ser mantida fora do servidor após a emissão dos certificados necessários.
 
-Como alternativa exclusivamente interna, `scripts/issue-internal-certificate.ps1` crea una CA privada `ISICOM Internal Root CA`, emite un certificado con SAN `android.isicom.pt` y activa HTTPS en Nginx. Los clientes deben instalar `certbot/internal/isicom-internal-ca.crt` en su almacén de autoridades raíz. La clave `isicom-internal-ca.key` es sensible, no debe distribuirse y debe custodiarse fuera del servidor tras emitir los certificados necesarios.
+A resolução de identidade habitual (`Username`, `FullName`, `IDLogin`, `IDResource`) utiliza exclusivamente a réplica `SysLogin` PostgreSQL. Todas as leituras do SQL Server – sincronização, histórico, validação, aprendizagem e consultas operacionais – são realizadas utilizando a API SolidSET Data independente. O agente não abre ligações TCP com o SQL Server nem utiliza as suas variáveis ​​de ligação. No perfil de CPU de produção, o Ollama utiliza `OLLAMA_KV_CACHE_TYPE=f16` porque um cache V quantizado requer Atenção Flash.
 
-La resolución habitual de identidad (`Username`, `FullName`, `IDLogin`, `IDResource`) utiliza exclusivamente la réplica PostgreSQL `SysLogin`. Todas las lecturas de SQL Server —sincronización, histórico, validación, aprendizaje y consultas operativas— se realizan mediante la SolidSET Data API independiente. El agente no abre conexiones TCP a SQL Server ni utiliza sus variables de conexión. En el perfil CPU de producción, Ollama usa `OLLAMA_KV_CACHE_TYPE=f16` porque una caché V cuantizada requiere Flash Attention.
+Cada instância configura a sua gateway para o PostgreSQL `SysSolidSETDataAPI` . A URL,
+O tempo limite, o limite e a validação do TLS são guardados por instância; a chave API é encriptada e
+Nunca é devolvido. As credenciais do SQL Server existem apenas no ficheiro
+ambiente do projeto independente `solidset-data-api`, exposto junto ao
+servidor de base de dados.
 
-Cada instancia configura su gateway en PostgreSQL `SysSolidSETDataAPI`. La URL,
-timeout, límite y validación TLS se guardan por instancia; la API key se cifra y
-nunca se devuelve. Las credenciales SQL Server existen únicamente en el fichero
-de entorno del proyecto independiente `solidset-data-api`, desplegado junto al
-servidor de base de datos.
+A implementação do `docker-compose-prod.yml` utiliza o Ollama por CPU por predefinição e não requer o tempo de execução NVIDIA. Quando o `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` funciona corretamente, a aceleração é ativada adicionando a sobreposição `docker-compose-prod.gpu.yml`. Na produção, o Uvicorn funciona sem `--reload`.
 
-El despliegue `docker-compose-prod.yml` utiliza Ollama por CPU de forma predeterminada y no exige el runtime NVIDIA. Cuando `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` funcione correctamente, la aceleración se activa añadiendo el overlay `docker-compose-prod.gpu.yml`. En producción Uvicorn se ejecuta sin `--reload`.
+A implementação do `docker-compose-dev.yml` replica a topologia funcional do
+produção, mas publica exclusivamente HTTP nas portas 80 e 8000, não
+Não inclui Certbot nem certificados de montagem. Preservar a montagem do código-fonte e
+Uvicorn `--reload` para desenvolvimento. Também ansioso pela saúde do PostgreSQL,
+Redis, Ollama e Qdrant, utilizam o perfil de CPU seguro e resolvem o SolidSET de
+ `SysSolidSETInstance` e as identidades de `SysLogin` no PostgreSQL.
 
-El despliegue `docker-compose-dev.yml` replica la topología funcional de
-producción, pero publica exclusivamente HTTP en los puertos 80 y 8000, no
-incluye Certbot ni monta certificados. Conserva el montaje del código fuente y
-Uvicorn `--reload` para desarrollo. También espera la salud de PostgreSQL,
-Redis, Ollama y Qdrant, utiliza el perfil CPU seguro y resuelve SolidSET desde
-`SysSolidSETInstance` y las identidades desde `SysLogin` en PostgreSQL.
+Última atualização: 22 de agosto de 2026.
 
-Última actualización: 22 de agosto de 2026.
+> Este documento deve ser atualizado na mesma alteração que modifica uma rota, método HTTP, contrato de entrada, resposta ou comportamento observável da API.
 
-> Este documento debe actualizarse en el mismo cambio que modifique una ruta, método HTTP, contrato de entrada, respuesta o comportamiento observable de la API.
-
-Actualmente la API expone 25 endpoints funcionales. Puedes consultar siempre la documentación interactiva en:
+Atualmente a API expõe 25 endpoints funcionais. Poderá sempre consultar a documentação interactiva em:
 
 ```text
 http://localhost:8000/docs
 ```
+## Registo IP por solicitação
 
-## Registro de IP por petición
-
-Todas las peticiones HTTP, independientemente del endpoint, generan una línea en la consola del servicio con la IP TCP directa, la primera IP declarada por el proxy, método, ruta, estado y duración. Ejemplo:
+Todos os pedidos HTTP, independentemente do endpoint, geram uma linha na consola de serviço com o IP TCP direto, o primeiro IP declarado pelo proxy, método, rota, estado e duração. Exemplo:
 
 ```text
 🌐 API_REQUEST ip=127.0.0.1 forwarded_ip=- method=POST endpoint=/api/v1/dialogue status=200 duration_ms=84.2
 ```
+`ip` é a ligação observada pelo FastAPI e não pode ser substituída por cabeçalhos.  `forwarded_ip` apresenta o primeiro valor de `X-Forwarded-For` ou `X-Real-IP` em separado; O IP real do cliente só deve ser considerado quando o proxy que configura estes cabeçalhos for fiável. Nenhum corpo ou parâmetro de consulta é registado.
 
-`ip` es la conexión observada por FastAPI y no puede ser sustituida mediante cabeceras. `forwarded_ip` muestra separadamente el primer valor de `X-Forwarded-For` o `X-Real-IP`; solo debe considerarse la IP real del cliente cuando el proxy que establece esas cabeceras sea de confianza. No se registran cuerpos ni parámetros de consulta.
+## Fluxo principal recomendado
 
-## Flujo principal recomendado
-
-El funcionamiento habitual sería:
+A operação normal seria:
 
 ```text
 1. Sincronizar recursos desde SQL Server
@@ -116,31 +113,30 @@ El funcionamiento habitual sería:
 9. Ejecutar el diálogo multiagente
 10. Cada agente responde con memoria y conocimiento independientes
 ```
+# Configuração multiagente
 
-# Configuración multiagente
+Em produção, docker-compose-prod.yml carrega .env.production. Este ficheiro
+contém apenas o modelo substituto e o segredo mestre de encriptação; o
+as alocações dinâmicas são lidas no PostgreSQL utilizando
+SysLLMProviderConfiguration e SysAgentIAModel. Deve ser mantido fora
+controlo de versão e copiado ao lado do Compose durante a implementação.
 
-En producción, docker-compose-prod.yml carga .env.production. Este archivo
-contiene únicamente el fallback de modelo y el secreto maestro de cifrado; las
-asignaciones dinámicas se leen de PostgreSQL mediante
-SysLLMProviderConfiguration y SysAgentIAModel. Debe conservarse fuera del
-control de versiones y copiarse junto al Compose durante el despliegue.
+## Fornecedores LLM intercambiáveis
 
-## Proveedores LLM intercambiables
+A lógica SolidSET depende de uma interface de modelo de chat comum
+( `invoke` e `bind_tools` ) e não instancia directamente Ollama. Registo em
+ `app/llm/providers.py` inclui os identificadores:
 
-La lógica de SolidSET depende de una interfaz común de modelo de chat
-(`invoke` y `bind_tools`) y no instancia Ollama directamente. El registro en
-`app/llm/providers.py` incluye los identificadores:
+- `ollama` (implementado e ativo por defeito).
+-`openai` .
+-`azure_openai` .
+-`anthropic` .
+-`gemini` .
+- `openai_compatible` ou `local_openai` para servidores compatíveis com API
+  da OpenAI.
 
-- `ollama` (implementado y activo por defecto).
-- `openai`.
-- `azure_openai`.
-- `anthropic`.
-- `gemini`.
-- `openai_compatible` o `local_openai` para servidores compatibles con la API
-  de OpenAI.
-
-Las variables siguientes son únicamente el respaldo de arranque cuando todavía
-no existe una configuración activa en PostgreSQL:
+As seguintes variáveis são apenas o backup de arranque quando ainda
+Não existe configuração ativa no PostgreSQL:
 
 ```env
 LLM_PROVIDER=ollama
@@ -151,51 +147,46 @@ LLM_TEMPERATURE=0.5
 LLM_MAX_OUTPUT_TOKENS=1024
 LLM_REQUEST_TIMEOUT_SECONDS=900
 ```
-
-Para Azure también se utilizan:
+Para o Azure são também utilizados:
 
 ```env
 AZURE_OPENAI_ENDPOINT=https://<recurso>.openai.azure.com
 AZURE_OPENAI_API_VERSION=2024-10-21
 AZURE_OPENAI_DEPLOYMENT=<deployment>
 ```
+Os fornecedores remotos carregam lentamente as suas integrações. Só tem que
+o pacote correspondente será instalado quando ativado: `langchain-openai` ,
+ `langchain-anthropic` ou `langchain-google-genai`. Se estiver em falta, inicialize os relatórios
+o pacote exato necessário. As chaves nunca são incluídas na integridade ou nos registos.
 
-Los proveedores remotos cargan sus integraciones de forma diferida. Solo debe
-instalarse el paquete correspondiente cuando se active: `langchain-openai`,
-`langchain-anthropic` o `langchain-google-genai`. Si falta, el arranque informa
-el paquete exacto necesario. Las claves nunca se incluyen en salud ni logs.
+### Configuração persistente no PostgreSQL
 
-### Configuración persistida en PostgreSQL
+A tabela `SysLLMProviderConfiguration` é a fonte canónica do modelo de chat.
+Suporta múltiplas configurações, um padrão global e uma configuração
+ativo específico da `SysResourceIA.IDResource`. Em cada conversa o router
+Resolve primeiro a configuração do agente solicitado e, caso não exista, utiliza o
+globais; só depois recorre a `.env` . As alterações serão aplicadas na próxima
+pedido sem reiniciar o contentor.
 
-La tabla `SysLLMProviderConfiguration` es la fuente canónica del modelo de chat.
-Admite varias configuraciones, una predeterminada global y una configuración
-activa específica por `SysResourceIA.IDResource`. En cada conversación el router
-resuelve primero la configuración del agente solicitado y, si no existe, usa la
-global; solo entonces recurre al `.env`. Los cambios se aplican en la próxima
-petición sin reiniciar el contenedor.
-
-Las API keys se guardan cifradas con Fernet y nunca aparecen en respuestas API.
-La clave maestra se conserva como secreto de despliegue:
+As chaves API são armazenadas encriptadas com Fernet e nunca aparecem nas respostas da API.
+A chave mestra é mantida como segredo de implantação:
 
 ```env
 LLM_CREDENTIAL_ENCRYPTION_KEY=<clave-fernet>
 ```
-
-Se genera una vez con:
+É gerado uma vez com:
 
 ```powershell
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+Não deve ser alterado após guardar as credenciais.
 
-No debe cambiarse después de guardar credenciales.
-
-#### Registrar o actualizar un proveedor
+#### Registe ou atualize um fornecedor
 
 ```http
 PUT /api/v1/agent/llm/providers/{code}
 ```
-
-Ejemplo global con Ollama:
+Exemplo global com Ollama:
 
 ```json
 {
@@ -212,32 +203,30 @@ Ejemplo global con Ollama:
   "active": true
 }
 ```
-
-Para asignar otro proveedor a un agente concreto se informa `IDResource`; en
-ese caso `IsDefault` se normaliza a `false`. Un `PUT` con `APIKey=null` conserva
-la credencial existente. Solo puede existir una configuración global
-predeterminada activa y una configuración activa por recurso.
+Para atribuir outro fornecedor a um agente específico, digite `IDResource`; em
+neste caso `IsDefault` está normalizado para `false` . Um `PUT` com `APIKey=null` retém
+a credencial existente. Apenas uma configuração global pode existir
+padrão ativo e uma configuração ativa por recurso.
 
 ```http
 GET /api/v1/agent/llm/providers
 DELETE /api/v1/agent/llm/providers/{code}
 ```
-
-El listado devuelve `HasAPIKey`, pero nunca `APIKey`. `DELETE` realiza una baja
+A listagem retorna `HasAPIKey` , mas nunca `APIKey` .  `DELETE` faz um levantamento
 lógica (`active=false`).
 
-Ollama continúa siendo necesario para los embeddings de Qdrant aunque el
-modelo de conversación sea remoto. `GET /api/v1/agent/health` expone proveedor,
-modelo, URL y `source=postgresql|environment_fallback` separadamente de
-`ollama_embeddings`.
+Ollama continua a ser necessário para as incorporações Qdrant embora o
+o modelo de conversação é remoto.  `GET /api/v1/agent/health` expõe fornecedor,
+modelo, URL e `source=postgresql|environment_fallback` separadamente do
+ `ollama_embeddings`.
 
-### Modelo asignado a cada agente: SysAgentIAModel
+### Modelo atribuído a cada agente: SysAgentIAModel
 
-La selección autoritativa de SolidSET continúa siendo `Chat.destiny[].talkWithAgent=true`.
-El `IDResource` seleccionado puede tener varias filas activas en `SysAgentIAModel`.
-El router clasifica cada mensaje y elige una fila cuya colección `Capabilities`
-contenga la capacidad requerida. Si ninguna coincide, usa `IsDefault=true` y,
-finalmente, el proveedor global predeterminado.
+A seleção oficial do SolidSET mantém-se `Chat.destiny[].talkWithAgent=true`.
+O `IDResource` selecionado pode ter várias linhas ativas em `SysAgentIAModel` .
+O router classifica cada mensagem e escolhe uma linha cuja coleção `Capabilities`
+contém a capacidade necessária. Se não corresponder, utilize `IsDefault=true` e,
+finalmente, o fornecedor global padrão.
 
 ```text
 talkWithAgent
@@ -249,8 +238,7 @@ talkWithAgent
       -> modelo de chat
       -> respuesta con identidad del recurso agente
 ```
-
-Asignar o consultar el modelo de un agente:
+Atribua ou consulte um modelo de agente:
 
 ```http
 PUT /api/v1/agent/solidset/agents/{IDResource}/model
@@ -272,22 +260,21 @@ GET /api/v1/agent/solidset/agents/{IDResource}/model
   "active": true
 }
 ```
+Capacidades iniciais:
 
-Capacidades iniciales:
+- `general` e `external_web` → `qwen2.5:3b` .
+- `coding`, `sql` e `technical` → `qwen2.5-coder:3b`.
+- `reasoning`, `planning` e `analysis` → `llama3.2:3b`.
 
-- `general` y `external_web` → `qwen2.5:3b`.
-- `coding`, `sql` y `technical` → `qwen2.5-coder:3b`.
-- `reasoning`, `planning` y `analysis` → `llama3.2:3b`.
+A identidade, sessão, memória, conhecimento privado e login do SolidSET permanecem
+associado ao mesmo `IDResource`; apenas o modelo que gera essa curva se altera.
 
-La identidad, sesión, memoria, conocimiento privado y login SolidSET permanecen
-asociados al mismo `IDResource`; solo cambia el modelo que genera ese turno.
+### Inverso do destinatário ao responder
 
-### Inversión del destinatario al responder
-
-Cuando `Chat.destiny` contiene el recurso humano `type=1` y el agente solicitado
-`type=2, talkWithAgent=true`, el primero selecciona el destinatario de respuesta
-y el segundo selecciona el agente emisor. El formulario enviado a SolidSET queda
-lógicamente invertido como agente → humano:
+Quando `Chat.destiny` contém o recurso humano `type=1` e o agente solicitado
+ `type=2, talkWithAgent=true` , o primeiro seleciona o destinatário da resposta
+e a segunda seleciona o agente emissor. O formulário enviado para o SolidSET é
+logicamente invertido como agente → humano:
 
 ```text
 Destiny.WorkRoom = Chat.destiny[].idChannel
@@ -296,19 +283,18 @@ Destiny.Dests[0].Resource = Chat.destiny[type=1].idResource
 Destiny.Dests[0].Kind = 2
 Destiny.Dests[0].Type = 2
 ```
+A API utiliza as chaves simples `Destiny.Dests[0].*` porque `/Chat/SendMessageForm`
+receber formulário; O model binder do SolidSET converte-o no objeto aninhado
+ `Destiny.Dests`.  `talkWithAgent` não é encaminhado na resposta para evitar
+a resposta gerada reativa o agente.
 
-La API usa las claves planas `Destiny.Dests[0].*` porque `/Chat/SendMessageForm`
-recibe formulario; el model binder de SolidSET lo convierte al objeto anidado
-`Destiny.Dests`. `talkWithAgent` no se reenvía en la respuesta para evitar que
-la respuesta generada vuelva a activar al agente.
+As consultas de contagem direta no SQL Server só são ativadas quando o
+questão contém explicitamente `recurso(s)` , `usuario(s)` ou os seus equivalentes
+Português/Inglês. Um quantificador isolado, por exemplo “quantos Campeões”, não
+ativa o SQL e continua através do fornecedor de conhecimento externo correspondente.
 
-Las consultas directas de conteo en SQL Server solo se habilitan cuando la
-pregunta contiene explícitamente `recurso(s)`, `usuario(s)` o sus equivalentes
-portugués/inglés. Un cuantificador aislado, por ejemplo «cuántas Champions», no
-activa SQL y continúa por el proveedor de conocimiento externo correspondiente.
-
-Además se envía el bloque `Chat` que utiliza el cliente SolidSET para pintar
-`From` y `To`. En una conversación con el agente propio queda:
+Além disso, é enviado o bloco `Chat` que o cliente SolidSET utiliza para pintar.
+ `From` e `To`. Numa conversa com o próprio agente é:
 
 ```text
 Chat.IDSenderResource = SysResourceIA.IDAgentResource
@@ -320,64 +306,62 @@ Chat.Kind = 60
 Chat.Destiny[0] = agente, Type=1, TalkWithAgent=true
 Chat.Destiny[1] = recurso humano, Type=2
 ```
+O envelope de resposta indica ainda `Sender.Resource=IDAgentResource`,
+ `Sender.Login=login del propietario` quando existe e mantém
+ `Sender.Session` / `Sender.WorkRoom` em zero GUID. O canal de entrega é indicado
+em `Destiny.WorkRoom`; O seu único destino é o recurso humano com `Kind=2`.
 
-El sobre de respuesta declara además `Sender.Resource=IDAgentResource`,
-`Sender.Login=login del propietario` cuando existe y mantiene
-`Sender.Session`/`Sender.WorkRoom` en GUID cero. El canal de entrega se indica
-en `Destiny.WorkRoom`; su único destino es el recurso humano con `Kind=2`.
+Assim a UI recebe `From: agente [IA] To: humano` , em vez de reutilizar o
+endereço da mensagem original `From: humano To: agente [IA]`.
 
-Así la UI recibe `From: agente [IA] To: humano`, en lugar de reutilizar la
-dirección del mensaje original `From: humano To: agente [IA]`.
+ O `SysResourceIA.IDResource` identifica o proprietário dos recursos humanos e é utilizado
+para selecionar o agente, resolva o seu login, memória e conhecimento.
+ O `SysResourceIA.IDAgentResource` identifica o recurso de software que representa
+para o remetente técnico do agente no SolidSET e provém de
+ `dbo.SysResource2Agent.IDAgentResource`; é utilizado em `IDAgentIA` e como identidade
+técnica. Também identifica sempre o participante De por
+ `Chat.Destiny[0].IDResource`, mesmo quando o proprietário está a falar com o seu
+própria IA.  `Chat.Destiny[1]` contém exclusivamente o recurso humano
+destinatário e não possui `TalkWithAgent`.  `Chat.IDSenderResource` contém o
+mesmo `IDAgentResource` verificado que identifica o De. `Chat.IDSender`
+contém exclusivamente o login do proprietário quando disponível;
+Nunca contém um GUID de recurso e é ignorado se o agente não tiver um login.
+nunca usado
+o UUID interno `SysResourceIA.ID` como
+Participante SolidSET. Se um agente ativo ainda não tiver
+ `IDAgentResource` , a resposta é omitida para não a publicar com identidade
+técnica incorreta.
 
-`SysResourceIA.IDResource` identifica al recurso humano propietario y se usa
-para seleccionar el agente, resolver su login, memoria y conocimiento.
-`SysResourceIA.IDAgentResource` identifica al recurso software que representa
-al remitente técnico del agente en SolidSET y procede de
-`dbo.SysResource2Agent.IDAgentResource`; se usa en `IDAgentIA` y como identidad
-técnica. También identifica siempre al participante From mediante
-`Chat.Destiny[0].IDResource`, incluso cuando el propietario conversa con su
-propia IA. `Chat.Destiny[1]` contiene exclusivamente el recurso humano
-destinatario y no lleva `TalkWithAgent`. `Chat.IDSenderResource` contiene el
-mismo `IDAgentResource` verificado que identifica al From. `Chat.IDSender`
-contiene exclusivamente el login del propietario cuando está disponible;
-nunca contiene un GUID de recurso y se omite si el agente no tiene login.
-Nunca se utiliza
-el UUID interno `SysResourceIA.ID` como
-participante de SolidSET. Si un agente activo todavía no tiene
-`IDAgentResource`, la respuesta se omite para no publicarla con una identidad
-técnica incorrecta.
+ O `TrainingMode` suporta `rag_reinforcement`, `rag_only` e `disabled`. A melhoria
+atual não modifica os pesos do modelo: utiliza conhecimento vetorial isolado,
+mensagens do proprietário do recurso, conhecimentos gerais permitidos, memória de
+conversa e recompensas derivadas das reações. Esta estratégia pode funcionar
+continuamente sem parar Ollama. Um futuro ajuste fino de pesos deve ser executado
+como um processo separado, versione o modelo resultante e registe-o como um
+novas definições antes de ativá-lo.
 
-`TrainingMode` admite `rag_reinforcement`, `rag_only` y `disabled`. La mejora
-actual no modifica los pesos del modelo: utiliza conocimiento vectorial aislado,
-mensajes del recurso propietario, conocimiento general permitido, memoria de
-conversación y recompensas derivadas de reacciones. Esta estrategia puede operar
-continuamente sin detener Ollama. Un futuro fine-tuning de pesos debe ejecutarse
-como proceso separado, versionar el modelo resultante y registrarlo como una
-nueva configuración antes de activarlo.
+ `LocalExecution=true` é válido apenas para `ollama`, `local_openai` ou um endpoint
+ `openai_compatible` implementado em infraestrutura própria. Os modelos oficiais
+da OpenAI, Azure OpenAI, Anthropic e Gemini são remotas; guarde as suas configurações
+O PostgreSQL não converte estes modelos proprietários em modelos locais.
 
-`LocalExecution=true` solo es válido para `ollama`, `local_openai` o un endpoint
-`openai_compatible` desplegado en infraestructura propia. Los modelos oficiales
-de OpenAI, Azure OpenAI, Anthropic y Gemini son remotos; guardar su configuración
-en PostgreSQL no convierte esos modelos propietarios en modelos locales.
+Para adicionar outro motor basta implementar o `ChatProvider.create_model()` e
+registe-o utilizando o `ProviderRegistry.register()`. O router, LangGraph,
+As ferramentas, a memória e os endpoints do SolidSET permanecem inalterados.
 
-Para agregar otro motor basta implementar `ChatProvider.create_model()` y
-registrarlo mediante `ProviderRegistry.register()`. El router, LangGraph,
-herramientas, memoria y endpoints SolidSET permanecen sin cambios.
+A seleção local atual foi calculada com o `llmfit` e está documentada em
+ `docs/llmfit-model-selection.md`: `qwen2.5:3b` para coordenação/chat,
+ `qwen2.5-coder:3b` para código e SQL, `Phi-4-mini-reasoning` como raciocinador
+sequencial opcional e `nomic-embed-text` para manter a coleção atual.
+ O `Qwen3-Embedding-0.6B` está reservado para migração com reindexação.
 
-La selección local vigente fue calculada con `llmfit` y está documentada en
-`docs/llmfit-model-selection.md`: `qwen2.5:3b` para coordinación/chat,
-`qwen2.5-coder:3b` para código y SQL, `Phi-4-mini-reasoning` como razonador
-opcional secuencial y `nomic-embed-text` para conservar la colección actual.
-`Qwen3-Embedding-0.6B` queda reservado para una migración con reindexado.
-
-## 0. Registrar una instancia SolidSET
+## 0. Registe uma instância SolidSET
 
 ```http
 POST /api/v1/agent/solidset/instances
 ```
-
-Registra o actualiza por `Code` las URLs y la SolidSET Data API de una
-instalación. El agente no recibe credenciales SQL Server:
+Registe ou atualize pela `Code` os URLs e a API SolidSET Data de um
+instalação. O agente não recebe as credenciais do SQL Server:
 
 ```json
 {
@@ -400,62 +384,60 @@ instalación. El agente no recibe credenciales SQL Server:
   "active": true
 }
 ```
+A configuração geral é guardada em `SysSolidSETInstance` e o gateway em
+ `SysSolidSETDataAPI`. A chave API é encriptada com Fernet antes de ser persistida e nunca
+é devolvido: A resposta contém apenas `APIKeyConfigured=true` . Para atualizar
+uma instância sem a alterar `DataAPI.APIKey` é ignorada.
 
-La configuración general se guarda en `SysSolidSETInstance` y el gateway en
-`SysSolidSETDataAPI`. La API key se cifra con Fernet antes de persistirse y nunca
-se devuelve: la respuesta solo contiene `APIKeyConfigured=true`. Para actualizar
-una instancia sin cambiarla se omite `DataAPI.APIKey`.
+O campo `Database` já não faz parte do contrato deste endpoint. Se
+envia, o FastAPI responde `422` porque as credenciais e parâmetros do SQL Server
+Pertencem exclusivamente à implantação independente `solidset-data-api/.env`.
+A tabela legada do PostgreSQL `SysSolidSETDatabase` foi preservada temporariamente
+para uma migração segura, mas este endpoint já não o lê nem atualiza.
+Se `LLM_CREDENTIAL_ENCRYPTION_KEY` não for fornecido, a API gera uma chave
+Fernet apenas uma vez em `/app/data/credential.key`. O diretório `data` já está
+persistentemente montado em desenvolvimento, API, produtor e trabalhador. Também é
+pode fornecer a chave como segredo de implantação; Não é a chave API ou uma
+Credencial SQL Server. O ficheiro deve ser incluído nas cópias de segurança: sim
+for perdido, as credenciais guardadas não poderão ser recuperadas.
+Se a variável ou ficheiro contiver uma chave que não seja um Fernet válido, o
+variável é ignorada e o ficheiro é mantido como
+ `credential.key.invalid-<timestamp>` antes de gerar uma chave correta.
 
-El campo `Database` ya no forma parte del contrato de este endpoint. Si se
-envía, FastAPI responde `422` porque las credenciales y parámetros de SQL Server
-pertenecen exclusivamente al despliegue independiente `solidset-data-api/.env`.
-La tabla PostgreSQL heredada `SysSolidSETDatabase` se conserva temporalmente
-para una migración segura, pero este endpoint ya no la lee ni la actualiza.
-Si no se proporciona `LLM_CREDENTIAL_ENCRYPTION_KEY`, la API genera una clave
-Fernet una sola vez en `/app/data/credential.key`. El directorio `data` ya está
-montado de forma persistente en desarrollo, API, producer y worker. También se
-puede proporcionar la clave como secreto de despliegue; no es la API key ni una
-credencial SQL Server. El fichero debe incluirse en las copias de seguridad: si
-se pierde, las credenciales guardadas no se pueden recuperar.
-Si la variable o el fichero contienen una clave que no es Fernet válida, la
-variable se ignora y el fichero se conserva como
-`credential.key.invalid-<timestamp>` antes de generar una clave correcta.
+ O `DataAPI.BaseUrl` deve ser acessível a partir dos contentores do agente. Se ele
+o gateway de teste está na mesma composição em que é utilizado
+ `http://solidset-data-api:8080`; se estiver no servidor SolidSET é utilizado
+DNS ou IP HTTPS. Para facilitar o desenvolvimento, foi criado um URL registado em
+ `localhost` , `127.0.0.1` ou `::1` traduz em tempo de execução para
+ `host.docker.internal` quando o agente está dentro do Docker. Fora do Docker
+o URL é preservado inalterado.
 
-`DataAPI.BaseUrl` debe ser alcanzable desde los contenedores del agente. Si el
-gateway de prueba está en el mismo compose se usa
-`http://solidset-data-api:8080`; si está en el servidor SolidSET se utiliza su
-DNS o IP HTTPS. Para facilitar el desarrollo, una URL registrada con
-`localhost`, `127.0.0.1` o `::1` se traduce en tiempo de ejecución a
-`host.docker.internal` cuando el agente está dentro de Docker. Fuera de Docker
-la URL se conserva sin cambios.
+Se o SQL Server estiver noutro Compose, a API Data também pode ser iniciada com
+ `solidset-data-api/docker-compose.sql-container.yml`. A sobreposição incorpora o
+rede externa configurada para `SQL_SERVER_DOCKER_NETWORK` e permite utilizar o nome
+do contentor SQL como `SQL_SERVER_HOST` , sem depender de uma porta host.
 
-Si SQL Server está en otro Compose, la Data API puede iniciarse además con
-`solidset-data-api/docker-compose.sql-container.yml`. El overlay incorpora la
-red externa configurada en `SQL_SERVER_DOCKER_NETWORK` y permite usar el nombre
-del contenedor SQL como `SQL_SERVER_HOST`, sin depender de un puerto del host.
+Antes de inserir, a API corresponde a `Code` ; Se encontrar um,
+atualiza essa linha e preserva o seu `ID` .  O `BaseUrl` é utilizado para login e
+respostas;  `NotificationUrl`, para notificações.  `SourceIP` é um endereço
+de destino. O registo ainda usa `Code` como identificador estável; o
+Os pedidos recebidos utilizam o host explícito de `X-SolidSET-Instance` para pesquisar
+uma única linha activa com aquele `SourceIP` . No arranque, o serviço remove o
+índice exclusivo herdado de `SourceIP` ; se várias linhas ativas partilharem o mesmo
+destino, o pedido é rejeitado por ambiguidade.
 
-Antes de insertar, la API busca coincidencias por `Code`; si encuentra una,
-actualiza esa fila y conserva su `ID`. `BaseUrl` se utiliza para login y
-respuestas; `NotificationUrl`, para notificaciones. `SourceIP` es una dirección
-de destino. El registro sigue usando `Code` como identificador estable; las
-peticiones entrantes usan el host explícito de `X-SolidSET-Instance` para buscar
-una única fila activa con ese `SourceIP`. Al arrancar, el servicio elimina el
-índice único heredado de `SourceIP`; si varias filas activas comparten el mismo
-destino, la petición se rechaza por ambigüedad.
-
-Después del registro se verifica la conexión mediante:
+Após o registo, a ligação é verificada utilizando:
 
 ```http
 POST /api/v1/agent/solidset/instances/solidset-lisboa/test-connection
 ```
+O teste atravessa a API Data e devolve o catálogo real, uma versão
+abreviatura do servidor, do adaptador e se existir `dbo.SysResource2Agent` ; nunca
+inclui nome de utilizador, palavra-passe, chave API encriptada ou string completa. Os vestígios de
+servidor apenas mostra `instance` , `DataAPI.BaseUrl` , o tipo de erro e
+um caso técnico abreviado.
 
-La prueba atraviesa la Data API y devuelve el catálogo real, una versión
-abreviada del servidor, el adaptador y si existe `dbo.SysResource2Agent`; nunca
-incluye usuario, contraseña, API key cifrada ni cadena completa. Las trazas del
-servidor muestran únicamente `instance`, `DataAPI.BaseUrl`, el tipo de error y
-una causa técnica abreviada.
-
-El proyecto independiente está en `solidset-data-api/` y expone:
+O projeto independente está na `solidset-data-api/` e afirma:
 
 ```http
 GET  /health
@@ -464,45 +446,43 @@ GET  /api/v1/datasets/{dataset}
 GET  /api/v1/agents/{humanResourceId}
 POST /api/v1/query/read
 ```
+Os terminais protegidos requerem `X-SolidSET-Data-Key` .  O `query/read` suporta
+apenas `SELECT` ou CTE parametrizado, rejeita escrita, procedimentos,
+comentários e múltiplas instruções e limita o número de linhas. A conta
+O SQL configurado no gateway também deve ter apenas permissões
+lendo. Esta primeira versão preserva as consultas existentes enquanto o seu
+execução e as credenciais são deixadas fora do agente.
 
-Los endpoints protegidos requieren `X-SolidSET-Data-Key`. `query/read` admite
-solo `SELECT` o CTE parametrizadas, rechaza escritura, procedimientos,
-comentarios y múltiples instrucciones, y limita el número de filas. La cuenta
-SQL configurada en el gateway también debe tener permisos exclusivamente de
-lectura. Esta primera versión conserva las consultas existentes mientras su
-ejecución y las credenciales quedan fuera del agente.
+O adaptador de compatibilidade remove os comentários SQL herdados antes
+enviar uma consulta de leitura para o gateway. Os valores temporários devolvidos por
+JSON são normalizados a partir da ISO 8601 antes de se construir o contexto do agente.
 
-El adaptador de compatibilidad elimina comentarios SQL heredados antes de
-enviar una consulta de lectura al gateway. Los valores temporales devueltos por
-JSON se normalizan desde ISO 8601 antes de construir el contexto del agente.
+Os conjuntos de dados `resources` , `logins` , `workrooms` e `workroom-resources`, em conjunto
+com a validação `agents/{humanResourceId}`, mantêm as suas consultas dentro do
+projeto independente. Consultas históricas e de aprendizagem cujo SQL é
+adapta-se dinamicamente ao esquema utilize `query/read` , mas também execute
+exclusivamente dentro do gateway.
 
-Los datasets `resources`, `logins`, `workrooms` y `workroom-resources`, junto
-con la validación `agents/{humanResourceId}`, mantienen sus consultas dentro del
-proyecto independiente. Las consultas históricas y de aprendizaje cuyo SQL se
-adapta dinámicamente al esquema utilizan `query/read`, pero también se ejecutan
-exclusivamente dentro del gateway.
+ O `GET /api/v1/datasets/{dataset}` suporta `offset` e `limit` e também retorna
+ `hasMore` e `nextOffset`. O conector do agente percorre automaticamente todos os
+páginas, pelo que uma instalação com mais linhas que o `MaxRows` não é
+parcialmente sincronizado.
 
-`GET /api/v1/datasets/{dataset}` admite `offset` y `limit` y devuelve además
-`hasMore` y `nextOffset`. El conector del agente recorre automáticamente todas
-las páginas, por lo que una instalación con más filas que `MaxRows` no queda
-sincronizada parcialmente.
+Ao responder dentro de uma reunião, o agente valida o `meeting_id` utilizando
+o `BaseUrl` da instância selecionada. Perguntas sobre recursos ou
+Os participantes da reunião não utilizam o contador de recursos global:
+resolver contra `dbo.SysMeeting2Resource` utilizando o `meeting_id` do
+conversação e eliminar recursos pendentes, bloqueados ou expulsos. A URL
+lógica `localhost` e a sua tradução Docker `host.docker.internal` identificam o
+mesma instância ao selecionar o `SysLogin` do agente.
 
-Al responder dentro de un meeting, el agente valida el `meeting_id` utilizando
-la `BaseUrl` de la instancia seleccionada. Las preguntas sobre recursos o
-participantes de un meeting no utilizan el contador global de recursos: se
-resuelven contra `dbo.SysMeeting2Resource` usando el `meeting_id` de la
-conversación y excluyen recursos pendientes, bloqueados o expulsados. La URL
-lógica `localhost` y su traducción Docker `host.docker.internal` identifican la
-misma instancia al seleccionar el `SysLogin` del agente.
-
-Para ejecutar el gateway de prueba en la misma máquina:
+Para executar o gateway de teste na mesma máquina:
 
 ```powershell
 docker compose -f docker-compose-dev.yml --profile data-api up -d --build solidset-data-api
 ```
-
-Para desplegarlo completamente separado en el servidor donde está SQL Server,
-se utiliza el Compose incluido dentro del proyecto independiente:
+Para o implementar completamente separadamente no servidor onde está o SQL Server,
+O Compose incluído no projeto independente é utilizado:
 
 ```powershell
 Set-Location solidset-data-api
@@ -510,58 +490,55 @@ Copy-Item .env.example .env
 # Configurar SQL_SERVER_* y SOLIDSET_DATA_API_KEY en .env.
 docker compose up -d --build
 ```
+Este Compose cria apenas `solidset_data_api` , a sua rede privada e o
+exame de saúde; não requer nenhum contentor de agente.
 
-Este Compose crea solamente `solidset_data_api`, su red privada y el
-healthcheck; no requiere ningún contenedor del agente.
+ `CountryCode`, `Locale` e `TimeZone` definem o contexto regional do
+respostas.  `TimeZone` deve ser uma zona IANA válida, como por exemplo `Europe/Lisbon`, e
+ O `Locale` utiliza o formato BCP 47, como o `pt-PT`. As instalações existentes são
+migram automaticamente com `PT`, `pt-PT` e `Europe/Lisbon`. A localização não está geolocalizada
+O IP privado nem o país são deduzidos da língua: estes métodos não são fiáveis
+atrás do NAT, VPN ou Docker.
 
-`CountryCode`, `Locale` y `TimeZone` definen el contexto regional de las
-respuestas. `TimeZone` debe ser una zona IANA válida, como `Europe/Lisbon`, y
-`Locale` utiliza formato BCP 47, como `pt-PT`. Las instalaciones existentes se
-migran automáticamente con `PT`, `pt-PT` y `Europe/Lisbon`. No se geolocaliza la
-IP privada ni se deduce el país a partir del idioma: esos métodos no son fiables
-detrás de NAT, VPN o Docker.
+O agente recebe estes valores em todas as respostas dessa instância. Para
+ `pt-PT` utiliza vocabulário e ortografia em português. As consultas explícitas de
+data ou hora (`Que dia é hoje?`, `Que horas são?`) são calculadas diretamente com
+ `TimeZone`, sem pedir ao LLM para adivinhar a localização; não pode, portanto, responder
+com a hora de Brasília quando a instância estiver configurada em Portugal.
 
-El agente recibe estos valores en todas las respuestas de esa instancia. Para
-`pt-PT` emplea vocabulario y ortografía de Portugal. Las consultas explícitas de
-fecha u hora (`Que dia é hoje?`, `Que horas são?`) se calculan directamente con
-`TimeZone`, sin pedir al LLM que adivine la ubicación; por ello no puede responder
-con la hora de Brasilia cuando la instancia está configurada en Portugal.
+A linguagem da pergunta tem sempre precedência sobre `Locale`: uma pergunta
+em inglês recebe uma resposta em inglês mesmo que a instância utilize `pt-PT` ; um
+pergunta em espanhol recebe espanhol.  `Locale` determina apenas a variante regional
+quando a língua corresponde e nunca obriga à tradução da resposta para português.
 
-El idioma de la pregunta siempre tiene prioridad sobre `Locale`: una pregunta
-en inglés recibe una respuesta en inglés aunque la instancia use `pt-PT`; una
-pregunta en español recibe español. `Locale` solo determina la variante regional
-cuando el idioma coincide y nunca obliga a traducir la respuesta al portugués.
+Se o cliente souber a localização real do recurso – por exemplo, porque o
+o utilizador está temporariamente noutro país - pode incluir `Info`, `TimeData` ou
+ `UserData` os campos `country_code` , `locale` e `time_zone`. Esses valores
+As especificidades da mensagem têm prioridade sobre a instância; uma zona IANA não
+válido é descartado. Quando a carga útil não os inclui, a configuração do
+ `SysSolidSETInstance`. O IP observado pela API corresponde normalmente ao
+Servidor ou proxy SolidSET, e não a máquina WPF, pelo que não é utilizado para localizar
+ao recurso.
 
-Si el cliente conoce la ubicación efectiva del recurso —por ejemplo, porque el
-usuario está temporalmente en otro país— puede incluir en `Info`, `TimeData` o
-`UserData` los campos `country_code`, `locale` y `time_zone`. Estos valores
-específicos del mensaje tienen prioridad sobre la instancia; una zona IANA no
-válida se descarta. Cuando el payload no los incluye, se usa la configuración de
-`SysSolidSETInstance`. La IP observada por la API corresponde normalmente al
-servidor SolidSET o al proxy, no al equipo WPF, por lo que no se usa para ubicar
-al recurso.
-
-Cada SolidSET debe llamar los endpoints de entrada con el host de respuesta:
+Cada SolidSET deve chamar os endpoints de entrada com o host de resposta:
 
 ```http
 X-SolidSET-Instance: 192.168.10.20
 ```
+O valor deve corresponder a `SysSolidSETInstance.SourceIP` de uma única instância
+ativo, com equivalência entre `localhost`, `127.0.0.1` e `::1`. Não aceito
+URL, caminho ou credenciais no cabeçalho. Depois de encontrar a linha, a API lê
+seus `BaseUrl`, `NotificationUrl` e `SysSolidSETDataAPI`; endereços de acesso
+e a resposta sai dessa configuração, não do cabeçalho. A instância
+resolvido é mantido na pegada do evento, sessão do agente, login e envio
+de resposta. Os erros de acesso do PostgreSQL continuam a retornar `503` .
 
-El valor debe coincidir con `SysSolidSETInstance.SourceIP` de una sola instancia
-activa, con equivalencia entre `localhost`, `127.0.0.1` y `::1`. No se acepta
-URL, ruta ni credenciales en el encabezado. Tras encontrar la fila, la API lee
-su `BaseUrl`, `NotificationUrl` y `SysSolidSETDataAPI`; las direcciones de acceso
-y respuesta salen de esa configuración, no del encabezado. La instancia
-resuelta se conserva en la huella del evento, sesión del agente, login y envío
-de respuesta. Los errores de acceso a PostgreSQL continúan devolviendo `503`.
-
-## 1. Guardar o actualizar un agente
+## 1. Guardar ou atualizar um agente
 
 ```http
 POST /api/v1/agent/solidset/chat-configuration
 ```
-
-Crea o actualiza un agente utilizando `IDResource` como identificador único.
+Crie ou atualize um agente utilizando `IDResource` como identificador único.
 
 ```json
 {
@@ -571,23 +548,21 @@ Crea o actualiza un agente utilizando `IDResource` como identificador único.
   "active": true
 }
 ```
+Comportamento:
 
-Comportamiento:
-
-- Si el recurso no existe, crea `SysResourceIA`.
-- Si ya existe, actualiza nombre, fecha y estado.
-- `active = false` impide que el agente responda.
-- El campo `ID` interno lo genera PostgreSQL automáticamente.
+- Caso o recurso não exista, crie o `SysResourceIA` .
+- Se já existir, atualize o nome, data e estado.
+- `active = false` impede o agente de responder.
+- O campo interno `ID` é gerado automaticamente pelo PostgreSQL.
 
 ---
 
-## 2. Configurar un agente dentro de un canal
+## 2. Configure um agente dentro de um canal
 
 ```http
 PUT /api/v1/agent/solidset/agents/{agent_resource_id}/workrooms/{workroom_id}
 ```
-
-Activa, desactiva u ordena al agente dentro de un canal específico.
+Ative, desative ou comande o agente dentro de um canal específico.
 
 ```json
 {
@@ -595,31 +570,28 @@ Activa, desactiva u ordena al agente dentro de un canal específico.
   "response_order": 1
 }
 ```
-
-Ejemplo:
+Exemplo:
 
 ```http
 PUT /api/v1/agent/solidset/agents/ce0e837a-fe28-47ae-9ba0-8841fe042ca8/workrooms/007e3b2a-bbf6-4f46-8cbd-26d26db06ec1
 ```
+Comportamento:
 
-Comportamiento:
-
-- Hace `UPSERT` en `SysChatIAResource`.
-- `active` controla si puede responder en ese canal.
-- `response_order` determina su posición frente a otros agentes.
-- Un agente puede estar activo globalmente y desactivado solamente en un canal.
+- Transforma `UPSERT` em `SysChatIAResource`.
+- `active` controla se pode responder nesse canal.
+- `response_order` determina a sua posição em relação aos outros agentes.
+- Um agente pode estar ativo globalmente e desativado apenas num canal.
 
 ---
 
-## 3. Añadir conocimiento propio a un agente
+## 3. Adicione conhecimento próprio a um agente
 
 ```http
 POST /api/v1/agent/solidset/agents/{agent_resource_id}/knowledge
 ```
+Armazena conhecimento privado no PostgreSQL e indexa-o no Qdrant.
 
-Guarda conocimiento privado en PostgreSQL y lo indexa en Qdrant.
-
-Conocimiento general del agente:
+Conhecimento geral do agente:
 
 ```json
 {
@@ -629,8 +601,7 @@ Conocimiento general del agente:
   "active": true
 }
 ```
-
-Conocimiento específico de un canal:
+Conhecimento específico do canal:
 
 ```json
 {
@@ -641,24 +612,22 @@ Conocimiento específico de un canal:
   "active": true
 }
 ```
+Comportamento:
 
-Comportamiento:
-
-- Guarda el contenido en `SysResourceIAKnowledge`.
-- Si no contiene `IDWorkRoom`, puede utilizarlo el agente en todos sus canales.
-- Si contiene `IDWorkRoom`, solo se utiliza dentro de ese canal.
-- Otro agente no puede recuperar este conocimiento.
-- `active = false` conserva el contenido, pero deja de utilizarlo.
+- Guarde o conteúdo em `SysResourceIAKnowledge`.
+- Caso não contenha `IDWorkRoom`, o agente poderá utilizá-lo em todos os seus canais.
+- Se contiver `IDWorkRoom`, só será utilizado dentro desse canal.
+- Outro agente não consegue recuperar este conhecimento.
+- `active = false` mantém o conteúdo, mas deixa de o utilizar.
 
 ---
 
-## 4. Ejecutar varios agentes
+## 4. Execute vários agentes
 
 ```http
 POST /api/v1/agent/solidset/multi-agent/dialogue
 ```
-
-Es el endpoint principal de la arquitectura multiagente.
+É o principal ponto final da arquitetura multiagente.
 
 ```json
 {
@@ -674,23 +643,22 @@ Es el endpoint principal de la arquitectura multiagente.
   "SolidSETInstanceCode": "solidset-lisboa"
 }
 ```
+`SolidSETInstanceCode` é necessário quando `SendToSolidSET=true` . Se apenas pretende gerar a resposta sem a publicar, pode manter `SendToSolidSET=false` e ignorar a instância.
 
-`SolidSETInstanceCode` es obligatorio cuando `SendToSolidSET=true`. Si solo se desea generar la respuesta sin publicarla, puede mantenerse `SendToSolidSET=false` y omitir la instancia.
+Comportamento:
 
-Comportamiento:
+1.º Verifique se cada agente existe.
+2.º Verifique se está ativo globalmente.
+3.º Verifique se está ativo e atribuído ao canal.
+4.º Crie ou atualize uma linha em `SysAgentIASession`.
+5.º Execute todos os agentes em paralelo.
+6.º Cada um utiliza a sua própria memória e conhecimento.
+7.º Retorna uma resposta separada por agente.
+8.Com o `SendToSolidSET = true`, publique as respostas no canal.
 
-1. Comprueba que cada agente existe.
-2. Comprueba que está activo globalmente.
-3. Comprueba que está activo y asignado al canal.
-4. Crea o actualiza una fila en `SysAgentIASession`.
-5. Ejecuta todos los agentes en paralelo.
-6. Cada uno utiliza su propia memoria y conocimiento.
-7. Devuelve una respuesta independiente por agente.
-8. Con `SendToSolidSET = true`, publica las respuestas en el canal.
+O mesmo `IDResource` pode aparecer como remetente e agente configurados. Isto é válido quando uma pessoa intervém utilizando o recurso que o SolidSET configurou como agente; o bloqueio do loop é feito pelo `Info.generated_by_ia` , não eliminando o recurso do remetente.
 
-El mismo `IDResource` puede aparecer como remitente y agente configurado. Esto es válido cuando una persona interviene usando el recurso que SolidSET ha configurado como agente; el bloqueo de bucles se realiza mediante `Info.generated_by_ia`, no descartando el recurso remitente.
-
-Respuesta:
+Responder:
 
 ```json
 {
@@ -707,21 +675,19 @@ Respuesta:
   ]
 }
 ```
+`IDSession` deve ser UUID. Se não for enviado, a API gera um.
 
-`IDSession` debe ser UUID. Si no se envía, la API genera uno.
-
-# Sincronización con SQL Server
+# Sincronização com SQL Server
 
 ## 5. Sincronizar recursos
 
 ```http
 POST /api/v1/agent/solidset/resources/sync
 ```
+Execute a consulta para `SysResources` e `SysLogin` e obtenha a identidade do
+recurso de software utilizando o relacionamento ativo de `SysResource2Agent`.
 
-Ejecuta la consulta de `SysResources` y `SysLogin`, y obtiene la identidad del
-recurso software mediante la relación activa de `SysResource2Agent`.
-
-Mapeo:
+Mapeamento:
 
 ```text
 SysResources.DisplayName → SysResourceIA.Name
@@ -730,21 +696,20 @@ SysResources.ActiveIDLogin2Resource → SysResourceIA.ActiveIDLogin2Resource
 SysResource2Agent.IDHumanResource → SysResourceIA.IDResource
 SysResource2Agent.IDAgentResource → SysResourceIA.IDAgentResource
 ```
+O `SysResourceIA.ID` continua a ser a chave interna gerada automaticamente a partir do PostgreSQL.
+Não é devolvida como a identidade do agente SolidSET. Sempre que um contrato
+resposta expõe `IDAgentResource` , devolve o GUID sincronizado de
+ `dbo.SysResource2Agent.IDAgentResource`;  O `IDResource` mantém o GUID do
+recurso humano proprietário.
 
-`SysResourceIA.ID` continúa siendo la clave interna autogenerada de PostgreSQL.
-No se devuelve como identidad del agente SolidSET. Siempre que un contrato de
-respuesta expone `IDAgentResource`, devuelve el GUID sincronizado desde
-`dbo.SysResource2Agent.IDAgentResource`; `IDResource` conserva el GUID del
-recurso humano propietario.
+A sincronização é idempotente:
 
-La sincronización es idempotente:
+- Inserir novos recursos.
+- Atualizar os recursos existentes.
+- Não cria duplicados.
+- Preserva o estado `active`.
 
-- Inserta recursos nuevos.
-- Actualiza recursos existentes.
-- No crea duplicados.
-- Conserva el estado `active`.
-
-Respuesta aproximada:
+Resposta aproximada:
 
 ```json
 {
@@ -756,16 +721,14 @@ Respuesta aproximada:
   "skipped": 0
 }
 ```
-
 ---
 
-## 6. Sincronizar recursos y canales
+## 6. Sincronize recursos e canais
 
 ```http
 POST /api/v1/agent/solidset/chat-workroom/sync
 ```
-
-Sincroniza las asignaciones de recursos a canales desde:
+Sincronize as atribuições de recursos a canais de:
 
 ```text
 SysResources
@@ -773,37 +736,33 @@ SysLogin
 SysWorkRoomResource
 SysWorkRoom
 ```
-
-Mapeo:
+Mapeamento:
 
 ```text
 ResourceId → SysChatIAResource.IDResource
 IDWorkRoom → SysChatIAResource.IDWorkRoom
 ```
+Comportamento:
 
-Comportamiento:
-
-- Crea las relaciones recurso–canal.
-- Evita duplicados por `(IDResource, IDWorkRoom)`.
-- No modifica las sesiones.
-- Las relaciones nuevas quedan activas por defecto.
+- Criar relações entre canais de recursos.
+- Evite duplicados por `(IDResource, IDWorkRoom)`.
+- Não modifica as sessões.
+- Os novos relacionamentos ficam ativos por defeito.
 
 ---
 
-## 7. Sincronizar el catálogo de canales
+## 7. Sincronize o catálogo de canais
 
 ```http
 POST /api/v1/agent/solidset/workrooms/sync
 ```
-
-Ejecuta esta consulta en SQL Server:
+Execute esta consulta no SQL Server:
 
 ```sql
 SELECT Code, Name, Description, IDWorkRoom
 FROM dbo.SysWorkRoom;
 ```
-
-Mapeo hacia PostgreSQL:
+Mapeamento para o PostgreSQL:
 
 ```text
 Code        → SysWorkRoom.Code
@@ -811,16 +770,15 @@ Name        → SysWorkRoom.Name
 Description → SysWorkRoom.Description
 IDWorkRoom  → SysWorkRoom.IDWorkRoom
 ```
+A sincronização faz `UPSERT` para `IDWorkRoom`, remove espaços adicionados pelo SQL Server tipo `NCHAR` e não cria duplicados.
 
-La sincronización hace `UPSERT` por `IDWorkRoom`, elimina los espacios añadidos por el tipo `NCHAR` de SQL Server y no crea duplicados.
+ `SysWorkRoom.IDWorkRoom` é a chave pai de:
 
-`SysWorkRoom.IDWorkRoom` es la clave padre de:
+-`SysChatIAResource.IDWorkRoom` .
+-`SysResourceIAKnowledge.IDWorkRoom` .
+-`SysAgentIASession.IDWorkRoom` .
 
-- `SysChatIAResource.IDWorkRoom`.
-- `SysResourceIAKnowledge.IDWorkRoom`.
-- `SysAgentIASession.IDWorkRoom`.
-
-Respuesta aproximada:
+Resposta aproximada:
 
 ```json
 {
@@ -832,42 +790,38 @@ Respuesta aproximada:
   "skipped": 0
 }
 ```
-
 ---
 
-## 8. Sincronizar cuentas de acceso
+## 8. Sincronizar contas de acesso
 
 ```http
 POST /api/v1/agent/solidset/logins/sync
 ```
-
-Ejecuta en SQL Server:
+Execute no SQL Server:
 
 ```sql
 SELECT Username, FullName, Password, Salt, IDLogin,
        LastIDResource, ActiveIDLogin2Resource
 FROM dbo.SysLogin;
 ```
+Guarda os dados no PostgreSQL `SysLogin` utilizando um `UPSERT` de `IDLogin` . A contagem exacta dos agentes é resolvida juntando `SysResourceIA.ActiveIDLogin2Resource` com `SysLogin.ActiveIDLogin2Resource` ; isto evita a escolha de outro utilizador que tenha o mesmo `LastIDResource` .
 
-Guarda los datos en PostgreSQL `SysLogin` mediante un `UPSERT` por `IDLogin`. La cuenta exacta del agente se resuelve uniendo `SysResourceIA.ActiveIDLogin2Resource` con `SysLogin.ActiveIDLogin2Resource`; esto evita elegir otro usuario que tenga el mismo `LastIDResource`.
-
-Mapeo adicional:
+Mapeamento adicional:
 
 ```text
 dbo.SysLogin.FullName → PostgreSQL SysLogin.FullName
 ```
+Ao enviar uma resposta automática ou multiagente, o router entrega o
+ `agent_resource_id` e `IDLogin` selecionados em `Chat.destiny` para o método
+ `_solidset_login`. Este método requer que `SysResourceIA.active=true` procure o
+contas relacionadas por `ActiveIDLogin2Resource` e priorizar exatamente essa
+ `IDLogin`; Desta forma evita escolher uma linha histórica através de uma ordem arbitrária.
+De seguida, inicie uma sessão separada com `POST /User/LoginJson` e poste o
+mensagem com os cookies dessa mesma sessão. Se o SolidSET retornar HTTP 200 com
+ `Success=false` , a API ressincroniza o `dbo.SysLogin` com o PostgreSQL e tenta novamente
+uma vez, cobrindo as alterações recentes de ID ou palavra-passe sem criar loops.
 
-Al enviar una respuesta automática o multiagente, el router entrega el
-`agent_resource_id` y el `IDLogin` seleccionado en `Chat.destiny` al método
-`_solidset_login`. Este método exige que `SysResourceIA.active=true`, busca las
-cuentas relacionadas por `ActiveIDLogin2Resource` y prioriza exactamente ese
-`IDLogin`; así evita escoger una fila histórica mediante un orden arbitrario.
-Después inicia una sesión independiente con `POST /User/LoginJson` y publica el
-mensaje con las cookies de esa misma sesión. Si SolidSET devuelve HTTP 200 con
-`Success=false`, la API resincroniza `dbo.SysLogin` hacia PostgreSQL y reintenta
-una sola vez, cubriendo cambios recientes de ID o contraseña sin crear bucles.
-
-La autenticación del agente envía internamente:
+A autenticação do agente envia internamente:
 
 ```text
 UserName          = SysLogin.Username
@@ -876,12 +830,11 @@ PasswordEncrypted = true
 TimezoneID        = SOLIDSET_TIMEZONE_ID
 Resources[0]      = SysResourceIA.IDResource
 ```
+`SysLogin.Password` é o HMAC já gerado pelo SolidSET, e não uma password reversível.  `PasswordEncrypted=true` faz com que o método SolidSET ignore `GenerateHMAC` e compare directamente esse valor.  `Resources[0]` força o registo da sessão no recurso do agente solicitado quando o login tem vários recursos. Caso o recurso não seja um agente ativo, não possua uma conta válida ou `LoginJson` recuse o acesso, o envio falha explicitamente e não utiliza a identidade global configurada em `.env` .
 
-`SysLogin.Password` es el HMAC ya generado por SolidSET, no una contraseña reversible. `PasswordEncrypted=true` hace que el método de SolidSET omita `GenerateHMAC` y compare directamente ese valor. `Resources[0]` obliga a registrar la sesión con el recurso agente solicitado cuando el login dispone de varios recursos. Si el recurso no es un agente activo, no tiene una cuenta válida o `LoginJson` rechaza el acceso, el envío falla explícitamente y no utiliza la identidad global configurada en `.env`.
+A resposta publicada utiliza `SysLogin.FullName` e mantém um ID visível no formato `{FullName}: respuesta`; por exemplo, `Alejandro Veitia: ...` . O SolidSET mostra também o login do próprio recurso como emissor. Se excepcionalmente `FullName` estiver vazio, `SysResourceIA.Name` será utilizado como backup.
 
-La respuesta publicada usa `SysLogin.FullName` y conserva una identificación visible con el formato `{FullName}: respuesta`; por ejemplo, `Alejandro Veitia: ...`. SolidSET muestra además como emisor el login propio del recurso. Si excepcionalmente `FullName` está vacío, se utiliza `SysResourceIA.Name` como respaldo.
-
-La respuesta contiene únicamente contadores; nunca devuelve ni registra `Password` o `Salt`:
+A resposta contém apenas contadores; nunca devolve ou regista `Password` ou `Salt`:
 
 ```json
 {
@@ -893,36 +846,34 @@ La respuesta contiene únicamente contadores; nunca devuelve ni registra `Passwo
   "skipped": 0
 }
 ```
+Os campos `Password` e `Salt` são dados sensíveis. O acesso ao esquema PostgreSQL deve ser limitado ao serviço do agente e não deve ser incluído em endpoints de consulta, registos ou mensagens de erro.
 
-Los campos `Password` y `Salt` son datos sensibles. El acceso al esquema PostgreSQL debe quedar limitado al servicio del agente y no deben incluirse en endpoints de consulta, logs ni mensajes de error.
+# Entrada de mensagens do SolidSET
 
-# Entrada de mensajes desde SolidSET
-
-## 9. Recibir una notificación FrameworkMessage
+## 9. Receber uma notificação FrameworkMessage
 
 ```http
 POST /api/v1/agent/notification/framework-message
 ```
+Recebe diretamente um `FrameworkMessage` do SolidSET.
 
-Recibe directamente un `FrameworkMessage` de SolidSET.
+Swagger inclui o exemplo fictício `meetingAgentQuestion`, também reutilizado
+por `/framework-message/preview` e `/agent/dialogue`. Representa uma questão
+um recurso humano para o seu recurso de IA numa reunião, com `talkWithAgent=true`,
+Identificadores consistentes de canal/reunião e dados regionais. Os valores não são
+Pertencem a usuários ou instalações reais.
 
-Swagger incluye el ejemplo ficticio `meetingAgentQuestion`, reutilizado también
-por `/framework-message/preview` y `/agent/dialogue`. Representa una pregunta de
-un recurso humano a su recurso IA dentro de un meeting, con `talkWithAgent=true`,
-identificadores coherentes de canal/meeting y datos regionales. Los valores no
-pertenecen a usuarios ni instalaciones reales.
+No modo `AGENT_RESPONSE_QUEUE_ENABLED=true` standard, este terminal
+basta validar a instância, obter `Chat.IDChat2` , criar o estado e publicar o
+mensagem original no Redis Stream. Retorna imediatamente; Captura Qdrant,
+seleção de agentes, LLM e envio para SolidSET executados em `agent-worker`.
+O commit HTTP é `202 Accepted` .
+A resolução `SysSolidSETInstance` é retida durante 60 segundos na memória para
+evitar uma consulta PostgreSQL por pedido durante picos de carga; salvar
+uma configuração de instância invalida imediatamente essa cache.
 
-En el modo predeterminado `AGENT_RESPONSE_QUEUE_ENABLED=true`, este endpoint
-solo valida la instancia, toma `Chat.IDChat2`, crea el estado y publica el
-mensaje original en Redis Stream. Devuelve inmediatamente; la captura Qdrant,
-selección del agente, LLM y envío a SolidSET se ejecutan en `agent-worker`.
-La confirmación HTTP es `202 Accepted`.
-La resolución de `SysSolidSETInstance` se conserva 60 segundos en memoria para
-evitar una consulta PostgreSQL por cada petición durante picos de carga; guardar
-una configuración de instancia invalida inmediatamente esa caché.
-
-La respuesta conserva `Result`, `Message` y `Error`, y añade los datos para
-seguir el trabajo asíncrono:
+A resposta retém `Result` , `Message` e `Error` e adiciona os dados a
+siga o trabalho assíncrono:
 
 ```json
 {
@@ -932,72 +883,70 @@ seguir el trabajo asíncrono:
   "statusUrl": "/api/v1/agent/responses/1824911/status"
 }
 ```
+`requestId` corresponde directamente a `Chat.IDChat2` , convertido em texto. De
+Desta forma, o WPF pode relacionar o carregamento e os estados com a mensagem que já está
+saber Apenas as notificações técnicas sem `IDChat2` recebem um UUID temporário
+contingência.
 
-`requestId` corresponde directamente a `Chat.IDChat2`, convertido a texto. De
-esta manera WPF puede relacionar el loading y los estados con el mensaje que ya
-conoce. Solo las notificaciones técnicas sin `IDChat2` reciben un UUID temporal
-de contingencia.
+O cliente WPF deve persistir `requestId` , apresentar um sinalizador indeterminado e
+consulte `statusUrl` a cada 1–2 segundos até `completed=true` .
 
-El cliente WPF debe conservar `requestId`, mostrar un indicador indeterminado y
-consultar `statusUrl` cada 1–2 segundos hasta que `completed=true`.
-
-### Sugerir una respuesta para `Chat.chatQuestion`
+### Sugerir uma resposta a `Chat.chatQuestion`
 
 ```http
 POST /api/v1/agent/notification/chat-question/suggest-response
 Content-Type: application/json
 ```
+Recebe o mesmo `FrameworkMessage` mas não captura a mensagem como uma nova
+pedido de resposta automática nem envia nada para o SolidSET. O ponto final leva:
 
-Recibe el mismo `FrameworkMessage`, pero no captura el mensaje como una nueva
-petición de autorrespuesta ni envía nada a SolidSET. El endpoint toma:
+- `Chat.IDChat2` como `requestId` para rastreio de estado.
+- `Chat.IDSenderResource` como recurso humano requerente da sugestão.
+- `Chat.chatQuestion.IDSenderResource` como autor da mensagem anterior.
+- `Chat.chatQuestion.IDChat2` e `RawMessage` como mensagem a responder.
+- `Chat.IDWorkRoom` , `Chat.IDMeeting` e `Info.meeting_code` como contexto.
 
-- `Chat.IDChat2` como `requestId` para el seguimiento del estado.
-- `Chat.IDSenderResource` como el recurso humano que solicita la sugerencia.
-- `Chat.chatQuestion.IDSenderResource` como el autor del mensaje anterior.
-- `Chat.chatQuestion.IDChat2` y `RawMessage` como el mensaje que debe responderse.
-- `Chat.IDWorkRoom`, `Chat.IDMeeting` y `Info.meeting_code` como contexto.
+Também suporta o modo de sugestão contextual quando `Chat=null` e
+ `RawMessage` está vazio. Nesse caso, deverão ser enviados:
 
-También admite el modo de sugerencia contextual cuando `Chat=null` y
-`RawMessage` está vacío. En ese caso deben enviarse:
+- `Info.advice_mode="1"` para ativar explicitamente o modo.
+- `Info.request_id` como identificador de estado e resultado.
+- `Info.session_id` como sessão lógica quando `Sender.session` é o GUID vazio.
+- `Sender.resource` como recurso humano candidato.
+- `Sender.workRoom` ou `Destiny.workRoom` como canal a verificar.
 
-- `Info.advice_mode="1"` para activar explícitamente el modo.
-- `Info.request_id` como identificador del estado y del resultado.
-- `Info.session_id` como sesión lógica cuando `Sender.session` sea el GUID vacío.
-- `Sender.resource` como recurso humano solicitante.
-- `Sender.workRoom` o `Destiny.workRoom` como canal que se debe revisar.
+Neste modo a API consulta, através da API SolidSET Data, até 30 mensagens
+canais acessíveis recentes do canal e constrói uma janela cronológica limitada a
+3.200 caracteres, dando prioridade às mensagens mais recentes. Este contexto inclui também a conversa de
+uma reunião quando as suas mensagens estão associadas ao mesmo `IDWorkRoom` . Os três
+As sugestões baseiam-se exclusivamente nestas mensagens, em conhecimento privado
+do agente e no seu contexto reforçador. Se o canal não contiver mensagens
+acessível, a API não inventa conteúdo e devolve um erro tratado.
+Os avisos técnicos do modelo (por exemplo, “consulta demasiado longa”) são apresentados
+São descartados e nunca mais devolvidos como se fossem uma sugestão de conversa.
 
-En este modo la API consulta, mediante SolidSET Data API, hasta 30 mensajes
-recientes accesibles del canal y construye una ventana cronológica acotada a
-3200 caracteres, priorizando los mensajes más recientes. Ese contexto incluye también la conversación de
-un meeting cuando sus mensajes están asociados al mismo `IDWorkRoom`. Las tres
-sugerencias se basan exclusivamente en esos mensajes, en el conocimiento privado
-del agente y en su contexto de refuerzo. Si el canal no contiene mensajes
-accesibles, la API no inventa contenido y devuelve un error controlado.
-Los avisos técnicos del modelo (por ejemplo, “consulta demasiado larga”) se
-descartan y nunca se devuelven como si fueran una sugerencia conversacional.
+Antes de gerar, verifique no SQL Server se o requerente tem uma relação
+ativa em `dbo.SysResource2Agent`, sincroniza `IDAgentResource` e resolve o seu
+agente ativo no PostgreSQL. A geração utiliza conhecimento privado e
+reforçando o contexto do próprio agente do requerente. Não utiliza o agente
+autor citado, não consulta a Internet e trata o texto citado como não-dado
+fiável.
 
-Antes de generar, comprueba en SQL Server que el solicitante tiene una relación
-activa en `dbo.SysResource2Agent`, sincroniza `IDAgentResource` y resuelve su
-agente activo en PostgreSQL. La generación utiliza el conocimiento privado y el
-contexto de refuerzo del agente propio del solicitante. No utiliza el agente del
-autor citado, no consulta Internet y trata el texto citado como datos no
-confiables.
+A operação de dica só é válida quando `Chat.RawMessage` está vazio.
+O texto a responder provém de `Chat.chatQuestion.RawMessage`; se ele
+a mensagem atual já contém texto, o endpoint retorna HTTP 422 para evitar
+uma resposta escrita pelo utilizador é substituída.
 
-La operación de sugerencia solo es válida cuando `Chat.RawMessage` está vacío.
-El texto que debe contestarse procede de `Chat.chatQuestion.RawMessage`; si el
-mensaje actual ya contiene texto, el endpoint devuelve HTTP 422 para evitar que
-una respuesta escrita por el usuario sea sustituida.
+Swagger inclui os exemplos `quotedMeetingMessage` e `emptyContextAdvice` com
+dados completamente fictícios. A primeira preserva a relação entre a `Chat.IDChat2`,
+ `chatQuestionMessage`, `Chat.chatQuestion`, o requerente, o autor citado, o
+canal e a reunião. O segundo documenta um pedido sem `Chat` ou texto que
+Solicite sugestões do canal. Sem GUID, nome ou número de chat
+Os exemplos pertencem a uma instalação real do SolidSET.
 
-Swagger incluye los ejemplos `quotedMeetingMessage` y `emptyContextAdvice` con
-datos completamente ficticios. El primero conserva la relación entre `Chat.IDChat2`,
-`chatQuestionMessage`, `Chat.chatQuestion`, el solicitante, el autor citado, el
-canal y el meeting. El segundo documenta una petición sin `Chat` ni texto que
-solicita sugerencias a partir del canal. Ningún GUID, nombre o número de chat de
-los ejemplos pertenece a una instalación real de SolidSET.
-
-Si termina correctamente devuelve HTTP 200 con una lista JSON de alternativas
-independientes. El modelo intenta producir tres variantes —directa, breve y
-colaborativa— en el mismo idioma del mensaje citado:
+Se for bem-sucedido, irá devolver HTTP 200 com uma lista JSON de alternativas
+independente. O modelo tenta produzir três variantes – direta, breve e
+colaborativo - na mesma língua da mensagem citada:
 
 ```json
 {
@@ -1014,67 +963,63 @@ colaborativa— en el mismo idioma del mensaje citado:
   "statusUrl": "/api/v1/agent/responses/1824995/status"
 }
 ```
-
-Cada `text` es apto para asignarse a `RawMessage`; no contiene nombre del
-agente, prefijo ni payload de envío. La selección pertenece exclusivamente al
-cliente y este endpoint nunca publica ninguna alternativa en SolidSET. Para
-mostrar progreso mientras la llamada está abierta, WPF puede consultar en paralelo:
+Cada `text` é elegível para ser atribuído a `RawMessage`; não contém nome de
+agente, prefixo ou carga útil de remessa. A seleção pertence exclusivamente ao
+cliente e este endpoint nunca publica qualquer alternativa ao SolidSET. Para
+mostrar o progresso enquanto a chamada estiver aberta, o WPF poderá consultar em paralelo:
 
 ```http
 GET /api/v1/agent/responses/{Chat.IDChat2}/status?lang=es
 ```
+A sequência normal é `queued` → `processing` → `searching` → `thinking` →
+ `completed`. `sending` não aparece porque este endpoint nunca publica o texto
+em SolidSET. Quando concluído, o estado inclui também `result.questionChatId`,
+ `result.language` e `result.suggestions`, para que o cliente possa recuperar
+as alternativas mesmo que o pedido POST esteja fechado. Os erros de validação retornam HTTP 422; a ausência de um
+o autoagente ativo retorna HTTP 404; dependências ou geração
+disponível retorna HTTP 503 e deixa o estado em `failed` .
 
-La secuencia normal es `queued` → `processing` → `searching` → `thinking` →
-`completed`. No aparece `sending`, porque este endpoint nunca publica el texto
-en SolidSET. Al completarse, el estado incluye también `result.questionChatId`,
-`result.language` y `result.suggestions`, de modo que el cliente puede recuperar
-las alternativas aunque se cierre la petición POST. Los errores de validación devuelven HTTP 422; la ausencia de un
-agente propio activo devuelve HTTP 404; las dependencias o la generación no
-disponibles devuelven HTTP 503 y dejan el estado en `failed`.
-
-### Consultar el estado de una respuesta
+### Verificar o estado de uma resposta
 
 ```http
 GET /api/v1/agent/responses/{requestId}/status?lang=es
 ```
-
-Como recuperación alternativa usando el mensaje original:
+Como recuperação alternativa utilizando a mensagem original:
 
 ```http
 GET /api/v1/agent/responses/status?chatId={IDChat2}&lang=es
 ```
+Os Estados são guardados temporariamente no Redis para
+ `AGENT_RESPONSE_STATUS_TTL_SECONDS` (padrão 86400 segundos):
 
-Los estados se guardan temporalmente en Redis durante
-`AGENT_RESPONSE_STATUS_TTL_SECONDS` (86400 segundos por defecto):
+ `lang` suporta `es`, `en` e `pt`; o valor predefinido é `es` . cada resposta
+inclui também o `displayMessages` com as três traduções para que o WPF possa
+alterar o idioma sem consultar novamente a API.
 
-`lang` admite `es`, `en` y `pt`; el valor predeterminado es `es`. Cada respuesta
-incluye además `displayMessages` con las tres traducciones para que WPF pueda
-cambiar el idioma sin volver a consultar la API.
-
-| Code | Estado | Español | English | Português |
+| Código | Estado | Espanhol | Inglês | Português |
 |---:|---|---|---|---|
-| `0` | `queued` | `Esperando…` | `Waiting…` | `Aguardando…` |
-| `1` | `processing` | `Procesando…` | `Processing…` | `Processando…` |
-| `2` | `searching` | `Buscando información…` | `Searching for information…` | `Procurando informações…` |
-| `3` | `thinking` | `Pensando…` | `Thinking…` | `Pensando…` |
-| `4` | `sending` | `Enviando respuesta…` | `Sending response…` | `Enviando resposta…` |
-| `5` | `completed` | `Respondido` | `Answered` | `Respondido` |
-| `6` | `failed` | `No se pudo responder` | `Unable to respond` | `Não foi possível responder` |
-| `7` | `cancelled` | `Cancelado` | `Cancelled` | `Cancelado` |
+|  `0` |  `queued` |  `Esperando…` |  `Waiting…` |  `Aguardando…` |
+|  `1` |  `processing` |  `Procesando…` |  `Processing…` |  `Processando…` |
+|  `2` |  `searching` |  `Buscando información…` |  `Searching for information…` |  `Procurando informações…` |
+|  `3` |  `thinking` |  `Pensando…` |  `Thinking…` |  `Pensando…` |
+|  `4` |  `sending` |  `Enviando respuesta…` |  `Sending response…` |  `Enviando resposta…` |
+|  `5` |  `completed` |  `Respondido` |  `Answered` |  `Respondido` |
+|  `6` |  `failed` |  `No se pudo responder` |  `Unable to respond` |  `Não foi possível responder` |
+|  `7` |  `cancelled` |  `Cancelado` |  `Cancelled` |  `Cancelado` |
 
-La respuesta de estado incluye `agents` para mostrar cada agente por separado,
-`stageHistory`, `responseCount`, `createdAt`, `updatedAt`, `completedAt` y
-`error`. El polling debe finalizar al recibir `completed`, `failed` o
-`cancelled` (todos devuelven `completed=true`). Un HTTP 404 significa que el
-`requestId` no existe o ya expiró.
+A resposta de estado inclui `agents` para mostrar cada agente em separado,
+ `stageHistory`, `responseCount`, `createdAt`, `updatedAt`, `completedAt` e
+ `error`. A votação deve terminar quando receber `completed`, `failed` ou
+ `cancelled` (todos regressam `completed=true` ). Um HTTP 404 significa que o
+ `requestId` não existe ou já expirou.
 
-### Cola durable y escalado de workers
+### Fila durável e escalonamento de trabalho
 
-La cola usa Redis Streams con consumer group. Un mensaje solo se confirma con
-`XACK` después de terminar; los mensajes abandonados por un worker se recuperan
-con `XAUTOCLAIM`. Los fallos se reencolan hasta
-`AGENT_RESPONSE_MAX_RETRIES`; después quedan en estado `failed` y PostgreSQL
-conserva el error.
+A fila utiliza Redis Streams com grupo de consumidores. Uma mensagem só é confirmada com
+ `XACK` após acabamento; as mensagens abandonadas por um trabalhador são recuperadas
+com `XAUTOCLAIM`. As falhas são repostas na fila até
+ `AGENT_RESPONSE_MAX_RETRIES`; depois permanecem no estado `failed` e PostgreSQL
+preserva o erro.
 
 ```env
 AGENT_RESPONSE_QUEUE_ENABLED=true
@@ -1086,66 +1031,62 @@ AGENT_RESPONSE_CLAIM_IDLE_MS=300000
 AGENT_RESPONSE_REDIS_SOCKET_TIMEOUT_SECONDS=15
 AGENT_RESPONSE_STATUS_TTL_SECONDS=86400
 ```
+`XREADGROUP` espera até 5 segundos. Um `redis.exceptions.TimeoutError` durante
+Esta espera é interpretada como uma fila vazia e o trabalhador continua. Outros erros
+Os casos temporários do Redis provocam uma reconexão automática a cada 2 segundos; não
+encerram o processo de trabalho.
 
-`XREADGROUP` espera hasta 5 segundos. Un `redis.exceptions.TimeoutError` durante
-esa espera se interpreta como cola vacía y el worker continúa. Otros errores
-temporales de Redis provocan una reconexión automática cada 2 segundos; no
-finalizan el proceso del worker.
+A tabela PostgreSQL `SysAgentIAResponseAudit` preserva `RequestID` , `IDChat2` ,
+payload original, estado, código, número de respostas, resultado resumido,
+erro e carimbos de data/hora.
 
-La tabla PostgreSQL `SysAgentIAResponseAudit` conserva `RequestID`, `IDChat2`,
-payload original, estado, código, cantidad de respuestas, resultado resumido,
-error y marcas temporales.
-
-Para aumentar capacidad sin modificar la API:
+Para aumentar a capacidade sem modificar a API:
 
 ```powershell
 docker compose -f docker-compose-prod.yml up -d --scale agent-worker=4
 ```
+O número efetivo de trabalhadores deve respeitar a capacidade do Ollama/GPU. Redis
+pode aceitar uma fila muito maior que a simultaneidade do modelo, mas aumenta
+trabalhadores acima de `OLLAMA_NUM_PARALLEL` só aumentam a espera em Ollama.
+O Nginx limita por IP a 100 pedidos/s (burst 200) e por
+ `X-SolidSET-Instance` a 200 pedidos/s (burst 500), devolvendo HTTP 429 em
+ultrapassar esses limites.
 
-El número efectivo de workers debe respetar la capacidad de Ollama/GPU. Redis
-puede aceptar una cola muy superior a la concurrencia del modelo, pero aumentar
-workers por encima de `OLLAMA_NUM_PARALLEL` solo aumenta la espera en Ollama.
-Nginx limita por IP a 100 solicitudes/s (burst 200) y por
-`X-SolidSET-Instance` a 200 solicitudes/s (burst 500), devolviendo HTTP 429 al
-superar esos límites.
-
-Las métricas de cola están disponibles en:
+As métricas de fila de espera estão disponíveis em:
 
 ```http
 GET /api/v1/agent/responses/queue/status
 ```
+Devolve `length` , `pending` , `consumers` e `lag` , necessário para decidir se pretende
+os trabalhadores devem aumentar.
 
-Devuelve `length`, `pending`, `consumers` y `lag`, necesarios para decidir si se
-deben aumentar los workers.
-
-### Previsualizar la respuesta sin enviarla
+### Visualize a resposta sem a enviar
 
 ```http
 POST /api/v1/agent/notification/framework-message/preview
 ```
+Recebe o mesmo `FrameworkMessage` , resolve a instância e os agentes
+selecionado, gera as suas respostas e constrói exatamente a carga útil que é
+enviaria para o SolidSET, mas este não faz login nem chama `Chat/SendMessageForm` .
+A resposta contém `Payloads` , uma lista porque uma mensagem pode seleccionar
+vários agentes. Cada elemento é devolvido como JSON aninhado com `Sender` ,
+ `Destiny`, `ExtraData`, `Info` e `Chat`.  `PayloadCount=0` indica que não
+agente ativo e verificado teve de responder.
 
-Recibe el mismo `FrameworkMessage`, resuelve la instancia y los agentes
-seleccionados, genera sus respuestas y construye exactamente el payload que se
-enviaría a SolidSET, pero no realiza login ni llama a `Chat/SendMessageForm`.
-La respuesta contiene `Payloads`, una lista porque un mensaje puede seleccionar
-varios agentes. Cada elemento se devuelve como JSON anidado con `Sender`,
-`Destiny`, `ExtraData`, `Info` y `Chat`. `PayloadCount=0` indica que ningún
-agente activo y verificado debía responder.
+Recursos:
 
-Funciones:
+- Normalizar a mensagem.
+- Captura para aprender.
+- Indexa no Qdrant.
+- Identifica os agentes selecionados.
+- Agende respostas automáticas, se aplicável.
+- Descartar as mensagens marcadas como `generated_by_ia`.
 
-- Normaliza el mensaje.
-- Lo captura para aprendizaje.
-- Lo indexa en Qdrant.
-- Identifica los agentes seleccionados.
-- Programa respuestas automáticas si corresponde.
-- Descarta mensajes marcados como `generated_by_ia`.
+Este endpoint não funciona como proxy: recebe e processa a mensagem.
 
-Este endpoint no funciona como proxy: recibe y procesa el mensaje.
+Cada mensagem humana é primeiro indexada como aprendizagem do sistema global. Se `IDSenderResource` corresponder a um `SysResourceIA.IDResource` ativo, uma cópia privada com `scope=agent_owner_behavior` e `agent_resource_id` do proprietário também será indexada. Assim, cada agente aprende o conhecimento, o vocabulário e os padrões expressos pelo seu próprio recurso humano, enquanto todos os agentes continuam a aprender a partir do contexto geral permitido. A cópia privada é eliminada de outros agentes utilizando o filtro `agent_resource_id`; As respostas geradas pela IA não entram novamente neste ciclo.
 
-Cada mensaje humano se indexa primero como aprendizaje global del sistema. Si `IDSenderResource` coincide con un `SysResourceIA.IDResource` activo, también se indexa una copia privada con `scope=agent_owner_behavior` y `agent_resource_id` del propietario. Así, cada agente aprende el conocimiento, vocabulario y patrones expresados por su propio recurso humano, mientras todos los agentes continúan aprendiendo del contexto general permitido. La copia privada queda excluida de los demás agentes mediante el filtro `agent_resource_id`; las respuestas generadas por IA no vuelven a entrar en este ciclo.
-
-Para identificar agentes candidatos, el router admite estas fuentes del payload:
+Para identificar os agentes candidatos, o router suporta estas fontes de carga:
 
 ```text
 Chat.destiny[].talkWithAgent=true + type=2 (prioridad absoluta)
@@ -1153,51 +1094,49 @@ Destiny.dests[].resource
 SelectedAgentResourceIds[] (solo cuando Destiny.dests está vacío)
 Destiny.resource (solo cuando Destiny.dests está vacío)
 ```
+O novo sinal canónico é `Chat.destiny[].talkWithAgent`. Se o campo aparecer em qualquer uma das entradas, essa coleção terá precedência absoluta. Apenas é selecionada uma entrada com `talkWithAgent=true` , `type=2` e um `idResource` válido. Adicionalmente, o agente responde quando `Chat.questionType=2` (pergunta), `Chat.questionType=3` (solicitação), ou quando o texto contém o sinal `?` mesmo sendo `questionType=1` . Nenhuma outra heurística linguística é aplicada. Um alvo `type=3` está sempre a aprender conteúdo e nunca gera uma resposta, mesmo que contenha `talkWithAgent=true` , `questionType=2/3` ou um sinal `?`. As restantes combinações permanecem exclusivamente na aprendizagem. Estão excluídos as entradas humanas ( `type=1` ), os agentes com `talkWithAgent=false` e quaisquer agentes presentes apenas em fontes antigas.
 
-La nueva señal canónica es `Chat.destiny[].talkWithAgent`. Si el campo aparece en cualquiera de las entradas, esa colección tiene precedencia absoluta. Únicamente se selecciona una entrada con `talkWithAgent=true`, `type=2` y un `idResource` válido. Además, el agente responde cuando `Chat.questionType=2` (pregunta), `Chat.questionType=3` (petición), o cuando el texto contiene el signo `?` aunque `questionType=1`. No se aplican otras heurísticas lingüísticas. Un destino `type=3` es siempre contenido de aprendizaje y nunca genera respuesta, incluso si contiene `talkWithAgent=true`, `questionType=2/3` o un signo `?`. Las demás combinaciones quedan exclusivamente en aprendizaje. Las entradas humanas (`type=1`), los agentes con `talkWithAgent=false` y cualquier agente presente solamente en fuentes antiguas quedan excluidos.
+Apenas o recurso selecionado responde se existir em `SysResourceIA` , possuir `active=true` e estiver habilitado para o canal. Uma lista auxiliar `SelectedAgentResourceIds` não pode adicionar outros agentes quando a carga contém uma seleção autorizada.
 
-Solo responde el recurso seleccionado si existe en `SysResourceIA`, tiene `active=true` y está habilitado para el canal. Una lista auxiliar `SelectedAgentResourceIds` no puede añadir otros agentes cuando el payload contiene una selección autoritativa.
+Imediatamente antes de criar cada execução, a API consulta de forma direcionada
+ `dbo.SysResource2Agent` para `IDHumanResource` e requer uma proporção `Active=1`.
+O `IDAgentResource` obtido é sincronizado com o `SysResourceIA` e substitui
+qualquer valor local anterior. A mesma verificação sincroniza `active=true`
+quando existe uma relação ativa e `active=false` quando não existe. Ele funciona
+antes do filtro de agente/canal local, evitando um valor PostgreSQL
+Obsoleto impede que um agente confirmado pelo SQL Server responda. A ausência
+Agente no SQL Server prevalece
+sobre qualquer configuração ou cache existente no PostgreSQL: se o SQL Server não
+confirmar a relação, estiver inativo ou a verificação falhar, esse agente será ignorado
+e nenhuma resposta é gerada ou enviada para o SolidSET.
 
-Inmediatamente antes de crear cada ejecución, la API consulta de forma dirigida
-`dbo.SysResource2Agent` por `IDHumanResource` y exige una relación `Active=1`.
-El `IDAgentResource` obtenido se sincroniza en `SysResourceIA` y sustituye
-cualquier valor local anterior. La misma comprobación sincroniza `active=true`
-cuando existe una relación activa y `active=false` cuando no existe. Se ejecuta
-antes del filtro local de agentes/canales, evitando que un valor PostgreSQL
-obsoleto impida responder a un agente confirmado por SQL Server. La ausencia
-del agente en SQL Server prevalece
-sobre cualquier configuración o caché existente en PostgreSQL: si SQL Server no
-confirma la relación, está inactiva o la verificación falla, ese agente se omite
-y no se genera ni se envía ninguna respuesta a SolidSET.
+A resposta inverte sempre a relação da mensagem original. Se a entrada for `Alejandro -> Víctor`, o agente inicia sessão com a conta de Victor e publica `Víctor -> Alejandro`: `Destiny.WorkRoom` mantém o canal e `Destiny.Dests[0].Resource`/`Login` contém o recurso e o login do autor original. Esta inversão é aplicada após a seleção do agente, uma vez que a descoberta inicial apenas pode aprender uma identidade global e não todos os agentes dinâmicos registados.
 
-La respuesta invierte siempre la relación del mensaje original. Si la entrada es `Alejandro -> Víctor`, el agente inicia sesión con la cuenta de Víctor y publica `Víctor -> Alejandro`: `Destiny.WorkRoom` conserva el canal y `Destiny.Dests[0].Resource`/`Login` contienen el recurso y login del autor original. Esta inversión se aplica después de seleccionar el agente, porque la detección inicial solo puede conocer una identidad global y no todos los agentes dinámicos registrados.
+O `Destiny.Dests[0].Type=2` e o `Destiny.Dests[0].Kind=2` são enviados no formulário de resposta para que as versões novas e antigas do SolidSET reconheçam a intervenção da IA.
 
-En el formulario de respuesta se envían `Destiny.Dests[0].Type=2` y `Destiny.Dests[0].Kind=2` para que las versiones nuevas y anteriores de SolidSET reconozcan la intervención de IA.
+ `Chat.resourceTable` por si só nunca seleciona agentes.  `Chat.destiny` apenas os seleciona através do `talkWithAgent=true` ou através do antigo chat privado e atendendo a regras específicas. Assim, estar presente no canal não autoriza o agente a responder. Caso o recurso destinatário ativo ainda não tenha relação com canal privado ou dinâmico, o router cria `SysChatIAResource(IDResource, IDWorkRoom)` com `active=true` exclusivamente para esse destino.
 
-`Chat.resourceTable` por sí sola nunca selecciona agentes. `Chat.destiny` solo los selecciona mediante `talkWithAgent=true` o mediante las reglas antiguas específicas de chat privado y meeting. De este modo, estar presente en el canal no autoriza a un agente a responder. Si el recurso destinatario activo todavía no tiene relación con un canal privado o dinámico, el router crea exclusivamente para ese destino `SysChatIAResource(IDResource, IDWorkRoom)` con `active=true`.
+ `Chat.channels[].idChannel` e `Chat.idWorkRoom` são interpretados como `SysWorkRoom.IDWorkRoom`.
 
-`Chat.channels[].idChannel` y `Chat.idWorkRoom` se interpretan como `SysWorkRoom.IDWorkRoom`.
+Uma mensagem humana pode ter o mesmo `Sender.resource` que o agente configurado. O agente pode responder porque o SolidSET utiliza esta funcionalidade como uma identidade partilhada; Apenas as mensagens que chegam marcadas com `Info.generated_by_ia` são descartadas.
 
-Un mensaje humano puede tener el mismo `Sender.resource` que el agente configurado. El agente puede responder porque SolidSET utiliza ese recurso como identidad compartida; únicamente se descartan mensajes que lleguen marcados con `Info.generated_by_ia`.
+No seu chat privado (`Chat.channels[].channelKind=1`) é válido conversar com o agente associado ao mesmo recurso de utilizador. Quando `Destiny.dests` está vazio, o router assume exclusivamente `Chat.destiny[].idResource` com `type=1` como proprietário do canal privado. Este recurso deve ainda existir como agente ativo. Esta exceção aplica-se apenas a chats privados e não altera a regra da reunião, em que `type=1` é o autor e nunca responde.
 
-En un chat privado propio (`Chat.channels[].channelKind=1`) es válido conversar con el agente asociado al mismo recurso del usuario. Cuando `Destiny.dests` está vacío, el router toma exclusivamente `Chat.destiny[].idResource` con `type=1` como propietario del canal privado. Ese recurso todavía debe existir como agente activo. Esta excepción solo aplica a chats privados y no altera la regla de meetings, donde `type=1` es el autor y nunca responde.
+Quando o proprietário conversa com a sua própria IA, a resposta retém
+ `SysResourceIA.IDResource` para login, permissões e participante humano.
+O participante De e a identidade lógica enviada
+ `Info[agent_resource_id]`, `IDAgentIA`, `Info[id_agent_ia]` e `Info[agent_id]`
+utilize sempre `SysResourceIA.IDAgentResource`, sincronizado de
+ `dbo.SysResource2Agent.IDAgentResource`; a chave interna nunca é utilizada
+ `SysResourceIA.ID`. SolidSET persiste remetente efetivo da sessão
+autenticado utilizando o `St_SendMessageSync(req, currentL, currentS, currentR)` .
 
-Cuando el propietario conversa con su propia IA, la respuesta conserva
-`SysResourceIA.IDResource` para login, permisos y el participante To humano.
-El participante From y la identidad lógica enviada en
-`Info[agent_resource_id]`, `IDAgentIA`, `Info[id_agent_ia]` e `Info[agent_id]`
-usan siempre `SysResourceIA.IDAgentResource`, sincronizada desde
-`dbo.SysResource2Agent.IDAgentResource`; nunca se utiliza la clave interna
-`SysResourceIA.ID`. SolidSET persiste el remitente efectivo desde la sesión
-autenticada mediante `St_SendMessageSync(req, currentL, currentS, currentR)`.
+Para apresentar um autoresponder à esquerda, o cliente SolidSET deve considerar a flag do agente no cálculo de `ChatView.FromSelf`: se `Info[generated_by_ia]=1` e `Info[id_agent_ia]` contiverem um UUID diferente, a mensagem deverá ser tratada visualmente como `FromSelf=false`, mesmo que `Chat.IDSender` / `IDSenderResource` correspondam ao utilizador autenticado. A alternativa estrutural é registar para cada agente um login independente e recurso SolidSET; nesse caso, não é necessária uma exceção visual.
+### Respostas nas reuniões
 
-Para mostrar una autorrespuesta a la izquierda, el cliente SolidSET debe considerar la marca de agente al calcular `ChatView.FromSelf`: si `Info[generated_by_ia]=1` y `Info[id_agent_ia]` contiene un UUID distinto, el mensaje debe tratarse visualmente como `FromSelf=false`, aunque `Chat.IDSender`/`IDSenderResource` coincidan con el usuario autenticado. La alternativa estructural es registrar para cada agente un login y recurso SolidSET independientes; en ese caso no se necesita una excepción visual.
+Quando a mensagem contém `Info.meeting_id` , `ExtraData.meeting_id` ou `Chat.idMeeting` , a resposta é mantida na reunião.  O `meeting_mirror_general` já não é necessário para detetar este contexto.
 
-### Respuestas dentro de meetings
-
-Cuando el mensaje contiene `Info.meeting_id`, `ExtraData.meeting_id` o `Chat.idMeeting`, la respuesta se mantiene dentro del meeting. `meeting_mirror_general` ya no es necesario para detectar este contexto.
-
-El formulario enviado a `/Chat/SendMessageForm` incluye:
+O formulário enviado para `/Chat/SendMessageForm` inclui:
 
 ```text
 Destiny.WorkRoom      = canal técnico subyacente
@@ -1205,117 +1144,114 @@ Info[meeting_id]      = UUID del meeting
 Info[meeting_code]    = código opcional, por ejemplo M10
 ExtraData             = {"meeting_id":"...","meeting_code":"M10"}
 ```
+O `WorkRoom` é retido apenas porque o SolidSET o utiliza como caminho de transporte.  `ExtraData.meeting_id` é quem liga o novo chat à reunião e ativa as validações de participantes bloqueados ou expulsos mostradas pelo `MeetingChatSendGuard`. A API não adiciona `Info[meeting_mirror_general]` , evitando transformar a resposta num espelho geral do canal.
 
-El `WorkRoom` se conserva únicamente porque SolidSET lo utiliza como ruta de transporte. `ExtraData.meeting_id` es lo que vincula el nuevo chat al meeting y activa las validaciones de participante bloqueado o expulsado mostradas por `MeetingChatSendGuard`. La API no añade `Info[meeting_mirror_general]`, evitando convertir la respuesta en un espejo general del canal.
+Antes de enviar, a API valida se `meeting_id` existe em `dbo.SysMeeting` , está ativo e se o seu `IDChannel` corresponde a `Destiny.WorkRoom` . Caso o identificador recebido esteja obsoleto, tente resolver a reunião utilizando o `meeting_code` dentro do mesmo canal. Caso nenhuma reunião corresponda, ignore o âmbito da reunião e envie para o canal técnico, evitando conflitos com o FK `FK_SysChat2SysWorkRoom_SysMeeting`.
 
-Antes del envío, la API valida que `meeting_id` exista en `dbo.SysMeeting`, esté activo y que su `IDChannel` coincida con `Destiny.WorkRoom`. Si el identificador recibido es obsoleto, intenta resolver el meeting mediante `meeting_code` dentro del mismo canal. Si ninguna reunión coincide, omite el ámbito meeting y envía al canal técnico, evitando conflictos con la FK `FK_SysChat2SysWorkRoom_SysMeeting`.
+Quando `Chat.chatQuestion` está presente, o agente recebe `chatQuestion.rawMessage` e `chatQuestion.idChat2` como contexto para a mensagem citada. A solicitação atual mantém-se `RawMessage` ; A mensagem citada não substitui o autor, os destinatários ou a reunião atual e é tratada como conteúdo não fidedigno, não como uma instrução do sistema.
 
-Cuando `Chat.chatQuestion` está presente, el agente recibe `chatQuestion.rawMessage` y `chatQuestion.idChat2` como contexto del mensaje citado. La petición actual continúa siendo `RawMessage`; el mensaje citado no sustituye al autor, los destinatarios ni el meeting actuales y se trata como contenido no confiable, no como una instrucción del sistema.
+As questões operacionais sobre os participantes da reunião são resolvidas de forma
+determinístico no SQL Server utilizando os métodos `SysMeeting` , `SysMeeting2Resource` e
+ `SysResources`. O `meeting_id` incluído na carga útil define o âmbito do
+consulta, pelo que não é obrigatório repetir a palavra “reunião” nas perguntas
+como "Diz-me quais são os recursos ativos". Os relacionamentos pendentes são excluídos,
+bloqueado ou expulso e a contagem, a lista nominal de recursos são suportados
+ativos e a identificação do recurso criador. Estas consultas não são delegadas no
+LLM nem para a descoberta gratuita de tabelas.
 
-Las preguntas operativas sobre participantes del meeting se resuelven de forma
-determinista en SQL Server mediante `SysMeeting`, `SysMeeting2Resource` y
-`SysResources`. El `meeting_id` incluido en el payload establece el ámbito de la
-consulta, por lo que no es obligatorio repetir la palabra «meeting» en preguntas
-como «Dime cuáles son los recursos activos». Se excluyen relaciones pendientes,
-bloqueadas o expulsadas y se soportan el conteo, el listado nominal de recursos
-activos y la identificación del recurso creador. Estas consultas no se delegan al
-LLM ni al descubrimiento libre de tablas.
+A língua do `RawMessage` atual tem prioridade absoluta sobre `Locale`, país,
+instância, memória de conversação, documentos recuperados e resultados SQL. O
+API deteta espanhol, português ou inglês em cada pedido e constrói ou normaliza
+a resposta nesse mesmo idioma.  `Locale=pt-PT` apenas adapta as variantes
+regional quando a mensagem é escrita em português; não é possível converter um
+Pergunta em espanhol ou inglês com resposta em português.
 
-El idioma del `RawMessage` actual tiene prioridad absoluta sobre `Locale`, país,
-instancia, memoria conversacional, documentos recuperados y resultados SQL. La
-API detecta español, portugués o inglés en cada petición y construye o normaliza
-la respuesta en ese mismo idioma. `Locale=pt-PT` únicamente adapta las variantes
-regionales cuando el mensaje está escrito en portugués; no puede convertir una
-pregunta española o inglesa en una respuesta portuguesa.
+Para qualquer dúvida sobre recursos, canais, reuniões, atividades ou tarefas
+A corrente `Qdrant -> SolidSET Data API -> SQL Server` é obrigatória.
+Primeiro, é consultado o conhecimento vetorial isolado do agente e do canal. Um
+o resultado só é considerado referente se atingir o limite semântico configurado
+por `BUSINESS_RAG_MIN_SCORE` (valor por defeito `0.60` ). Se não houver evidências
+suficiente, a API consulta os dados operacionais utilizando a API SolidSET Data;
+o agente não se liga diretamente ao SQL Server. Estas intenções nunca usam
+pesquisa na web e LLM não podem substituir a consulta por nomes de tabelas
+inventadas ou por explicações genéricas.
 
-Para cualquier pregunta sobre recursos, canales, meetings, actividades o tareas
-se aplica obligatoriamente la cadena `Qdrant -> SolidSET Data API -> SQL Server`.
-Primero se consulta el conocimiento vectorial aislado del agente y del canal. Un
-resultado solo se considera referente si alcanza el umbral semántico configurado
-por `BUSINESS_RAG_MIN_SCORE` (valor predeterminado `0.60`). Si no existe evidencia
-suficiente, la API consulta los datos operacionales mediante SolidSET Data API;
-el agente no conecta directamente a SQL Server. Estas intenciones nunca utilizan
-búsqueda web y el LLM no puede reemplazar la consulta por nombres de tablas
-inventados ni por explicaciones genéricas.
+Se o SQL Server rejeitar uma coluna ou tabela, a API Data irá devolver um erro
+estruturado `COLUMN_NOT_FOUND` ou `TABLE_NOT_FOUND` sem expor o traço completo.
+O agente pode atualizar o fragmento do catálogo e realizar no máximo uma
+correção baseada em identificadores reais; Não entra em tentativas ilimitadas.
 
-Si SQL Server rechaza una columna o tabla, la Data API devuelve un error
-estructurado `COLUMN_NOT_FOUND` o `TABLE_NOT_FOUND` sin exponer la traza completa.
-El agente puede refrescar el fragmento del catálogo y realizar como máximo una
-corrección basada en los identificadores reales; no entra en reintentos ilimitados.
+As questões sobre o estado ativo ou operacional constituem uma exceção
+autoridade, e não ordem: Qdrant é consultado em primeiro lugar, mas uma coincidência histórica
+não pode substituir os identificadores atuais recebidos na carga útil. Consultas
+como “participantes”, “nomes”, “recursos ativos”, “estado atual”, contagens ou
+As listagens são sempre verificadas através do SolidSET Data API/SQL Server utilizando
+ `Chat.idMeeting` , `Info.meeting_id` , `IDWorkRoom` e os restantes identificadores do
+mensagem. Para estes casos, o SQL é a fonte autorizada e o LLM apenas pode escrever
+os dados obtidos; Não pode responder com instruções genéricas sobre reuniões.
 
-Las preguntas sobre estado vivo u operacional constituyen una excepción de
-autoridad, no de orden: Qdrant se consulta primero, pero una coincidencia histórica
-no puede sustituir los identificadores actuales recibidos en el payload. Consultas
-como «participantes», «nombres», «recursos activos», «estado actual», conteos o
-listados se verifican siempre mediante SolidSET Data API/SQL Server usando
-`Chat.idMeeting`, `Info.meeting_id`, `IDWorkRoom` y los demás identificadores del
-mensaje. Para estos casos SQL es la fuente autoritativa y el LLM solo puede redactar
-los datos obtenidos; no puede responder con instrucciones genéricas sobre meetings.
+### Catálogo de esquemas e consultas dinâmicas seguras
 
-### Catálogo de esquema y consultas dinámicas seguras
+A API do agente nunca descobre o esquema ligando-se diretamente ao SQL
+Servidor. A API SolidSET Data expõe o `GET /api/v1/schema/catalog`, autenticado com
+ `X-SolidSET-Data-Key` , que devolve tabelas, colunas, tipos, nulidade `dbo`,
+chaves primárias e chaves externas. Parâmetro opcional `tables` aceita nomes
+separados por vírgulas para devolver apenas o fragmento necessário.
 
-La API del agente nunca descubre el esquema conectándose directamente a SQL
-Server. La SolidSET Data API expone `GET /api/v1/schema/catalog`, autenticado con
-`X-SolidSET-Data-Key`, que devuelve tablas `dbo`, columnas, tipos, nulabilidad,
-claves primarias y claves foráneas. El parámetro opcional `tables` acepta nombres
-separados por coma para devolver únicamente el fragmento necesario.
+O agente seleciona as tabelas candidatas com base na entidade comercial e pré-carrega essas tabelas.
+fragmento antes de solicitar ao modelo uma nova consulta. O modelo só pode gerar
+um `SELECT` /CTE, devem ser utilizadas relações presentes no catálogo, marcadores `%s` e
+a matriz `parameters_json`. A execução continua através
+ `POST /api/v1/query/read` , com limite de linha, tempo limite, rejeição de gravação,
+comentários, múltiplas declarações, declarações de controlo e referências a outros
+bases de dados. Frequentemente, as consultas retêm os seus modelos determinísticos;
+O SQL dinâmico é apenas o substituto para uma nova intenção operacional.
 
-El agente selecciona tablas candidatas según la entidad de negocio y precarga ese
-fragmento antes de pedir al modelo una consulta nueva. El modelo solo puede generar
-un `SELECT`/CTE, debe usar relaciones presentes en el catálogo, marcadores `%s` y
-el array `parameters_json`. La ejecución continúa pasando por
-`POST /api/v1/query/read`, con límite de filas, timeout, rechazo de escritura,
-comentarios, instrucciones múltiples, sentencias de control y referencias a otras
-bases de datos. Las consultas frecuentes conservan sus plantillas deterministas;
-el SQL dinámico es únicamente el fallback para una intención operacional nueva.
+A API SolidSET Data regista os rastreios operacionais seguros para diagnosticar erros
+ `503` - tentativa e resultado de ligação (`host`, instância, porta e base de dados),
+rótulo da operação, identificador SHA-256 curto da consulta, número de
+parâmetros, linhas, colunas e duração. Em caso de falha, inclua o tipo e uma mensagem
+limitado. Os traces não mostram a consulta, os seus parâmetros, o utilizador, a palavra-passe
+nem a chave API.
 
-La SolidSET Data API registra trazas operativas seguras para diagnosticar errores
-`503`: intento y resultado de conexión (`host`, instancia, puerto y base de datos),
-etiqueta de la operación, identificador SHA-256 abreviado de la consulta, número de
-parámetros, filas, columnas y duración. En caso de fallo incluye el tipo y un mensaje
-acotado. Las trazas no muestran la consulta, sus parámetros, el usuario, la contraseña
-ni la clave de la API.
+Quando a API SolidSET Data é executada dentro do Docker, o SQL Server aloja
+ `localhost` , `127.0.0.1` e `::1` resolvem para `host.docker.internal` , uma vez que
+o endereço de loopback do contentor não representa o host. Se o SQL Server estiver ativado
+outro contentor deve ter o seu nome DNS de serviço configurado (por ex.
+ `sqlserver` ) e ambas as aplicações devem partilhar uma rede Docker.
 
-Cuando la SolidSET Data API se ejecuta dentro de Docker, los hosts SQL Server
-`localhost`, `127.0.0.1` y `::1` se resuelven como `host.docker.internal`, ya que
-la dirección loopback del contenedor no representa al host. Si SQL Server está en
-otro contenedor debe configurarse su nombre DNS de servicio (por ejemplo,
-`sqlserver`) y ambas aplicaciones deben compartir una red Docker.
+####`POST /api/v1/agent/solidset/instances/{code}/schema/refresh`
 
-#### `POST /api/v1/agent/solidset/instances/{code}/schema/refresh`
+Obtém todo o catálogo da API SolidSET Data configurada para o
+instância e guarda-a no PostgreSQL em `SysSolidSETSchemaSnapshot` . Devolva o
+estado, base de dados, número de tabelas, hash e data de captura. As mensagens de
+a saída está em português de Portugal e a descrição do Swagger está em inglês.
 
-Obtiene el catálogo completo desde la SolidSET Data API configurada para la
-instancia y lo guarda en PostgreSQL en `SysSolidSETSchemaSnapshot`. Devuelve el
-estado, base de datos, número de tablas, hash y fecha de captura. Los mensajes de
-salida están en portugués de Portugal y la descripción de Swagger está en inglés.
+####`GET /api/v1/agent/solidset/instances/{code}/schema`
 
-#### `GET /api/v1/agent/solidset/instances/{code}/schema`
+Retorna o instantâneo mais recente do PostgreSQL sem abrir uma ligação ao SQL Server.
+Cada instância mantém o seu próprio catálogo e hash, permitindo o suporte de versões.
+de diferentes esquemas sem misturar tabelas ou relações entre instalações.
 
-Devuelve el último snapshot desde PostgreSQL sin abrir una conexión a SQL Server.
-Cada instancia mantiene su propio catálogo y hash, permitiendo soportar versiones
-de esquema diferentes sin mezclar tablas o relaciones entre instalaciones.
-
-En meetings, `Chat.destiny` es la fuente canónica para decidir qué agente responde:
+Nas reuniões, `Chat.destiny` é a fonte canónica para decidir qual o agente que responde:
 
 ```text
 Chat.destiny[].type = 1 → autor de la pregunta; nunca responde
 Chat.destiny[].type = 2 → destinatario solicitado; puede responder
 Chat.destiny[].sequence → orden de los destinatarios
 ```
-
-Cuando `Chat.destiny` está presente, el router ignora `Destiny.dests`, porque esta última colección puede contener copias técnicas para el autor y otros participantes del meeting. Solo los recursos `type=2` pasan después por las validaciones de `SysResourceIA.active` y asignación al canal técnico. Si únicamente existe una entrada `type=1`, no se ejecuta ningún agente. `Destiny.dests` se utiliza como respaldo exclusivamente si el payload de meeting no contiene `Chat.destiny`.
+Quando `Chat.destiny` está presente, o router ignora `Destiny.dests` , uma vez que esta última coleção pode conter cópias técnicas para o autor e outros participantes da reunião. Apenas os recursos `type=2` passam pelas validações `SysResourceIA.active` e atribuição ao canal técnico. Se existir apenas uma entrada `type=1`, não será executado qualquer agente.  O `Destiny.dests` será utilizado como substituto apenas se a carga útil da reunião não contiver `Chat.destiny` .
 
 ---
 
-## 10. Capturar y reenviar FrameworkHub
+## 10. Capturar e encaminhar FrameworkHub
 
 ```http
 POST /api/v1/agent/notification/frameworkHub/SendMessage
 ```
+Funciona como um proxy entre o SolidSET e o endpoint das notificações reais.
 
-Funciona como proxy entre SolidSET y el endpoint real de notificaciones.
-
-Flujo:
+Fluxo:
 
 ```text
 Mensaje entrante
@@ -1326,27 +1262,24 @@ Reenvío al endpoint real de SolidSET
     ↓
 Programación de agentes seleccionados
 ```
+Preserva o corpo, os cabeçalhos e os parâmetros relevantes.
 
-Conserva el cuerpo, las cabeceras y los parámetros relevantes.
-
-La respuesta incluye cabeceras como:
+A resposta inclui cabeçalhos como:
 
 ```text
 X-Agent-Capture-Learned
 X-Agent-Replies-Scheduled
 ```
+# Conversa tradicional
 
-# Conversación tradicional
+## 11. Diálogo com um único agente
 
-## 11. Diálogo con un único agente
-
-Los saludos identifican respetuosamente al interlocutor mediante el `FullName` asociado al recurso, por ejemplo: `¡Hola, Alejandro Veitia! Es un placer saludarte. ¿En qué puedo ayudarte?`. No muestran el alias del recurso, perfil, rol, permisos ni cantidad o nombres de canales. Si no se puede resolver `FullName`, se utiliza el mismo saludo sin nombre.
+Saudações identifique respeitosamente o locutor utilizando o `FullName` associado ao recurso, por exemplo: `¡Hola, Alejandro Veitia! Es un placer saludarte. ¿En qué puedo ayudarte?` . Não mostram o alias do recurso, perfil, função, permissões ou número ou nomes de canais. Se `FullName` não puder ser resolvido, será utilizada a mesma saudação sem nome.
 
 ```http
 POST /api/v1/agent/dialogue
 ```
-
-Procesa un `FrameworkMessage` mediante el agente tradicional.
+Processe um `FrameworkMessage` utilizando o agente tradicional.
 
 Utiliza principalmente:
 
@@ -1362,28 +1295,26 @@ Utiliza principalmente:
   }
 }
 ```
+Recursos:
 
-Funciones:
+- Valida o conteúdo e o comprimento.
+- Deteta injeção imediata.
+- Resolve utilizador, recurso e canal.
+- Recupera contexto SQL Server e Qdrant.
+- Utilize memória Redis.
+- Execute ferramentas permitidas.
+- Retorna uma única resposta.
 
-- Valida contenido y longitud.
-- Detecta prompt injection.
-- Resuelve usuario, recurso y canal.
-- Recupera contexto SQL Server y Qdrant.
-- Usa memoria Redis.
-- Ejecuta herramientas permitidas.
-- Devuelve una única respuesta.
-
-Para nuevos desarrollos con varios agentes debe preferirse `/multi-agent/dialogue`.
+Para novos desenvolvimentos com vários agentes deve ser preferido o `/multi-agent/dialogue`.
 
 ---
 
-## 12. Registrar feedback
+## 12. Registar feedback
 
 ```http
 POST /api/v1/agent/feedback
 ```
-
-Registra una valoración, corrección o señal de aprendizaje.
+Grave um sinal de avaliação, correção ou aprendizagem.
 
 ```json
 {
@@ -1398,25 +1329,23 @@ Registra una valoración, corrección o señal de aprendizaje.
   "update_profile": true
 }
 ```
+Recursos:
 
-Funciones:
+- Analise a reação.
+- Guarde a correção.
+- Atualizar perfil dinâmico.
+- Incorpora a aprendizagem a longo prazo.
 
-- Analiza la reacción.
-- Guarda la corrección.
-- Actualiza el perfil dinámico.
-- Incorpora aprendizaje de largo plazo.
-
-Para feedback multiagente convendría que SolidSET conserve también el `IDAgentResource` que produjo la respuesta.
+Para feedback multiagente, seria aconselhável que o SolidSET também retivesse o `IDAgentResource` que produziu a resposta.
 
 ---
 
-## 13. Capturar una reacción de SolidSET
+## 13. Capte uma reação SolidSET
 
 ```http
 POST /api/v1/agent/solidset/reactions/capture
 ```
-
-Recibe el mismo contrato de `ChangeReactionRequest` después de que SolidSET haya establecido `IDUser` desde la sesión:
+Recebe o mesmo contrato de `ChangeReactionRequest` após SolidSET definir `IDUser` na sessão:
 
 ```json
 {
@@ -1427,10 +1356,9 @@ Recibe el mismo contrato de `ChangeReactionRequest` después de que SolidSET hay
   "Counter": 1
 }
 ```
+A API consulta `dbo.SysChat.IDChat2` , verifica se o remetente está registado em `SysResourceIA` e se a mensagem começa por `Asistente IA` . Em seguida, guarda o evento no PostgreSQL `SysAgentIAReaction` e incorpora-o na aprendizagem isolada do agente que emitiu a resposta.
 
-La API consulta `dbo.SysChat.IDChat2`, comprueba que el emisor esté registrado en `SysResourceIA` y que el mensaje comience con `Asistente IA`. Después guarda el evento en PostgreSQL `SysAgentIAReaction` y lo incorpora al aprendizaje aislado del agente que emitió la respuesta.
-
-Este endpoint cierra un ciclo de Reinforcement Learning basado en memoria de preferencias:
+Este ponto final fecha um ciclo de Aprendizagem por Reforço baseado na memória de preferência:
 
 ```text
 positive → reward = +Counter
@@ -1438,12 +1366,11 @@ negative → reward = -Counter
 neutral  → reward = +0.1 × Counter
 removed  → reward = 0
 ```
+Antes de gerar respostas futuras, o agente consulta as recompensas do seu canal. Os padrões positivos são apresentados como exemplos cujo foco e clareza devem ser encorajados; os negativos como padrões que deve corrigir e evitar. A política é isolada por `IDAgentResource` e `IDChannel`, não mistura reações entre agentes e nunca expõe recompensas internas ao utilizador.
 
-Antes de generar futuras respuestas, el agente consulta sus recompensas del canal. Los patrones positivos se presentan como ejemplos cuyo enfoque y claridad debe favorecer; los negativos como patrones que debe corregir y evitar. La política está aislada por `IDAgentResource` y `IDChannel`, no mezcla reacciones entre agentes y nunca expone al usuario las recompensas internas.
+Este é o RL com recuperação de memória e preferência, apropriado para o melhoramento online seguro. Não altera os pesos do modelo básico nem copia literalmente as respostas anteriores.
 
-Se trata de RL con memoria y recuperación de preferencias, apropiado para mejora online segura. No modifica en caliente los pesos del modelo base ni copia literalmente respuestas anteriores.
-
-Señales posibles:
+Possíveis sinais:
 
 ```text
 positive → aprobación, agradecimiento, corazón, celebración
@@ -1451,10 +1378,9 @@ negative → desaprobación, enfado o tristeza
 neutral  → emoji sin clasificación explícita
 removed  → Counter = 0; se registra la retirada pero no se aprende
 ```
+A combinação `(IDChat, IDUser, IDEmoji)` é idempotente. Repetir o mesmo contador não gera aprendizagem duplicada.
 
-La combinación `(IDChat, IDUser, IDEmoji)` es idempotente. Repetir el mismo contador no genera aprendizaje duplicado.
-
-Respuesta:
+Responder:
 
 ```json
 {
@@ -1468,196 +1394,183 @@ Respuesta:
   "AgentName": "Victor Vargas"
 }
 ```
+# Memória e ficheiros
 
-# Memoria y archivos
-
-## 14. Consultar historial
+## 14. Verifique o histórico
 
 ```http
 GET /api/v1/agent/history/{session_id}
 ```
+Retorna as mensagens armazenadas no Redis.
 
-Devuelve mensajes almacenados en Redis.
-
-Parámetros opcionales:
+Parâmetros opcionais:
 
 ```text
 before
 limit
 ```
+Utilizado para paginar o histórico de uma conversa.
 
-Se utiliza para paginar el historial de una conversación.
-
-En multiagente, el identificador interno incluye agente, canal y sesión.
+No multiagente, o identificador interno inclui o agente, o canal e a sessão.
 
 ---
 
-## 15. Eliminar historial
+## 15. Apagar histórico
 
 ```http
 DELETE /api/v1/agent/history/{session_id}
 ```
+Limpa a memória Redis correspondente a uma sessão.
 
-Borra la memoria Redis correspondiente a una sesión.
-
-Es una operación destructiva: elimina el historial conversacional de esa clave.
+É uma operação destrutiva: elimina o histórico de conversação dessa chave.
 
 ---
 
-## 16. Obtener audio generado
+## 16. Obter áudio gerado
 
 ```http
 GET /api/v1/agent/audio-response?file=nombre.mp3
 ```
+Retorna um ficheiro de áudio criado anteriormente pelo agente.
 
-Devuelve un archivo de audio creado previamente por el agente.
+Valida que o ficheiro existe e que o caminho solicitado é seguro.
 
-Valida que el archivo exista y que la ruta solicitada sea segura.
+# Monitorização e diagnóstico
 
-# Supervisión y diagnóstico
-
-## 17. Estado general del agente
+## 17. Situação geral do agente
 
 ```http
 GET /api/v1/agent/health
 ```
+Verifique o estado do serviço e dependências como:
 
-Comprueba el estado del servicio y dependencias como:
-
-- Ollama.
-- Qdrant.
+-Olhama.
+-Qdrant.
 - Redis.
 - PostgreSQL.
-- SQL Server.
-- SolidSET.
-- Notification API.
+-Servidor SQL.
+-SólidoSET.
+- API de notificação.
 
-Es el endpoint principal para monitorización.
+É o principal endpoint para monitorização.
 
 ---
 
-## 18. Resumen de evaluación
+## 18. Resumo da avaliação
 
 ```http
 GET /api/v1/agent/evaluation/summary
 ```
+Retorna métricas operacionais relacionadas com:
 
-Devuelve métricas operativas relacionadas con:
-
-- Diálogos procesados.
-- Duración.
-- Caché.
-- Errores.
-- Captura de notificaciones.
-- Autorrespuestas.
-- Estado de integraciones.
+- Diálogos processados.
+- Duração.
+- Cache.
+- Erros.
+- Capturar notificações.
+- Respostas automáticas.
+- Estado das integrações.
 
 ---
 
-## 19. Mensajes recientes capturados
+## 19. Mensagens recentes capturadas
 
 ```http
 GET /api/v1/agent/notification/recent-messages?limit=30
 ```
+Retorna as últimas mensagens captadas pelo ouvinte.
 
-Devuelve los últimos mensajes capturados por el listener.
+O limite permitido situa-se entre 1 e 200.
 
-El límite permitido está entre 1 y 200.
+É utilizado para verificar se o SolidSET está a enviar corretamente:
 
-Sirve para comprobar que SolidSET está enviando correctamente:
-
-- Mensaje.
+- Mensagem.
 - Canal.
-- Remitente.
+- Remetente.
 - Identificadores.
 - Tipo de evento.
 
 ---
 
-## 20. Contexto de un usuario
+## 20. Contexto de um utilizador
 
 ```http
 GET /api/v1/agent/context/{user_id}
 ```
+Retorna o contexto computado para um utilizador:
 
-Devuelve el contexto calculado para un usuario:
-
-- Identidad.
-- Roles.
-- Canales.
-- Actividades recientes.
-- Recursos disponibles.
-- Permisos.
+- Identidade.
+- Papéis.
+- Canais.
+- Atividades recentes.
+- Recursos disponíveis.
+- Autorizações.
 - Perfil aprendido.
 
-Se usa principalmente para depuración.
+É utilizado principalmente para depuração.
 
 ---
 
-## 21. Métricas de reintentos SQL
+## 21. Métricas de nova tentativa SQL
 
 ```http
 GET /api/v1/agent/sql-retry-stats
 ```
+Amostra:
 
-Muestra:
-
-- Reintentos de conexión.
-- Reintentos de consultas.
-- Operaciones que generaron reintentos.
-- Última fecha de reintento.
+- Novas tentativas de ligação.
+- Tentativas de consulta.
+- Operações que geraram novas tentativas.
+- Data da última tentativa.
 
 ---
 
-## 22. Reiniciar métricas SQL
+## 22. Repor métricas SQL
 
 ```http
 POST /api/v1/agent/sql-retry-stats/reset
 ```
+Repõe as métricas de repetição SQL para zero.
 
-Pone a cero las métricas de reintentos SQL.
+Não modifica tabelas ou dados SolidSET; apenas reinicia os contadores internos.
 
-No modifica tablas ni datos de SolidSET; solamente reinicia contadores internos.
+# Conectividade
 
-# Conectividad
-
-## 23. Probar SolidSET
+## 23. Experimente o SolidSET
 
 ```http
 GET /api/v1/connectivity/solidset
 ```
+Testa a conectividade com o SolidSET, normalmente através do seu endpoint de pulsação.
 
-Prueba la conectividad con SolidSET, normalmente mediante su endpoint de heartbeat.
+É utilizado para diagnosticar:
 
-Sirve para diagnosticar:
-
-- URL incorrecta.
-- Servicio no disponible.
-- Timeout.
-- Problemas TLS.
-- Respuesta HTTP inesperada.
+- URL incorreto.
+- Serviço não disponível.
+- Tempo esgotado.
+- Problemas de TLS.
+- Resposta HTTP inesperada.
 
 ---
 
-## 24. Probar todas las integraciones
+## 24. Teste todas as integrações
 
 ```http
 GET /api/v1/connectivity/all
 ```
+Executa uma verificação conjunta dos serviços configurados.
 
-Ejecuta una comprobación conjunta de los servicios configurados.
+Permite localizar rapidamente se o problema está em:
 
-Permite localizar rápidamente si el problema está en:
-
-- SolidSET.
-- Notification API.
+-SólidoSET.
+- API de notificação.
 - PostgreSQL.
-- SQL Server.
+-Servidor SQL.
 - Redis.
-- Qdrant.
-- Ollama.
+-Qdrant.
+-Olhama.
 
-## Tablas y responsabilidades
+## Tabelas e responsabilidades
 
 ```text
 SysResourceIA ──────────────┐
@@ -1685,96 +1598,94 @@ SysAgentIASession
 Redis
     Memoria conversacional rápida
 ```
-
-La regla central es:
+A regra central é:
 
 ```text
 Un mensaje puede seleccionar varios agentes.
 Cada agente se valida y ejecuta por separado.
 Cada agente mantiene su propia sesión, memoria y conocimiento.
 ```
-# Conectividad de producción: SQL Server y Qdrant
+# Conectividade de produção: SQL Server e Qdrant
 
-Cada SQL Server se configura en PostgreSQL mediante el endpoint de instancias.
-Ya no existen variables `SQL_SERVER_HOST`, `SQL_SERVER_INSTANCE`,
-`SQL_SERVER_PORT`, `SQL_SERVER_DB`, `SQL_SERVER_USER` ni
-`SQL_SERVER_PASSWORD` en los ficheros `.env` o Compose. Una instancia nombrada
-usa `Host` más `InstanceName`; para conexión TCP directa se deja
-`InstanceName=null` y se indica el puerto publicado.
+Cada SQL Server é configurado no PostgreSQL utilizando o endpoint da instância.
+Já não existem variáveis `SQL_SERVER_HOST` , `SQL_SERVER_INSTANCE` ,
+ `SQL_SERVER_PORT`, `SQL_SERVER_DB`, `SQL_SERVER_USER` ou
+ `SQL_SERVER_PASSWORD` nos ficheiros `.env` ou Compose. Uma instância nomeada
+utilize `Host` mais `InstanceName`; Para ligação TCP direta, deixe
+ `InstanceName=null` e a porta publicada são indicados.
 
-El `.env` de producción debe declarar `ENVIRONMENT=production`, utilizar
-`OLLAMA_BASE_URL=http://ollama-llm:11434` y no contener una cuenta global en
-`SOLIDSET_LOGIN_*`; la identidad para responder se obtiene de `SysLogin` según
-el recurso agente seleccionado.
+A produção `.env` deve declarar `ENVIRONMENT=production`, utilizar
+ `OLLAMA_BASE_URL=http://ollama-llm:11434` e não contém uma conta global em
+ `SOLIDSET_LOGIN_*`; a identidade para responder é obtida a partir de `SysLogin` de acordo com
+o recurso do agente selecionado.
 
-Los endpoints manuales de sincronización requieren ahora el parámetro
-`instanceCode`, por ejemplo
-`POST /api/v1/agent/solidset/resources/sync?instanceCode=solidset-lisboa`.
-Lo mismo aplica a `logins/sync`, `workrooms/sync` y `chat-workroom/sync`.
-La ingesta histórica recorre cada instancia con su propia conexión y cursores;
-una instancia sin conexión configurada se omite, sin recurrir a otra base.
+Os endpoints de sincronização manual requerem agora o parâmetro
+ `instanceCode`, por exemplo
+ `POST /api/v1/agent/solidset/resources/sync?instanceCode=solidset-lisboa`.
+O mesmo se aplica a `logins/sync`, `workrooms/sync` e `chat-workroom/sync`.
+A ingestão histórica percorre cada instância com a sua própria ligação e cursores;
+uma instância offline configurada é ignorada, sem recurso a outra base.
 
-Después de actualizar una instalación existente, el orden inicial recomendado
-es: desplegar y configurar su `solidset-data-api`, registrar la instancia con
-`DataAPI`, ejecutar `test-connection`,
-sincronizar `resources`, `logins`, `workrooms` y `chat-workroom`, y finalmente
-reanudar la ingesta histórica. La sincronización de recursos crea el ámbito de
-instancia necesario; hasta entonces los agentes se omiten deliberadamente.
+Após a atualização de uma instalação existente, o pedido inicial recomendado
+é: implantar e configurar o seu `solidset-data-api`, registar a instância com
+ `DataAPI`, execute `test-connection`,
+sincronizar `resources` , `logins` , `workrooms` e `chat-workroom` , e por fim
+retomar a ingestão histórica. A sincronização de recursos cria o âmbito de
+instância necessária; até então os agentes são deliberadamente omitidos.
 
-`SysSolidSETInstanceResource` registra qué recursos fueron descubiertos en cada
-instalación. La validación histórica exige esa relación además de un agente
-activo, evitando utilizar recursos pertenecientes a otra instancia.
-Las cuentas se replican además en `SysSolidSETInstanceLogin`, cuya clave es
-`(IDSolidSETInstance, IDLogin)`. El login de una respuesta se resuelve por la
-instancia de la URL de destino; aunque dos instalaciones reutilicen el mismo
-GUID de login, sus contraseñas no se sobrescriben entre sí.
+ O `SysSolidSETInstanceResource` regista quais os recursos que foram descobertos em cada
+instalação. A validação histórica requer esta relação para além de um agente
+ativo, evitando utilizar recursos pertencentes a outra instância.
+As contas são também replicadas em `SysSolidSETInstanceLogin`, cuja chave é
+ `(IDSolidSETInstance, IDLogin)`. O login de uma resposta é resolvido pelo
+instância de URL de destino; mesmo que duas instalações reutilizem o mesmo
+login GUID, as suas passwords não se sobrepõem.
 
-La cuenta global antigua de SolidSET queda deshabilitada en
-`docker-compose-prod.yml`. Cada respuesta inicia sesión con el `SysLogin` del
-recurso agente almacenado en PostgreSQL.
+A antiga conta global SolidSET está desativada em
+ `docker-compose-prod.yml`. Cada resposta faz login com o `SysLogin` do
+recurso de agente armazenado no PostgreSQL.
 
-Qdrant dispone de una comprobación TCP de salud. El agente no comienza hasta
-que `vector-db:6333` acepta conexiones, evitando que la creación inicial de la
-colección `machining_docs` falle por una carrera de arranque.
+O Qdrant tem uma verificação de integridade TCP. O agente não arranca até
+que o `vector-db:6333` aceita ligações, impedindo a criação inicial do
+A coleção `machining_docs` falhou devido a uma corrida inicial.
 
-El ciclo periódico de aprendizaje de estructura procesa todas las instancias
-SolidSET activas que tengan una Data API activa. Cada ejecución establece su propio
-contexto de instancia antes de consultar SQL Server y registra el resultado por
-`instanceCode`. Un fallo en una instalación no detiene las demás; el ciclo se marca
-como `partial`. Solo se considera fallido cuando ninguna instancia puede ingerirse.
+O ciclo periódico de aprendizagem da estrutura processa todas as instâncias
+SolidSETs ativos que possuem uma API de dados ativa. Cada corrida estabelece o seu próprio
+contexto da instância antes de consultar o SQL Server e regista o resultado por
+ `instanceCode`. Uma falha numa instalação não impede as outras; o ciclo está marcado
+como `partial`. Só é considerado com falha quando nenhuma instância pode ser ingerida.
 
-## Ingesta retroactiva de conocimiento SolidSET
+## Ingestão retroativa de conhecimento SolidSET
 
-La ingesta histórica es independiente de las respuestas en tiempo real. Solo
-crea procesos para recursos con `SysResourceIA.active=true`, un
-`IDAgentResource` y una relación `dbo.SysResource2Agent.Active=1` verificada.
+A ingestão histórica é independente das respostas em tempo real. sozinho
+cria processos para recursos com o `SysResourceIA.active=true`, um
+ `IDAgentResource` e uma relação `dbo.SysResource2Agent.Active=1` verificada.
 
-Cada agente activo tiene cursores independientes:
+Cada agente ativo possui cursores independentes:
 
 ```text
 solidset_chat_history:{IDResource}
 solidset_task_history:{IDResource}
 ```
+O cursor do chat lê `dbo.SysChat` incrementalmente por `IDChat2` e inclui
+apenas as mensagens que o recurso escreveu, recebeu como participante ou pode
+Verifique os seus relacionamentos `SysChatIAResource` ativos. Os documentos são
+São classificados como `owner`, `workroom`, `private` ou `meeting`.
+ O `SysChat.IDMeeting` é opcional dependendo da instalação. Antes de extrair, o
+consulta do produtor `INFORMATION_SCHEMA.COLUMNS` ; Se não existir, projete
+ `NULL AS IDMeeting` e continua sem classificar estas mensagens como reuniões.
 
-El cursor de chat lee `dbo.SysChat` incrementalmente por `IDChat2` e incluye
-únicamente mensajes que el recurso escribió, recibió como participante o puede
-consultar por sus relaciones activas de `SysChatIAResource`. Los documentos se
-clasifican como `owner`, `workroom`, `private` o `meeting`.
-`SysChat.IDMeeting` es opcional según la instalación. Antes de extraer, el
-productor consulta `INFORMATION_SCHEMA.COLUMNS`; si no existe, proyecta
-`NULL AS IDMeeting` y continúa sin clasificar esos mensajes como meeting.
-
-El cursor de tareas descubre las columnas instaladas de `dbo.SysTask` y sus
-tablas relacionales. Solo extrae tareas donde el recurso aparece como creador,
-responsable, propietario, asignado o participante. Si la instalación no expone
-`IDTask` o una relación verificable con recursos, esta fuente se omite de forma
-segura y nunca se convierte en conocimiento global.
-El descubrimiento incluye `DATA_TYPE`: únicamente columnas
-`uniqueidentifier` pueden relacionarse con un recurso o login. Columnas
-homónimas `tinyint`, `int` u otros tipos se ignoran, y `IDTask` debe ser un
+O cursor de tarefas descobre as colunas instaladas do `dbo.SysTask` e as suas
+tabelas relacionais. Extraia apenas as tarefas em que o recurso esteja listado como criador,
+responsável, proprietário, cessionário ou participante. Se a instalação não expor
+ `IDTask` ou uma relação verificável com recursos, esta fonte é omitida
+seguro e nunca se torna conhecimento global.
+Discovery inclui `DATA_TYPE` - apenas colunas
+ `uniqueidentifier` pode estar relacionado com um recurso ou login. Colunas
+Os homónimos `tinyint`, `int` ou outros tipos são ignorados e `IDTask` deve ser um
 identificador incremental numérico.
 
-Por seguridad comienza desactivada y en modo simulación:
+Por segurança, inicia e em modo de simulação:
 
 ```env
 HISTORICAL_INGESTION_ENABLED=false
@@ -1791,14 +1702,13 @@ HISTORICAL_INGESTION_ADMIN_KEY=<secreto-administrativo>
 DB_INGEST_CONNECT_TIMEOUT_SECONDS=15
 DB_INGEST_QUERY_TIMEOUT_SECONDS=120
 ```
+`DB_INGEST_CONNECT_TIMEOUT_SECONDS` limita abertura de ligação com SQL
+Server e `DB_INGEST_QUERY_TIMEOUT_SECONDS` limitam cada lote de extração.
 
-`DB_INGEST_CONNECT_TIMEOUT_SECONDS` limita la apertura de conexión con SQL
-Server y `DB_INGEST_QUERY_TIMEOUT_SECONDS` limita cada lote de extracción.
-
-Todas las operaciones requieren la cabecera `X-Agent-Admin-Key`, cuyo valor
-debe ser exactamente el configurado en `HISTORICAL_INGESTION_ADMIN_KEY`.
-La cabecera está declarada en OpenAPI y aparece como campo obligatorio en
-Swagger. Si se omite, la API devuelve `422`; si no coincide, devuelve `401`.
+Todas as operações requerem o cabeçalho `X-Agent-Admin-Key`, cujo valor
+deve ser exactamente aquele que está configurado em `HISTORICAL_INGESTION_ADMIN_KEY` .
+O cabeçalho é declarado no OpenAPI e aparece como um campo obrigatório no
+Arrogância. Se for omitido, a API irá retornar `422` ; se não corresponder, devolve `401` .
 
 ```http
 POST /api/v1/agent/historical-ingestion/start
@@ -1809,134 +1719,129 @@ GET  /api/v1/agent/historical-ingestion/status
 GET  /api/v1/agent/historical-ingestion/batches?limit=50
 DELETE /api/v1/agent/historical-ingestion/messages/{idChat2}?instanceCode=local-solidset&sourceType=chat
 ```
-
-El cuerpo de `start` es:
+O corpo do `start` é:
 
 ```json
 {"instanceCode":"local-solidset","dryRun":true}
 ```
+`dryRun` normaliza, rejeita segredos e valida escopos sem gerar embeddings
+nem avance `LastIDChat2` . Depois de analisar a auditoria,
+ `approve-dry-run` e depois para `start` com `dryRun=false` .
 
-El `dryRun` normaliza, rechaza secretos y valida scopes sin generar embeddings
-ni avanzar `LastIDChat2`. Tras revisar auditoría se llama a
-`approve-dry-run`, y después a `start` con `dryRun=false`.
+As mensagens de IA, os segredos, as mensagens vazias e os registos sem autor/canal são
+rejeitam. O conhecimento é armazenado apenas para o agente alvo com
+escopo `owner`, `workroom`, `private`, `meeting` ou `task`;  `global` permanece
+desativado. Os pontos Qdrant incluem `agent_resource_id`, `canal_id`,
+ `source_type`, `source_id`, `scope`, `id_chat2` e `content_hash`.
 
-Los mensajes IA, secretos, mensajes vacíos y registros sin autor/canal se
-rechazan. El conocimiento se almacena únicamente para el agente objetivo con
-scope `owner`, `workroom`, `private`, `meeting` o `task`; `global` permanece
-deshabilitado. Los puntos Qdrant incluyen `agent_resource_id`, `canal_id`,
-`source_type`, `source_id`, `scope`, `id_chat2` y `content_hash`.
+O produtor funciona também como um reconciliador. Quando um agente aparece
+novo ativo, cria automaticamente os seus cursores de chat e tarefas. Se existirem
+documentos anteriores desse agente, parte da origem máxima confirmada; sim
+É realmente novo, começando do zero. A ativação de um agente não reinicia os outros. Um
+o agente desativado deixa de produzir lotes e o trabalhador verifica novamente o seu
+estado antes de indexar qualquer trabalho pendente.
 
-El productor funciona también como reconciliador. Cuando aparece un agente
-activo nuevo, crea automáticamente sus cursores de chat y tareas. Si existen
-documentos anteriores para ese agente, parte del máximo origen confirmado; si
-es realmente nuevo, parte de cero. Activar un agente no reinicia los demás. Un
-agente desactivado deja de producir lotes y el worker vuelve a comprobar su
-estado antes de indexar cualquier trabajo pendiente.
-
-PostgreSQL conserva cursores, auditoría de lotes y la relación exacta entre
-`IDChat2` y `QdrantPointID`. El endpoint DELETE borra los puntos y marca los
+O PostgreSQL preserva cursores, auditoria em batch e a relação exata entre
+ `IDChat2` e `QdrantPointID`. O ponto final DELETE elimina os pontos e marca o
 documentos como eliminados.
 
-En producción pueden mantenerse simultáneamente:
+Na produção podem ser mantidos simultaneamente:
 
 ```env
 HISTORICAL_INGESTION_ENABLED=true
 HISTORICAL_INGESTION_DRY_RUN=false
 ```
+Retomar após reiniciar o Docker utiliza o PostgreSQL como ponto de verificação
+durável.  A `SysAgentIAIngestionCursor.LastIDChat2` representa exclusivamente o
+última mensagem cujo lote foi finalizado com sucesso e `CurrentBatchID` identifica a
+lote em curso. O cursor é atualizado monotonicamente - uma versão antiga
+recuperado do Redis nunca poderá reduzir o `LastIDChat2` .
 
-La reanudación después de reiniciar Docker utiliza PostgreSQL como checkpoint
-duradero. `SysAgentIAIngestionCursor.LastIDChat2` representa exclusivamente el
-último mensaje cuyo lote terminó correctamente y `CurrentBatchID` identifica el
-lote en curso. El cursor se actualiza de forma monotónica: una entrega antigua
-recuperada desde Redis nunca puede reducir `LastIDChat2`.
+Redis persiste o Stream via AOF no volume `redis_data` . Depois de um
+reiniciar, um trabalhador afirma em aproximadamente
+ `HISTORICAL_INGESTION_CLAIM_IDLE_MS` as mensagens pendentes do consumidor
+anterior. Se o Redis perder o lote inteiro, o produtor detetará um cursor
+ `queued` ou `processing` abandonado após
+ `HISTORICAL_INGESTION_STALE_SECONDS`, mantém o último checkpoint confirmado
+e extraia novamente de `LastIDChat2 + 1` .
 
-Redis conserva el Stream mediante AOF en el volumen `redis_data`. Después de un
-reinicio, un worker reclama en aproximadamente
-`HISTORICAL_INGESTION_CLAIM_IDLE_MS` los mensajes pendientes del consumidor
-anterior. Si Redis perdió el lote completo, el productor detecta un cursor
-`queued` o `processing` abandonado después de
-`HISTORICAL_INGESTION_STALE_SECONDS`, conserva el último checkpoint confirmado
-y vuelve a extraer desde `LastIDChat2 + 1`.
+O último lote pode ser processado novamente após uma interrupção, mas não
+conhecimento duplicado: `DocumentID` e `QdrantPointID` são UUIDs determinísticos,
+O Qdrant utiliza o `upsert` e o PostgreSQL aplica chaves únicas. Esta garantia oferece
+processamento eficaz *pelo menos uma vez* com um resultado idempotente, evitando tanto
+perda de mensagens, como por exemplo reiniciar do zero.
 
-El último lote puede procesarse nuevamente después de una interrupción, pero no
-duplica conocimiento: `DocumentID` y `QdrantPointID` son UUID deterministas,
-Qdrant utiliza `upsert` y PostgreSQL aplica claves únicas. Esta garantía ofrece
-procesamiento efectivo *at least once* con resultado idempotente, evitando tanto
-la pérdida de mensajes como el reinicio desde cero.
+ `GET /api/v1/agent/historical-ingestion/status` mostra agora também
+ `CurrentBatchID` , `LastIDChat2` , `LastRunAt` e o estado de recuperação para
+diagnosticar exatamente onde a ingestão continuará.
 
-`GET /api/v1/agent/historical-ingestion/status` muestra ahora también
-`CurrentBatchID`, `LastIDChat2`, `LastRunAt` y el estado de recuperación para
-diagnosticar exactamente dónde continuará la ingesta.
-
-Los estados y auditorías pueden filtrarse por agente:
+Os estados e as auditorias podem ser filtrados por agente:
 
 ```http
 GET /api/v1/agent/historical-ingestion/status?resourceId={IDResource}
 GET /api/v1/agent/historical-ingestion/batches?resourceId={IDResource}&limit=50
 ```
+O `approve-dry-run` liberta todos os cursores de chat e tarefas do `dry_run` no
+instância selecionada. O cursor global das versões anteriores está marcado como
+ `superseded` e deixe de participar no planeamento.
 
-`approve-dry-run` libera todos los cursores `dry_run` de chat y tareas de la
-instancia seleccionada. El cursor global de versiones anteriores se marca como
-`superseded` y deja de participar en la planificación.
+O terminal DELETE utiliza o `sourceType=chat` por defeito. Para remover
+um documento de tarefa é enviado `sourceType=task` e o valor do caminho é
+interpretado como `IDTask` , evitando colisões entre `IDChat2` e `IDTask` .
 
-El endpoint DELETE usa `sourceType=chat` de forma predeterminada. Para eliminar
-un documento de tarea se envía `sourceType=task` y el valor de la ruta se
-interpreta como `IDTask`, evitando colisiones entre `IDChat2` e `IDTask`.
-
-Servicios Docker:
+Serviços Docker:
 
 ```powershell
 docker compose -f docker-compose-prod.yml up -d historical-worker historical-producer
 docker compose -f docker-compose-prod.yml up -d --scale historical-worker=2
 ```
+## Organização arrogante
 
-## Organización de Swagger
+Swagger (`/docs`) apresenta documentação pública de endpoint em inglês
+e agrupa operações utilizando tags OpenAPI estáveis:
 
-Swagger (`/docs`) presenta la documentación pública de los endpoints en inglés
-y agrupa las operaciones mediante etiquetas OpenAPI estables:
+-`Conversation`
+-`SolidSET Notifications`
+-`Asynchronous Responses`
+-`Historical Ingestion`
+-`SolidSET Agents`
+-`SolidSET Configuration`
+-`LLM Providers`
+-`Learning and Feedback`
+-`Audio, History and Context`
+-`Observability`
+-`Connectivity`
 
-- `Conversation`
-- `SolidSET Notifications`
-- `Asynchronous Responses`
-- `Historical Ingestion`
-- `SolidSET Agents`
-- `SolidSET Configuration`
-- `LLM Providers`
-- `Learning and Feedback`
-- `Audio, History and Context`
-- `Observability`
-- `Connectivity`
+A classificação apenas modifica a apresentação e documentação do OpenAPI; não
+alterar os URLs, corpos, respostas ou comportamento dos endpoints.
 
-La clasificación solo modifica la presentación y documentación OpenAPI; no
-cambia las URLs, cuerpos, respuestas ni comportamiento de los endpoints.
+As mensagens humanas devolvidas pela API (`detail`, `message`, erros
+validação e diagnóstico) utilizam o português de Portugal. Os códigos técnicos
+consumido pelos clientes (`queued`, `processing`, `completed`, `failed`, etc.)
+São mantidos estáveis para não quebrar a integração com o WPF. O texto gerado
+pelo agente preserva o idioma solicitado pelo utilizador.
 
-Los mensajes humanos devueltos por la API (`detail`, `message`, errores de
-validación y diagnósticos) utilizan portugués de Portugal. Los códigos técnicos
-consumidos por clientes (`queued`, `processing`, `completed`, `failed`, etc.)
-se mantienen estables para no romper la integración con WPF. El texto generado
-por el agente conserva el idioma solicitado por el usuario.
+As respostas conversacionais não revelam detalhes internos de recuperação
+ou armazenamento. Termos como `RAG`, `Qdrant`, `embeddings`, `base vectorial`
+ou `vectorial knowledge base` são proibidos imediatamente e removidos por
+uma validação final comum antes de devolver ou enviar qualquer resposta.
 
-Las respuestas conversacionales no revelan detalles internos de recuperación
-o almacenamiento. Términos como `RAG`, `Qdrant`, `embeddings`, `base vectorial`
-o `vectorial knowledge base` se prohíben en el prompt y se eliminan mediante
-una validación final común antes de devolver o enviar cualquier respuesta.
+Quando o `Chat.chatQuestion` está presente, o `Chat.rawMessage` é a intervenção
+atual e `chatQuestion.rawMessage` são mantidos apenas como contexto citado.
+A intervenção atual pode sempre alimentar a aprendizagem. Basta gerar um
+resposta se contiver pergunta, pedido, saudação ou continuação; um
+declaração informativa ou correção sobre a mensagem citada é classificada como
+ `respuesta_citada_solo_aprendizaje` e não provoca resposta automática.
 
-Cuando `Chat.chatQuestion` está presente, `Chat.rawMessage` es la intervención
-actual y `chatQuestion.rawMessage` se conserva únicamente como contexto citado.
-La intervención actual siempre puede alimentar el aprendizaje. Solo genera una
-respuesta si contiene una pregunta, petición, saludo o continuación; una
-afirmación o corrección informativa sobre el mensaje citado se clasifica como
-`respuesta_citada_solo_aprendizaje` y no provoca una auto-respuesta.
+A deteção de idioma também se aplica a mensagens curtas e respostas
+deterministas que não passam pelo LLM. Expressões como `Bom dia` , `Boa tarde` ,
+ `Good morning` , `Good evening` , `Buenos días` e os seus equivalentes geram o
+responder diretamente em português, inglês ou espanhol, respetivamente.
 
-La detección de idioma se aplica también a mensajes cortos y respuestas
-deterministas que no pasan por el LLM. Expresiones como `Bom dia`, `Boa tarde`,
-`Good morning`, `Good evening`, `Buenos días` y sus equivalentes generan la
-respuesta directamente en portugués, inglés o español, respectivamente.
-
-Los mensajes declarativos se distinguen lingüísticamente de preguntas y
-peticiones. Se consideran señales de conocimiento las estructuras factuales,
-fechas, contenido extenso o multilínea y expresiones como `ten en cuenta`,
-`para seu conhecimento` o `remember that`. El mensaje se aprende, pero no se
-envía al LLM. Si estaba dirigido explícitamente al agente, la única respuesta
-es un agradecimiento breve en el idioma detectado; en un canal sin destino
-directo se aprende silenciosamente.
+As mensagens declarativas são linguisticamente distintas das perguntas e
+solicitações. As estruturas factuais são consideradas sinais de conhecimento,
+datas, conteúdo longo ou multilinha e expressões como `ten en cuenta` ,
+ `para seu conhecimento` ou `remember that`. A mensagem é aprendida, mas não
+envia para o LLM. Se foi endereçado explicitamente ao agente, a única resposta
+é um breve agradecimento na língua detectada; num canal sem destino
+Diretamente aprende-se silenciosamente.
