@@ -2071,7 +2071,7 @@ async def _process_auto_replies_impl(
         # Las respuestas de alcance/restricción se generan antes del
         # orquestador y salen por este camino directo. Deben respetar también
         # el idioma del mensaje antes de enviarse a SolidSET.
-        if response_text:
+        if response_text and not message_metadata.get("_agent_scope_prechecked"):
             response_text = orchestrator._ensure_response_language(
                 incoming_text,
                 response_text,
