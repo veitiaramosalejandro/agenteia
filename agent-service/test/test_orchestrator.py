@@ -13,14 +13,14 @@ class FakeAgent:
 
     @staticmethod
     def _is_internal_domain_query(text):
-        return any(term in text.lower() for term in ("canal", "conversación", "consulta interna"))
+        return any(term in text.lower() for term in ("canal", "conversación", "consulta interna", "analiza", "causa raíz"))
 
     @staticmethod
     def _looks_like_raw_tool_response(text):
         return "status=" in text.lower()
 
     @staticmethod
-    def _detect_user_language(text):
+    def _detect_user_language(text, locale=""):
         return "es"
 
     def analyze_event_with_dialogue(self, **kwargs):
@@ -72,7 +72,11 @@ class OrchestratorTests(unittest.TestCase):
         agent.answer_with_assigned_openai = answer_with_assigned_openai
         orchestrator = SolidSETOrchestrator(agent)
 
-        orchestrator.invoke(session_id="direct-once", user_text="Explica este código")
+        orchestrator.invoke(
+            session_id="direct-once",
+            user_text="Explica este código",
+            message_metadata={"_agent_scope_decision": "allow"},
+        )
 
         self.assertEqual(agent.direct_calls, 1)
         self.assertTrue(
@@ -85,6 +89,7 @@ class OrchestratorTests(unittest.TestCase):
         response = orchestrator.invoke(
             session_id="s1",
             user_text="¿Qué tiempo hará en Leiria?",
+            message_metadata={"_agent_scope_decision": "allow"},
         )
         self.assertEqual(response, "respuesta")
         self.assertEqual(agent.calls[0]["tool_allowlist"], {"google_web_search"})
@@ -96,6 +101,7 @@ class OrchestratorTests(unittest.TestCase):
         orchestrator.invoke(
             session_id="s-general",
             user_text="Explícame los últimos avances en baterías de estado sólido",
+            message_metadata={"_agent_scope_decision": "allow"},
         )
         self.assertEqual(agent.calls[0]["tool_allowlist"], {"google_web_search"})
         self.assertTrue(agent.calls[0]["external_query_mode"])
@@ -178,7 +184,11 @@ class OrchestratorTests(unittest.TestCase):
     def test_analysis_question_selects_reasoning_capability(self):
         agent = FakeAgent()
         orchestrator = SolidSETOrchestrator(agent)
-        orchestrator.invoke(session_id="reason", user_text="Analiza la causa raíz del problema")
+        orchestrator.invoke(
+            session_id="reason",
+            user_text="Analiza la causa raíz del problema",
+            message_metadata={"_agent_scope_decision": "allow"},
+        )
         self.assertEqual(agent.calls[0]["message_metadata"]["model_capability"], "reasoning")
 
 

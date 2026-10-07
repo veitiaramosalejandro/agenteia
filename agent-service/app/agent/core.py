@@ -223,6 +223,10 @@ class MachiningAgent:
             provider_config_from_record(record)
             if record else self.llm_provider_config
         )
+        metadata["effective_llm_provider"] = str(config.provider or "").strip() or None
+        metadata["effective_llm_model"] = str(config.model or "").strip() or None
+        metadata["effective_llm_capability"] = capability
+        metadata["effective_llm_source"] = "postgresql" if record else "environment"
         requested_cap = int(metadata.get("max_output_tokens") or 0)
         if requested_cap > 0 and requested_cap < config.max_output_tokens:
             config = replace(config, max_output_tokens=max(128, requested_cap))
@@ -240,6 +244,34 @@ class MachiningAgent:
                 cached = (model, model.bind_tools(list(self.tools_map.values())), config)
                 self._llm_cache = {key: cached}
             return cached
+
+    def _resolve_identity_runtime_metadata(self, metadata: dict[str, Any]) -> bool:
+        """Resolve the explicitly assigned general model for identity answers."""
+        resource_id = str(metadata.get("agent_resource_id") or "").strip() or None
+        instance_id = metadata.get("solidset_instance_id")
+        try:
+            record = get_llm_provider_configuration(resource_id, "general", instance_id=instance_id)
+        except Exception as exc:
+            print(f"AGENT_RUNTIME_IDENTITY_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
+            return False
+        if not record:
+            return False
+        try:
+            config = provider_config_from_record(record)
+        except Exception as exc:
+            print(f"AGENT_RUNTIME_IDENTITY_CONFIG_FAILED type={type(exc).__name__}", flush=True)
+            return False
+        provider = str(config.provider or "").strip()
+        model = str(config.model or "").strip()
+        if not provider or not model:
+            return False
+        metadata.update({
+            "effective_llm_provider": provider,
+            "effective_llm_model": model,
+            "effective_llm_capability": "general",
+            "effective_llm_source": "postgresql",
+        })
+        return True
 
     def _is_llm_connection_error(self, exc: Exception) -> bool:
         """Detecta fallos típicos de conexión al endpoint del LLM/Ollama."""
@@ -449,19 +481,6 @@ class MachiningAgent:
         """Expose only provider/model evidence from the effective runtime config."""
         provider = str(metadata.get("effective_llm_provider") or "").strip()
         model = str(metadata.get("effective_llm_model") or "").strip()
-        if not provider or not model:
-            try:
-                record = get_llm_provider_configuration(
-                    metadata.get("agent_resource_id"),
-                    str(metadata.get("model_capability") or "general"),
-                    instance_id=metadata.get("solidset_instance_id"),
-                )
-                if record:
-                    config = provider_config_from_record(record)
-                    provider = str(config.provider or "").strip()
-                    model = str(config.model or "").strip()
-            except Exception as exc:
-                print(f"AGENT_RUNTIME_IDENTITY_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
         if not provider or not model:
             return "No puedo verificar el proveedor o modelo activo en esta ejecución."
         return f"En esta ejecución estoy usando el proveedor **{provider}** y el modelo **{model}**."
@@ -2926,6 +2945,7 @@ class MachiningAgent:
 
         metadata = message_metadata or {}
         if self._is_agent_runtime_identity_intent(user_text):
+            self._resolve_identity_runtime_metadata(metadata)
             return self._build_agent_runtime_identity_response(metadata)
         if not metadata.get("_agent_scope_prechecked"):
             restricted_answer = answer_restricted_topic(

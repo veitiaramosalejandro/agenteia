@@ -66,6 +66,17 @@ class TestResourceIdentity(unittest.TestCase):
             response,
         )
 
+    def test_identity_runtime_metadata_uses_assigned_general_configuration(self):
+        config = SimpleNamespace(provider="ollama", model="qwen2.5:3b")
+        metadata = {"agent_resource_id": "agent", "solidset_instance_id": "instance"}
+        with patch("app.agent.core.get_llm_provider_configuration", return_value={"ID": "cfg"}), \
+             patch("app.agent.core.provider_config_from_record", return_value=config):
+            assert self.agent._resolve_identity_runtime_metadata(metadata)
+        self.assertEqual("ollama", metadata["effective_llm_provider"])
+        self.assertEqual("qwen2.5:3b", metadata["effective_llm_model"])
+        self.assertEqual("general", metadata["effective_llm_capability"])
+        self.assertEqual("postgresql", metadata["effective_llm_source"])
+
 
 if __name__ == "__main__":
     unittest.main()
