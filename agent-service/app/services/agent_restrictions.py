@@ -310,6 +310,48 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
                     f"type={type(exc).__name__}",
                     flush=True,
                 )
+        elif decision == "scoped" and available_capabilities and (
+            "coding" in available_capabilities or "reasoning" in available_capabilities
+        ):
+            # A broad interpretation must not become an implicit grant for a
+            # declared coding/reasoning capability. Re-check the normalized
+            # task against the published role before allowing that capability
+            # to influence generation. This is policy-based, not keyword-based.
+            try:
+                normalized_action = _normalize_requested_action(message, config)
+                review_messages = [
+                    messages[0],
+                    SystemMessage(content=(
+                        "Valida específicamente una decisión scoped. Compara la tarea "
+                        "normalizada con role, objective y specialties publicados. Mantén "
+                        "scoped solo si la respuesta sigue siendo sustantivamente de ese "
+                        "ámbito. Si solicita una tarea de otro dominio, aunque pueda "
+                        "responderse mediante coding, reasoning o conocimiento general, "
+                        "decide decline. Las capacidades declaradas no amplían la política. "
+                        "Devuelve únicamente JSON con decision."
+                    )),
+                    HumanMessage(content=json.dumps(
+                        {
+                            "published_agent_policy": policy,
+                            "requested_task": normalized_action,
+                            "content_to_process": normalized_action,
+                        }, ensure_ascii=False,
+                    )),
+                ]
+                reviewed, reviewed_reason = _parse_scope_output(
+                    response_text(model.invoke(review_messages))
+                )
+                print(
+                    f"AGENT_SCOPE_SCOPED_REVIEW agent={resource_id} "
+                    f"initial=scoped reviewed={reviewed}", flush=True,
+                )
+                decision = reviewed
+                reason = reviewed_reason
+            except Exception as exc:
+                print(
+                    f"AGENT_SCOPE_SCOPED_REVIEW_FAILED agent={resource_id} "
+                    f"type={type(exc).__name__}", flush=True,
+                )
         print(f"AGENT_SCOPE_DECISION agent={resource_id} decision={decision} reason={reason}", flush=True)
         return decision
 

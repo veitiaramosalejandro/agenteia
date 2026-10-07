@@ -50,6 +50,29 @@ def test_scoped_request_continues_with_normal_context_and_tools():
         clarify.assert_not_called()
 
 
+def test_scoped_cannot_grant_cross_domain_reasoning_or_coding():
+    context = {"declared_capabilities": {"reasoning", "coding"}}
+    model = Mock()
+    model.invoke.side_effect = [
+        SimpleNamespace(content='{"decision":"scoped"}'),
+        SimpleNamespace(content='{"decision":"decline"}'),
+    ]
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
+         patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model), \
+         patch("app.services.agent_restrictions._normalize_requested_action", return_value="desarrollar un sistema web"), \
+         patch("app.services.agent_restrictions._clarification", return_value="No puedo responder sobre programación; mi ámbito es financiero.") as refusal:
+        answer = answer_restricted_topic(
+            "Necesito hacer un sistema web", "instance", "agent", scope_context=context
+        )
+    assert context["_agent_scope_decision"] == "decline"
+    refusal.assert_called_once()
+    assert "programación" in answer
+
+
 def test_clarify_returns_only_clarification():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
          patch("app.services.agent_restrictions._scope_decision", return_value="clarify"), \
