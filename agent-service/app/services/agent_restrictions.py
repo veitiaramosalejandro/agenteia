@@ -100,6 +100,22 @@ def _request_instruction(message: str) -> str:
     return first_paragraph if first_paragraph else text
 
 
+def _published_code_review_authorizes(message: str, behavior: dict) -> bool:
+    """Return whether the published policy explicitly covers an attached code task."""
+    text = str(message or "")
+    has_code_artifact = bool(
+        re.search(r"```|\b(?:public|private|protected|internal)\s+\w+|[{};]\s*(?:\r?\n|$)", text)
+    )
+    instructions = behavior.get("code_review_instructions")
+    if not has_code_artifact or not isinstance(instructions, (list, tuple)):
+        return False
+    if not any(str(item or "").strip() for item in instructions):
+        return False
+    # Applicability of individual restrictions remains a policy-classifier
+    # decision; unrelated safety restrictions must not revoke code review.
+    return True
+
+
 def _language(message: str, default_language: str | None = None) -> str:
     language = _language_resolver().detect(_request_instruction(message)).language
     if language in {"es", "en", "pt"}:
@@ -304,6 +320,20 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
                 )
                 decision = reviewed
                 reason = reviewed_reason
+                if (
+                    reviewed == "decline"
+                    and _published_code_review_authorizes(message, behavior)
+                ):
+                    # A semantic repair cannot revoke an explicit published
+                    # code-review scope. Explicit safety restrictions remain
+                    # authoritative and are checked above.
+                    decision = "scoped"
+                    reason = "scoped_interpretation"
+                    print(
+                        f"AGENT_SCOPE_POLICY_AUTHORIZATION agent={resource_id} "
+                        "decision=scoped reason=published_code_review_scope",
+                        flush=True,
+                    )
             except Exception as exc:
                 print(
                     f"AGENT_SCOPE_SEMANTIC_REVIEW_FAILED agent={resource_id} "

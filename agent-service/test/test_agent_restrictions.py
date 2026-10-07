@@ -73,6 +73,32 @@ def test_scoped_cannot_grant_cross_domain_reasoning_or_coding():
     assert "programación" in answer
 
 
+def test_published_code_review_scope_cannot_be_downgraded_to_decline():
+    policy = {
+        "role": "ingeniero de software senior",
+        "specialties": ["Backend C#"],
+        "code_review_instructions": ["Revisa tipos, excepciones y concurrencia."],
+        "restrictions": ["No generar malware ni facilitar accesos no autorizados."],
+    }
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    model = Mock()
+    model.invoke.side_effect = [
+        SimpleNamespace(content='{"decision":"clarify"}'),
+        SimpleNamespace(content='{"decision":"decline"}'),
+    ]
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model), \
+         patch("app.services.agent_restrictions._normalize_requested_action", return_value="refactorizar código C#"):
+        from app.services.agent_restrictions import _scope_decision
+        decision = _scope_decision(
+            "Refactoriza: public async Task Foo() { return; }",
+            policy, "instance", "agent", {"coding"},
+        )
+    assert decision == "scoped"
+
+
 def test_clarify_returns_only_clarification():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
          patch("app.services.agent_restrictions._scope_decision", return_value="clarify"), \
