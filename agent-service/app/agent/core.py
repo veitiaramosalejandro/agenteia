@@ -431,6 +431,41 @@ class MachiningAgent:
         ]
         return any(re.search(pattern, text) for pattern in patterns)
 
+    @staticmethod
+    def _is_agent_runtime_identity_intent(user_text: str) -> bool:
+        """Detect questions about the executing model/provider, not user identity."""
+        text = str(user_text or "").strip().lower()
+        if not text:
+            return False
+        return bool(re.search(
+            r"\b(?:qu[eé]|que|cu[aá]l|cual|dime|what|which|tell me)\b[^\n]{0,80}"
+            r"\b(?:modelo|model|proveedor|provider|llm|motor|engine)\b|"
+            r"\b(?:qué|que|cual|cu[aá]l)\s+modelo\s+(?:est[aá]s|usas|utilizas|usando)\b",
+            text,
+            re.IGNORECASE,
+        ))
+
+    def _build_agent_runtime_identity_response(self, metadata: dict[str, Any]) -> str:
+        """Expose only provider/model evidence from the effective runtime config."""
+        provider = str(metadata.get("effective_llm_provider") or "").strip()
+        model = str(metadata.get("effective_llm_model") or "").strip()
+        if not provider or not model:
+            try:
+                record = get_llm_provider_configuration(
+                    metadata.get("agent_resource_id"),
+                    str(metadata.get("model_capability") or "general"),
+                    instance_id=metadata.get("solidset_instance_id"),
+                )
+                if record:
+                    config = provider_config_from_record(record)
+                    provider = str(config.provider or "").strip()
+                    model = str(config.model or "").strip()
+            except Exception as exc:
+                print(f"AGENT_RUNTIME_IDENTITY_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
+        if not provider or not model:
+            return "No puedo verificar el proveedor o modelo activo en esta ejecución."
+        return f"En esta ejecución estoy usando el proveedor **{provider}** y el modelo **{model}**."
+
     def _extract_resource_alias(self, *values: Optional[str]) -> Optional[str]:
         """Extrae alias de recurso tipo Dev17/Dev20 desde textos de identidad."""
         for value in values:
@@ -2890,6 +2925,8 @@ class MachiningAgent:
         from app.services.agent_restrictions import answer_restricted_topic
 
         metadata = message_metadata or {}
+        if self._is_agent_runtime_identity_intent(user_text):
+            return self._build_agent_runtime_identity_response(metadata)
         if not metadata.get("_agent_scope_prechecked"):
             restricted_answer = answer_restricted_topic(
                 user_text, metadata.get("solidset_instance_id"), metadata.get("agent_resource_id"),

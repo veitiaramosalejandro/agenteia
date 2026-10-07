@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.agent.core import MachiningAgent
 
@@ -45,6 +46,25 @@ class TestResourceIdentity(unittest.TestCase):
         self.assertNotIn(login_guid, response)
         self.assertNotIn(channel_guid, response)
         self.assertNotIn("resource_guid", response)
+
+    def test_runtime_model_identity_uses_verified_provider_and_model(self):
+        self.assertTrue(self.agent._is_agent_runtime_identity_intent(
+            "¿Qué modelo estás usando?"
+        ))
+        response = self.agent._build_agent_runtime_identity_response({
+            "effective_llm_provider": "ollama",
+            "effective_llm_model": "qwen2.5:3b",
+        })
+        self.assertIn("ollama", response)
+        self.assertIn("qwen2.5:3b", response)
+
+    def test_runtime_model_identity_fails_closed_when_unverified(self):
+        with patch("app.agent.core.get_llm_provider_configuration", return_value=None):
+            response = self.agent._build_agent_runtime_identity_response({})
+        self.assertEqual(
+            "No puedo verificar el proveedor o modelo activo en esta ejecución.",
+            response,
+        )
 
 
 if __name__ == "__main__":
