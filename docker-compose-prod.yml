@@ -51,6 +51,8 @@ services:
     hostname: agent-service
     restart: always
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - 8000:8000
     expose:
       - "8000"
     env_file:
@@ -320,7 +322,8 @@ services:
       - OLLAMA_LOAD_TIMEOUT=${OLLAMA_LOAD_TIMEOUT:-10m}
       - LLAMA_ARG_FIT_TARGET=512
       - OLLAMA_KEEP_ALIVE=${OLLAMA_CHAT_KEEP_ALIVE:-24h}
-    cpus: ${OLLAMA_CHAT_CPUS:-24.0}
+    # El host dispone de 20 CPUs; dejamos margen para la API, workers y bases de datos.
+    cpus: ${OLLAMA_CHAT_CPUS:-12.0}
     mem_limit: ${OLLAMA_CHAT_MEMORY_LIMIT:-32g}
     shm_size: ${OLLAMA_CHAT_SHM_SIZE:-2g}
     stop_grace_period: 2m
