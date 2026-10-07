@@ -118,6 +118,11 @@ class SolidSETOrchestrator:
             route = "work_sql_rag"
         elif self.agent._is_external_information_query(user_text):
             route = "external_web"
+        elif metadata.get("model_capability") in {"reasoning", "coding"}:
+            # A published scope/capability decision already selected a
+            # reasoning or coding response. Do not promote it to SQL merely
+            # because this is an auto-reply without a SolidSET data intent.
+            route = "general_conversation"
         elif bool(state.get("auto_reply_mode")):
             # Una pregunta dirigida a un agente SolidSET se interpreta primero
             # contra su conocimiento y datos de trabajo. La ausencia de una
@@ -167,6 +172,8 @@ class SolidSETOrchestrator:
 
     def _execute_external(self, state: AgentGraphState) -> AgentGraphState:
         metadata = dict(state.get("message_metadata") or {})
+        if metadata.get("_agent_scope_decision") not in {"allow", "scoped"}:
+            raise PermissionError("external_web requiere autorización previa del ámbito publicado")
         # El enrutador ya autorizó la capacidad; propagarla explícitamente al
         # adaptador evita que una lista de herramientas heredada bloquee la web.
         permissions = set(metadata.get("tool_permissions") or ())

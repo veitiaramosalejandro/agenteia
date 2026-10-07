@@ -1447,12 +1447,34 @@ class MachiningAgent:
             "participante", "participantes", "participant", "participants", "miembro", "miembros",
             "membro", "membros", "actividad", "actividades", "activity", "activities",
             "atividade", "atividades", "tarea", "tareas", "task", "tasks", "tarefa", "tarefas",
+        )
+        if any(term in text for term in terms):
+            return True
+
+        # Generic organisational words are not SolidSET entities by themselves.
+        # They enter the internal-data route only when the user is actually
+        # asking to retrieve/verify a record (for example, company membership).
+        generic_entities = (
             "empresa", "empresas", "company", "companies", "companhia", "companhias",
             "comunidad", "comunidades", "community", "communities", "comunidade",
             "organización", "organizacion", "organização", "organizacao", "organization",
             "organisation",
         )
-        return any(term in text for term in terms)
+        query_intent = (
+            "quién", "quien", "cuál", "cual", "cuáles", "cuales", "qué", "que",
+            "dime", "lista", "listar", "muestra", "buscar", "consulta", "existe",
+            "pertenezco", "pertenece", "pertenecemos", "tiene", "tienen", "hay",
+            "who", "which", "what", "list", "show", "search", "belongs",
+        )
+        internal_context = (
+            "solidset", "en el sistema", "no sistema", "in the system", "del sistema",
+            "mi cuenta", "my account", "meu sistema", "COMmunicator"
+        )
+        return (
+            any(term in text for term in generic_entities)
+            and any(term in text for term in query_intent)
+            and any(term in text for term in internal_context)
+        )
 
     @staticmethod
     def _is_source_code_explanation_request(user_text: str) -> bool:

@@ -233,6 +233,16 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         self.assertTrue(self.agent._requires_live_business_data(text))
         self.assertEqual([], self.agent._business_schema_table_hints(text))
 
+    def test_conceptual_company_finance_question_is_not_internal_sql(self):
+        questions = (
+            "¿Cómo afectaría una inflación creciente a los estados financieros de una empresa con alta deuda a tipo fijo frente a otra con deuda a tipo variable?",
+            "Compara el efecto de la inflación sobre deuda fija y variable en una empresa.",
+            "Explica cómo cambia el coste financiero de una compañía con inflación creciente.",
+        )
+        for text in questions:
+            with self.subTest(text=text):
+                self.assertFalse(self.agent._is_business_knowledge_query(text))
+
     def test_live_meeting_participants_require_sql_even_with_vector_context(self):
         meeting_id = "7d7a581d-d7c1-4e18-a11b-6d322e4755c6"
         self.assertTrue(
