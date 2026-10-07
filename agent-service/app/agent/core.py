@@ -1536,11 +1536,15 @@ class MachiningAgent:
         text = str(user_text or "").strip()
         if not text:
             return False
-        asks_about_code = bool(re.search(
-            r"(?i)\b(?:interpreta|interpretar|explica|explicar|analiza|analisar|"
-            r"revisa|revisar|opina|opinar|opini[oó]n|parecer|"
-            r"explain|interpret|review|opinion|thoughts?)\b"
-            r"[^\n:]{0,100}\b(?:c[oó]digo|code|fragmento|snippet)\b",
+        asks_for_code_task = bool(re.search(
+            r"(?i)\b(?:refactoriza|refactorizar|refactor|interpreta|interpretar|"
+            r"explica|explicar|analiza|analisar|revisa|revisar|opina|opinar|"
+            r"opini[oó]n|parecer|explain|interpret|review|opinion|thoughts?)\b",
+            text,
+        ))
+        mentions_code = bool(re.search(
+            r"(?i)\b(?:c[oó]digo|code|fragmento|snippet|clase|m[eé]todo|m[eé]thod|"
+            r"funci[oó]n|function|algoritmo|algorithm)\b",
             text,
         ))
         code_structure = bool(
@@ -1551,7 +1555,7 @@ class MachiningAgent:
                 text,
             )
         )
-        return asks_about_code and code_structure
+        return asks_for_code_task and (mentions_code or code_structure)
 
     def _is_resource_consumption_query(self, user_text: str) -> bool:
         """Distingue consumo técnico de recursos de entidades Resource de SolidSET."""

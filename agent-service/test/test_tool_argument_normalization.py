@@ -106,6 +106,15 @@ class ToolArgumentNormalizationTests(unittest.TestCase):
         self.assertTrue(self.agent._is_source_code_explanation_request(question))
         self.assertFalse(self.agent._is_business_knowledge_query(question))
 
+    def test_refactoring_code_with_solidset_terms_does_not_trigger_business_sql(self):
+        question = (
+            "Refactoriza: public async Task<SolidSETReactionCaptureResponse> "
+            "CaptureSolidSETReactionAsync(ChatUpdateReactionRequest request) "
+            "{ return new SolidSETReactionCaptureResponse(); }"
+        )
+        self.assertTrue(self.agent._is_source_code_explanation_request(question))
+        self.assertFalse(self.agent._is_business_knowledge_query(question))
+
     def test_explicit_activity_question_remains_in_business_domain(self):
         question = "Interpreta el estado de mis actividades pendientes"
         self.assertFalse(self.agent._is_source_code_explanation_request(question))

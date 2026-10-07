@@ -106,8 +106,15 @@ def _published_code_review_authorizes(message: str, behavior: dict) -> bool:
     has_code_artifact = bool(
         re.search(r"```|\b(?:public|private|protected|internal)\s+\w+|[{};]\s*(?:\r?\n|$)", text)
     )
+    has_code_task = bool(re.search(
+        r"(?i)\b(?:implementa|implementar|desarrolla|desarrollar|crea|crear|"
+        r"programa|programar|refactoriza|refactorizar|revisa|revisar|"
+        r"m[eé]todo|m[eé]thod|funci[oó]n|function|algoritmo|algorithm|"
+        r"c[oó]digo|code|software)\b",
+        text,
+    ))
     instructions = behavior.get("code_review_instructions")
-    if not has_code_artifact or not isinstance(instructions, (list, tuple)):
+    if not (has_code_artifact or has_code_task) or not isinstance(instructions, (list, tuple)):
         return False
     if not any(str(item or "").strip() for item in instructions):
         return False
@@ -377,6 +384,14 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
                 )
                 decision = reviewed
                 reason = reviewed_reason
+                if reviewed == "decline" and _published_code_review_authorizes(message, behavior):
+                    decision = "scoped"
+                    reason = "scoped_interpretation"
+                    print(
+                        f"AGENT_SCOPE_POLICY_AUTHORIZATION agent={resource_id} "
+                        "decision=scoped reason=published_code_review_scope",
+                        flush=True,
+                    )
             except Exception as exc:
                 print(
                     f"AGENT_SCOPE_SCOPED_REVIEW_FAILED agent={resource_id} "

@@ -16,6 +16,10 @@ class FakeAgent:
         return any(term in text.lower() for term in ("canal", "conversación", "consulta interna", "analiza", "causa raíz"))
 
     @staticmethod
+    def _is_source_code_explanation_request(text):
+        return text.lower().startswith("refactoriza:")
+
+    @staticmethod
     def _looks_like_raw_tool_response(text):
         return "status=" in text.lower()
 
@@ -190,6 +194,19 @@ class OrchestratorTests(unittest.TestCase):
             message_metadata={"_agent_scope_decision": "allow"},
         )
         self.assertEqual(agent.calls[0]["message_metadata"]["model_capability"], "reasoning")
+
+    def test_code_artifact_has_priority_over_internal_identifiers(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+        orchestrator.invoke(
+            session_id="code-priority",
+            user_text="Refactoriza: public async Task<SolidSETReactionCaptureResponse> Foo() { return null; }",
+            message_metadata={"_agent_scope_decision": "allow"},
+        )
+        self.assertNotEqual(
+            agent.calls[0].get("tool_allowlist"),
+            {"query_sql_server", "get_db_schema"},
+        )
 
 
 if __name__ == "__main__":

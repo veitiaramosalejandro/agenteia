@@ -114,6 +114,10 @@ class SolidSETOrchestrator:
             route = "work_sql_rag"
         elif is_general(user_text):
             route = "general_conversation"
+        elif getattr(self.agent, "_is_source_code_explanation_request", lambda _text: False)(user_text):
+            # Code is the requested artifact; identifiers inside it must not
+            # turn the request into a SolidSET records query.
+            route = "general_conversation"
         elif is_business(user_text):
             route = "work_sql_rag"
         elif self.agent._is_external_information_query(user_text):
