@@ -37,6 +37,24 @@ def test_default_assignment_does_not_grant_web_permission():
     create.assert_not_called()
 
 
+def test_conversational_recommendation_does_not_select_coding():
+    metadata = {
+        'agent_resource_id': 'agent',
+        'solidset_instance_id': 'instance',
+        'conversational_recommendation_mode': True,
+    }
+    with patch(
+        'app.services.capability_planner.get_agent_model_configurations',
+        return_value=[{'Capabilities': ['general', 'coding', 'reasoning']}],
+    ), patch('app.services.capability_planner.create_chat_model') as create:
+        prepare_capability_route('Necesito crear una inteligencia artificial', metadata)
+
+    assert metadata['model_capability'] == 'general'
+    assert metadata['external_information_mode'] is False
+    assert metadata['_capability_route_prepared'] is True
+    create.assert_not_called()
+
+
 def test_planner_rejects_undeclared_capability():
     model = Mock()
     model.invoke.return_value = SimpleNamespace(content='{"capability":"sql"}')
