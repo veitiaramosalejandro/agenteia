@@ -65,9 +65,13 @@ def display_messages(status_name: str) -> dict[str, str]:
     )
 
 
-def localize(data: dict[str, Any], language: str) -> dict[str, Any]:
+def localize(data: dict[str, Any], language: str | None = None) -> dict[str, Any]:
     localized = json.loads(json.dumps(data, ensure_ascii=False))
-    lang = language if language in {"es", "en", "pt"} else "pt"
+    result_language = ((localized.get("result") or {}).get("language")
+                       if isinstance(localized.get("result"), dict) else None)
+    lang = language if language in {"es", "en", "pt"} else (
+        result_language if result_language in {"es", "en", "pt"} else "pt"
+    )
     messages = display_messages(str(localized.get("status") or ""))
     localized.update(
         code=CODES.get(str(localized.get("status") or ""), -1),

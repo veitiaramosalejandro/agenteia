@@ -1121,6 +1121,14 @@ def _learned_assertion_response_prompt(fact: str, language: str) -> str:
     )
 
 
+def _protect_learned_assertion_route(metadata: dict[str, Any]) -> None:
+    """Keep learned-content acknowledgements on the tool-free general route."""
+    metadata["model_capability"] = "general"
+    metadata["tool_permissions"] = set()
+    metadata["external_information_mode"] = False
+    metadata["_capability_route_prepared"] = True
+
+
 def _persist_suggestion_fact(
     *,
     resource_id: str,
@@ -2078,6 +2086,10 @@ async def _process_chat_question_response_suggestion(
             # already passed the learning gate. Avoid a cold model-backed scope
             # classification and unrelated RAG/system snapshot retrieval.
             metadata["_agent_scope_prechecked"] = True
+            # A learned assertion is an acknowledgement task, never a coding
+            # or external-research request because its content mentions those
+            # topics. Keep every downstream route on the general capability.
+            _protect_learned_assertion_route(metadata)
         reference_utc = datetime.now(timezone.utc)
         try:
             reference_zone = ZoneInfo(metadata["time_zone"])

@@ -412,6 +412,15 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
             {"es": "Respondido", "en": "Answered", "pt": "Respondido"},
         )
 
+    def test_status_without_language_uses_completed_result_language(self):
+        current = {
+            "status": "completed",
+            "result": {"language": "es"},
+        }
+        localized = _localize_response_status(current)
+        self.assertEqual(localized["language"], "es")
+        self.assertEqual(localized["displayMessage"], "Respondido")
+
     @patch("app.services.response_status._redis")
     def test_suggestion_retry_removes_transient_failed_identity(self, redis_mock):
         storage = {}

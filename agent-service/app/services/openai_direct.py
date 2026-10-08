@@ -308,7 +308,13 @@ def answer_direct(user_text, metadata, session_id):
         except Exception as exc:
             print(f'OPENAI_PUBLIC_HISTORY_FAILED type={type(exc).__name__}', flush=True)
         return result
-    capability = requested_capability(user_text, metadata)
+    # The capability planner is authoritative once it has selected a route.
+    # Reclassifying here could turn a general recommendation or learned
+    # assertion into coding merely because its text mentions Python or
+    # algorithms.
+    capability = str(metadata.get('model_capability') or '').strip().lower()
+    if not capability:
+        capability = requested_capability(user_text, metadata)
     metadata['model_capability'] = capability
     record = assigned_openai(
         metadata.get('agent_resource_id'), capability,

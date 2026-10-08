@@ -16,7 +16,7 @@ suggestion_queue = SuggestionQueue()
 @router.get("/status")
 def read_agent_response_status_by_chat(
     chatId: str = Query(...),
-    lang: str = Query("pt", pattern="^(es|en|pt)$"),
+    lang: str | None = Query(None, pattern="^(es|en|pt)$"),
 ) -> dict[str, Any]:
     data = load_by_chat(str(chatId).strip())
     if data is None:
@@ -49,7 +49,7 @@ def read_suggestion_queue_status() -> dict[str, Any]:
 @router.get("/{request_id}/status")
 def read_agent_response_status(
     request_id: str,
-    lang: str = Query("pt", pattern="^(es|en|pt)$"),
+    lang: str | None = Query(None, pattern="^(es|en|pt)$"),
 ) -> dict[str, Any]:
     data = load(request_id.strip())
     if data is None:

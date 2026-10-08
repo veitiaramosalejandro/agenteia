@@ -12,6 +12,17 @@ from app.agent.orchestrator import SolidSETOrchestrator
 
 
 class DirectRoutingTests(unittest.TestCase):
+    def test_existing_capability_is_not_reclassified_by_direct_provider(self):
+        metadata = {
+            'agent_resource_id': str(uuid4()),
+            'solidset_instance_id': str(uuid4()),
+            'model_capability': 'general',
+        }
+        with patch.object(service, 'requested_capability', side_effect=AssertionError), \
+                patch.object(service, 'assigned_openai', return_value=None):
+            self.assertIsNone(service.answer_direct('Python y algoritmos', metadata, 's'))
+        self.assertEqual(metadata['model_capability'], 'general')
+
     def test_cached_spanish_suggestion_is_not_reused_for_portuguese_question(self):
         result = service._compatible_learned_answer(
             '["Para crear una API GraphQL, primero define tu esquema con tipos y consultas."]',
