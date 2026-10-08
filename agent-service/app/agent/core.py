@@ -230,8 +230,6 @@ class MachiningAgent:
         requested_cap = int(metadata.get("max_output_tokens") or 0)
         if requested_cap > 0 and requested_cap < config.max_output_tokens:
             config = replace(config, max_output_tokens=max(128, requested_cap))
-        if config.provider == "ollama":
-            config = replace(config, max_output_tokens=min(400, max(1, config.max_output_tokens or 400)))
         key = (
             str((record or {}).get("ID") or "environment"),
             (record or {}).get("UpdatedAt"), capability, config.provider, config.model,

@@ -83,6 +83,22 @@ class AgentPromptTests(unittest.TestCase):
         self.assertIn("FORMATO DE RESPOSTA CONFIGURADO", prompt)
         self.assertIn("1. Propósito del código", prompt)
 
+    def test_algorithmic_profile_includes_basic_math_scope(self):
+        from app.agent.prompt_budget import compact_system
+
+        prompt = compact_system(
+            "", language="es", identity={}, agent_id="agent", subject_id="",
+            now="2026-10-08T00:00:00Z", business_query=False, auto_reply=False,
+            agent_behavior={
+                "role": "ingeniero de software",
+                "specialties": ["Algoritmia y ciencias de la computación"],
+                "out_of_scope_action": "Declinar preguntas ajenas al software.",
+            },
+        )
+
+        self.assertIn("operaciones matemáticas básicas", prompt)
+        self.assertIn("raíces", prompt)
+
     @patch("app.agent.core.get_active_agent_prompt")
     def test_prompt_cache_is_scoped_by_instance_and_resource(self, loader):
         loader.return_value = {

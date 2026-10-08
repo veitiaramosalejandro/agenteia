@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     
     # Ollama Local Configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://ollama-chat:11434")
-    OLLAMA_CHAT_CONTEXT_LENGTH: int = Field(default=4096, ge=1)
+    OLLAMA_CHAT_CONTEXT_LENGTH: int = Field(
+        default=int(os.getenv("OLLAMA_CHAT_CONTEXT_LENGTH", os.getenv("OLLAMA_CONTEXT_LENGTH", "4096"))),
+        ge=1,
+    )
     # Required explicitly: embeddings must never inherit the chat endpoint.
     # Validation below runs before any consumer can create an embedding client.
     EMBEDDING_BASE_URL: str = ""
@@ -38,7 +41,8 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
     AZURE_OPENAI_DEPLOYMENT: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:3b")
+    #MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:3b")
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen2.5:14b")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     EMBEDDING_VECTOR_SIZE: int = max(0, int(os.getenv("EMBEDDING_VECTOR_SIZE", "0")))
     LLM_MAX_OUTPUT_TOKENS: int = max(128, int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1024")))

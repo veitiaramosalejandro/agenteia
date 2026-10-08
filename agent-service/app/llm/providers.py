@@ -63,7 +63,9 @@ class OllamaProvider(ChatProvider):
             base_url=config.base_url,
             model=config.model,
             temperature=config.temperature,
-            num_predict=min(400, max(1, config.max_output_tokens or 400)),
+            # Respect the capability/database setting; the previous hard cap
+            # of 400 tokens truncated normal coding responses mid-sentence.
+            num_predict=max(128, config.max_output_tokens or 1024),
             num_ctx=settings.OLLAMA_CHAT_CONTEXT_LENGTH,
             keep_alive="30m",  # o -1 para mantener indefinidamente
             top_p=0.9,

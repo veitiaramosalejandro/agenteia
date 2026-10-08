@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS public."SysLLMProviderConfiguration" (
     "BaseUrl" varchar(500),
     "APIKey" text,
     "Temperature" double precision NOT NULL DEFAULT 0.5,
-    "MaxOutputTokens" integer NOT NULL DEFAULT 1024,
+    "MaxOutputTokens" integer NOT NULL DEFAULT 1536,
     "TimeoutSeconds" integer NOT NULL DEFAULT 60,
     "AzureEndpoint" varchar(500),
     "AzureApiVersion" varchar(80),
@@ -55,7 +55,7 @@ INSERT INTO public."SysLLMProviderConfiguration" (
     "MaxOutputTokens", "TimeoutSeconds", "IsDefault", active
 ) VALUES (
     'ollama-default', 'Ollama coordinador', 'ollama', 'qwen2.5:3b',
-    'http://ollama-llm:11434', 0.5, 1024, 900, true, true
+    'http://ollama-llm:11434', 0.5, 1536, 900, true, true
 )
 ON CONFLICT ("Code") DO NOTHING;
 

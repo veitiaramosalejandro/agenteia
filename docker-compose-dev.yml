@@ -48,7 +48,8 @@ services:
       OLLAMA_CHAT_CONTEXT_LENGTH: ${OLLAMA_CHAT_CONTEXT_LENGTH:-4096}
       OLLAMA_BASE_URL: http://ollama-chat:11434
       EMBEDDING_BASE_URL: http://ollama-embeddings:11434
-      MODEL_NAME: qwen2.5:3b
+      #MODEL_NAME: qwen2.5:3b
+      MODEL_NAME: qwen3:30b-a3b-instruct-2507-q4_K_M
       VECTOR_DB_URL: http://vector-db:6333
       POSTGRES_HOST: timescaledb
       POSTGRES_PORT: 5432

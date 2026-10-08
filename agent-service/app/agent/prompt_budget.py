@@ -4,7 +4,9 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-MAX_PROMPT_CHARS = 7999
+# Keep enough room for normal coding requests, agent policy, history and
+# retrieved context while leaving capacity for the configured response.
+MAX_PROMPT_CHARS = 12000
 MAX_RAG_CHARS = 2000
 _OMITTED = "\n[contenido omitido por límite de contexto]"
 
@@ -54,7 +56,7 @@ def compact_system(output_contract: str, *, language: str, identity: dict,
         "humano y gemelo; ante otros habla en primera persona sobre datos verificados del gemelo. "
         "En sugerencias al propietario comparte su ámbito privado conservando autoría separada. "
         "No afirmes conciencia, emociones ni vivencias reales ni muestres razonamiento interno. Los fragmentos omitidos no prueban "
-        "ausencia de datos. Responde de forma completa dentro de 400 tokens.\n"
+        "ausencia de datos. Responde de forma completa y concisa dentro del límite configurado.\n"
         f"Fecha/hora actual verificada (única fuente para ahora): {now}.\n"
         f"Agente seleccionado: {agent_id or 'predeterminado'}.\n"
     )
@@ -101,6 +103,20 @@ def compact_system(output_contract: str, *, language: str, identity: dict,
             ) + "\n"
         if out_of_scope_action:
             policy += f"Fuera de especialidad: {out_of_scope_action}\n"
+        published_text = " ".join(
+            [role] + [str(value) for value in specialties if value]
+        ).lower()
+        if any(term in published_text for term in (
+            "algorit", "ciencia de la computación", "computer science",
+            "razonamiento computacional",
+        )):
+            policy += (
+                "Alcance algorítmico: las operaciones matemáticas básicas que apoyan la "
+                "algoritmia forman parte de esta especialidad, incluso como cálculos aislados "
+                "(aritmética, potencias, raíces, ecuaciones sencillas y ejemplos numéricos). "
+                "Esto no amplía el perfil a matemáticas avanzadas o a una tutoría matemática "
+                "general sin relación con algoritmos.\n"
+            )
     # The caller captures only the trusted mode contract before adding retrieved data.
     # Never discover policy by parsing headings supplied in documents or templates.
     return policy + "\n" + output_contract
@@ -138,9 +154,13 @@ def budget_messages(messages: list) -> list:
     used = sum(size(copies[i]) for i in required)
     # Retain every tool result (at least its role/id) so calls never become orphaned.
     tool_indices = [i for i, message in enumerate(copies) if isinstance(message, ToolMessage)]
-    if used + len(tool_indices) * len(_OMITTED) > MAX_PROMPT_CHARS:
-        raise ValueError("OLLAMA_PROMPT_BUDGET_EXCEEDED: instrucciones, consulta o argumentos "
-                         "exceden 7999 caracteres; reduce la entrada o usa un modelo con mayor contexto.")
+    minimum_required = used + len(tool_indices) * len(_OMITTED)
+    if minimum_required > MAX_PROMPT_CHARS:
+        raise ValueError(
+            "OLLAMA_PROMPT_BUDGET_EXCEEDED: instrucciones, consulta o argumentos "
+            f"ocupan {minimum_required} caracteres; el límite es {MAX_PROMPT_CHARS}. "
+            "Reduce la entrada o usa un modelo con mayor contexto."
+        )
     remaining = MAX_PROMPT_CHARS - used
     optional = [i for i in range(len(copies)) if i not in required]
     # Latest tool evidence first, then retrieved context, then recent conversation.

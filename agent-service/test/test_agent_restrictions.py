@@ -435,3 +435,25 @@ def test_external_web_does_not_change_scope_decision():
         )
     assert answer is not None
     assert context["_agent_scope_decision"] == "clarify"
+
+
+def test_algorithmic_scope_prompt_allows_basic_math_support():
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(content='{"decision":"allow"}')
+    policy = {
+        "role": "ingeniero de software senior",
+        "specialties": ["Algoritmia y ciencias de la computación"],
+        "out_of_scope_action": "Declinar preguntas ajenas al software.",
+    }
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        assert _scope_decision(
+            "¿Cuál es la raíz décima de 1024?", policy, "instance", "agent"
+        ) == "allow"
+
+    prompt = model.invoke.call_args.args[0][0].content
+    assert "operaciones matemáticas básicas" in prompt
+    assert "raíces" in prompt
