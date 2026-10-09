@@ -92,18 +92,23 @@ class AgentDefaultModelTests(unittest.TestCase):
         self.assertEqual(rows[0]["Priority"], 9)
         self.assertFalse(rows[0]["LearnFromOwner"])
 
-    def test_remote_global_default_does_not_change_new_twins_local_default(self):
+    def test_global_default_is_used_for_new_twins(self):
         self.db.execute(self.sql('UPDATE public."SysLLMProviderConfiguration" SET "IsDefault"=false'))
         self.db.execute(self.sql('UPDATE public."SysLLMProviderConfiguration" SET "IsDefault"=true WHERE "ID"=%s'), (self.remote,))
-        self.assertEqual(self.models(self.create_resource())[0]["IDProviderConfiguration"], self.local)
+        rows = self.models(self.create_resource())
+        self.assertEqual(rows[0]["IDProviderConfiguration"], self.remote)
+        self.assertFalse(rows[0]["LocalExecution"])
 
-    def test_missing_local_provider_rejects_insert_atomically(self):
+    def test_missing_provider_rejects_insert_atomically(self):
         self.db.execute(self.sql('UPDATE public."SysLLMProviderConfiguration" SET active=false WHERE "ID"=%s'), (self.local,))
         resource = uuid4()
-        with self.assertRaises(psycopg.errors.RaiseException):
-            with self.db.transaction():
-                self.db.execute(self.sql('INSERT INTO public."SysResourceIA" VALUES (%s,\'Twin\')'), (resource,))
-        self.assertEqual(self.db.execute(self.sql('SELECT count(*) AS n FROM public."SysResourceIA" WHERE "IDResource"=%s'), (resource,)).fetchone()["n"], 0)
+        self.db.execute(self.sql('INSERT INTO public."SysResourceIA" VALUES (%s,\'Twin\')'), (resource,))
+        self.assertEqual(
+            self.db.execute(self.sql('SELECT count(*) AS n FROM public."SysAgentIAModel" WHERE "IDResource"=%s'), (resource,)).fetchone()["n"],
+            1,
+        )
+        self.assertEqual(self.models(resource)[0]["IDProviderConfiguration"], self.remote)
+        self.assertEqual(self.db.execute(self.sql('SELECT count(*) AS n FROM public."SysResourceIA" WHERE "IDResource"=%s'), (resource,)).fetchone()["n"], 1)
 
     def test_inactive_assignment_history_is_preserved(self):
         resource = self.create_resource()

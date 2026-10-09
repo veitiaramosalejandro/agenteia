@@ -196,6 +196,7 @@ def update(
     error: Optional[str] = None,
     response_count: Optional[int] = None,
     result: Optional[dict[str, Any]] = None,
+    effective_model: Optional[dict[str, Any]] = None,
 ) -> None:
     if not request_id or (data := load(request_id)) is None:
         return
@@ -222,6 +223,8 @@ def update(
             updatedAt=now,
             error=error,
         )
+        if effective_model:
+            state["effectiveModel"] = dict(effective_model)
     if len(data.get("agents") or []) > 1 and (
         agent_resource_id or status_name in {"completed", "failed"}
     ):

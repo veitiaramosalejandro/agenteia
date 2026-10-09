@@ -2000,11 +2000,26 @@ async def _process_auto_replies_impl(
         if response_text is None:
             response_text = _weather_location_prompt(incoming_text)
         if response_text is not None:
+            effective_model = {
+                "providerCode": str(message_metadata.get("effective_llm_provider_code") or ""),
+                "provider": str(message_metadata.get("effective_llm_provider") or ""),
+                "model": str(message_metadata.get("effective_llm_model") or ""),
+                "capability": str(message_metadata.get("effective_llm_capability") or "general"),
+                "source": str(message_metadata.get("effective_llm_source") or ""),
+                "providerConfigurationId": str(
+                    message_metadata.get("effective_llm_provider_configuration_id") or ""
+                ),
+                "agentModelId": str(message_metadata.get("effective_llm_agent_model_id") or ""),
+            }
+            effective_model = {
+                key: value for key, value in effective_model.items() if value
+            } or None
             _update_response_status(
                 response_request_id,
                 "thinking",
                 agent_resource_id=status_agent_id,
                 agent_name=agent_name,
+                effective_model=effective_model,
             )
         if response_text is None:
             try:

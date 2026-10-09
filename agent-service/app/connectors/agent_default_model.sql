@@ -18,11 +18,11 @@ BEGIN
   ) THEN RETURN; END IF;
 
   SELECT "ID" INTO provider_id FROM public."SysLLMProviderConfiguration"
-   WHERE active AND lower("Provider")='ollama'
-   ORDER BY "IsDefault" DESC, ("Code"='ollama-default') DESC, "Code" LIMIT 1;
+   WHERE active
+   ORDER BY "IsDefault" DESC, "Code" LIMIT 1;
   IF provider_id IS NULL THEN
     -- Resources can arrive before their provider. Provider synchronization below
-    -- fills these assignments when an active Ollama configuration is registered.
+    -- fills these assignments when an active LLM configuration is registered.
     RETURN;
   END IF;
 
@@ -30,7 +30,12 @@ BEGIN
     "IDSolidSETInstance", "IDResource", "IDProviderConfiguration", "Role",
     "LocalExecution", "Capabilities", "Priority", "IsDefault", active
   ) VALUES (
-    instance_id, resource_id, provider_id, 'general', true,
+    instance_id, resource_id, provider_id, 'general',
+    EXISTS (
+      SELECT 1 FROM public."SysLLMProviderConfiguration" p
+       WHERE p."ID"=provider_id
+         AND lower(p."Provider") IN ('ollama','local_openai','openai_compatible')
+    ),
     '["general"]'::jsonb, 100, true, true
   ) ON CONFLICT ("IDSolidSETInstance", "IDResource", "IDProviderConfiguration")
     WHERE active=true DO UPDATE SET "IsDefault"=true,"UpdatedAt"=CURRENT_TIMESTAMP;
@@ -84,8 +89,8 @@ BEGIN
         AND m."IDResource"=membership."IDResource" AND m.active
         AND m."IDProviderConfiguration"=(
           SELECT p."ID" FROM public."SysLLMProviderConfiguration" p
-          WHERE p.active AND lower(p."Provider")='ollama'
-          ORDER BY p."IsDefault" DESC, (p."Code"='ollama-default') DESC, p."Code" LIMIT 1
+          WHERE p.active
+          ORDER BY p."IsDefault" DESC, p."Code" LIMIT 1
         )
     ) INTO had_assignment;
     PERFORM public.ensure_resource_default_model(membership."IDSolidSETInstance", membership."IDResource");
@@ -106,7 +111,7 @@ END $body$;
 CREATE OR REPLACE FUNCTION public.sync_defaults_after_provider_change()
 RETURNS trigger LANGUAGE plpgsql AS $body$
 BEGIN
-  IF NEW.active AND lower(NEW."Provider")='ollama' THEN
+  IF NEW.active THEN
     PERFORM public.synchronize_agent_model_defaults(NULL);
   END IF;
   RETURN NEW;

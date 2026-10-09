@@ -18,17 +18,25 @@ BEGIN
     END IF;
 
     SELECT "ID" INTO provider_id FROM public."SysLLMProviderConfiguration"
-    WHERE active AND lower("Provider")='ollama'
-    ORDER BY "IsDefault" DESC, ("Code"='ollama-default') DESC, "Code"
+    WHERE active
+    ORDER BY "IsDefault" DESC, "Code"
     LIMIT 1;
     IF provider_id IS NULL THEN
-        RAISE EXCEPTION 'An active Ollama provider is required to assign the resource default model';
+        RAISE EXCEPTION 'An active LLM provider is required to assign the resource default model';
     END IF;
 
     INSERT INTO public."SysAgentIAModel" (
         "IDResource", "IDProviderConfiguration", "Role", "LocalExecution",
         "Capabilities", "Priority", "IsDefault", active
-    ) VALUES (resource_id, provider_id, 'general', true, '["general"]'::jsonb, 100, true, true)
+    ) VALUES (
+        resource_id, provider_id, 'general',
+        EXISTS (
+            SELECT 1 FROM public."SysLLMProviderConfiguration" p
+             WHERE p."ID"=provider_id
+               AND lower(p."Provider") IN ('ollama','local_openai','openai_compatible')
+        ),
+        '["general"]'::jsonb, 100, true, true
+    )
     ON CONFLICT ("IDResource", "IDProviderConfiguration") WHERE active=true
     DO UPDATE SET "IsDefault"=true, "UpdatedAt"=CURRENT_TIMESTAMP;
 END

@@ -223,10 +223,34 @@ class MachiningAgent:
             provider_config_from_record(record)
             if record else self.llm_provider_config
         )
+        if not str(config.provider or "").strip():
+            raise ValueError("La configuración LLM efectiva no tiene proveedor.")
+        if not str(config.model or "").strip():
+            raise ValueError("La configuración LLM efectiva no tiene modelo.")
+        if record and bool(record.get("AgentLocalExecution", True)) and str(
+            record.get("Provider") or config.provider
+        ).strip().lower().replace("-", "_") not in {
+            "ollama", "local_openai", "openai_compatible"
+        }:
+            raise ValueError(
+                "La asignación del agente marca LocalExecution=true para un proveedor remoto."
+            )
         metadata["effective_llm_provider"] = str(config.provider or "").strip() or None
         metadata["effective_llm_model"] = str(config.model or "").strip() or None
+        metadata["effective_llm_provider_code"] = (
+            str((record or {}).get("Code") or "").strip() or None
+        )
+        metadata["effective_llm_provider_configuration_id"] = (
+            str((record or {}).get("ID") or "").strip() or None
+        )
+        metadata["effective_llm_agent_model_id"] = (
+            str((record or {}).get("AgentModelID") or "").strip() or None
+        )
         metadata["effective_llm_capability"] = capability
-        metadata["effective_llm_source"] = "postgresql" if record else "environment"
+        metadata["effective_llm_source"] = (
+            "agent_assignment" if record and record.get("AgentModelID") else
+            "global_default" if record else "environment"
+        )
         requested_cap = int(metadata.get("max_output_tokens") or 0)
         if requested_cap > 0 and requested_cap < config.max_output_tokens:
             config = replace(config, max_output_tokens=max(128, requested_cap))

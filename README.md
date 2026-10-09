@@ -163,10 +163,9 @@ predeterminado.
 
 Al crear o sincronizar un recurso en `SysResourceIA`, PostgreSQL garantiza una
 asignación activa con `IsDefault=true` en `SysAgentIAModel`. Si falta, utiliza el
-proveedor Ollama activo predeterminado; en su ausencia prioriza `ollama-default`
-y después el código del proveedor. Debe existir al menos un proveedor Ollama
-activo. La asignación inicial tiene capacidad `general` y sirve de respaldo para
-las capacidades sin un modelo específico.
+proveedor LLM activo marcado como predeterminado y después el código del proveedor.
+La asignación inicial tiene capacidad `general` y sirve de respaldo para las
+capacidades sin un modelo específico.
 
 La sincronización conserva los modelos personalizados y sus parámetros. Para
 cambiar el modelo principal del gemelo, se usa el endpoint de configuración de
@@ -174,6 +173,13 @@ modelos con `IsDefault=true` (y `LocalExecution=false` para OpenAI). La migraci�
 `024_assign_default_agent_model.sql`, también instalada al iniciar la API,
 completa los recursos existentes sin predeterminado sin alterar sus modelos
 especializados.
+
+La resolución efectiva sigue esta precedencia: asignación activa del agente para
+la instancia y capacidad solicitada, asignación activa `IsDefault=true`, proveedor
+global activo `IsDefault=true` y, solo como compatibilidad, configuración de
+entorno. Cambiar el proveedor global no sustituye asignaciones explícitas de
+`SysAgentIAModel`. Cada respuesta conserva el proveedor, modelo, capacidad, origen
+e identificadores de la configuración efectiva.
 
 Para desarrollo local, Ollama es el proveedor habitual:
 

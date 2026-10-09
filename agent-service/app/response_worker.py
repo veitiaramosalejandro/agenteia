@@ -86,7 +86,12 @@ async def run_worker() -> None:
                             final_status.get("error"),
                             None,
                             {"responseCount": int(final_status.get("responseCount", int(result))),
-                             "acceptedCount": int(result)},
+                             "acceptedCount": int(result),
+                             "effectiveModels": [
+                                 agent.get("effectiveModel")
+                                 for agent in (final_status.get("agents") or [])
+                                 if agent.get("effectiveModel")
+                             ]},
                             instance.get("ID"),
                         )
                     except Exception as audit_exc:

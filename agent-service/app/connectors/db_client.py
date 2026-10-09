@@ -801,7 +801,9 @@ def get_llm_provider_configuration(
         with connection.cursor() as cursor:
             requested_capability = str(capability or "general").strip().lower()
             cursor.execute(
-                '''SELECT p.* FROM public."SysLLMProviderConfiguration" p
+                '''SELECT p.*, m."ID" AS "AgentModelID",
+                          m."LocalExecution" AS "AgentLocalExecution"
+                   FROM public."SysLLMProviderConfiguration" p
                    LEFT JOIN public."SysAgentIAModel" m
                      ON m."IDProviderConfiguration"=p."ID" AND m.active=true
                         AND m."IDResource"=%s::uuid
@@ -811,7 +813,8 @@ def get_llm_provider_configuration(
                      OR (%s='general' AND p."IsDefault"=true))
                    ORDER BY CASE WHEN m."ID" IS NOT NULL AND m."Capabilities" ? %s THEN 0
                                  WHEN m."ID" IS NOT NULL AND m."IsDefault" THEN 1
-                                 ELSE 2 END,
+                                 WHEN p."IsDefault" THEN 2
+                                 ELSE 3 END,
                             m."Priority" NULLS LAST, p."Code" LIMIT 1''',
                 (
                     normalized, instance_id, instance_id, provider, provider,

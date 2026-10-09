@@ -131,7 +131,9 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
         return None
     resource_id = UUID(str(resource_id))
     with _postgres_connection() as db:
-        row = db.execute('''SELECT p.*, m."TrainingMode", m."LearnFromSystem"
+        row = db.execute('''SELECT p.*, m."ID" AS "AgentModelID",
+                                   m."LocalExecution" AS "AgentLocalExecution",
+                                   m."TrainingMode", m."LearnFromSystem"
             FROM public."SysAgentIAModel" m
             JOIN public."SysLLMProviderConfiguration" p ON p."ID"=m."IDProviderConfiguration"
             JOIN public."SysResourceIA" r ON r."IDResource"=m."IDResource"
@@ -148,6 +150,8 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
               f'provider={row["Provider"]} model={row["Model"]}', flush=True)
         if str(row.get('Provider') or '').lower() != 'openai':
             return None
+        if bool(row.get('AgentLocalExecution', False)):
+            raise ValueError('La asignación OpenAI no puede marcar LocalExecution=true.')
         row['APIKey'] = decrypt_api_key(row.get('APIKey'))
     return row
 
@@ -322,6 +326,15 @@ def answer_direct(user_text, metadata, session_id):
     )
     if record is None:
         return None
+    metadata.update({
+        'effective_llm_provider_code': str(record.get('Code') or '').strip() or None,
+        'effective_llm_provider': str(record.get('Provider') or '').strip() or None,
+        'effective_llm_model': str(record.get('Model') or '').strip() or None,
+        'effective_llm_provider_configuration_id': str(record.get('ID') or '').strip() or None,
+        'effective_llm_agent_model_id': str(record.get('AgentModelID') or '').strip() or None,
+        'effective_llm_capability': capability,
+        'effective_llm_source': 'agent_assignment',
+    })
     if not isinstance(user_text, str) or not user_text.strip() or len(user_text) > 32000:
         raise ValueError('Invalid direct message length')
     twin_context = _twin_context(metadata)
