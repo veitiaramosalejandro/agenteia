@@ -33,6 +33,8 @@ services:
       start_period: 5s
     networks:
       - machining-network
+    cpus: ${NGINX_CPUS:-0.5}
+    mem_limit: ${NGINX_MEMORY_LIMIT:-256m}
     logging: *default-logging
 
   certbot:
@@ -209,7 +211,7 @@ services:
       redis-cache: {condition: service_healthy}
       vector-db: {condition: service_healthy}
     deploy:
-      replicas: ${SUGGESTION_WORKER_REPLICAS:-2}
+      replicas: 1
     cpus: ${SUGGESTION_WORKER_CPUS:-4.0}
     mem_limit: ${SUGGESTION_WORKER_MEMORY_LIMIT:-6g}
     networks: [machining-network]
@@ -238,6 +240,8 @@ services:
     depends_on:
       timescaledb: {condition: service_healthy}
       redis-cache: {condition: service_healthy}
+    cpus: ${RETRY_WORKER_CPUS:-0.5}
+    mem_limit: ${RETRY_WORKER_MEMORY_LIMIT:-512m}
     networks: [machining-network]
     logging: *default-logging
 
@@ -317,7 +321,7 @@ services:
       # Una sola inferencia es la configuración segura para los modelos de 19 GB.
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_LOADED_MODELS=1
-      - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
+      - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-64}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CHAT_CONTEXT_LENGTH:-8192}
       # Qwen3 admite Flash Attention; q8_0 reduce aproximadamente a la mitad
       # la memoria de la KV cache con una pérdida mínima de precisión.
@@ -329,7 +333,7 @@ services:
       - OLLAMA_KEEP_ALIVE=${OLLAMA_CHAT_KEEP_ALIVE:-24h}
     # El host dispone de 20 CPUs; dejamos margen para la API, workers y bases de datos.
     cpus: ${OLLAMA_CHAT_CPUS:-12.0}
-    mem_limit: ${OLLAMA_CHAT_MEMORY_LIMIT:-32g}
+    mem_limit: ${OLLAMA_CHAT_MEMORY_LIMIT:-64g}
     shm_size: ${OLLAMA_CHAT_SHM_SIZE:-2g}
     stop_grace_period: 2m
     healthcheck:
@@ -361,8 +365,8 @@ services:
       - OLLAMA_MAX_QUEUE=${OLLAMA_EMBEDDING_MAX_QUEUE:-64}
       - OLLAMA_CONTEXT_LENGTH=4096
       - OLLAMA_KEEP_ALIVE=${OLLAMA_EMBEDDING_KEEP_ALIVE:-24h}
-    cpus: ${OLLAMA_EMBEDDING_CPUS:-4.0}
-    mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-6g}
+    cpus: ${OLLAMA_EMBEDDING_CPUS:-2.0}
+    mem_limit: ${OLLAMA_EMBEDDING_MEMORY_LIMIT:-3g}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -390,8 +394,8 @@ services:
       - OLLAMA_MAX_QUEUE=${OLLAMA_SYSTEM_EMBEDDING_MAX_QUEUE:-128}
       - OLLAMA_CONTEXT_LENGTH=4096
       - OLLAMA_KEEP_ALIVE=${OLLAMA_SYSTEM_EMBEDDING_KEEP_ALIVE:-24h}
-    cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-8.0}
-    mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-12g}
+    cpus: ${OLLAMA_SYSTEM_EMBEDDING_CPUS:-4.0}
+    mem_limit: ${OLLAMA_SYSTEM_EMBEDDING_MEMORY_LIMIT:-6g}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -443,7 +447,7 @@ services:
 
   # 2. Base de Datos Vectorial (Para RAG)
   vector-db:
-    image: ${QDRANT_IMAGE:-qdrant/qdrant:latest}
+    image: ${QDRANT_IMAGE:-qdrant/qdrant@sha256:b7b0444c4c351c970b98e90a6f89c2ee4287c65b44e52b4cb503fa5b2aa927ad}
     container_name: machining_vector_db
     hostname: vector-db
     restart: always
@@ -452,6 +456,7 @@ services:
     volumes:
       - ${SERVER_DATA_ROOT:-.}/qdrant_data:/qdrant/storage
     mem_limit: ${QDRANT_MEMORY_LIMIT:-16g}
+    cpus: ${QDRANT_CPUS:-4.0}
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
       interval: 5s
@@ -475,6 +480,26 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-robotea}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD debe estar definida}
       POSTGRES_DB: ${POSTGRES_DB:-machining_db}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-4GB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-10GB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-512MB}
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+      - -c
+      - max_wal_size=${POSTGRES_MAX_WAL_SIZE:-4GB}
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - wal_compression=on
     expose:
       - "5432"
     ports:
@@ -483,6 +508,7 @@ services:
       - ${SERVER_DATA_ROOT:-.}/postgres_data:/var/lib/postgresql/data
       - ./database/init:/docker-entrypoint-initdb.d:ro
     mem_limit: ${POSTGRES_MEMORY_LIMIT:-16g}
+    cpus: ${POSTGRES_CPUS:-6.0}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -505,6 +531,7 @@ services:
     volumes:
       - ${SERVER_DATA_ROOT:-.}/redis_data:/data
     mem_limit: ${REDIS_MEMORY_LIMIT:-8g}
+    cpus: ${REDIS_CPUS:-2.0}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -526,6 +553,8 @@ services:
     depends_on:
       agent-service:
         condition: service_healthy
+    cpus: ${CONTROL_CENTER_CPUS:-0.5}
+    mem_limit: ${CONTROL_CENTER_MEMORY_LIMIT:-512m}
     networks:
       - machining-network
     logging: *default-logging
@@ -566,6 +595,8 @@ services:
         condition: service_started
       timescaledb:
         condition: service_healthy
+    cpus: ${N8N_CPUS:-2.0}
+    mem_limit: ${N8N_MEMORY_LIMIT:-2g}
     networks:
       - machining-network
     logging: *default-logging
