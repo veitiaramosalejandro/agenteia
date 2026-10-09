@@ -1,4 +1,5 @@
-# Produccion para Ryzen 9 3950X / 128 GiB. SERVER_DATA_ROOT debe apuntar al
+# Producción para un host de 20 CPU y aproximadamente 128 GiB de RAM con una
+# única GPU para el runtime de chat. SERVER_DATA_ROOT debe apuntar al
 # almacenamiento persistente montado; por defecto se usan rutas del proyecto.
 x-logging: &default-logging
   driver: json-file
@@ -74,9 +75,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-machining_db}
       DB_URL: ${DB_URL:?DB_URL debe estar definida}
       REDIS_URL: redis://redis-cache:6379
-      # La API admite dos solicitudes; Ollama serializa la inferencia del 7B
-      # para que una segunda KV cache no agote los 8 GiB de la Quadro M4000.
-      DIALOGUE_MAX_CONCURRENT: ${DIALOGUE_MAX_CONCURRENT:-2}
+      # El modelo de producción es de aproximadamente 19 GB. Una sola
+      # inferencia evita duplicar la KV cache y mantiene latencia predecible.
+      DIALOGUE_MAX_CONCURRENT: "1"
       LLM_COMPACT_RUNTIME_PROMPT: ${LLM_COMPACT_RUNTIME_PROMPT:-true}
       LLM_DIALOGUE_MAX_OUTPUT_TOKENS: ${LLM_DIALOGUE_MAX_OUTPUT_TOKENS:-1536}
       LLM_SUGGESTION_MAX_OUTPUT_TOKENS: ${LLM_SUGGESTION_MAX_OUTPUT_TOKENS:-384}
@@ -140,6 +141,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD debe estar definida}
       POSTGRES_DB: ${POSTGRES_DB:-machining_db}
       REDIS_URL: redis://redis-cache:6379
+      DIALOGUE_MAX_CONCURRENT: "1"
       SOLIDSET_LOGIN_USERNAME: ""
       SOLIDSET_LOGIN_PASSWORD: ""
       SOLIDSET_LOGIN_HASHPASS: ""
@@ -189,6 +191,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD debe estar definida}
       POSTGRES_DB: ${POSTGRES_DB:-machining_db}
       REDIS_URL: redis://redis-cache:6379
+      DIALOGUE_MAX_CONCURRENT: "1"
       SOLIDSET_LOGIN_USERNAME: ""
       SOLIDSET_LOGIN_PASSWORD: ""
       SOLIDSET_LOGIN_HASHPASS: ""
@@ -298,7 +301,7 @@ services:
   # Runtime interactivo. El overlay GPU reserva la GPU únicamente para este
   # servicio; embeddings e ingestión usan el runtime CPU independiente.
   ollama-chat:
-    # 0.33.2 fue validada en este servidor con CUDA 12 y compute capability 5.2.
+    # 0.33.2 está fijada para mantener reproducibilidad del runtime CUDA.
     image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
     container_name: machining_ollama_chat
     hostname: ollama-chat
@@ -311,15 +314,15 @@ services:
       - ${SERVER_DATA_ROOT:-.}/ollama_storage:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-      # El compose base funciona también sin GPU. Con CPU se limita la
-      # concurrencia para no agotar RAM; el overlay GPU puede sobrescribirla.
+      # Una sola inferencia es la configuración segura para los modelos de 19 GB.
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-32}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CHAT_CONTEXT_LENGTH:-8192}
-      # Maxwell no dispone de los tensor cores usados por Flash Attention.
-      - OLLAMA_FLASH_ATTENTION=0
-      - OLLAMA_KV_CACHE_TYPE=f16
+      # Qwen3 admite Flash Attention; q8_0 reduce aproximadamente a la mitad
+      # la memoria de la KV cache con una pérdida mínima de precisión.
+      - OLLAMA_FLASH_ATTENTION=1
+      - OLLAMA_KV_CACHE_TYPE=q8_0
       - OLLAMA_SCHED_SPREAD=false
       - OLLAMA_LOAD_TIMEOUT=${OLLAMA_LOAD_TIMEOUT:-10m}
       - LLAMA_ARG_FIT_TARGET=512
@@ -405,8 +408,7 @@ services:
     environment:
       OLLAMA_HOST: http://ollama-chat:11434
     entrypoint: ["ollama"]
-    #command: ["pull", "${MODEL_NAME:-qwen2.5:3b}"]
-    command: ["pull", "${MODEL_NAME:-qwen2.5:14b}"]
+    command: ["pull", "${MODEL_NAME:-qwen3:30b-a3b-instruct-2507-q4_K_M}"]
     depends_on:
       ollama-chat:
         condition: service_healthy
