@@ -1225,14 +1225,17 @@ def _candidate_session_id(candidate: dict) -> uuid.UUID:
     )
     for value in candidates:
         try:
-            return uuid.UUID(str(value))
+            parsed = uuid.UUID(str(value))
+            if parsed.int != 0:
+                return parsed
         except (TypeError, ValueError, AttributeError):
             continue
     stable_scope = (
+        f"{candidate.get('solidset_instance_id')}|{candidate.get('agent_resource_id')}|"
         f"{candidate.get('channel_id')}|{candidate.get('sender_resource')}|"
         f"{candidate.get('reply_resource')}"
     )
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"solidset-agent-session:{stable_scope}")
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"solidset-agent-session:v2:{stable_scope}")
 
 
 def _candidate_conversation_id(candidate: dict, fallback: str) -> str:
@@ -1818,7 +1821,8 @@ async def _process_auto_replies_impl(
             )
             continue
 
-        incoming_text = _sanitize_auto_reply_input(str(candidate.get("message") or ""))
+        raw_incoming_text = str(candidate.get("message") or "").strip()
+        incoming_text = _sanitize_auto_reply_input(raw_incoming_text)
         channel_id = (candidate.get("channel_id") or "").strip()
         is_direct = bool(candidate.get("is_direct"))
         reply_resource = str(candidate.get("reply_resource") or "").strip()
@@ -1932,6 +1936,16 @@ async def _process_auto_replies_impl(
             f"agent:{agent_resource_id}:room:{channel_id}:"
             f"conversation:{conversation_id}"
         )
+        from app.services.code_context import attach_code_context
+        try:
+            attach_code_context(
+                raw_incoming_text,
+                message_metadata,
+                session_id,
+                chat_id=candidate.get("chat_id"),
+            )
+        except Exception as exc:
+            print(f"CODE_CONTEXT_STORE_FAILED type={type(exc).__name__}", flush=True)
         user_id = str(
             candidate.get("sender_resource")
             or candidate.get("sender_name")

@@ -9,41 +9,41 @@ x-logging: &default-logging
 
 services:
   # API del agente. n8n accede internamente mediante http://agent-service:8000.
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: machining_nginx
-    hostname: nginx
-    restart: always
-    ports:
-      - 80:80
-      - 443:443
-    volumes:
-      - ./nginx/conf.d/agent.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./certbot/www:/var/www/certbot:ro
-      - ./certbot/conf:/etc/letsencrypt:ro
-      - ./certbot/internal:/etc/nginx/internal:ro
-    depends_on:
-      agent-service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-health"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    networks:
-      - machining-network
-    cpus: ${NGINX_CPUS:-0.5}
-    mem_limit: ${NGINX_MEMORY_LIMIT:-256m}
-    logging: *default-logging
+  #nginx:
+  #  image: nginx:1.27-alpine
+  #  container_name: machining_nginx
+  #  hostname: nginx
+  #  restart: always
+  #  ports:
+  #    - 80:80
+  #    - 443:443
+  #  volumes:
+  #    - ./nginx/conf.d/agent.conf:/etc/nginx/conf.d/default.conf:ro
+  #    - ./certbot/www:/var/www/certbot:ro
+  #    - ./certbot/conf:/etc/letsencrypt:ro
+  #    - ./certbot/internal:/etc/nginx/internal:ro
+  #  depends_on:
+  #    agent-service:
+  #      condition: service_healthy
+  #  healthcheck:
+  #    test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-health"]
+  #    interval: 10s
+  #    timeout: 3s
+  #    retries: 10
+  #    start_period: 5s
+  #  networks:
+  #    - machining-network
+  #  cpus: ${NGINX_CPUS:-0.5}
+  #  mem_limit: ${NGINX_MEMORY_LIMIT:-256m}
+  #   logging: *default-logging
 
-  certbot:
-    image: certbot/certbot:latest
-    container_name: machining_certbot
-    profiles: ["certbot"]
-    volumes:
-      - ./certbot/www:/var/www/certbot
-      - ./certbot/conf:/etc/letsencrypt
+  #certbot:
+  #  image: certbot/certbot:latest
+  #  container_name: machining_certbot
+  #  profiles: ["certbot"]
+  #  volumes:
+  #    - ./certbot/www:/var/www/certbot
+  #    - ./certbot/conf:/etc/letsencrypt
 
   agent-service:
     image: agent-beta:0.0.2
@@ -95,6 +95,11 @@ services:
       SOLIDSET_LOGIN_HASHPASS: ""
       SOLIDSET_LOGIN_RESOURCE_ID: ""
       SOLIDSET_RESOURCE_ID: ""
+      CONTROL_CENTER_AUTH_ENABLED: ${CONTROL_CENTER_AUTH_ENABLED:-true}
+      CONTROL_CENTER_BOOTSTRAP_USERNAME: ${CONTROL_CENTER_BOOTSTRAP_USERNAME:-administrator}
+      CONTROL_CENTER_BOOTSTRAP_PASSWORD: ${CONTROL_CENTER_BOOTSTRAP_PASSWORD:-Abcd*1234}
+      CONTROL_CENTER_BOOTSTRAP_DISPLAY_NAME: ${CONTROL_CENTER_BOOTSTRAP_DISPLAY_NAME:-Administrator}
+      CONTROL_CENTER_SESSION_HOURS: ${CONTROL_CENTER_SESSION_HOURS:-8}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:      

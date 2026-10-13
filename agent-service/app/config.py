@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     LLM_MAX_HISTORY_MESSAGES: int = max(
         1, min(3, int(os.getenv("LLM_MAX_HISTORY_MESSAGES", "3")))
     )
+    CODE_CONTEXT_TTL_SECONDS: int = max(
+        300, int(os.getenv("CODE_CONTEXT_TTL_SECONDS", "7200"))
+    )
+    CODE_CONTEXT_MAX_CHARS: int = max(
+        1000, int(os.getenv("CODE_CONTEXT_MAX_CHARS", "60000"))
+    )
+    CODE_CONTEXT_PROMPT_MAX_CHARS: int = max(
+        4000, int(os.getenv("CODE_CONTEXT_PROMPT_MAX_CHARS", "24000"))
+    )
     LLM_MAX_TOOL_ITERATIONS: int = max(
         1, min(5, int(os.getenv("LLM_MAX_TOOL_ITERATIONS", "3")))
     )
