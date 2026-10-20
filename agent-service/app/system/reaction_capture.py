@@ -72,7 +72,7 @@ def resolve_agent_message(id_chat: int, instance: dict[str, Any]) -> dict[str, A
                 SELECT
                     r."IDResource",
                     r."IDAgentResource",
-                    r."IDSolidSETInstance",
+                    COALESCE(%s::uuid, r."IDSolidSETInstance") AS "IDSolidSETInstance",
                     r."Name",
                     l."FullName"
                 FROM public."SysResourceIA" r
@@ -83,13 +83,23 @@ def resolve_agent_message(id_chat: int, instance: dict[str, Any]) -> dict[str, A
                       r."IDResource" = %s
                       OR r."IDAgentResource" = %s
                   )
-                  AND (%s::uuid IS NULL OR r."IDSolidSETInstance" = %s::uuid)
+                  AND (
+                      %s::uuid IS NULL
+                      OR EXISTS (
+                          SELECT 1
+                          FROM public."SysSolidSETInstanceResource" membership
+                          WHERE membership."IDSolidSETInstance" = %s::uuid
+                            AND membership."IDResource" = r."IDResource"
+                            AND membership.active = TRUE
+                      )
+                  )
                 ORDER BY
                     CASE WHEN r."IDResource" = %s THEN 0 ELSE 1 END,
                     l."IDLogin"
                 LIMIT 1
                 ''',
                 (
+                    instance.get("ID") if instance else None,
                     resource_id,
                     resource_id,
                     instance.get("ID") if instance else None,
