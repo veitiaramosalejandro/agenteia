@@ -14,6 +14,9 @@ data:
   POSTGRES_PORT: "5432"
   POSTGRES_DB: machining_db
   REDIS_URL: redis://redis-cache:6379
+  AUDIO_DIR: /app/audio
+  GENERATED_DOCS_DIR: /app/data/generated_docs
+  CREDENTIAL_ENCRYPTION_KEY_FILE: /app/data/credential.key
   MODEL_NAME: qwen3:30b-a3b-instruct-2507-q4_K_M
   EMBEDDING_MODEL_NAME: nomic-embed-text
   OLLAMA_CHAT_CONTEXT_LENGTH: "8192"

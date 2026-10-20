@@ -49,6 +49,18 @@ spec:
             limits:
               cpu: "4"
               memory: 8Gi
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/data
+            - name: agent-audio
+              mountPath: /app/audio
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-data
+        - name: agent-audio
+          persistentVolumeClaim:
+            claimName: agent-audio
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -82,6 +94,18 @@ spec:
             limits:
               cpu: "4"
               memory: 6Gi
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/data
+            - name: agent-audio
+              mountPath: /app/audio
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-data
+        - name: agent-audio
+          persistentVolumeClaim:
+            claimName: agent-audio
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -115,6 +139,18 @@ spec:
             limits:
               cpu: "6"
               memory: 8Gi
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/data
+            - name: agent-audio
+              mountPath: /app/audio
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-data
+        - name: agent-audio
+          persistentVolumeClaim:
+            claimName: agent-audio
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -148,6 +184,18 @@ spec:
             limits:
               cpu: "2"
               memory: 2Gi
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/data
+            - name: agent-audio
+              mountPath: /app/audio
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-data
+        - name: agent-audio
+          persistentVolumeClaim:
+            claimName: agent-audio
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -181,6 +229,13 @@ spec:
             limits:
               cpu: "500m"
               memory: 512Mi
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/data
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-data
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -214,6 +269,18 @@ spec:
             limits:
               cpu: "6"
               memory: 8Gi
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/data
+            - name: agent-audio
+              mountPath: /app/audio
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-data
+        - name: agent-audio
+          persistentVolumeClaim:
+            claimName: agent-audio
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -285,4 +352,16 @@ spec:
             limits:
               cpu: "4"
               memory: 6Gi
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/data
+            - name: agent-audio
+              mountPath: /app/audio
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-data
+        - name: agent-audio
+          persistentVolumeClaim:
+            claimName: agent-audio
 

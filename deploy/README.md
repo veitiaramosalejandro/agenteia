@@ -26,6 +26,12 @@ kubectl kustomize deploy/k8s/overlays/staging
 4. Confirmar que existe un `StorageClass` compatible con PVC `ReadWriteOnce`.
 5. Confirmar que el nodo GPU tiene instalado el NVIDIA device plugin.
 
+Los PVC `agent-data` y `agent-audio` son `ReadWriteOnce` y se comparten entre
+los Pods de API y workers. Esto es válido para el despliegue inicial en un
+único nodo. En un clúster multinodo se debe usar almacenamiento `ReadWriteMany`
+o separar los volúmenes por servicio antes de habilitar anti-affinity o
+escalado entre nodos.
+
 ## Construcción de imágenes
 
 Desde la raíz del repositorio:
