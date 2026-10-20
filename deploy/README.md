@@ -5,6 +5,15 @@ La configuración se divide en:
 - `k8s/base`: recursos comunes del sistema.
 - `k8s/overlays/production`: personalización de producción.
 - `k8s/migrations`: imagen que ejecuta las migraciones SQL versionadas.
+- `scripts/preflight.sh`: comprobaciones previas sin modificar el clúster.
+
+## Staging
+
+El overlay de staging reduce las réplicas y usa un modelo de chat menor:
+
+```bash
+kubectl kustomize deploy/k8s/overlays/staging
+```
 
 ## Preparación
 
@@ -35,6 +44,14 @@ Con `kubectl` y `kustomize` instalados:
 kubectl kustomize deploy/k8s/overlays/production
 kubectl apply -k deploy/k8s/overlays/production
 kubectl -n agenteia-prod get pods,pvc,jobs
+```
+
+Antes de aplicar producción:
+
+```bash
+KUBE_CONTEXT=mi-contexto \
+  NAMESPACE=agenteia-prod \
+  sh deploy/scripts/preflight.sh
 ```
 
 El manifiesto no contiene secretos reales y no debe aplicarse hasta sustituir

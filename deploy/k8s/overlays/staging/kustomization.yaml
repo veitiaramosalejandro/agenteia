@@ -1,0 +1,60 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: agenteia-staging
+
+resources:
+  - ../../base
+
+images:
+  - name: registry.example.com/agenteia/agent-service
+    newName: registry.example.com/agenteia/agent-service
+    newTag: staging
+  - name: registry.example.com/agenteia/agent-control-center
+    newName: registry.example.com/agenteia/agent-control-center
+    newTag: staging
+  - name: registry.example.com/agenteia/db-migrations
+    newName: registry.example.com/agenteia/db-migrations
+    newTag: staging
+
+patches:
+  - path: configmap-patch.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: agent-service
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: agent-worker
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: agenteia
+    patch: |
+      - op: replace
+        path: /spec/tls/0/hosts
+        value:
+          - staging-agent.example.com
+          - staging-control.example.com
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: staging-agenteia-tls
+      - op: replace
+        path: /spec/rules/0/host
+        value: staging-agent.example.com
+      - op: replace
+        path: /spec/rules/1/host
+        value: staging-control.example.com
+
