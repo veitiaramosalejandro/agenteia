@@ -54,6 +54,17 @@ KUBE_CONTEXT=mi-contexto \
   sh deploy/scripts/preflight.sh
 ```
 
+Para crear el Secret sin escribir credenciales en Git, exportar primero las
+variables en la sesión actual y ejecutar:
+
+```bash
+NAMESPACE=agenteia-staging \
+  sh deploy/scripts/create-secret.sh
+```
+
+El script requiere `POSTGRES_USER`, `POSTGRES_PASSWORD` y `DB_URL`. Las claves
+de proveedores LLM y la contraseña inicial del Control Center son opcionales.
+
 El manifiesto no contiene secretos reales y no debe aplicarse hasta sustituir
 los nombres de registry, dominios, `ClusterIssuer` y valores operativos.
 
