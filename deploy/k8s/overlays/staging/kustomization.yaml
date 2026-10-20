@@ -8,13 +8,13 @@ resources:
 
 images:
   - name: registry.example.com/agenteia/agent-service
-    newName: registry.example.com/agenteia/agent-service
+    newName: agenteia/agent-service
     newTag: staging
   - name: registry.example.com/agenteia/agent-control-center
-    newName: registry.example.com/agenteia/agent-control-center
+    newName: agenteia/agent-control-center
     newTag: staging
   - name: registry.example.com/agenteia/db-migrations
-    newName: registry.example.com/agenteia/db-migrations
+    newName: agenteia/db-migrations
     newTag: staging
 
 patches:

@@ -68,6 +68,22 @@ docker build -t registry.example.com/agenteia/agent-control-center:0.5.0 ./agent
 docker build -t registry.example.com/agenteia/db-migrations:0.0.1 -f deploy/k8s/migrations/Dockerfile .
 ```
 
+Para el clúster K3s local de un solo nodo puede utilizarse el flujo sin
+registry remoto:
+
+```bash
+sh deploy/scripts/build-import-k3s-images.sh
+```
+
+Este script construye las tres imágenes de staging y las importa en el
+containerd interno de K3s. Requiere `sudo` únicamente para la importación.
+
+Si las imágenes ya están construidas, basta con importarlas:
+
+```bash
+sh deploy/scripts/import-k3s-images.sh
+```
+
 ## Validación y aplicación
 
 Con `kubectl` y `kustomize` instalados:
