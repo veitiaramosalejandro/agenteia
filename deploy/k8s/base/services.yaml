@@ -53,4 +53,18 @@ spec:
       port: 11434
       targetPort: http
   type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-control-center
+  namespace: agenteia-prod
+spec:
+  selector:
+    app.kubernetes.io/name: agent-control-center
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
 

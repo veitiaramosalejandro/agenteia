@@ -86,6 +86,176 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: historical-worker
+  namespace: agenteia-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: historical-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: historical-worker
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: historical-worker
+          image: registry.example.com/agenteia/agent-service:0.0.2
+          command: ["python", "-m", "app.historical.worker"]
+          envFrom:
+            - configMapRef:
+                name: agenteia-runtime
+            - secretRef:
+                name: agenteia-secrets
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "6"
+              memory: 8Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: historical-producer
+  namespace: agenteia-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: historical-producer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: historical-producer
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: historical-producer
+          image: registry.example.com/agenteia/agent-service:0.0.2
+          command: ["python", "-m", "app.historical.producer"]
+          envFrom:
+            - configMapRef:
+                name: agenteia-runtime
+            - secretRef:
+                name: agenteia-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solidset-retry-worker
+  namespace: agenteia-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: solidset-retry-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: solidset-retry-worker
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: solidset-retry-worker
+          image: registry.example.com/agenteia/agent-service:0.0.2
+          command: ["python", "-m", "app.solidset_retry_worker"]
+          envFrom:
+            - configMapRef:
+                name: agenteia-runtime
+            - secretRef:
+                name: agenteia-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+            limits:
+              cpu: "500m"
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: system-knowledge-worker
+  namespace: agenteia-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: system-knowledge-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: system-knowledge-worker
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: system-knowledge-worker
+          image: registry.example.com/agenteia/agent-service:0.0.2
+          command: ["python", "-m", "app.system.system_knowledge_worker"]
+          envFrom:
+            - configMapRef:
+                name: agenteia-runtime
+            - secretRef:
+                name: agenteia-secrets
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "6"
+              memory: 8Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-control-center
+  namespace: agenteia-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-control-center
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-control-center
+    spec:
+      containers:
+        - name: agent-control-center
+          image: registry.example.com/agenteia/agent-control-center:0.5.0
+          env:
+            - name: AGENT_API_UPSTREAM
+              value: http://agent-service:8000
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 128Mi
+            limits:
+              cpu: "500m"
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: suggestion-worker
   namespace: agenteia-prod
 spec:

@@ -7,6 +7,7 @@ resources:
   - services.yaml
   - stateful.yaml
   - ollama.yaml
+  - ingress.yaml
   - workloads.yaml
 
 commonLabels:
