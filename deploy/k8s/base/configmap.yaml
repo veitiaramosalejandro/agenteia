@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agenteia-runtime
+  namespace: agenteia-prod
+data:
+  ENVIRONMENT: production
+  RUNNING_IN_DOCKER: "1"
+  OLLAMA_BASE_URL: http://ollama-chat:11434
+  EMBEDDING_BASE_URL: http://ollama-embeddings:11434
+  VECTOR_DB_URL: http://vector-db:6333
+  POSTGRES_HOST: timescaledb
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: machining_db
+  REDIS_URL: redis://redis-cache:6379
+  MODEL_NAME: qwen3:30b-a3b-instruct-2507-q4_K_M
+  EMBEDDING_MODEL_NAME: nomic-embed-text
+  OLLAMA_CHAT_CONTEXT_LENGTH: "8192"
+  LLM_COMPACT_RUNTIME_PROMPT: "true"
+  DIALOGUE_MAX_CONCURRENT: "1"
+  AGENT_RESPONSE_QUEUE_ENABLED: "true"
+  SUGGESTION_QUEUE_ENABLED: "true"
+
