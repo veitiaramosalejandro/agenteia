@@ -5,6 +5,7 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - services.yaml
+  - stateful.yaml
   - workloads.yaml
 
 commonLabels:
