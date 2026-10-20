@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agenteia-runtime
+  namespace: agenteia-prod
+data:
+  ENVIRONMENT: local
+  MODEL_NAME: qwen2.5:3b
+  OLLAMA_CHAT_CONTEXT_LENGTH: "4096"

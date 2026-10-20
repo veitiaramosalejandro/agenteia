@@ -1,0 +1,184 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-service
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: agent-service
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-worker
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: agent-worker
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: historical-worker
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: historical-worker
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: historical-producer
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: historical-producer
+          resources:
+            requests: { cpu: "100m", memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: system-knowledge-worker
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: system-knowledge-worker
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: suggestion-worker
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: suggestion-worker
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solidset-retry-worker
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: solidset-retry-worker
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { cpu: "500m", memory: 512Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-chat
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      runtimeClassName: null
+      containers:
+        - name: ollama-chat
+          resources:
+            $patch: replace
+            requests: { cpu: "1", memory: 2Gi }
+            limits: { cpu: "2", memory: 4Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-embeddings
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: ollama-embeddings
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-system-embeddings
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: ollama-system-embeddings
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: timescaledb
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: timescaledb
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "1", memory: 2Gi }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cache
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: redis-cache
+          resources:
+            requests: { cpu: "100m", memory: 256Mi }
+            limits: { cpu: "500m", memory: 512Mi }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vector-db
+  namespace: agenteia-prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: vector-db
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "1", memory: 2Gi }
+---

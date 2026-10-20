@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: agenteia-local
+
+resources:
+  - ../../base
+
+images:
+  - name: registry.example.com/agenteia/agent-service
+    newName: agenteia/agent-service
+    newTag: local
+  - name: registry.example.com/agenteia/agent-control-center
+    newName: agenteia/agent-control-center
+    newTag: local
+  - name: registry.example.com/agenteia/db-migrations
+    newName: agenteia/db-migrations
+    newTag: local
+
+patches:
+  - path: configmap-patch.yaml
+  - path: local-resources-patch.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: agent-service
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: agent-worker
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
