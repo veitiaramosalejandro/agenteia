@@ -77,7 +77,10 @@ class SolidSETReactionCaptureRequest(BaseModel):
         min_length=1, max_length=64
     )
     Counter: int = Field(
-        ..., validation_alias=AliasChoices("Counter", "counter"), ge=0
+        ...,
+        validation_alias=AliasChoices("Counter", "counter"),
+        ge=-1,
+        description="Cantidad de reacciones; -1 indica que la reacción fue retirada.",
     )
 
     class Config:

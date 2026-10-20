@@ -29,6 +29,15 @@ class ReactionCaptureTests(unittest.TestCase):
         self.assertEqual("U+1F44E", request.IDEmoji)
         self.assertEqual(1, request.Counter)
 
+        removed = SolidSETReactionCaptureRequest(
+            IDChat=1822812,
+            IDUser=user,
+            IDChannel=channel,
+            IDEmoji="U+1F44E",
+            Counter=-1,
+        )
+        self.assertEqual(-1, removed.Counter)
+
     def test_classifies_common_solidset_reactions(self):
         self.assertEqual("positive", classify_reaction("U+1F64F", 1))
         self.assertEqual("positive", classify_reaction("U+1F44D", 1))
