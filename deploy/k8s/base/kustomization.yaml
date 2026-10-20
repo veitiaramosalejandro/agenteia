@@ -6,6 +6,7 @@ resources:
   - configmap.yaml
   - services.yaml
   - stateful.yaml
+  - ollama.yaml
   - workloads.yaml
 
 commonLabels:

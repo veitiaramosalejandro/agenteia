@@ -11,4 +11,46 @@ spec:
       port: 8000
       targetPort: http
   type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-chat
+  namespace: agenteia-prod
+spec:
+  selector:
+    app.kubernetes.io/name: ollama-chat
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-embeddings
+  namespace: agenteia-prod
+spec:
+  selector:
+    app.kubernetes.io/name: ollama-embeddings
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-system-embeddings
+  namespace: agenteia-prod
+spec:
+  selector:
+    app.kubernetes.io/name: ollama-system-embeddings
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+  type: ClusterIP
 
