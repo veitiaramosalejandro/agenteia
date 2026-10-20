@@ -47,7 +47,13 @@ kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml \
 kubectl -n "$NAMESPACE" create secret generic "$SECRET_NAME" \
     "$@" \
     --dry-run=client -o yaml \
-    | kubectl apply -f - >/dev/null
+    | kubectl apply --server-side \
+        --field-manager=agenteia-secret-manager -f - >/dev/null
+
+# Evita conservar una copia serializada del Secret en la anotación legacy de
+# kubectl apply. Los valores siguen existiendo únicamente en data del Secret.
+kubectl -n "$NAMESPACE" annotate secret "$SECRET_NAME" \
+    kubectl.kubernetes.io/last-applied-configuration- >/dev/null 2>&1 || true
 
 echo "Secret $SECRET_NAME preparado en namespace $NAMESPACE"
 

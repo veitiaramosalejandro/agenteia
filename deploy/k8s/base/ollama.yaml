@@ -15,6 +15,7 @@ spec:
       labels:
         app.kubernetes.io/name: ollama-chat
     spec:
+      runtimeClassName: nvidia
       terminationGracePeriodSeconds: 120
       containers:
         - name: ollama-chat
