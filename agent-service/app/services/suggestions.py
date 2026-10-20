@@ -1784,6 +1784,7 @@ async def _process_chat_question_response_suggestion(
             get_agent_reinforcement_context,
             context["requester_resource"],
             context["workroom_id"],
+            solidset_instance["ID"],
         )
         log_stage("private_context", context_started)
         quoted_source_context = ""

@@ -1426,7 +1426,9 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 private_knowledge = ""
             try:
                 reinforcement = get_agent_reinforcement_context(
-                    agent_resource_id, channel_id
+                    agent_resource_id,
+                    channel_id,
+                    candidate.get("solidset_instance_id"),
                 )
             except (ValueError, psycopg.Error):
                 reinforcement = ""

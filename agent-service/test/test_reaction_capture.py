@@ -119,6 +119,7 @@ class ReactionCaptureTests(unittest.TestCase):
         self, resolve_message, save_reaction, learn
     ):
         agent_resource = uuid4()
+        instance_id = uuid4()
         channel = uuid4()
         user = uuid4()
         resolve_message.return_value = {
@@ -128,6 +129,7 @@ class ReactionCaptureTests(unittest.TestCase):
             "IDWorkRoom": channel,
             "IDResource": agent_resource,
             "IDAgentResource": agent_resource,
+            "IDSolidSETInstance": instance_id,
             "Name": "Dev20",
             "FullName": "Victor Vargas",
         }
@@ -150,6 +152,10 @@ class ReactionCaptureTests(unittest.TestCase):
         self.assertTrue(response.persisted)
         self.assertEqual(agent_resource, response.IDAgentResource)
         self.assertEqual("Victor Vargas", response.AgentName)
+        self.assertEqual(
+            instance_id,
+            save_reaction.call_args.args[0]["IDSolidSETInstance"],
+        )
         learn.assert_called_once()
 
 

@@ -72,6 +72,7 @@ def resolve_agent_message(id_chat: int, instance: dict[str, Any]) -> dict[str, A
                 SELECT
                     r."IDResource",
                     r."IDAgentResource",
+                    r."IDSolidSETInstance",
                     r."Name",
                     l."FullName"
                 FROM public."SysResourceIA" r
@@ -82,12 +83,19 @@ def resolve_agent_message(id_chat: int, instance: dict[str, Any]) -> dict[str, A
                       r."IDResource" = %s
                       OR r."IDAgentResource" = %s
                   )
+                  AND (%s::uuid IS NULL OR r."IDSolidSETInstance" = %s::uuid)
                 ORDER BY
                     CASE WHEN r."IDResource" = %s THEN 0 ELSE 1 END,
                     l."IDLogin"
                 LIMIT 1
                 ''',
-                (resource_id, resource_id, resource_id),
+                (
+                    resource_id,
+                    resource_id,
+                    instance.get("ID") if instance else None,
+                    instance.get("ID") if instance else None,
+                    resource_id,
+                ),
             )
             agent_row = cursor.fetchone()
     if agent_row is None:
@@ -104,9 +112,15 @@ def save_agent_reaction(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                 '''
                 SELECT "Counter", "Signal", "Reward"
                 FROM public."SysAgentIAReaction"
-                WHERE "IDChat" = %s AND "IDUser" = %s AND "IDEmoji" = %s
+                WHERE "IDSolidSETInstance" = %s
+                  AND "IDChat" = %s AND "IDUser" = %s AND "IDEmoji" = %s
                 ''',
-                (data["IDChat"], data["IDUser"], data["IDEmoji"]),
+                (
+                    data["IDSolidSETInstance"],
+                    data["IDChat"],
+                    data["IDUser"],
+                    data["IDEmoji"],
+                ),
             )
             previous = cursor.fetchone()
             changed = previous is None or (
@@ -117,10 +131,10 @@ def save_agent_reaction(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             cursor.execute(
                 '''
                 INSERT INTO public."SysAgentIAReaction" (
-                    "IDChat", "IDUser", "IDChannel", "IDEmoji", "Counter",
+                    "IDSolidSETInstance", "IDChat", "IDUser", "IDChannel", "IDEmoji", "Counter",
                     "Signal", "Reward", "IDAgentResource", "AgentResponse"
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT ("IDChat", "IDUser", "IDEmoji") DO UPDATE SET
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT ("IDSolidSETInstance", "IDChat", "IDUser", "IDEmoji") DO UPDATE SET
                     "IDChannel" = EXCLUDED."IDChannel",
                     "Counter" = EXCLUDED."Counter",
                     "Signal" = EXCLUDED."Signal",
@@ -131,7 +145,7 @@ def save_agent_reaction(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                 RETURNING *
                 ''',
                 (
-                    data["IDChat"], data["IDUser"], data["IDChannel"],
+                    data["IDSolidSETInstance"], data["IDChat"], data["IDUser"], data["IDChannel"],
                     data["IDEmoji"], data["Counter"], data["Signal"],
                     data["Reward"], data["IDAgentResource"], data["AgentResponse"],
                 ),
@@ -143,9 +157,12 @@ def save_agent_reaction(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 def get_agent_reinforcement_context(
     resource_id: UUID | str,
     channel_id: UUID | str,
+    instance_id: UUID | str | None = None,
     limit: int = 3,
 ) -> str:
     """Construye la política de preferencias aprendida para futuras respuestas."""
+    if not instance_id:
+        return ""
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -160,6 +177,7 @@ def get_agent_reinforcement_context(
                     OR resource."IDAgentResource" = %s
                 )
                   AND reaction."IDChannel" = %s
+                  AND reaction."IDSolidSETInstance" = %s
                   AND reaction."Counter" > 0
                 GROUP BY reaction."IDChat", reaction."AgentResponse"
                 HAVING SUM(reaction."Reward") <> 0
@@ -169,7 +187,7 @@ def get_agent_reinforcement_context(
                 ''',
                 (
                     UUID(str(resource_id)), UUID(str(resource_id)),
-                    UUID(str(channel_id)), max(1, limit * 2),
+                    UUID(str(channel_id)), UUID(str(instance_id)), max(1, limit * 2),
                 ),
             )
             rows = cursor.fetchall()

@@ -316,6 +316,8 @@ services:
     hostname: ollama-chat
     restart: always
     user: root
+    ports:
+      - "11500:11434"
     expose:
       - "11434"
     volumes:

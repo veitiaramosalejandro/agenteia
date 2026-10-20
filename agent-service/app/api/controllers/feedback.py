@@ -134,6 +134,9 @@ def capture_solidset_agent_reaction(
     signal = classify_reaction(req.IDEmoji, req.Counter)
     reward = reaction_reward(signal, req.Counter)
     reaction_data = {
+        "IDSolidSETInstance": (
+            instance.get("ID") if instance else message.get("IDSolidSETInstance")
+        ),
         "IDChat": req.IDChat,
         "IDUser": req.IDUser,
         "IDChannel": channel_id,
@@ -188,6 +191,9 @@ def capture_solidset_agent_reaction(
                         "signal": signal,
                         "reward": reward,
                         "agent_resource_id": str(message["IDAgentResource"]),
+                        "solidset_instance_id": str(
+                            reaction_data["IDSolidSETInstance"] or ""
+                        ),
                     },
                 )
             )

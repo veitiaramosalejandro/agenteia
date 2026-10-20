@@ -432,6 +432,7 @@ async def handle_multi_agent_dialogue(
             get_agent_reinforcement_context,
             agent_resource_id,
             request.IDWorkRoom,
+            solidset_instance.get("ID") if solidset_instance else None,
         )
         await asyncio.to_thread(
             touch_agent_session,
