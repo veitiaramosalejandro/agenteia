@@ -3,10 +3,8 @@ kind: Ingress
 metadata:
   name: agenteia
   namespace: agenteia-prod
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   tls:
     - hosts:
         - agent.example.com

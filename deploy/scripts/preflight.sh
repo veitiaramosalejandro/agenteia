@@ -6,6 +6,10 @@ NAMESPACE=${NAMESPACE:-agenteia-prod}
 KUSTOMIZE_DIR=${KUSTOMIZE_DIR:-deploy/k8s/overlays/production}
 REQUIRE_GPU=${REQUIRE_GPU:-true}
 
+if [ -z "${KUBECONFIG:-}" ] && [ -f "$HOME/.kube/config" ]; then
+    export KUBECONFIG="$HOME/.kube/config"
+fi
+
 fail() {
     echo "ERROR: $*" >&2
     exit 1

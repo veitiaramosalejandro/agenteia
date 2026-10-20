@@ -5,6 +5,10 @@ KUBE_CONTEXT=${KUBE_CONTEXT:-}
 NAMESPACE=${NAMESPACE:-agenteia-staging}
 SECRET_NAME=${SECRET_NAME:-agenteia-secrets}
 
+if [ -z "${KUBECONFIG:-}" ] && [ -f "$HOME/.kube/config" ]; then
+    export KUBECONFIG="$HOME/.kube/config"
+fi
+
 fail() {
     echo "ERROR: $*" >&2
     exit 1

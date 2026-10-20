@@ -2,6 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: agenteia-runtime
+  namespace: agenteia-prod
 data:
   ENVIRONMENT: staging
   MODEL_NAME: qwen3:30b-a3b-instruct-2507-q4_K_M

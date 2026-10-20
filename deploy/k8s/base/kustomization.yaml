@@ -9,9 +9,11 @@ resources:
   - ollama.yaml
   - ingress.yaml
   - migrations.yaml
+  - pdb.yaml
   - workloads.yaml
 
-commonLabels:
-  app.kubernetes.io/part-of: agenteia
-  app.kubernetes.io/managed-by: kustomize
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: agenteia
+      app.kubernetes.io/managed-by: kustomize
 

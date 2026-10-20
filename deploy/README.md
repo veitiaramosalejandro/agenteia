@@ -7,12 +7,23 @@ La configuración se divide en:
 - `k8s/migrations`: imagen que ejecuta las migraciones SQL versionadas.
 - `scripts/preflight.sh`: comprobaciones previas sin modificar el clúster.
 
+El manifiesto opcional `k8s/optional` añade `solidset-data-api` y requiere
+configurar previamente sus valores SQL Server. No se incluye en los overlays
+base de staging/producción porque el acceso a SQL Server depende de la red y
+las credenciales de cada instalación.
+
 ## Staging
 
 El overlay de staging reduce las réplicas y usa un modelo de chat menor:
 
 ```bash
 kubectl kustomize deploy/k8s/overlays/staging
+```
+
+Para renderizar la variante con Data API:
+
+```bash
+kubectl kustomize deploy/k8s/optional
 ```
 
 ## Preparación
@@ -23,8 +34,23 @@ kubectl kustomize deploy/k8s/overlays/staging
    guardar credenciales en Git.
 3. Cambiar los dominios de `k8s/base/ingress.yaml` o sobrescribirlos desde el
    overlay de producción.
-4. Confirmar que existe un `StorageClass` compatible con PVC `ReadWriteOnce`.
-5. Confirmar que el nodo GPU tiene instalado el NVIDIA device plugin.
+4. Confirmar que el `IngressClass` utilizado es el instalado en el clúster.
+   K3s usa `traefik` por defecto; el manifiesto base ya está preparado para
+   esa clase.
+5. Confirmar que existe un `StorageClass` compatible con PVC `ReadWriteOnce`.
+6. Confirmar que el nodo GPU tiene instalado el NVIDIA device plugin.
+
+En K3s, la configuración del runtime y el Device Plugin requieren privilegios
+de administrador. El script preparado para este nodo es:
+
+```bash
+sudo sh deploy/scripts/configure-k3s-nvidia.sh
+```
+
+El script hace una copia de seguridad de la configuración de containerd,
+configura el runtime NVIDIA para K3s, reinicia K3s y aplica el Device Plugin
+NVIDIA fijado a `v0.17.1`. Después debe aparecer `nvidia.com/gpu` en los recursos
+asignables del nodo.
 
 Los PVC `agent-data` y `agent-audio` son `ReadWriteOnce` y se comparten entre
 los Pods de API y workers. Esto es válido para el despliegue inicial en un
