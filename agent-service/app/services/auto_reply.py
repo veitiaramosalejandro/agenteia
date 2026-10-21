@@ -1679,7 +1679,14 @@ def _learn_direct_agent_assertion(candidate: dict[str, Any]) -> bool:
             if not indexed:
                 raise RuntimeError("No se pudo indexar el conocimiento en Qdrant")
         _learn_global_user_fact(
-            resource_id=agent_resource_id,
+            # The selected IA is the learner, but the human sender is the
+            # author of the assertion. Keep that provenance in shared memory
+            # so another twin can use it without attributing the statement to
+            # the wrong resource.
+            resource_id=(
+                str(candidate.get("sender_resource") or "").strip()
+                or agent_resource_id
+            ),
             workroom_id=channel_id,
             fact=assertion,
             origin="direct_agent_message",

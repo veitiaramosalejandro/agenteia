@@ -6,7 +6,12 @@ import pytest
 import httpx
 
 from app.agent.prompt_budget import compact_system
-from app.services.agent_restrictions import _language, _request_instruction, answer_restricted_topic
+from app.services.agent_restrictions import (
+    _clarification,
+    _language,
+    _request_instruction,
+    answer_restricted_topic,
+)
 from app.services.agent_restrictions import _scope_decision
 
 
@@ -196,6 +201,44 @@ def test_scope_classifier_receives_intervenient_history_as_context_only():
     payload = json.loads(model.invoke.call_args.args[0][-1].content)
     assert payload["requested_task"] == "¿Qué es Kanban?"
     assert payload["conversation_history"] == history
+
+
+def test_channel_follow_up_keeps_the_topic_from_intervenient_history():
+    context = {
+        "conversation_history": (
+            "[2026-10-21 12:43:00] Victor: Kanban es un método ágil "
+            "para gestionar el flujo de trabajo."
+        )
+    }
+    with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
+         patch("app.services.agent_restrictions._scope_decision") as decide, \
+         patch("app.services.agent_restrictions._clarification") as clarify:
+        assert answer_restricted_topic(
+            "¿Qué es Kanban?", "instance", "agent", scope_context=context
+        ) is None
+
+    decide.assert_not_called()
+    clarify.assert_not_called()
+    assert context["_agent_scope_decision"] == "scoped"
+    assert context["_scope_conversation_context"] is True
+
+
+def test_clarification_rejects_internal_policy_leak():
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(
+        content="La solicitud ya fue clasificada fuera del ámbito permitido. "
+        "Aplica out_of_scope_action."
+    )
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model), \
+         pytest.raises(ValueError, match="internal_contract_leak"):
+        _clarification(
+            "¿Qué es Kanban?", PUBLISHED["BehaviorConfig"], "instance", "agent", "es",
+            decline=True,
+        )
 
 
 def test_role_and_specialties_alone_enforce_published_scope():
