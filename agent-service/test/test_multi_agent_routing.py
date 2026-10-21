@@ -22,6 +22,7 @@ from app.services.auto_reply import (
     _auto_reply_rejection_reason,
     _candidate_conversation_id,
     _candidate_session_id,
+    _stable_agent_session_id,
     _payload_requests_agent_response,
     _process_auto_replies_impl,
     _selected_agent_resource_ids,
@@ -55,6 +56,23 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
                 {"agent_session_id": first_session, "chat_id": "1766721"},
                 "fallback",
             ),
+        )
+
+    def test_agent_session_is_stable_when_transport_sessions_and_chat_ids_change(self):
+        first = {
+            "solidset_instance_id": "instance-1",
+            "channel_id": "room-1",
+            "sender_resource": "requester-1",
+            "chat_id": "1766719",
+        }
+        follow_up = {**first, "chat_id": "1766721", "transport_session": "other"}
+        self.assertEqual(
+            _stable_agent_session_id(first, "agent-1"),
+            _stable_agent_session_id(follow_up, "agent-1"),
+        )
+        self.assertNotEqual(
+            _stable_agent_session_id(first, "agent-1"),
+            _stable_agent_session_id(first, "agent-2"),
         )
 
     def test_question_type_response_contract(self):

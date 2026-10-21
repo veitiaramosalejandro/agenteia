@@ -1247,6 +1247,25 @@ def _candidate_conversation_id(candidate: dict, fallback: str) -> str:
     )
 
 
+def _stable_agent_session_id(candidate: dict, agent_resource_id: str) -> uuid.UUID:
+    """Build one session for the same instance/channel/participants.
+
+    SolidSET's Chat2 identifier identifies a message, not necessarily the
+    conversation.  A stable scope keeps Redis history available when a later
+    turn arrives with a different Chat2 or transport session value.
+    """
+    stable_scope = "|".join(
+        (
+            str(candidate.get("solidset_instance_id") or "").strip().lower(),
+            str(candidate.get("channel_id") or "").strip().lower(),
+            str(agent_resource_id or "").strip().lower(),
+            str(candidate.get("sender_resource") or "").strip().lower(),
+            str(candidate.get("reply_resource") or candidate.get("sender_resource") or "").strip().lower(),
+        )
+    )
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"solidset-agent-session:v3:{stable_scope}")
+
+
 def _load_intervenient_conversation_history(candidate: dict) -> str:
     """Load a bounded, channel-scoped dialogue before policy/generation.
 
@@ -1506,7 +1525,9 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     "agent_identity_id": solidset_agent_resource_id,
                     "agent_configuration_id": str(configured_agent.get("ID") or ""),
                     "agent_name": _agent_visible_name(configured_agent),
-                    "agent_session_id": str(_candidate_session_id(candidate)),
+                    "agent_session_id": str(
+                        _stable_agent_session_id(candidate, agent_resource_id)
+                    ),
                     "agent_knowledge": private_knowledge,
                     "agent_reinforcement": reinforcement,
                     "addressed_to_agent": True,

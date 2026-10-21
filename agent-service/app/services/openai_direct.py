@@ -403,6 +403,17 @@ def answer_direct(user_text, metadata, session_id):
     if not answer:
         raise RuntimeError('OpenAI returned no text')
     try:
+        # Direct provider responses bypass the dialogue core. Keep the exchange
+        # in the same stable Redis session so the next SolidSET turn can use it
+        # even when it arrives with a different Chat2 identifier.
+        from app.redis_history import RedisChatMessageHistory
+
+        history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
+        history.add_user_message(user_text)
+        history.add_ai_message(answer)
+    except Exception as exc:
+        print(f'OPENAI_DIALOGUE_HISTORY_FAILED type={type(exc).__name__}', flush=True)
+    try:
         # This endpoint already persists the exchange in agent-private learning.
         # Personal context must never enter the instance-global answer cache.
         if not twin_context:
