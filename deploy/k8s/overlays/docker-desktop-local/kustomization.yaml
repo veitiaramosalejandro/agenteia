@@ -20,6 +20,8 @@ images:
 patches:
   - path: configmap-patch.yaml
   - path: local-resources-patch.yaml
+  - path: local-services-patch.yaml
+  - path: local-job-patch.yaml
   - target:
       group: apps
       version: v1

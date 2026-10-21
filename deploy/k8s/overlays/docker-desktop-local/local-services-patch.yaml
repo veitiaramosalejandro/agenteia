@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-service
+  namespace: agenteia-prod
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-control-center
+  namespace: agenteia-prod
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30081

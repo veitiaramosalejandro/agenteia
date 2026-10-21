@@ -1,0 +1,7 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agenteia-db-migrations
+  namespace: agenteia-prod
+spec:
+  backoffLimit: 5
