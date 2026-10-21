@@ -38,6 +38,7 @@ from app.connectors.db_client import (
 from app.connectors.solidset_data_api import (
     SolidSETDataAPIError,
     agent_can_respond_in_workroom,
+    session_is_web_or_android,
 )
 from app.connectors.solidset_sql import (
     instance_context as solidset_sql_instance_context,
@@ -860,7 +861,10 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     )
     if _payload_has_learning_only_destination(payload):
         return "contenido_solo_aprendizaje"
-    if not _payload_has_talk_with_agent(payload):
+    if (
+        not _payload_has_talk_with_agent(payload)
+        and not candidate.get("session_allows_implicit_agent_response")
+    ):
         return "talk_with_agent_no_autorizado"
 
     message = (candidate.get("message") or "").strip()
@@ -1009,7 +1013,9 @@ def _payload_requests_agent_response(payload: dict[str, Any], raw_text: str) -> 
     )
 
 
-def _selected_agent_resource_ids(candidate: dict) -> list[str]:
+def _selected_agent_resource_ids(
+    candidate: dict, *, include_non_talk_agent_destinations: bool = False,
+) -> list[str]:
     """Selecciona únicamente los recursos destinatarios del mensaje dirigido."""
     payload = (
         candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
@@ -1041,7 +1047,10 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
             for row in resource_table
             if isinstance(row, dict)
             and str(row.get("type") or row.get("Type") or "") == "2"
-            and normalize_bool(row.get("talkWithAgent") or row.get("TalkWithAgent"))
+            and (
+                include_non_talk_agent_destinations
+                or normalize_bool(row.get("talkWithAgent") or row.get("TalkWithAgent"))
+            )
         }
         selected = [item for item in participants.agent_recipient_ids if item in explicit_type_two]
     tables = [resource_table]
@@ -1078,7 +1087,9 @@ def _selected_agent_resource_ids(candidate: dict) -> list[str]:
             has_talk_flag = normalize_bool(lowered.get("talkwithagent"))
             is_framework_destiny = table is framework_rows
             is_agent = destination_type == "2" and (
-                has_talk_flag or (is_framework_destiny and destination_type == "2")
+                has_talk_flag
+                or include_non_talk_agent_destinations
+                or (is_framework_destiny and destination_type == "2")
             )
             if not is_agent:
                 continue
@@ -1218,6 +1229,7 @@ def _candidate_session_id(candidate: dict) -> uuid.UUID:
     )
     candidates = (
         payload.get("IDSession"),
+        payload.get("Session"),
         sender.get("Session"),
         sender.get("session"),
         sender.get("IDSession"),
@@ -1350,10 +1362,40 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             print("AGENT_ROUTING_SKIPPED reason=generated_by_ia", flush=True)
             continue
         channel_id = str(candidate.get("channel_id") or "").strip()
-        selected = _selected_agent_resource_ids(candidate)
+        instance = get_solidset_instance(
+            code=str(candidate.get("solidset_instance_code") or "") or None,
+            source_ip=None,
+        )
+        if not instance or not instance.get("DataAPI"):
+            print("⚠️ Agente omitido: instância sem SolidSET Data API configurada")
+            continue
+        session_id = _candidate_session_id(candidate)
+        allow_implicit_agent_destinations = False
+        if session_id.int != 0:
+            try:
+                allow_implicit_agent_destinations = session_is_web_or_android(
+                    instance.get("DataAPI") or {}, str(session_id)
+                )
+            except (
+                SolidSETDataAPIError,
+                ValueError,
+                TypeError,
+                AttributeError,
+                pymssql.Error,
+                RuntimeError,
+            ) as exc:
+                print(
+                    "⚠️ No se pudo verificar la aplicación de la sesión; "
+                    f"se mantiene el routing explícito: session={session_id}: {exc}"
+                )
+        selected = _selected_agent_resource_ids(
+            candidate,
+            include_non_talk_agent_destinations=allow_implicit_agent_destinations,
+        )
         print(
             "AGENT_ROUTING_INPUT "
             f"channel_present={bool(channel_id)} selected_count={len(selected)} "
+            f"session={session_id} web_or_android={allow_implicit_agent_destinations} "
             f"payload_type={type(candidate.get('payload')).__name__}",
             flush=True,
         )
@@ -1363,13 +1405,6 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 f"reason={'missing_channel' if not channel_id else 'no_selected_agent'}",
                 flush=True,
             )
-            continue
-        instance = get_solidset_instance(
-            code=str(candidate.get("solidset_instance_code") or "") or None,
-            source_ip=None,
-        )
-        if not instance or not instance.get("DataAPI"):
-            print("⚠️ Agente omitido: instância sem SolidSET Data API configurada")
             continue
         try:
             ensure_payload_agent_workroom_assignments(channel_id, selected)
@@ -1552,6 +1587,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     "agent_chat_resource_name": agent_chat_resource_name,
                     "agent_chat_login": agent_chat_destination.get("login", ""),
                     "reply_destiny_inverted": True,
+                    "session_allows_implicit_agent_response": allow_implicit_agent_destinations,
                     "automation_rule_id": str((automation_rule or {}).get("ID") or ""),
                 }
             )

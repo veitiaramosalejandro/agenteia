@@ -717,6 +717,36 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         assign.assert_not_called()
         registry.assert_not_called()
 
+    def test_web_or_android_session_allows_talk_with_agent_false(self):
+        room_id = uuid4()
+        agent = uuid4()
+        candidate = {
+            "fingerprint": "talk-with-agent-false-web",
+            "channel_id": str(room_id),
+            "payload": {
+                "FrameworkSender": {"session": str(uuid4())},
+                "Chat": {
+                    "resourceTable": [
+                        {"iDResource": str(agent), "type": 2, "talkWithAgent": False}
+                    ]
+                },
+            },
+        }
+        configured = [{"IDResource": agent, "IDAgentResource": uuid4(), "Name": "Agente web"}]
+        with (
+            patch("app.services.auto_reply.ensure_payload_agent_workroom_assignments"),
+            patch("app.services.auto_reply.get_active_agents_for_workroom", return_value=configured),
+            patch("app.services.auto_reply.verify_and_sync_solidset_agent_mapping", return_value={
+                "verified": True, "IDAgentResource": str(configured[0]["IDAgentResource"]),
+            }),
+            patch("app.services.auto_reply.get_agent_knowledge", return_value=""),
+            patch("app.services.auto_reply.get_agent_reinforcement_context", return_value=""),
+            patch("app.services.auto_reply.session_is_web_or_android", return_value=True),
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        self.assertEqual([str(agent)], [item["agent_resource_id"] for item in routed])
+
     def test_missing_talk_with_agent_prevents_legacy_fallback(self):
         room_id = uuid4()
         agent = uuid4()

@@ -475,6 +475,30 @@ def agent_can_respond_in_workroom(
     )
 
 
+def session_is_web_or_android(
+    configuration: dict[str, Any], session_id: str
+) -> bool:
+    """Identify sessions from the web/Android application family in SolidSET."""
+    with DataAPIConnection(configuration, as_dict=True) as connection:
+        with connection.cursor(as_dict=True) as cursor:
+            cursor.execute(
+                """
+                SELECT IDSession, IDWorkstation, IDLogin, IDCurrentResource,
+                       ClientVersion, IDApplication
+                FROM SysSession
+                WHERE IDSession = %s
+                """,
+                (session_id,),
+            )
+            row = cursor.fetchone()
+    if not row:
+        return False
+    application_id = str(row.get("IDApplication") or "").strip().lower()
+    return application_id in {
+        "c9f19a23-36c2-430c-b939-cb495f975d36",
+    }
+
+
 def read_resource_identity(
     configuration: dict[str, Any], resource_id: str
 ) -> dict[str, Any] | None:

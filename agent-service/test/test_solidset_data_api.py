@@ -5,6 +5,7 @@ from app.connectors.solidset_data_api import (
     DataAPIConnection,
     SolidSETDataAPIError,
     agent_can_respond_in_workroom,
+    session_is_web_or_android,
     _read_legacy_agent_scopes,
     _runtime_base_url,
     _strip_sql_comments,
@@ -60,6 +61,26 @@ class SolidSETDataAPIConnectorTests(unittest.TestCase):
                         "human-1", "room-1",
                     )
                 )
+
+    @patch("app.connectors.solidset_data_api.DataAPIConnection")
+    def test_session_is_web_or_android_checks_id_application(self, connection_factory):
+        cursor = (
+            connection_factory.return_value.__enter__.return_value
+            .cursor.return_value.__enter__.return_value
+        )
+        cursor.fetchone.return_value = {
+            "IDSession": "session-1",
+            "IDApplication": "C9F19A23-36C2-430C-B939-CB495F975D36",
+        }
+
+        self.assertTrue(
+            session_is_web_or_android(
+                {"BaseUrl": "https://solidset", "EncryptedAPIKey": "encrypted"},
+                "session-1",
+            )
+        )
+        self.assertIn("FROM SysSession", cursor.execute.call_args.args[0])
+        self.assertEqual(("session-1",), cursor.execute.call_args.args[1])
 
     @patch("app.connectors.solidset_sql.connect_data_api")
     def test_startup_timeout_override_does_not_mutate_persisted_config(self, connect_data_api):
