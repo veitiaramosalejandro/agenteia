@@ -1405,25 +1405,14 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     selected_resource_id, expected_agent_id, validation_instance
                 )
             except SolidSETDataAPIError as exc:
-                # A timeout/5xx means the authoritative source could not be
-                # checked; it does not prove that the active relation was
-                # removed. Preserve the already synchronized mapping so a
-                # transient Data API outage does not silence the agent.
-                cached_agent_id = str(expected_agent_id or "").strip()
-                if cached_agent_id:
-                    verified_mappings[selected_resource_id.lower()] = cached_agent_id
-                    print(
-                        "⚠️ Validação ao vivo de SysResource2Agent indisponível; "
-                        "usando relação local ativa previamente sincronizada "
-                        f"IDHumanResource={selected_resource_id} "
-                        f"IDAgentResource={cached_agent_id}: {exc}"
-                    )
-                else:
-                    print(
-                        "⚠️ Agente omitido: validação ao vivo indisponível e sem "
-                        "relação local sincronizada "
-                        f"IDHumanResource={selected_resource_id}: {exc}"
-                    )
+                # The SolidSET relation is authoritative for this request.
+                # Never use the local mapping when it cannot be checked:
+                # otherwise a disabled/deleted AI relation could still answer.
+                print(
+                    "⚠️ Agente omitido: validación obligatoria de "
+                    "SysResource2Agent no disponible; fail-closed "
+                    f"IDHumanResource={selected_resource_id}: {exc}"
+                )
                 continue
             except (ValueError, pymssql.Error, psycopg.Error, RuntimeError) as exc:
                 print(

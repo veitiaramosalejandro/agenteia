@@ -561,6 +561,47 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(human_agent), self.verify_mapping.call_args.args[0])
         self.assertEqual(cached_agent, self.verify_mapping.call_args.args[1])
 
+    def test_disabled_workroom_ai_mode_blocks_response_even_with_valid_mapping(self):
+        room_id = uuid4()
+        human_agent = uuid4()
+        candidate = {
+            "fingerprint": "disabled-workroom-ai-mode",
+            "channel_id": str(room_id),
+            "payload": {
+                "Chat": {
+                    "resourceTable": [
+                        {
+                            "idResource": str(human_agent),
+                            "type": 2,
+                            "talkWithAgent": True,
+                        }
+                    ],
+                },
+            },
+        }
+        configured = [{
+            "IDResource": human_agent,
+            "IDAgentResource": uuid4(),
+            "Name": "Agente configurado",
+        }]
+        with (
+            patch(
+                "app.services.auto_reply.ensure_payload_agent_workroom_assignments",
+                return_value=0,
+            ),
+            patch(
+                "app.services.auto_reply.get_active_agents_for_workroom",
+                return_value=configured,
+            ),
+            patch(
+                "app.services.auto_reply.agent_can_respond_in_workroom",
+                return_value=False,
+            ),
+        ):
+            routed = _route_candidates_to_selected_agents([candidate])
+
+        self.assertEqual([], routed)
+
     def test_talk_with_agent_selects_only_explicit_ai_destination(self):
         room_id = uuid4()
         sender_resource = uuid4()
