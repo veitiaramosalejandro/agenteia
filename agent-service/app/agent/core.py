@@ -3696,26 +3696,27 @@ class MachiningAgent:
                 rag_context = ""
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
-        chat_context_bd = ""
-        if response_suggestion_mode and str(
-            metadata_identity.get("scope_context") or ""
-        ).strip():
-            # The endpoint already performed the authorized primary read on the
-            # ambient turn. Refinements reuse its Redis conversation memory.
-            chat_context_bd = str(metadata_identity.get("scope_context") or "").strip()
-        elif (
-            valid_user_guid
-            and solidset_sql_allowed
-            and not record_focused
-            and not suggestion_refine_mode
-            and not external_query_mode
-            and not general_conversation_mode
-        ):
-            chat_context_bd = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
-                user_id=user_id,
-                canal_id=canal_id if valid_channel_guid else None,
-                limit=3,
-            )
+        chat_context_bd = str(metadata_identity.get("conversation_history") or "").strip()
+        if not chat_context_bd:
+            if response_suggestion_mode and str(
+                metadata_identity.get("scope_context") or ""
+            ).strip():
+                # The endpoint already performed the authorized primary read on the
+                # ambient turn. Refinements reuse its Redis conversation memory.
+                chat_context_bd = str(metadata_identity.get("scope_context") or "").strip()
+            elif (
+                valid_user_guid
+                and solidset_sql_allowed
+                and not record_focused
+                and not suggestion_refine_mode
+                and not external_query_mode
+                and not general_conversation_mode
+            ):
+                chat_context_bd = self.sistema_aprendizaje.obtener_contexto_chat_desde_bd(
+                    user_id=user_id,
+                    canal_id=canal_id if valid_channel_guid else None,
+                    limit=3,
+                )
 
         # 4.3.1 Resumen operativo vivo del canal actual
         canal_operativo_context = ""

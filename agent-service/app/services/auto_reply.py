@@ -1247,6 +1247,73 @@ def _candidate_conversation_id(candidate: dict, fallback: str) -> str:
     )
 
 
+def _load_intervenient_conversation_history(candidate: dict) -> str:
+    """Load a bounded, channel-scoped dialogue before policy/generation.
+
+    Redis history is keyed by the agent session and can be empty when SolidSET
+    creates a new Chat2 id for a follow-up.  The authoritative channel history
+    contains the turns between the human resources and the selected twin, so it
+    is the correct fallback for short follow-ups such as ``Que es Kanban?``.
+    The result is context data only; it never grants permissions or changes the
+    selected sender/agent identities.
+    """
+    channel_id = str(candidate.get("channel_id") or "").strip()
+    requester_id = str(candidate.get("sender_resource") or "").strip()
+    current_chat_id = str(candidate.get("chat_id") or "").strip()
+    if not channel_id or not requester_id or agent is None:
+        return ""
+
+    instance = get_solidset_instance(
+        code=str(candidate.get("solidset_instance_code") or "") or None,
+        source_ip=None,
+    )
+    if not instance or not instance.get("DataAPI"):
+        return ""
+
+    try:
+        with solidset_sql_instance_context(instance):
+            rows = agent.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
+                user_id=requester_id,
+                canal_id=channel_id,
+                # Keep enough turns to include the previous human/IA exchange,
+                # while bounding prompt size and SQL work.
+                limit=12,
+            )
+    except Exception as exc:
+        print(
+            "AGENT_CONVERSATION_HISTORY_FAILED "
+            f"channel={channel_id} type={type(exc).__name__}",
+            flush=True,
+        )
+        return ""
+
+    lines: list[str] = []
+    total_chars = 0
+    # The data access method returns newest first.  The model must receive the
+    # dialogue in chronological order, excluding the current turn if it has
+    # already been persisted by SolidSET.
+    for row in reversed(rows or []):
+        if str(row.get("chat_id") or "").strip() == current_chat_id:
+            continue
+        text = " ".join(str(row.get("message") or "").split()).strip()
+        if not text:
+            continue
+        author = (
+            str(row.get("sender_display_name") or row.get("sender_username") or "Participante")
+            .strip()
+        )
+        resource_id = str(row.get("sender_resource_id") or "").strip()
+        stamp = row.get("timestamp")
+        stamp_text = stamp.strftime("%Y-%m-%d %H:%M:%S") if hasattr(stamp, "strftime") else str(stamp or "")[:19]
+        line = f"[{stamp_text}] {author} ({resource_id or 'recurso no disponible'}): {text[:900]}"
+        if total_chars + len(line) > 10000:
+            break
+        lines.append(line)
+        total_chars += len(line)
+
+    return "\n".join(lines)
+
+
 def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
     """Genera una ejecución por agente activo, seleccionado y asignado al canal."""
     routed: list[dict] = []
@@ -1964,6 +2031,21 @@ async def _process_auto_replies_impl(
         )
         from app.services.openai_direct import answer_direct
         try:
+            # SolidSET may deliver a follow-up with a new Chat2 identifier and
+            # without ChatQuestion/quoted_message.  Recover the bounded channel
+            # dialogue before scope classification so the twin can resolve the
+            # current turn against the prior human/IA exchange.
+            conversation_history = await asyncio.to_thread(
+                _load_intervenient_conversation_history, candidate
+            )
+            if conversation_history:
+                message_metadata["conversation_history"] = conversation_history
+                message_metadata["conversation_history_source"] = "solidset_channel"
+                print(
+                    "AGENT_CONVERSATION_HISTORY "
+                    f"channel={channel_id} chars={len(conversation_history)}",
+                    flush=True,
+                )
             response_text = await asyncio.to_thread(
                 answer_restricted_topic,
                 incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,

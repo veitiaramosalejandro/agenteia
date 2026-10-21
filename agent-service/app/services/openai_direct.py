@@ -192,7 +192,10 @@ def _learned_answer(user_text, metadata):
 
 def _twin_context(metadata):
     """Include only the selected twin's supplied context, never raw records."""
-    if metadata.get('source') != 'solidset_multi_agent':
+    if (
+        metadata.get('source') != 'solidset_multi_agent'
+        and not str(metadata.get('conversation_history') or '').strip()
+    ):
         return ''
     profile = metadata.get('agent_profile') or {}
     owner = str(metadata.get('agent_resource_id') or '')
@@ -211,6 +214,7 @@ def _twin_context(metadata):
         'relevant_knowledge': str(metadata.get('agent_relevant_knowledge') or '')[:12000],
         'reinforcement': str(metadata.get('agent_reinforcement') or '')[:4000],
         'published_behavior': str(metadata.get('agent_system_prompt') or '')[:12000],
+        'conversation_history': str(metadata.get('conversation_history') or '')[:10000],
         'public_research': metadata.get('public_research') or {},
     }, ensure_ascii=False, default=str)
 

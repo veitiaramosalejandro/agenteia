@@ -177,6 +177,27 @@ def test_allowed_request_continues_to_agent():
         assert answer_restricted_topic("¿Cómo valorar una empresa por DCF?", "instance", "agent") is None
 
 
+def test_scope_classifier_receives_intervenient_history_as_context_only():
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(
+        content='{"decision":"allow","reason_code":"in_scope"}'
+    )
+    history = "[2026-10-21 12:44:00] Gemelo [IA] (agent): Kanban es un método ágil."
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        assert _scope_decision(
+            "¿Qué es Kanban?", PUBLISHED["BehaviorConfig"], "instance", "agent",
+            conversation_history=history,
+        ) == "allow"
+
+    payload = json.loads(model.invoke.call_args.args[0][-1].content)
+    assert payload["requested_task"] == "¿Qué es Kanban?"
+    assert payload["conversation_history"] == history
+
+
 def test_role_and_specialties_alone_enforce_published_scope():
     policy_without_explicit_restrictions = {
         "BehaviorConfig": {
