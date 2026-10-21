@@ -440,6 +440,41 @@ def read_active_resource_agent(
         return dict(rows[0]) if rows else None
 
 
+def agent_can_respond_in_workroom(
+    configuration: dict[str, Any], resource_id: str, workroom_id: str
+) -> bool:
+    """Check SolidSET's authoritative AI response flags for one resource/room."""
+    with DataAPIConnection(configuration, as_dict=True) as connection:
+        with connection.cursor(as_dict=True) as cursor:
+            cursor.execute(
+                """
+                SELECT IDHumanResource, AiResponseMode
+                FROM dbo.SysResource2Agent WITH (NOLOCK)
+                WHERE IDHumanResource = %s
+                  AND ISNULL(Active, 1) = 1
+                """,
+                (resource_id,),
+            )
+            agent_row = cursor.fetchone()
+            if not agent_row or int(agent_row.get("AiResponseMode") or 0) != 1:
+                return False
+
+            cursor.execute(
+                """
+                SELECT IDResource, IDWorkRoom, AiResponseMode
+                FROM dbo.SysWorkRoom2ResourceAiMode
+                WHERE IDResource = %s
+                  AND IDWorkRoom = %s
+                """,
+                (resource_id, workroom_id),
+            )
+            workroom_row = cursor.fetchone()
+    return bool(
+        workroom_row
+        and int(workroom_row.get("AiResponseMode") or 0) in {1, 2}
+    )
+
+
 def read_resource_identity(
     configuration: dict[str, Any], resource_id: str
 ) -> dict[str, Any] | None:

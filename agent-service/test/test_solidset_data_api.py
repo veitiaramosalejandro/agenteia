@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, Mock, patch
 from app.connectors.solidset_data_api import (
     DataAPIConnection,
     SolidSETDataAPIError,
+    agent_can_respond_in_workroom,
     _read_legacy_agent_scopes,
     _runtime_base_url,
     _strip_sql_comments,
@@ -15,6 +16,51 @@ from app.services.connectivity import _probe_sql_server_connection
 
 
 class SolidSETDataAPIConnectorTests(unittest.TestCase):
+    @patch("app.connectors.solidset_data_api.DataAPIConnection")
+    def test_agent_can_respond_requires_global_mode_one_and_room_mode_one_or_two(
+        self, connection_factory
+    ):
+        cursor = (
+            connection_factory.return_value.__enter__.return_value
+            .cursor.return_value.__enter__.return_value
+        )
+        cursor.fetchone.side_effect = [
+            {"IDHumanResource": "human-1", "AiResponseMode": 1},
+            {"IDResource": "human-1", "IDWorkRoom": "room-1", "AiResponseMode": 2},
+        ]
+
+        self.assertTrue(
+            agent_can_respond_in_workroom(
+                {"BaseUrl": "https://solidset", "EncryptedAPIKey": "encrypted"},
+                "human-1", "room-1",
+            )
+        )
+        self.assertEqual(2, cursor.execute.call_count)
+        self.assertIn("SysResource2Agent", cursor.execute.call_args_list[0].args[0])
+        self.assertIn("SysWorkRoom2ResourceAiMode", cursor.execute.call_args_list[1].args[0])
+
+    @patch("app.connectors.solidset_data_api.DataAPIConnection")
+    def test_agent_can_respond_rejects_missing_or_disabled_modes(self, connection_factory):
+        cursor = (
+            connection_factory.return_value.__enter__.return_value
+            .cursor.return_value.__enter__.return_value
+        )
+        for rows in (
+            [None],
+            [{"AiResponseMode": 0}],
+            [{"AiResponseMode": 1}, None],
+            [{"AiResponseMode": 1}, {"AiResponseMode": 0}],
+        ):
+            with self.subTest(rows=rows):
+                cursor.reset_mock()
+                cursor.fetchone.side_effect = rows
+                self.assertFalse(
+                    agent_can_respond_in_workroom(
+                        {"BaseUrl": "https://solidset", "EncryptedAPIKey": "encrypted"},
+                        "human-1", "room-1",
+                    )
+                )
+
     @patch("app.connectors.solidset_sql.connect_data_api")
     def test_startup_timeout_override_does_not_mutate_persisted_config(self, connect_data_api):
         configuration = {"active": True, "BaseUrl": "https://example.test", "TimeoutSeconds": 120}

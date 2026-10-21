@@ -59,6 +59,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(auto_reply, "ensure_payload_agent_workroom_assignments", return_value=0),
                 patch.object(auto_reply, "get_active_agents_for_workroom", return_value=[configured]),
                 patch.object(auto_reply, "verify_and_sync_solidset_agent_mapping", return_value={"verified": True, "IDAgentResource": str(agent_identity)}),
+                patch.object(auto_reply, "agent_can_respond_in_workroom", return_value=True),
                 patch.object(auto_reply, "get_agent_model_configurations", return_value=[{"Capabilities": capabilities, "active": True}]),
                 patch.object(auto_reply, "get_agent_knowledge", return_value=""),
                 patch.object(auto_reply, "get_agent_reinforcement_context", return_value=""),

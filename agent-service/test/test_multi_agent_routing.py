@@ -504,6 +504,12 @@ class TestMultiAgentRouting(unittest.IsolatedAsyncioTestCase):
         )
         self.verify_mapping = self.mapping_verifier.start()
         self.addCleanup(self.mapping_verifier.stop)
+        self.ai_mode_verifier = patch(
+            "app.services.auto_reply.agent_can_respond_in_workroom",
+            return_value=True,
+        )
+        self.ai_mode_verifier.start()
+        self.addCleanup(self.ai_mode_verifier.stop)
 
     def test_inactive_sql_agent_mapping_blocks_response(self):
         room_id = uuid4()

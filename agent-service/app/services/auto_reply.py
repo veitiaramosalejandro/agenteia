@@ -35,7 +35,10 @@ from app.connectors.db_client import (
     save_agent_knowledge,
     touch_agent_session,
 )
-from app.connectors.solidset_data_api import SolidSETDataAPIError
+from app.connectors.solidset_data_api import (
+    SolidSETDataAPIError,
+    agent_can_respond_in_workroom,
+)
 from app.connectors.solidset_sql import (
     instance_context as solidset_sql_instance_context,
 )
@@ -1455,6 +1458,24 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 print(
                     "⚠️ Agente omitido: no existe relación activa en dbo.SysResource2Agent "
                     f"para IDHumanResource={agent_resource_id}"
+                )
+                continue
+            try:
+                can_respond = agent_can_respond_in_workroom(
+                    validation_instance.get("DataAPI") or {},
+                    agent_resource_id,
+                    channel_id,
+                )
+            except (SolidSETDataAPIError, ValueError, pymssql.Error, RuntimeError) as exc:
+                print(
+                    "⚠️ Agente omitido: no se pudo verificar AiResponseMode "
+                    f"IDResource={agent_resource_id} IDWorkRoom={channel_id}: {exc}"
+                )
+                continue
+            if not can_respond:
+                print(
+                    "⚠️ Agente omitido: AiResponseMode no permite responder "
+                    f"IDResource={agent_resource_id} IDWorkRoom={channel_id}"
                 )
                 continue
             automation_rule = None
