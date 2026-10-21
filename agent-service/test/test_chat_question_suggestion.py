@@ -11,6 +11,7 @@ from app.services.suggestions import (
     _chat_question_session_id,
     _suggestion_count,
     _should_repair_suggestions,
+    _suggestion_is_incomplete,
     _safe_chat_question_fallback,
     _suggestion_title,
     _suggestion_tool_allowlist,
@@ -47,6 +48,10 @@ from app.knowledge_provenance import (
 
 
 class TestChatQuestionSuggestion(unittest.TestCase):
+    def test_incomplete_suggestion_is_rejected_when_it_ends_with_heading_colon(self):
+        self.assertTrue(_suggestion_is_incomplete("Para ampliarlo o aplicarlo:"))
+        self.assertFalse(_suggestion_is_incomplete("Para ampliarlo o aplicarlo: usa un ejemplo."))
+
     def test_product_version_anchor_rejects_unrelated_rag_context(self):
         machining_agent = MachiningAgent.__new__(MachiningAgent)
 

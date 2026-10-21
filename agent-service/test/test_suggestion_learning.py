@@ -34,6 +34,7 @@ def test_learned_assertion_requests_an_acknowledgement_instead_of_an_echo():
     assert "reconociendo brevemente" in prompt
     assert "No copies ni reformules todo el texto" in prompt
     assert "entre dos y cuatro formas concretas" in prompt
+    assert "No termines una frase con dos puntos" in prompt
     assert prompt.endswith(fact)
 
     sanitized = _sanitize_learned_assertion_output(
