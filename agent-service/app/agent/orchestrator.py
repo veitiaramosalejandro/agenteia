@@ -341,6 +341,14 @@ class SolidSETOrchestrator:
     def _validate(self, state: AgentGraphState) -> AgentGraphState:
         response = str(state.get("response") or "").strip()
         metadata = state.get("message_metadata") or {}
+        print(
+            "AGENT_ORCHESTRATOR_VALIDATE "
+            f"route={state.get('route') or 'unknown'} "
+            f"capability={metadata.get('model_capability') or 'unknown'} "
+            f"repair={bool(metadata.get('response_repair_mode'))} "
+            f"chars={len(response)} preview={response[:240]!r}",
+            flush=True,
+        )
         if not response:
             if metadata.get("response_suggestion_mode"):
                 # The suggestion service owns its bounded repair pass. Preserve
@@ -355,6 +363,10 @@ class SolidSETOrchestrator:
                 )
                 return {"response": "", "elapsed_seconds": elapsed}
             response = "No pude generar una respuesta en este momento. Inténtalo nuevamente."
+            print(
+                "AGENT_RESPONSE_FALLBACK stage=orchestrator reason=empty_response",
+                flush=True,
+            )
         elif self.agent._looks_like_raw_tool_response(response):
             metadata["response_repair_required"] = "raw_tool_response"
             print(

@@ -459,6 +459,7 @@ def _unsafe_auto_reply_reason(response_text: str) -> str | None:
         "no pude presentar de forma segura los datos obtenidos",
         "no pude generar una respuesta en este momento",
         "obtuve datos técnicos, pero no pude convertirlos",
+        "no pude procesar correctamente tu mensaje",
     )
     for marker in forbidden:
         if marker in text:
@@ -2275,6 +2276,15 @@ async def _process_auto_replies_impl(
                 continue
 
         response_text = (response_text or "").strip()
+        print(
+            "AGENT_AUTOREPLY_OUTPUT "
+            f"chat={candidate.get('chat_id')} "
+            f"capability={message_metadata.get('model_capability') or 'unknown'} "
+            f"route={message_metadata.get('orchestrator_route') or 'unknown'} "
+            f"repair_required={message_metadata.get('response_repair_required') or 'none'} "
+            f"chars={len(response_text)} preview={response_text[:240]!r}",
+            flush=True,
+        )
         # Las respuestas de alcance/restricción se generan antes del
         # orquestador y salen por este camino directo. Deben respetar también
         # el idioma del mensaje antes de enviarse a SolidSET.
@@ -2370,9 +2380,14 @@ async def _process_auto_replies_impl(
                     flush=True,
                 )
             if _unsafe_auto_reply_reason(response_text):
+                print(
+                    "AGENT_MODEL_ASSIGNED_FAILURE stage=auto_reply reason=repair_rejected "
+                    f"chat={candidate.get('chat_id')} preview={response_text[:240]!r}",
+                    flush=True,
+                )
                 response_text = (
-                    "No pude procesar correctamente tu mensaje en este momento. "
-                    "Por favor, inténtalo de nuevo en unos instantes."
+                    "El modelo asignado al agente no pudo generar una respuesta válida "
+                    "para esta solicitud."
                 )
 
         # Request-local collector shared by this request's concurrent agents.

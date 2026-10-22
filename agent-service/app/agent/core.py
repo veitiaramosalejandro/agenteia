@@ -4029,6 +4029,15 @@ class MachiningAgent:
                 "La conversación pertenece a esta reunión; utiliza este contexto sin inventar otros datos."
             )
 
+        if repair_isolated_context:
+            system_prompt += (
+                "\n\n=== REPARACIÓN DE RESPUESTA ===\n"
+                "La respuesta anterior no fue válida. Responde ahora directamente a la pregunta "
+                "actual del usuario. No devuelvas mensajes de error, mensajes de reintento, "
+                "explicaciones internas, JSON ni detalles del sistema. Si puedes responder, "
+                "hazlo de forma clara y útil; no copies ninguna respuesta anterior."
+            )
+
         if business_knowledge_query:
             system_prompt += (
                 "\n\n=== REGLA DE DATOS DE NEGOCIO ===\n"
@@ -4836,9 +4845,19 @@ class MachiningAgent:
             else:
                 # Respuesta final del modelo
                 response_text = self._llm_response_text(response)
+                completion_metadata = getattr(response, "response_metadata", {}) or {}
+                finish = completion_metadata.get("finish_reason") or completion_metadata.get("done_reason")
+                print(
+                    "AGENT_MODEL_OUTPUT "
+                    f"route={message_metadata.get('orchestrator_route') or 'unknown'} "
+                    f"capability={message_metadata.get('model_capability') or 'unknown'} "
+                    f"provider={request_provider_config.provider} "
+                    f"model={request_provider_config.model} iteration={iteration + 1} "
+                    f"finish={finish or 'unknown'} chars={len(response_text or '')} "
+                    f"preview={str(response_text or '')[:240]!r}",
+                    flush=True,
+                )
                 if response_suggestion_mode:
-                    completion_metadata = getattr(response, "response_metadata", {}) or {}
-                    finish = completion_metadata.get("finish_reason") or completion_metadata.get("done_reason")
                     print(
                         f"SUGGESTION_COMPLETION request_id={message_metadata.get('chat_id')} "
                         f"finish={finish} chars={len(response_text)}",
@@ -4911,6 +4930,12 @@ class MachiningAgent:
         
         # --- 8. MANEJO DE CASOS LÍMITE ---
         if not response_text or response_text.strip() == "":
+            print(
+                "AGENT_RESPONSE_FALLBACK stage=core reason=empty_response "
+                f"route={message_metadata.get('orchestrator_route') or 'unknown'} "
+                f"capability={message_metadata.get('model_capability') or 'unknown'}",
+                flush=True,
+            )
             if last_tool_result:
                 response_text = self._synthesize_tool_response(messages, user_text, request_llm=request_llm) or (
                     "Obtuve datos técnicos, pero no pude convertirlos en una respuesta fiable. "
@@ -4932,6 +4957,11 @@ class MachiningAgent:
                 response_text = synthesized
             else:
                 message_metadata["response_repair_required"] = "raw_tool_response"
+                print(
+                    "AGENT_RESPONSE_FALLBACK stage=core reason=raw_tool_response "
+                    f"preview={str(response_text)[:240]!r}",
+                    flush=True,
+                )
                 response_text = (
                     "No pude presentar de forma segura los datos obtenidos. "
                     "Inténtalo nuevamente en unos instantes."
