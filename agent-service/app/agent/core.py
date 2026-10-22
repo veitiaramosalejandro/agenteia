@@ -3096,6 +3096,7 @@ class MachiningAgent:
             general_conversation_mode or self._is_general_conversation(user_text)
         )
         capability_tool_free = bool(metadata.get("_capability_tool_free"))
+        repair_isolated_context = bool(metadata.get("_repair_isolated_context"))
         response_suggestion_mode = bool(
             metadata.get("response_suggestion_mode")
         )
@@ -3128,6 +3129,19 @@ class MachiningAgent:
             metadata_identity["related_records_context"] = ""
             agent_private_knowledge = ""
             agent_reinforcement = ""
+        if repair_isolated_context:
+            # The repair is a fresh answer to the current turn.  Reusing the
+            # failed channel response is the main cause of repeated generic
+            # safety messages.
+            metadata_identity["conversation_history"] = ""
+            metadata_identity["scope_context"] = ""
+            metadata_identity["quoted_message"] = ""
+            metadata_identity["agent_relevant_knowledge"] = ""
+            metadata_identity["agent_knowledge"] = ""
+            metadata_identity["agent_reinforcement"] = ""
+            metadata_identity["related_records_context"] = ""
+            agent_private_knowledge = ""
+            agent_reinforcement = ""
         suggestion_refine_mode = bool(
             response_suggestion_mode
             and message_metadata
@@ -3141,6 +3155,7 @@ class MachiningAgent:
             and agent_resource_id
             and training_enabled
             and learn_from_system
+            and not repair_isolated_context
             and not metadata_identity.get("related_records_context")
             and not strict_current_question
             and not isolated_quoted_request
@@ -3167,6 +3182,7 @@ class MachiningAgent:
             solidset_instance_id
             and training_enabled
             and learn_from_system
+            and not repair_isolated_context
             and not metadata_identity.get("related_records_context")
             and not strict_current_question
             and not isolated_quoted_request
@@ -3344,6 +3360,7 @@ class MachiningAgent:
             business_knowledge_query
             and training_enabled
             and learn_from_system
+            and not repair_isolated_context
             and not metadata_identity.get("related_records_context")
         ):
             business_rag_context = self.knowledge.search_documentation(
@@ -3704,6 +3721,7 @@ class MachiningAgent:
             and not record_focused
             and training_enabled
             and learn_from_system
+            and not repair_isolated_context
             and not external_query_mode
             and not general_conversation_mode
         ):
@@ -4419,7 +4437,7 @@ class MachiningAgent:
             messages.append(rag_msg)
 
         # --- 6. CARGAR HISTORIAL CON RESUMEN ---
-        if history and not strict_current_question and not isolated_quoted_request:
+        if history and not strict_current_question and not isolated_quoted_request and not repair_isolated_context:
             all_history = [
                 message for message in history.messages
                 if isinstance(message, (HumanMessage, AIMessage))
@@ -4902,6 +4920,11 @@ class MachiningAgent:
                 response_text = "Lo siento, no pude generar una respuesta. ¿Podrías reformular tu consulta?"
 
         if self._looks_like_raw_tool_response(response_text):
+            print(
+                "AGENT_MODEL_OUTPUT_REJECTED reason=raw_tool_response "
+                f"preview={str(response_text)[:240]!r}",
+                flush=True,
+            )
             synthesized = self._synthesize_tool_response(
                 messages, user_text, request_llm=request_llm
             )

@@ -2321,6 +2321,14 @@ async def _process_auto_replies_impl(
             repair_metadata = dict(message_metadata)
             repair_metadata["force_general_conversation"] = True
             repair_metadata["response_repair_mode"] = True
+            repair_metadata["_repair_isolated_context"] = True
+            for key in (
+                "conversation_history", "scope_context", "quoted_message",
+                "agent_relevant_knowledge", "agent_knowledge",
+                "agent_reinforcement", "related_records_context",
+                "response_repair_required",
+            ):
+                repair_metadata.pop(key, None)
             try:
                 repaired = await asyncio.to_thread(
                     _invoke_orchestrator_for_instance,

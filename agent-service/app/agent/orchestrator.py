@@ -293,6 +293,18 @@ class SolidSETOrchestrator:
         # way through the dialogue core; stale private context cannot re-enable
         # SQL/RAG after route selection.
         metadata["_capability_tool_free"] = True
+        if metadata.get("response_repair_mode"):
+            # A repair must not re-ingest the failed answer through channel
+            # history or private context. Keep only the current user turn and
+            # the already selected model/capability.
+            for key in (
+                "conversation_history", "scope_context", "quoted_message",
+                "agent_relevant_knowledge", "agent_knowledge",
+                "agent_reinforcement", "related_records_context",
+                "response_repair_required",
+            ):
+                metadata.pop(key, None)
+            metadata["_repair_isolated_context"] = True
         response = self.agent.analyze_event_with_dialogue(
             session_id=state.get("session_id", ""),
             user_text=state.get("user_text", ""),
