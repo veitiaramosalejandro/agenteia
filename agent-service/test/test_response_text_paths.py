@@ -33,6 +33,24 @@ class ResponseTextPathTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertFalse(_is_safe_auto_reply_output(text))
 
+    def test_technical_docker_http_and_yaml_answers_are_not_raw_tools(self):
+        from app.agent.response_validation import looks_like_raw_tool_response
+        answer = """Para configurar n8n en Docker puedes usar este bloque:
+
+        environment:
+          - N8N_PORT=5678
+          - WEBHOOK_URL=http://localhost:5678/
+
+        El estado HTTP se puede comprobar con status=200 en la respuesta del
+        endpoint, pero esa línea es solo una explicación para el usuario.
+        """
+        self.assertFalse(looks_like_raw_tool_response(answer))
+
+    def test_raw_tool_envelope_is_still_blocked(self):
+        from app.agent.response_validation import looks_like_raw_tool_response
+        self.assertTrue(looks_like_raw_tool_response("status=200; body={...}"))
+        self.assertTrue(looks_like_raw_tool_response('{"status": 200, "body": {}}'))
+
     def setUp(self):
         runtime = patch.object(suggestions, "agent", Mock())
         runtime.start()

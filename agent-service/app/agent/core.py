@@ -20,6 +20,7 @@ from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.prompt_budget import budget_messages, compact_system, context_message, clipped
+from app.agent.response_validation import looks_like_raw_tool_response
 from app.agent.identity import AgentIdentityService
 from app.agent.audit import PostgresToolAudit
 from app.agent.knowledge import AgentKnowledge
@@ -2695,12 +2696,7 @@ class MachiningAgent:
         return paragraphs[0] if paragraphs else cleaned
 
     def _looks_like_raw_tool_response(self, response_text: str) -> bool:
-        text = " ".join((response_text or "").lower().split())
-        markers = (
-            "status=", "method=get", "method=post", "body={", "body=[",
-            "endpoint:", "http://localhost", "https://localhost", "validation error",
-        )
-        return any(marker in text for marker in markers)
+        return looks_like_raw_tool_response(response_text)
 
     @staticmethod
     def _has_incomplete_response_markup(response: str) -> bool:

@@ -21,6 +21,7 @@ import pymssql
 import redis
 
 from app.agent.authorization import normalize_bool, normalize_uuid, resolve_resource_table
+from app.agent.response_validation import looks_like_raw_tool_response
 from app.agent.tools import solidset_send_chat_message
 from app.config import settings
 from app.interactive_priority import async_interactive_work
@@ -443,19 +444,10 @@ def _unsafe_auto_reply_reason(response_text: str) -> str | None:
         "se alcanzó el límite de iteraciones",
         "validation error",
         "error al ejecutar la herramienta",
-        "status=200",
-        "method=get",
-        "method=post",
-        "body={",
-        "body=[",
-        "traceback (most recent call last)",
-        "pydantic.dev",
         "resultado de la busqueda para responder el turno actual",
         "resultado de la búsqueda para responder el turno actual",
         "resultado da busca para responder o turno atual",
         '"tool": "query_sql_server"',
-        "query_sql_server",
-        "select * from",
         "no pude presentar de forma segura los datos obtenidos",
         "no pude generar una respuesta en este momento",
         "obtuve datos técnicos, pero no pude convertirlos",
@@ -464,6 +456,8 @@ def _unsafe_auto_reply_reason(response_text: str) -> str | None:
     for marker in forbidden:
         if marker in text:
             return f"forbidden_marker:{marker}"
+    if looks_like_raw_tool_response(response_text):
+        return "raw_tool_response"
     return None
 
 
