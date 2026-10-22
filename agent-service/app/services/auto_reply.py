@@ -1312,12 +1312,26 @@ def _load_intervenient_conversation_history(candidate: dict) -> str:
 
     try:
         with solidset_sql_instance_context(instance):
-            rows = agent.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
+            rows = agent.sistema_aprendizaje.obtener_cadena_mensajes_chat_desde_bd(
                 user_id=requester_id,
+                chat_id=current_chat_id,
                 canal_id=channel_id,
-                # Keep enough turns to include the previous human/IA exchange,
-                # while bounding prompt size and SQL work.
-                limit=12,
+                max_depth=50,
+            )
+            history_source = "chat_question_chain"
+            if not rows:
+                rows = agent.sistema_aprendizaje.obtener_mensajes_chat_desde_bd(
+                    user_id=requester_id,
+                    canal_id=channel_id,
+                    # Keep enough turns to include the previous human/IA exchange,
+                    # while bounding prompt size and SQL work.
+                    limit=12,
+                )
+                history_source = "solidset_channel_fallback"
+            print(
+                "AGENT_CONVERSATION_RECONSTRUCTED "
+                f"chat={current_chat_id} source={history_source} messages={len(rows)}",
+                flush=True,
             )
     except Exception as exc:
         print(
@@ -2121,6 +2135,23 @@ async def _process_auto_replies_impl(
             if conversation_history:
                 message_metadata["conversation_history"] = conversation_history
                 message_metadata["conversation_history_source"] = "solidset_channel"
+                quoted_sender = str(candidate.get("quoted_sender_resource") or "").strip().casefold()
+                agent_ids = {
+                    str(candidate.get("agent_identity_id") or "").strip().casefold(),
+                    str(candidate.get("agent_resource_id") or "").strip().casefold(),
+                }
+                if quoted_sender and quoted_sender in agent_ids:
+                    # A reply to the agent's previous answer must use the full
+                    # ChatQuestion chain. The previous answer is context, not
+                    # the user's question, and must not trigger web routing.
+                    message_metadata["quoted_message"] = ""
+                    message_metadata["quoted_chat_id"] = ""
+                    message_metadata["conversation_history_source"] = "chat_question_chain"
+                    print(
+                        "AGENT_QUOTED_AGENT_ANSWER_NORMALIZED "
+                        f"chat={candidate.get('chat_id')} quoted={candidate.get('quoted_chat_id')}",
+                        flush=True,
+                    )
                 print(
                     "AGENT_CONVERSATION_HISTORY "
                     f"channel={channel_id} chars={len(conversation_history)}",

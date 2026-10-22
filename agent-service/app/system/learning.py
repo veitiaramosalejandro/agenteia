@@ -1012,6 +1012,117 @@ class SistemaAprendizaje:
             print(f"⚠️ Error obteniendo mensajes de chat desde BD: {e}")
             return []
 
+    def obtener_cadena_mensajes_chat_desde_bd(
+        self,
+        user_id: str,
+        chat_id: str,
+        canal_id: Optional[str] = None,
+        max_depth: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Reconstruye la conversación siguiendo ChatQuestionMessage hacia el padre.
+
+        SysChat no garantiza que los turnos consecutivos compartan el mismo
+        IDChat2. La relación autoritativa es:
+
+            hijo.IDChat2 -> padre.ChatQuestionMessage
+
+        El ancla y el acceso al canal se validan antes de recorrer la cadena;
+        ningún mensaje de otro workroom se incorpora al contexto del agente.
+        """
+        identity = self._resolve_user_identity(user_id)
+        username = (identity.get("username") or user_id or "").strip()
+        current_chat_id = str(chat_id or "").strip()
+        if not username or not current_chat_id:
+            return []
+        safe_depth = max(1, min(int(max_depth), 50))
+        channel = str(canal_id or "").strip()
+        query = """
+            WITH CadenaMensajes AS (
+                SELECT
+                    c.IDChat2,
+                    c.ChatQuestionMessage,
+                    c.Stamp,
+                    c.RawMessage,
+                    c.IDWorkRoom AS IDChannel,
+                    c.IDSenderResource AS SenderResourceId,
+                    c.IDSender AS SenderLoginId,
+                    0 AS Depth
+                FROM dbo.SysChat c WITH (NOLOCK)
+                WHERE c.IDChat2 = %s
+                  AND (%s = '' OR c.IDWorkRoom = TRY_CONVERT(uniqueidentifier, %s))
+                  AND c.RawMessage IS NOT NULL
+                  AND LEN(LTRIM(RTRIM(c.RawMessage))) > 0
+
+                UNION ALL
+
+                SELECT
+                    c.IDChat2,
+                    c.ChatQuestionMessage,
+                    c.Stamp,
+                    c.RawMessage,
+                    c.IDWorkRoom AS IDChannel,
+                    c.IDSenderResource AS SenderResourceId,
+                    c.IDSender AS SenderLoginId,
+                    cm.Depth + 1
+                FROM dbo.SysChat c WITH (NOLOCK)
+                INNER JOIN CadenaMensajes cm
+                    ON c.IDChat2 = cm.ChatQuestionMessage
+                WHERE cm.Depth < %s
+                  AND c.RawMessage IS NOT NULL
+                  AND LEN(LTRIM(RTRIM(c.RawMessage))) > 0
+            )
+            SELECT
+                cm.IDChat2, cm.ChatQuestionMessage, cm.Stamp, cm.RawMessage,
+                cm.IDChannel, cm.SenderResourceId,
+                COALESCE(sl.FullName, sl.Username, 'Sin usuario asociado') AS SenderDisplayName,
+                COALESCE(sl.FullName, '') AS SenderFullName,
+                COALESCE(sl.Username, '') AS SenderUsername,
+                cm.Depth
+            FROM CadenaMensajes cm
+            LEFT JOIN dbo.SysLogin sl WITH (NOLOCK) ON sl.IDLogin = cm.SenderLoginId
+            ORDER BY cm.Stamp ASC, cm.IDChat2 ASC
+            OPTION (MAXRECURSION 50)
+        """
+        params = (
+            current_chat_id,
+            channel, channel,
+            safe_depth,
+        )
+        try:
+            with self._connect_sql_with_retry(context="chat_question_chain") as conn:
+                with conn.cursor(as_dict=True) as cursor:
+                    self._execute_with_retry(
+                        cursor,
+                        query=query,
+                        params=params,
+                        context="chat_question_chain_query",
+                    )
+                    rows = cursor.fetchall() or []
+            return [
+                {
+                    "chat_id": str(row.get("IDChat2") or ""),
+                    "parent_chat_id": str(row.get("ChatQuestionMessage") or ""),
+                    "timestamp": row.get("Stamp"),
+                    "message": str(row.get("RawMessage") or "").strip(),
+                    "channel_id": str(row.get("IDChannel") or ""),
+                    "sender_resource_id": str(row.get("SenderResourceId") or ""),
+                    "sender_display_name": str(row.get("SenderDisplayName") or "").strip(),
+                    "sender_full_name": str(row.get("SenderFullName") or "").strip(),
+                    "sender_username": str(row.get("SenderUsername") or "").strip(),
+                    "depth": int(row.get("Depth") or 0),
+                }
+                for row in rows
+                if str(row.get("RawMessage") or "").strip()
+            ]
+        except Exception as exc:
+            print(
+                "AGENT_CHAT_QUESTION_CHAIN_FAILED "
+                f"chat={current_chat_id} channel={channel or '-'} "
+                f"type={type(exc).__name__}",
+                flush=True,
+            )
+            return []
+
     def obtener_mensaje_chat_por_id(
         self, user_id: str, chat_id: str, canal_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
