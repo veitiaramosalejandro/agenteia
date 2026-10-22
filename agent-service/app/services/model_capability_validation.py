@@ -19,6 +19,7 @@ from app.llm.text import response_text
 
 CAPABILITIES = ("general", "structured_json", "tool_calling")
 _DECISION_SCHEMA = {
+    "title": "CapabilityDecision",
     "type": "object",
     "properties": {"decision": {"type": "string", "enum": ["allow", "decline"]}},
     "required": ["decision"],
@@ -26,10 +27,12 @@ _DECISION_SCHEMA = {
 }
 
 
-def _result(capability: str, ok: bool, *, detail: str = "", latency_ms: float | None = None) -> dict[str, Any]:
+def _result(capability: str, ok: bool, *, detail: str = "", latency_ms: float | None = None,
+            status: str | None = None) -> dict[str, Any]:
     return {
         "capability": capability,
         "ok": ok,
+        "status": status or ("passed" if ok else "failed"),
         "detail": detail,
         "latencyMs": round(latency_ms, 1) if latency_ms is not None else None,
     }
@@ -95,7 +98,7 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
             "model": config.model,
             "available": False,
             "availableDetail": availability_detail,
-            "capabilities": [_result(capability, False, detail=availability_detail) for capability in requested],
+            "capabilities": [_result(capability, False, detail=availability_detail, status="unavailable") for capability in requested],
             "passed": False,
         }
 
@@ -122,7 +125,10 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
             else:
                 model = create_chat_model(replace(config, temperature=0, max_output_tokens=128, max_retries=0))
                 if capability == "structured_json":
-                    model = model.bind(format=_DECISION_SCHEMA)
+                    structured_factory = getattr(model, "with_structured_output", None)
+                    if not callable(structured_factory):
+                        raise RuntimeError("El adaptador no expone salida estructurada.")
+                    model = structured_factory(_DECISION_SCHEMA)
                 elif capability == "tool_calling":
                     model = model.bind_tools([{
                         "name": "capability_probe",
@@ -134,14 +140,20 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                 if capability == "general":
                     ok, detail = bool(content), "Respuesta de texto recibida" if content else "Respuesta vacía"
                 elif capability == "structured_json":
-                    parsed = json.loads(content)
-                    ok, detail = isinstance(parsed, dict), "JSON estructurado válido" if isinstance(parsed, dict) else "JSON no válido"
+                    parsed = response if isinstance(response, dict) else json.loads(content)
+                    ok = isinstance(parsed, dict) and parsed.get("decision") in {"allow", "decline"}
+                    detail = "JSON estructurado válido" if ok else "JSON no cumple el esquema"
                 else:
                     tool_calls = getattr(response, "tool_calls", None) or []
                     ok, detail = bool(tool_calls), "El modelo devolvió una llamada de herramienta" if tool_calls else "No devolvió una llamada de herramienta"
                 results.append(_result(capability, ok, detail=detail))
         except Exception as exc:
-            results.append(_result(capability, False, detail=f"{type(exc).__name__}: {exc}"))
+            detail = f"{type(exc).__name__}: {exc}"
+            status = "adapter_error" if (
+                capability in {"structured_json", "tool_calling"}
+                and not isinstance(exc, json.JSONDecodeError)
+            ) else "failed"
+            results.append(_result(capability, False, detail=detail, status=status))
 
     return {
         "provider": config.provider,

@@ -34,7 +34,7 @@ export const api = {
   syncSolidset: (operation: 'workrooms' | 'logins' | 'resources' | 'chat-workroom' | 'agent-scopes' | 'agent-models', code: string) => request<Record<string, unknown>>(`/api/v1/agent/solidset/${operation}/sync?instanceCode=${encodeURIComponent(code)}`, { method: 'POST' }),
   agents: (code: string) => request<{ total: number; items: Agent[] }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(code)}/agents`),
   providers: () => request<Provider[]>('/api/v1/agent/llm/providers'),
-  validateProvider: (code: string, capabilities = ['general', 'structured_json', 'tool_calling']) => request<ModelValidation>(`/api/v1/agent/llm/providers/${encodeURIComponent(code)}/validate`, { method: 'POST', body: JSON.stringify({ capabilities }) }),
+  validateProvider: (code: string, capabilities = ['general', 'structured_json', 'tool_calling']) => request<ModelValidation>(`/api/v1/agent/llm/providers/${encodeURIComponent(code.trim())}/validate`, { method: 'POST', body: JSON.stringify({ capabilities }) }),
   saveModel: (resourceId: string, body: Record<string, unknown>) => request(`/api/v1/agent/solidset/agents/${resourceId}/model`, { method: 'PUT', body: JSON.stringify(body) }),
   createAgent: (body: Record<string, unknown>) => request<Agent>('/api/v1/agent/solidset/agents', { method: 'POST', body: JSON.stringify(body) }),
   generatePrompt: (resourceId: string, instanceCode: string, body: Record<string, unknown>) => request<PromptDraft>(`/api/v1/agent/solidset/agents/${resourceId}/prompt/generate?instanceCode=${encodeURIComponent(instanceCode)}`, { method: 'POST', body: JSON.stringify(body) }),

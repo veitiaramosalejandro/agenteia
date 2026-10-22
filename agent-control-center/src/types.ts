@@ -43,6 +43,7 @@ export type ModelValidation = {
   capabilities: Array<{
     capability: string
     ok: boolean
+    status: 'passed' | 'failed' | 'unavailable' | 'adapter_error'
     detail: string
     latencyMs?: number | null
   }>

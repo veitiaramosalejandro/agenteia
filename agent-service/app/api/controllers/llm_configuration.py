@@ -43,6 +43,14 @@ def validate_llm_provider(code: str, request: ModelValidationRequest) -> ModelVa
         if not record:
             raise HTTPException(status_code=404, detail="La conexión LLM no existe o está inactiva.")
         result = validate_provider(provider_config_from_record(record), request.capabilities)
+        summary = " ".join(
+            f"{item['capability']}={item['status']}" for item in result["capabilities"]
+        )
+        print(
+            f"MODEL_VALIDATION code={record.get('Code')} provider={result['provider']} "
+            f"model={result['model']} passed={result['passed']} {summary}",
+            flush=True,
+        )
         return ModelValidationResponse(**result)
     except HTTPException:
         raise

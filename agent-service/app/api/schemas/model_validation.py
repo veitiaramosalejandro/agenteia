@@ -11,6 +11,7 @@ class ModelValidationRequest(BaseModel):
 class ModelCapabilityResult(BaseModel):
     capability: str
     ok: bool
+    status: str
     detail: str = ""
     latencyMs: float | None = None
 
