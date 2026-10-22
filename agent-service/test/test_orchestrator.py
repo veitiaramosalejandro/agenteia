@@ -208,6 +208,35 @@ class OrchestratorTests(unittest.TestCase):
             {"query_sql_server", "get_db_schema"},
         )
 
+    def test_coding_capability_is_not_overridden_by_previous_private_context(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+        orchestrator.invoke(
+            session_id="coding-context",
+            user_text="Necesito crear un docker-compose.yml para usar nginx",
+            message_metadata={
+                "model_capability": "coding",
+                "agent_relevant_knowledge": "Contexto privado de un turno anterior.",
+            },
+            auto_reply_mode=True,
+            tool_allowlist={"query_sql_server", "get_db_schema"},
+        )
+        self.assertEqual(agent.calls[0]["tool_allowlist"], set())
+        self.assertTrue(agent.calls[0]["general_conversation_mode"])
+
+    def test_repair_mode_forces_general_conversation(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+        orchestrator.invoke(
+            session_id="repair-context",
+            user_text="Explica cómo crear un docker-compose.yml",
+            message_metadata={"force_general_conversation": True},
+            auto_reply_mode=True,
+            tool_allowlist={"query_sql_server", "get_db_schema"},
+        )
+        self.assertEqual(agent.calls[0]["tool_allowlist"], set())
+        self.assertTrue(agent.calls[0]["general_conversation_mode"])
+
 
 if __name__ == "__main__":
     unittest.main()

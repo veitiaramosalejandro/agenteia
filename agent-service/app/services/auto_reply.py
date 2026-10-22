@@ -433,11 +433,11 @@ def _enqueue_auto_replies(
     return stream_id
 
 
-def _is_safe_auto_reply_output(response_text: str) -> bool:
-    """Impide publicar en SolidSET trazas, errores o resultados crudos de herramientas."""
+def _unsafe_auto_reply_reason(response_text: str) -> str | None:
+    """Returns the concrete reason an auto-reply cannot be published."""
     text = (response_text or "").strip().lower()
     if not text:
-        return False
+        return "empty_response"
     forbidden = (
         "basado en la información obtenida: status=",
         "se alcanzó el límite de iteraciones",
@@ -457,7 +457,15 @@ def _is_safe_auto_reply_output(response_text: str) -> bool:
         "query_sql_server",
         "select * from",
     )
-    return not any(marker in text for marker in forbidden)
+    for marker in forbidden:
+        if marker in text:
+            return f"forbidden_marker:{marker}"
+    return None
+
+
+def _is_safe_auto_reply_output(response_text: str) -> bool:
+    """Impide publicar en SolidSET trazas, errores o resultados crudos de herramientas."""
+    return _unsafe_auto_reply_reason(response_text) is None
 
 
 def _split_solidset_response(response_text: str, max_chars: int = 1800) -> list[str]:
@@ -2288,11 +2296,62 @@ async def _process_auto_replies_impl(
             )
         ):
             response_text = _uncertain_response(_language(incoming_text))
-        if not _is_safe_auto_reply_output(response_text):
-            response_text = (
-                "No pude procesar correctamente tu mensaje en este momento. "
-                "Por favor, inténtalo de nuevo en unos instantes."
+        unsafe_reason = _unsafe_auto_reply_reason(response_text)
+        if unsafe_reason:
+            print(
+                "AGENT_RESPONSE_REPAIR_REQUIRED "
+                f"chat={candidate.get('chat_id')} reason={unsafe_reason} "
+                f"route={message_metadata.get('orchestrator_route') or 'unknown'}",
+                flush=True,
             )
+            repair_metadata = dict(message_metadata)
+            repair_metadata["force_general_conversation"] = True
+            repair_metadata["response_repair_mode"] = True
+            try:
+                repaired = await asyncio.to_thread(
+                    _invoke_orchestrator_for_instance,
+                    str(candidate.get("solidset_instance_code") or ""),
+                    session_id=session_id,
+                    user_text=incoming_text,
+                    user_id=user_id,
+                    canal_id=channel_id,
+                    meeting_id=meeting_id or None,
+                    meeting_code=meeting_code or None,
+                    message_kind=message_kind,
+                    message_category=message_category,
+                    message_metadata=repair_metadata,
+                    tool_allowlist=set(),
+                    auto_reply_mode=True,
+                )
+                repaired = (repaired or "").strip()
+                repaired = orchestrator._ensure_response_language(
+                    incoming_text, repaired, repair_metadata
+                ).strip()
+                repair_reason = _unsafe_auto_reply_reason(repaired)
+                if repair_reason is None:
+                    response_text = repaired
+                    print(
+                        "AGENT_RESPONSE_REPAIR_SUCCEEDED "
+                        f"chat={candidate.get('chat_id')} reason={unsafe_reason}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        "AGENT_RESPONSE_REPAIR_REJECTED "
+                        f"chat={candidate.get('chat_id')} reason={repair_reason}",
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(
+                    "AGENT_RESPONSE_REPAIR_FAILED "
+                    f"chat={candidate.get('chat_id')} type={type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+            if _unsafe_auto_reply_reason(response_text):
+                response_text = (
+                    "No pude procesar correctamente tu mensaje en este momento. "
+                    "Por favor, inténtalo de nuevo en unos instantes."
+                )
 
         # Request-local collector shared by this request's concurrent agents.
         # Capture the validated final text before payload construction can fail.

@@ -88,7 +88,9 @@ class SolidSETOrchestrator:
         quoted_followup = bool(quoted_context) and not any(
             marker in lowered for marker in ("actual", "ahora", "hoy", "buscar", "fuente", "web")
         )
-        if quoted_followup:
+        if metadata.get("force_general_conversation"):
+            route = "general_conversation"
+        elif quoted_followup:
             # A follow-up over an explicitly quoted message is answered from
             # that context; public search must not reinterpret the short query.
             route = "general_conversation"
@@ -108,6 +110,15 @@ class SolidSETOrchestrator:
             # knowledge. It must not escape to the public web merely because
             # the quoted text is outside the internal-domain classifier.
             route = "work_sql_rag"
+        elif (
+            metadata.get("model_capability") in {"coding", "reasoning"}
+            and not is_business(user_text)
+        ):
+            # A published coding/reasoning capability is a response contract,
+            # not an instruction to query SolidSET.  Private context may still
+            # be present from a previous turn, but it must not override the
+            # current request's route.
+            route = "general_conversation"
         elif str(metadata.get("agent_relevant_knowledge") or "").strip():
             # Agent-scoped evidence takes precedence over the generic web
             # classifier for personal facts and internal conversation context.
@@ -160,6 +171,7 @@ class SolidSETOrchestrator:
         # Keep the capability already resolved before the direct-provider path.
         capability = metadata.get("model_capability") or capability
         metadata["model_capability"] = capability
+        metadata["orchestrator_route"] = route
         print(
             f"🧭 LangGraph route={route} capability={capability} "
             f"session={state.get('session_id', '')}"
