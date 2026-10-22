@@ -2142,8 +2142,17 @@ async def _process_auto_replies_impl(
                 try:
                     await asyncio.to_thread(prepare_capability_route, incoming_text, message_metadata)
                 except Exception as exc:
-                    print(f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__}", flush=True)
-                    response_text = _uncertain_response(_language(incoming_text))
+                    # A capability-planning failure is not an authorization
+                    # failure. Continue with the least-privileged general
+                    # route; scope was already approved immediately above.
+                    message_metadata["model_capability"] = "general"
+                    message_metadata["external_information_mode"] = False
+                    message_metadata["_capability_route_prepared"] = True
+                    print(
+                        f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__} "
+                        "fallback=general",
+                        flush=True,
+                    )
             if response_text is None:
                 response_text = await asyncio.to_thread(
                     answer_direct, incoming_text, message_metadata, session_id
