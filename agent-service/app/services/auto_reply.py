@@ -456,6 +456,9 @@ def _unsafe_auto_reply_reason(response_text: str) -> str | None:
         '"tool": "query_sql_server"',
         "query_sql_server",
         "select * from",
+        "no pude presentar de forma segura los datos obtenidos",
+        "no pude generar una respuesta en este momento",
+        "obtuve datos técnicos, pero no pude convertirlos",
     )
     for marker in forbidden:
         if marker in text:
@@ -2306,6 +2309,8 @@ async def _process_auto_replies_impl(
         ):
             response_text = _uncertain_response(_language(incoming_text))
         unsafe_reason = _unsafe_auto_reply_reason(response_text)
+        if unsafe_reason is None and message_metadata.get("response_repair_required"):
+            unsafe_reason = str(message_metadata["response_repair_required"])
         if unsafe_reason:
             print(
                 "AGENT_RESPONSE_REPAIR_REQUIRED "

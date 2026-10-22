@@ -174,10 +174,17 @@ class OrchestratorTests(unittest.TestCase):
 
     def test_validation_blocks_raw_tool_payload(self):
         agent = FakeAgent()
-        agent.analyze_event_with_dialogue = lambda **kwargs: "status=200; body={...}"
+        captured = {}
+        agent.analyze_event_with_dialogue = lambda **kwargs: (
+            captured.update(kwargs) or "status=200; body={...}"
+        )
         orchestrator = SolidSETOrchestrator(agent)
         response = orchestrator.invoke(session_id="s3", user_text="Consulta interna")
         self.assertNotIn("status=", response)
+        self.assertEqual(
+            captured["message_metadata"]["response_repair_required"],
+            "raw_tool_response",
+        )
 
     def test_sql_question_selects_coding_capability(self):
         agent = FakeAgent()
@@ -255,6 +262,7 @@ class OrchestratorTests(unittest.TestCase):
         )
 
         self.assertTrue(agent.calls[0]["general_conversation_mode"])
+        self.assertTrue(agent.calls[0]["message_metadata"]["_capability_tool_free"])
         self.assertEqual(
             agent.calls[0]["message_metadata"]["orchestrator_route"],
             "general_conversation",

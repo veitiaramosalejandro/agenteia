@@ -3095,6 +3095,7 @@ class MachiningAgent:
         general_conversation_mode = (
             general_conversation_mode or self._is_general_conversation(user_text)
         )
+        capability_tool_free = bool(metadata.get("_capability_tool_free"))
         response_suggestion_mode = bool(
             metadata.get("response_suggestion_mode")
         )
@@ -3120,6 +3121,11 @@ class MachiningAgent:
         if code_reference_mode:
             # A code review is grounded in the supplied artifact.  Business RAG
             # can contain unrelated facts and must not replace that artifact.
+            agent_private_knowledge = ""
+            agent_reinforcement = ""
+        if capability_tool_free and not response_suggestion_mode and not code_reference_mode:
+            metadata_identity["agent_relevant_knowledge"] = ""
+            metadata_identity["related_records_context"] = ""
             agent_private_knowledge = ""
             agent_reinforcement = ""
         suggestion_refine_mode = bool(
@@ -3178,6 +3184,9 @@ class MachiningAgent:
                 print(f"⚠️ No se pudo consultar la fotografía SQL del sistema: {exc}")
         if system_snapshot_context and not self._rag_context_matches_query(user_text, system_snapshot_context):
             print("⚠️ Fotografía SQL rechazada: no conserva las anclas del turno actual")
+            system_snapshot_context = ""
+        if capability_tool_free:
+            agent_rag_context = ""
             system_snapshot_context = ""
         if response_suggestion_mode:
             general_conversation_mode = False
@@ -3323,7 +3332,10 @@ class MachiningAgent:
             if response_suggestion_mode
             else user_text
         )
-        business_knowledge_query = self._is_business_knowledge_query(business_query_text)
+        business_knowledge_query = (
+            False if capability_tool_free
+            else self._is_business_knowledge_query(business_query_text)
+        )
         live_business_query = self._requires_live_business_data(
             business_query_text, meeting_id
         )
@@ -4890,10 +4902,17 @@ class MachiningAgent:
                 response_text = "Lo siento, no pude generar una respuesta. ¿Podrías reformular tu consulta?"
 
         if self._looks_like_raw_tool_response(response_text):
-            response_text = self._synthesize_tool_response(messages, user_text, request_llm=request_llm) or (
-                "No pude presentar de forma segura los datos obtenidos. "
-                "Inténtalo nuevamente en unos instantes."
+            synthesized = self._synthesize_tool_response(
+                messages, user_text, request_llm=request_llm
             )
+            if synthesized:
+                response_text = synthesized
+            else:
+                message_metadata["response_repair_required"] = "raw_tool_response"
+                response_text = (
+                    "No pude presentar de forma segura los datos obtenidos. "
+                    "Inténtalo nuevamente en unos instantes."
+                )
 
         if (
             business_knowledge_query

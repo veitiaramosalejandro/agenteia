@@ -288,6 +288,11 @@ class SolidSETOrchestrator:
         return {"response": response}
 
     def _execute_general(self, state: AgentGraphState) -> AgentGraphState:
+        metadata = dict(state.get("message_metadata") or {})
+        # A resolved conversational capability must remain tool-free all the
+        # way through the dialogue core; stale private context cannot re-enable
+        # SQL/RAG after route selection.
+        metadata["_capability_tool_free"] = True
         response = self.agent.analyze_event_with_dialogue(
             session_id=state.get("session_id", ""),
             user_text=state.get("user_text", ""),
@@ -297,7 +302,7 @@ class SolidSETOrchestrator:
             meeting_code=state.get("meeting_code"),
             message_kind=state.get("message_kind"),
             message_category=state.get("message_category"),
-            message_metadata=state.get("message_metadata"),
+            message_metadata=metadata,
             tool_allowlist=set(),
             auto_reply_mode=bool(state.get("auto_reply_mode")),
             general_conversation_mode=True,
@@ -339,6 +344,12 @@ class SolidSETOrchestrator:
                 return {"response": "", "elapsed_seconds": elapsed}
             response = "No pude generar una respuesta en este momento. Inténtalo nuevamente."
         elif self.agent._looks_like_raw_tool_response(response):
+            metadata["response_repair_required"] = "raw_tool_response"
+            print(
+                "AGENT_RESPONSE_VALIDATION_REJECTED reason=raw_tool_response "
+                f"preview={response[:160]!r}",
+                flush=True,
+            )
             response = (
                 "No pude presentar de forma segura los datos obtenidos. "
                 "Inténtalo nuevamente en unos instantes."
