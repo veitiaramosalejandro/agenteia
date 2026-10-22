@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.capabilities import normalize_capabilities, tool_permissions
 from app.connectors.db_client import get_agent_model_configurations, get_active_agent_prompt, get_llm_provider_configuration
-from app.llm.providers import create_chat_model, provider_config_from_record
+from app.llm.providers import bind_structured_json, create_chat_model, provider_config_from_record
 from app.llm.text import response_text
 
 
@@ -65,8 +65,7 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
     model = create_chat_model(config)
     schema = {'type': 'object', 'properties': {'capability': {'type': 'string', 'enum': sorted(choices)}},
               'required': ['capability'], 'additionalProperties': False}
-    if config.provider == 'ollama':
-        model = model.bind(format=schema)
+    model = bind_structured_json(model, config, schema)
     policy = (get_active_agent_prompt(instance, resource) or {}).get('BehaviorConfig') or {}
     result = model.invoke([
         SystemMessage(content=(
@@ -84,6 +83,10 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
                                          'available': sorted(choices)}, ensure_ascii=False)),
     ])
     raw = response_text(result).strip()
+    print(
+        f'AGENT_CAPABILITY_PLAN_OUTPUT provider={config.provider} model={config.model} '
+        f'content_preview={raw[:160]!r}', flush=True,
+    )
     if len(raw) > 1024:
         raise ValueError('capability_plan_too_long')
     payload = json.loads(raw)

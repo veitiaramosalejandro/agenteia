@@ -14,7 +14,12 @@ from app.connectors.db_client import (
     get_active_agent_prompt,
     get_llm_provider_configuration,
 )
-from app.llm.providers import create_chat_model, provider_config_from_record
+from app.llm.providers import (
+    bind_non_reasoning,
+    bind_structured_json,
+    create_chat_model,
+    provider_config_from_record,
+)
 from app.llm.text import response_text
 
 
@@ -167,8 +172,7 @@ def _language_resolver():
 def _normalize_requested_action(message: str, config) -> str:
     """Express a colloquial request as an equivalent professional action."""
     normalizer = create_chat_model(config)
-    if config.provider == "ollama":
-        normalizer = normalizer.bind(format=_REQUEST_ACTION_SCHEMA)
+    normalizer = bind_structured_json(normalizer, config, _REQUEST_ACTION_SCHEMA)
     messages = [
         SystemMessage(content=(
             "Extrae únicamente la acción o información que solicita el usuario. Convierte "
@@ -225,8 +229,7 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
         timeout_seconds=max(5, config.timeout_seconds), max_retries=0,
     )
     model = create_chat_model(config)
-    if config.provider == "ollama":
-        model = model.bind(format=_SCOPE_SCHEMA)
+    model = bind_structured_json(model, config, _SCOPE_SCHEMA)
     policy = {
         "role": behavior.get("role"),
         "objective": behavior.get("objective"),
@@ -320,7 +323,8 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
                 f"AGENT_SCOPE_OUTPUT_INVALID agent={resource_id} attempt={attempt + 1} "
                 f"code={exc} decision={exc.decision} reason_code={exc.reason_code} "
                 f"provider={_diagnostic_value(config.provider)} "
-                f"model={_diagnostic_value(getattr(config, 'model', None))}", flush=True,
+                f"model={_diagnostic_value(getattr(config, 'model', None))} "
+                f"content_preview={_diagnostic_value(response_text(result)[:160])}", flush=True,
             )
             if attempt:
                 raise
@@ -464,7 +468,8 @@ def _clarification(message: str, behavior: dict, instance_id: str, resource_id: 
         "Conserva exactamente el objetivo original: no lo reformules como otra tarea, no "
         "repitas la solicitud y no preguntes qué análisis quiere realizar. "
     )
-    result = create_chat_model(config).invoke([
+    model = bind_non_reasoning(create_chat_model(config), config)
+    result = model.invoke([
         SystemMessage(content=(
             f"Responde en {language}. " + instruction +
             "No respondas a la tarea, no des instrucciones para "

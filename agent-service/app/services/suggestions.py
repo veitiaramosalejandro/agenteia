@@ -522,9 +522,8 @@ def _suggestion_title(language: str, *, initial: bool) -> str | None:
 
 def _json_model(model: Any, provider: Any, schema: dict[str, Any]) -> Any:
     """Constrain Ollama decoding instead of relying on prompt-only JSON."""
-    if provider.provider == "ollama":
-        return model.bind(format=schema)
-    return model
+    from app.llm.providers import bind_structured_json
+    return bind_structured_json(model, provider, schema)
 
 
 def _suggestion_schema(count: int) -> dict[str, Any]:

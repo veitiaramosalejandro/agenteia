@@ -42,6 +42,27 @@ class ChatProvider(ABC):
         """Crea un modelo con ``invoke`` y ``bind_tools``."""
 
 
+def bind_structured_json(model: Any, config: LLMProviderConfig, schema: dict[str, Any]) -> Any:
+    """Bind the provider-specific contract used by internal JSON decisions.
+
+    Structured decisions must be emitted in the normal content channel. Ollama
+    reasoning models may otherwise put their reasoning in ``thinking`` and leave
+    ``content`` empty, which makes a valid HTTP response unusable to the agent.
+    The option is applied at invocation time so the same model can still use
+    reasoning for a user-facing task when that capability explicitly requires it.
+    """
+    if str(config.provider or "").strip().lower().replace("-", "_") != "ollama":
+        return model
+    return model.bind(format=schema, think=False)
+
+
+def bind_non_reasoning(model: Any, config: LLMProviderConfig) -> Any:
+    """Disable hidden reasoning only for short internal classification calls."""
+    if str(config.provider or "").strip().lower().replace("-", "_") == "ollama":
+        return model.bind(think=False)
+    return model
+
+
 def _optional_class(module_name: str, class_name: str, package_name: str) -> type:
     try:
         module = import_module(module_name)

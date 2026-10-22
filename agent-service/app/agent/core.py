@@ -2995,9 +2995,18 @@ class MachiningAgent:
             try:
                 prepare_capability_route(user_text, metadata)
             except Exception as exc:
-                from app.services.agent_restrictions import _language, _uncertain_response
-                print(f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__}", flush=True)
-                return _uncertain_response(_language(user_text))
+                # A malformed capability contract must not turn an otherwise
+                # allowed request into an out-of-scope response.  General is
+                # the least-privileged route: it uses no capability-specific
+                # tools and lets the assigned general model answer normally.
+                metadata["model_capability"] = "general"
+                metadata["external_information_mode"] = False
+                metadata["_capability_route_prepared"] = True
+                print(
+                    f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__} "
+                    "fallback=general",
+                    flush=True,
+                )
 
         if not metadata.get("_assigned_direct_prechecked"):
             direct_answer = self.answer_with_assigned_openai(user_text, metadata, session_id)
