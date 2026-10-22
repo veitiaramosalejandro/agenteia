@@ -59,6 +59,11 @@ def _invoke_ollama(config: LLMProviderConfig, *, schema: dict[str, Any] | None =
     payload: dict[str, Any] = {
         "model": config.model,
         "stream": False,
+        # Capability probes measure the provider's public response contract,
+        # not its hidden reasoning budget.  Thinking models can otherwise
+        # spend all num_predict tokens in `message.thinking` and return an
+        # empty `message.content`, producing a false negative for text/JSON.
+        "think": False,
         "messages": [{"role": "user", "content": "Responde a esta prueba de compatibilidad."}],
         "options": {"temperature": 0, "num_predict": 128},
     }
