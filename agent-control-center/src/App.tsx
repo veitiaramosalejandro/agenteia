@@ -111,7 +111,7 @@ function App() {
   }, [instanceCode, loadAgents])
 
   const content = useMemo(() => {
-    const shared = { selectedInstance, agents, providers, notify, refreshAgents: loadAgents }
+    const shared = { selectedInstance, agents, providers, notify, refreshAgents: loadAgents, refreshProviders: loadBase }
     if (view === 'instances') return <Instances instances={instances} selected={instanceCode} notify={notify} />
     if (view === 'synchronization') return <SolidsetSynchronization selectedInstance={selectedInstance} notify={notify} refreshAgents={loadAgents} />
     if (view === 'agents') return <Agents {...shared} />
@@ -204,7 +204,7 @@ function Instances({ instances, selected, notify }: { instances: Instance[]; sel
   </>
 }
 
-type Shared = { selectedInstance: Instance | null; agents: Agent[]; providers: Provider[]; notify: (t: 'success' | 'error', m: string) => void; refreshAgents: () => Promise<void> }
+type Shared = { selectedInstance: Instance | null; agents: Agent[]; providers: Provider[]; notify: (t: 'success' | 'error', m: string) => void; refreshAgents: () => Promise<void>; refreshProviders: () => Promise<void> }
 
 function Agents({ selectedInstance, agents, notify, refreshAgents }: Shared) {
   const [filter, setFilter] = useState('')
@@ -287,7 +287,7 @@ function Prompts({ selectedInstance, agents, notify, refreshAgents }: Shared) {
   </>
 }
 
-function Models({ selectedInstance, agents, providers, notify, refreshAgents }: Shared) {
+function Models({ selectedInstance, agents, providers, notify, refreshAgents, refreshProviders }: Shared) {
   const [agentId, setAgentId] = useState('')
   const [providerCode, setProviderCode] = useState('')
   const [capabilities, setCapabilities] = useState(['general'])
@@ -296,13 +296,37 @@ function Models({ selectedInstance, agents, providers, notify, refreshAgents }: 
   const [busy, setBusy] = useState(false)
   const [validating, setValidating] = useState<string | null>(null)
   const [validation, setValidation] = useState<Record<string, ModelValidation>>({})
+  const [provider, setProvider] = useState('ollama')
+  const [newCode, setNewCode] = useState('')
+  const [newName, setNewName] = useState('')
+  const [newModel, setNewModel] = useState('')
+  const [newBaseUrl, setNewBaseUrl] = useState('http://ollama-chat:11434')
+  const [newApiKey, setNewApiKey] = useState('')
   useEffect(() => { setAgentId(current => agents.some(a => a.IDResource === current) ? current : agents[0]?.IDResource || ''); setProviderCode(current => providers.some(p => p.Code === current) ? current : providers.find(p => p.active)?.Code || '') }, [agents, providers])
   const toggle = (cap: string) => setCapabilities(old => old.includes(cap) ? old.filter(v => v !== cap) : [...old, cap])
   const save = async () => { if (!selectedInstance || !agentId || !providerCode || !capabilities.length) return; setBusy(true); try { await api.saveModel(agentId, { IDSolidSETInstance: selectedInstance.ID, ProviderCode: providerCode, Role: role, LocalExecution: providers.find(p => p.Code === providerCode)?.Provider === 'ollama', TrainingMode: 'rag_reinforcement', LearnFromOwner: true, LearnFromSystem: true, LearnFromReactions: true, Capabilities: capabilities, Priority: priority, IsDefault: true, active: true }); await refreshAgents(); notify('success', 'Asignación de modelo guardada.') } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible asignar el modelo.') } finally { setBusy(false) } }
   const validate = async (code: string) => { setValidating(code); try { const result = await api.validateProvider(code); setValidation(old => ({ ...old, [code]: result })); notify(result.passed ? 'success' : 'error', result.passed ? 'El modelo superó todas las pruebas.' : 'El modelo no superó todas las pruebas de compatibilidad.') } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible validar el modelo.') } finally { setValidating(null) } }
+  const register = async () => {
+    const code = newCode.trim(); const name = newName.trim(); const model = newModel.trim()
+    if (!code || !name || !model) return notify('error', 'Completa código, nombre y modelo.')
+    setBusy(true)
+    try {
+      const body: Record<string, unknown> = {
+        Code: code, Name: name, Provider: provider, Model: model,
+        BaseUrl: newBaseUrl.trim() || null, APIKey: newApiKey || null,
+        Temperature: 0.2, MaxOutputTokens: 1024, TimeoutSeconds: 120,
+        IsDefault: false, active: true,
+      }
+      await api.saveProvider(code, body)
+      await refreshProviders()
+      setProviderCode(code); setNewCode(''); setNewName(''); setNewModel(''); setNewApiKey('')
+      notify('success', 'Modelo registrado. Ya puedes validarlo y asignarlo a un agente.')
+    } catch (e) { notify('error', e instanceof Error ? e.message : 'No fue posible registrar el modelo.') }
+    finally { setBusy(false) }
+  }
   const capabilityLabel = (value: string) => ({ general: 'Texto', structured_json: 'JSON', tool_calling: 'Herramientas' } as Record<string, string>)[value] || value
   return <><PageHeader eyebrow="Enrutamiento" title="Modelos y capacidades" copy="Asigna conexiones reutilizables a un agente dentro de la instancia seleccionada." />
-    <div className="split-grid model-layout"><section className="panel"><span className="eyebrow">Conexiones disponibles</span><h2>Proveedores LLM</h2><p className="section-copy">Valida el contrato real del modelo antes de asignarlo: texto, JSON estructurado y herramientas.</p><div className="provider-list">{providers.map(p => { const result = validation[p.Code]; return <div key={p.ID} className="provider-row"><div className={`provider-dot ${p.active ? 'on' : ''}`} /><div className="provider-info"><strong>{p.Name}</strong><small>{p.Provider} · {p.Model}</small>{result && <><div className="validation-summary"><span className={`status-pill ${result.passed ? 'success' : 'danger'}`}>{result.passed ? 'Compatible' : 'Revisar'}</span><small>{result.availableDetail}</small></div><div className="capability-results">{result.capabilities.map(item => <span key={item.capability} className={`capability-result ${item.status}`} title={item.detail}><b>{item.status === 'passed' ? '✓' : item.status === 'unavailable' ? '—' : '!'}</b>{capabilityLabel(item.capability)}<small>{item.latencyMs != null ? `${Math.round(item.latencyMs)} ms` : item.status}</small></span>)}</div></>}</div>{p.IsDefault && <span className="status-pill">Global</span>}<button className="secondary compact" onClick={() => void validate(p.Code)} disabled={!p.active || validating === p.Code}>{validating === p.Code ? <LoaderCircle className="spin" size={14} /> : <CheckCircle2 size={14} />} Validar</button></div> })}</div></section><section className="panel form-panel"><span className="eyebrow">Nueva asignación</span><h2>Configurar agente</h2><label>Agente<SearchSelect value={agentId} onChange={setAgentId} ariaLabel="Agente" searchPlaceholder="Buscar agente…" options={agents.map(a => ({ value: a.IDResource, label: a.Name, detail: a.FullName || shortId(a.IDResource) }))} /></label><label>Conexión<SearchSelect value={providerCode} onChange={setProviderCode} ariaLabel="Conexión LLM" searchPlaceholder="Buscar conexión o modelo…" options={providers.filter(p => p.active).map(p => ({ value: p.Code, label: p.Name, detail: `${p.Provider} · ${p.Model}` }))} /></label><div className="form-row"><Field label="Rol" value={role} onChange={setRole} /><label>Prioridad<input type="number" value={priority} onChange={e => setPriority(Number(e.target.value))} min="0" max="10000" /></label></div><label>Capacidades</label><div className="chips">{['general', 'coding', 'reasoning', 'sql', 'external_web'].map(cap => <button key={cap} className={capabilities.includes(cap) ? 'selected' : ''} onClick={() => toggle(cap)}>{cap}</button>)}</div><button className="primary" onClick={() => void save()} disabled={busy || !selectedInstance}><Save size={17} /> Guardar asignación</button></section></div>
+    <div className="split-grid model-layout"><section className="panel"><span className="eyebrow">Conexiones disponibles</span><h2>Proveedores LLM</h2><p className="section-copy">Valida el contrato real del modelo antes de asignarlo: texto, JSON estructurado y herramientas.</p><div className="provider-list">{providers.map(p => { const result = validation[p.Code]; return <div key={p.ID} className="provider-row"><div className={`provider-dot ${p.active ? 'on' : ''}`} /><div className="provider-info"><strong>{p.Name}</strong><small>{p.Provider} · {p.Model}</small>{result && <><div className="validation-summary"><span className={`status-pill ${result.passed ? 'success' : 'danger'}`}>{result.passed ? 'Compatible' : 'Revisar'}</span><small>{result.availableDetail}</small></div><div className="capability-results">{result.capabilities.map(item => <span key={item.capability} className={`capability-result ${item.status}`} title={item.detail}><b>{item.status === 'passed' ? '✓' : item.status === 'unavailable' ? '—' : '!'}</b>{capabilityLabel(item.capability)}<small>{item.latencyMs != null ? `${Math.round(item.latencyMs)} ms` : item.status}</small></span>)}</div></>}</div>{p.IsDefault && <span className="status-pill">Global</span>}<button className="secondary compact" onClick={() => void validate(p.Code)} disabled={!p.active || validating === p.Code}>{validating === p.Code ? <LoaderCircle className="spin" size={14} /> : <CheckCircle2 size={14} />} Validar</button></div> })}</div></section><section className="panel form-panel"><span className="eyebrow">Alta de conexión</span><h2>Registrar modelo</h2><p className="section-copy">Guarda una conexión reutilizable. Para Ollama usa el nombre exacto descargado, por ejemplo <code>qwen3.5:27b</code>.</p><label>Proveedor<select value={provider} onChange={e => { setProvider(e.target.value); if (e.target.value === 'ollama') setNewBaseUrl('http://ollama-chat:11434'); else if (e.target.value === 'openai') setNewBaseUrl('https://api.openai.com/v1') }}><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="nvidia">NVIDIA</option><option value="openai_compatible">OpenAI compatible</option></select></label><div className="form-row"><Field label="Código único" value={newCode} onChange={setNewCode} /><Field label="Nombre visible" value={newName} onChange={setNewName} /></div><Field label="Modelo exacto" value={newModel} onChange={setNewModel} /><Field label="URL base" value={newBaseUrl} onChange={setNewBaseUrl} /><label>API key{provider === 'ollama' && <small className="field-help">No necesaria para Ollama.</small>}<input type="password" value={newApiKey} onChange={e => setNewApiKey(e.target.value)} autoComplete="new-password" /></label><button className="secondary" onClick={() => void register()} disabled={busy}><Plus size={16} /> Registrar modelo</button><div className="model-assignment-divider" /><span className="eyebrow">Asignación</span><h2>Configurar agente</h2><label>Agente<SearchSelect value={agentId} onChange={setAgentId} ariaLabel="Agente" searchPlaceholder="Buscar agente…" options={agents.map(a => ({ value: a.IDResource, label: a.Name, detail: a.FullName || shortId(a.IDResource) }))} /></label><label>Conexión<SearchSelect value={providerCode} onChange={setProviderCode} ariaLabel="Conexión LLM" searchPlaceholder="Buscar conexión o modelo…" options={providers.filter(p => p.active).map(p => ({ value: p.Code, label: p.Name, detail: `${p.Provider} · ${p.Model}` }))} /></label><div className="form-row"><Field label="Rol" value={role} onChange={setRole} /><label>Prioridad<input type="number" value={priority} onChange={e => setPriority(Number(e.target.value))} min="0" max="10000" /></label></div><label>Capacidades</label><div className="chips">{['general', 'coding', 'reasoning', 'sql', 'external_web'].map(cap => <button key={cap} className={capabilities.includes(cap) ? 'selected' : ''} onClick={() => toggle(cap)}>{cap}</button>)}</div><button className="primary" onClick={() => void save()} disabled={busy || !selectedInstance}><Save size={17} /> Guardar asignación</button></section></div>
   </>
 }
 
