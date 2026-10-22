@@ -237,6 +237,50 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(agent.calls[0]["tool_allowlist"], set())
         self.assertTrue(agent.calls[0]["general_conversation_mode"])
 
+    def test_prepared_general_capability_cannot_be_promoted_to_sql_rag(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+
+        orchestrator.invoke(
+            session_id="prepared-general",
+            user_text="Que debo hacer para configurar N8N en docker?",
+            auto_reply_mode=True,
+            tool_allowlist={"query_sql_server", "get_db_schema"},
+            message_metadata={
+                "model_capability": "general",
+                "_capability_route_prepared": True,
+                "agent_relevant_knowledge": "Contexto privado no relacionado.",
+                "tool_permissions": {"sql"},
+            },
+        )
+
+        self.assertTrue(agent.calls[0]["general_conversation_mode"])
+        self.assertEqual(
+            agent.calls[0]["message_metadata"]["orchestrator_route"],
+            "general_conversation",
+        )
+
+    def test_prepared_sql_capability_can_use_sql_rag(self):
+        agent = FakeAgent()
+        orchestrator = SolidSETOrchestrator(agent)
+
+        orchestrator.invoke(
+            session_id="prepared-sql",
+            user_text="Consulta los datos internos del canal",
+            auto_reply_mode=True,
+            tool_allowlist={"query_sql_server", "get_db_schema"},
+            message_metadata={
+                "model_capability": "sql",
+                "_capability_route_prepared": True,
+                "tool_permissions": {"query_sql_server"},
+            },
+        )
+
+        self.assertEqual(
+            agent.calls[0]["message_metadata"]["orchestrator_route"],
+            "work_sql_rag",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

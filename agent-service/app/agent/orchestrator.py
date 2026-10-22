@@ -170,6 +170,27 @@ class SolidSETOrchestrator:
             capability = "general"
         # Keep the capability already resolved before the direct-provider path.
         capability = metadata.get("model_capability") or capability
+
+        # Once the capability planner has resolved the request, it is the
+        # authority for the execution route.  Conversation history, private
+        # RAG context and auto-reply defaults must not promote a general/coding
+        # answer to SQL.  Suggestions are the one intentional exception: they
+        # are explicitly grounded in the agent's private knowledge flow.
+        if metadata.get("_capability_route_prepared") and not metadata.get(
+            "response_suggestion_mode"
+        ):
+            if capability == "external_web":
+                route = "external_web"
+            elif capability == "sql" and "query_sql_server" in set(
+                metadata.get("tool_permissions") or ()
+            ):
+                route = "work_sql_rag"
+            else:
+                # general, coding, reasoning and unknown capabilities are
+                # tool-free conversational routes.  The selected capability
+                # still chooses the assigned model in MachiningAgent.
+                route = "general_conversation"
+
         metadata["model_capability"] = capability
         metadata["orchestrator_route"] = route
         print(
