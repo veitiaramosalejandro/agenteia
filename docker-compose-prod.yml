@@ -553,6 +553,9 @@ services:
     build:
       context: ./agent-control-center
       dockerfile: Dockerfile
+      # npm necesita resolver registry.npmjs.org durante la fase de build.
+      # La red bridge del host puede devolver EAI_AGAIN en este servidor.
+      network: host
     container_name: agent_control_center
     hostname: agent-control-center
     restart: always

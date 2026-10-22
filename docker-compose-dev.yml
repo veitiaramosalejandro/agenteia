@@ -491,6 +491,7 @@ services:
     build:
       context: ./agent-control-center
       dockerfile: Dockerfile
+      network: host
     image: agent-control-center:0.5.0
     container_name: agent_control_center
     hostname: agent-control-center
