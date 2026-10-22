@@ -12,6 +12,26 @@ from app.llm.providers import (
 )
 
 
+def test_model_capability_validation_uses_generic_ollama_contract(monkeypatch):
+    from app.services import model_capability_validation as validation
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "test-model"}]}
+
+    monkeypatch.setattr(validation.httpx, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(validation, "_invoke_ollama", lambda *args, **kwargs: ({"message": {"content": '{"decision":"allow"}'}}, 10.0))
+    result = validation.validate_provider(
+        LLMProviderConfig(provider="ollama", model="test-model", base_url="http://ollama"),
+        ["structured_json"],
+    )
+    assert result["passed"] is True
+    assert result["capabilities"][0]["capability"] == "structured_json"
+
+
 class _FakeProvider(ChatProvider):
     name = "test_provider"
 

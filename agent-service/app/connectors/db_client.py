@@ -788,6 +788,24 @@ def list_llm_provider_configurations() -> list[dict[str, Any]]:
             return [_public_llm_configuration(dict(row)) for row in cursor.fetchall()]
 
 
+def get_llm_provider_configuration_by_code(code: str) -> dict[str, Any] | None:
+    """Read one active provider with its decrypted credential for runtime probes."""
+    ensure_llm_provider_schema()
+    with _postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT * FROM public."SysLLMProviderConfiguration" '
+                'WHERE active=true AND lower("Code")=lower(%s) LIMIT 1',
+                (str(code or "").strip(),),
+            )
+            row = cursor.fetchone()
+    if not row:
+        return None
+    result = dict(row)
+    result["APIKey"] = decrypt_api_key(result.get("APIKey"))
+    return result
+
+
 def get_llm_provider_configuration(
     resource_id: UUID | str | None = None,
     capability: str | None = None,

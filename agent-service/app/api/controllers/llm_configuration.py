@@ -13,19 +13,43 @@ from app.api.schemas.llm_configuration import (
     LLMProviderConfigurationStored,
     LLMProviderFromEnvironment,
 )
+from app.api.schemas.model_validation import ModelValidationRequest, ModelValidationResponse
 from app.config import settings
 from app.connectors.db_client import (
     deactivate_llm_provider_configuration,
     get_agent_model_configurations,
+    get_llm_provider_configuration_by_code,
     list_llm_provider_configurations,
     save_agent_model_configuration,
     save_llm_provider_configuration,
 )
 from app.llm import LLMProviderConfig, ProviderRegistry, create_chat_model
 from app.llm.providers import provider_config_from_settings, NVIDIA_BASE_URL
+from app.llm.providers import provider_config_from_record
+from app.services.model_capability_validation import validate_provider
 
 
 router = APIRouter(tags=["LLM Providers"])
+
+
+@router.post(
+    "/api/v1/agent/llm/providers/{code}/validate",
+    response_model=ModelValidationResponse,
+    summary="Validar las capacidades reales de un modelo",
+)
+def validate_llm_provider(code: str, request: ModelValidationRequest) -> ModelValidationResponse:
+    try:
+        record = get_llm_provider_configuration_by_code(code)
+        if not record:
+            raise HTTPException(status_code=404, detail="La conexión LLM no existe o está inactiva.")
+        result = validate_provider(provider_config_from_record(record), request.capabilities)
+        return ModelValidationResponse(**result)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="No fue posible consultar la configuración LLM.") from exc
 
 
 def _clear_cache(request: Request) -> None:

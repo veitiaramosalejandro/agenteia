@@ -34,6 +34,20 @@ export type Provider = {
   active: boolean
 }
 
+export type ModelValidation = {
+  provider: string
+  model: string
+  available: boolean
+  availableDetail: string
+  passed: boolean
+  capabilities: Array<{
+    capability: string
+    ok: boolean
+    detail: string
+    latencyMs?: number | null
+  }>
+}
+
 export type AgentModel = {
   ID: string
   ProviderCode: string
