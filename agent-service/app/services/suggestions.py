@@ -52,7 +52,7 @@ from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
-from app.system.module_constants import resolve_record_module
+from app.system.module_constants import ModuleConstants, resolve_record_module
 from app.agent.schema_query_planner import plan_related_record_query
 from app.agent.semantic_text import language_signal, requested_output_language
 from app.agent.tools import google_web_search, query_sql_server
@@ -94,8 +94,17 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, Any]
     related_raw = _get_payload_value(
         payload, "RelatedRecordsData", "relatedRecordsData"
     )
+    nested_related_raw = _get_payload_value(
+        chat, "relatedRecords", "RelatedRecords"
+    )
+    related_sources: list[Any] = []
+    if isinstance(nested_related_raw, list):
+        related_sources.extend(nested_related_raw)
+    if isinstance(related_raw, list):
+        related_sources.extend(related_raw)
     related_records: list[dict[str, str]] = []
-    for item in related_raw if isinstance(related_raw, list) else []:
+    seen_related_records: set[tuple[str, str, str]] = set()
+    for item in related_sources:
         if not isinstance(item, dict):
             continue
         normalized = {
@@ -119,6 +128,14 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, Any]
         normalized["idRecordModule"] = module_info["idRecordModule"] or normalized["idRecordModule"]
         normalized["recordModuleName"] = module_info["moduleName"]
         normalized["recordModuleKnown"] = module_info["known"]
+        dedupe_key = (
+            normalized["idRecordModule"].lower(),
+            normalized["gidRecord"].lower(),
+            normalized["recordCode"].lower(),
+        )
+        if dedupe_key in seen_related_records:
+            continue
+        seen_related_records.add(dedupe_key)
         if any(normalized.values()):
             related_records.append(normalized)
 
@@ -214,21 +231,130 @@ def _format_related_records_context(records: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_SYS_TASK_RELATED_COLUMNS = (
+    "IDTask",
+    "IDResource",
+    "IDModule",
+    "IDResourceCreation",
+    "IDResourceAssign",
+    "Code",
+    "Status",
+    "DateCompletion",
+    "Description",
+    "importance",
+    "StartDate",
+    "EndDate",
+    "Duration",
+    "ShortName",
+    "RunningStatus",
+    "WorkStatus",
+    "ProgressPercentage",
+)
+
+
+def _is_sys_tasks_record(record: dict[str, Any]) -> bool:
+    module_id = str(record.get("idRecordModule") or "").strip()
+    return module_id.replace("-", "").upper() == ModuleConstants.SysTasks.replace("-", "").upper()
+
+
+def _verified_sys_tasks_context(
+    solidset_instance: dict[str, Any],
+    records: list[dict[str, Any]],
+    requester_resource: str = "",
+) -> str:
+    """Loads task records referenced by chat.relatedRecords using a fixed safe projection."""
+    task_records = [record for record in records if _is_sys_tasks_record(record)]
+    if not task_records:
+        return ""
+
+    task_ids: list[str] = []
+    records_by_id: dict[str, dict[str, Any]] = {}
+    for record in task_records[:10]:
+        task_id = _valid_framework_identifier(record.get("gidRecord"))
+        if not task_id:
+            continue
+        key = task_id.lower()
+        if key not in records_by_id:
+            task_ids.append(task_id)
+            records_by_id[key] = record
+    if not task_ids:
+        return "\n\n".join(
+            _format_related_records_context([record])
+            + "\nSQL_VERIFICATION: invalid task reference; client reference only."
+            for record in task_records[:10]
+        )
+
+    placeholders = ", ".join("%s" for _ in task_ids)
+    query = (
+        "SELECT "
+        + ", ".join(_SYS_TASK_RELATED_COLUMNS)
+        + " FROM dbo.SysTask WHERE IDTask IN ("
+        + placeholders
+        + ")"
+    )
+    try:
+        with solidset_sql_instance_context(solidset_instance):
+            raw = query_sql_server.invoke({
+                "query": query,
+                "parameters_json": json.dumps(task_ids),
+            })
+        rows = json.loads(str(raw))
+    except (json.JSONDecodeError, TypeError, ValueError, RuntimeError) as exc:
+        print(f"⚠️ No se pudieron ampliar tareas relacionadas: {exc}")
+        return "\n\n".join(
+            _format_related_records_context([record])
+            + "\nSQL_VERIFICATION: task query failed; client reference only."
+            for record in task_records[:10]
+        )
+
+    rows_by_id = {
+        str(row.get("IDTask") or "").strip().lower(): row
+        for row in rows if isinstance(row, dict)
+    } if isinstance(rows, list) else {}
+    blocks: list[str] = []
+    for record in task_records[:10]:
+        task_id = str(record.get("gidRecord") or "").strip().lower()
+        row = rows_by_id.get(task_id, {})
+        base = _format_related_records_context([record])
+        if not row:
+            blocks.append(base + "\nSQL_VERIFICATION: no task rows; client reference only.")
+            continue
+        details = [
+            f"{key}: {_sanitize_related_record_value(row.get(key)) if row.get(key) not in (None, '') else 'NO DISPONIBLE'}"
+            for key in _SYS_TASK_RELATED_COLUMNS
+        ]
+        blocks.append(base + "\nSQL_VERIFICATION: retrieved\n" + "\n".join(details))
+        if requester_resource:
+            from app.services.record_snapshot import schedule_record_snapshot
+            schedule_record_snapshot(
+                str(solidset_instance["ID"]), requester_resource,
+                "SysTask", record, row,
+            )
+    return "\n\n".join(blocks)
+
+
 def _verified_related_records_context(
     solidset_instance: dict[str, Any], records: list[dict[str, Any]], requester_resource: str = ""
 ) -> str:
     """Amplía RelatedRecordsData con campos descriptivos verificados mediante el catálogo SQL."""
     if not records:
         return ""
+    sys_tasks_context = _verified_sys_tasks_context(
+        solidset_instance, records, requester_resource
+    )
+    non_task_records = [record for record in records if not _is_sys_tasks_record(record)]
+    if not non_task_records:
+        return sys_tasks_context
     snapshot = get_solidset_schema_snapshot(solidset_instance.get("ID")) or {}
     catalog = snapshot.get("Catalog")
     if isinstance(catalog, str):
         catalog = json.loads(catalog)
     if not isinstance(catalog, dict):
-        return _format_related_records_context(records) + "\nSQL_VERIFICATION: unavailable; client reference only."
+        generic_context = _format_related_records_context(non_task_records) + "\nSQL_VERIFICATION: unavailable; client reference only."
+        return "\n\n".join(value for value in (sys_tasks_context, generic_context) if value)
     blocks: list[str] = []
     with solidset_sql_instance_context(solidset_instance):
-        for record in records[:10]:
+        for record in non_task_records[:10]:
             base = _format_related_records_context([record])
             plan = plan_related_record_query(record, catalog)
             if plan is None:
@@ -259,7 +385,8 @@ def _verified_related_records_context(
             ]
             blocks.append(base + ("\nSQL_VERIFICATION: retrieved\n" + "\n".join(details)
                                   if details else "\nSQL_VERIFICATION: no rows; client reference only."))
-    return "\n\n".join(blocks)
+    generic_context = "\n\n".join(blocks)
+    return "\n\n".join(value for value in (sys_tasks_context, generic_context) if value)
 
 
 def _verified_task_code_context(
@@ -1851,6 +1978,13 @@ async def _process_chat_question_response_suggestion(
             # It must not be interpreted as a request to search a business table.
             request_intent = "general"
             use_related_record = False
+        elif context["related_records"] and not learned_fact:
+            # RelatedRecords is an authoritative framework reference. Do not
+            # let the intent classifier discard it just because the user asks
+            # about several records or uses a generic phrase such as "these
+            # tasks". The module-specific verifier must run first.
+            request_intent = "related_record"
+            use_related_record = True
         related_records_context = ""
         vector_record_context = ""
         if use_related_record:
