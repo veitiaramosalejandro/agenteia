@@ -10,6 +10,7 @@ MAX_PROMPT_CHARS = 12000
 MAX_RAG_CHARS = 2000
 MAX_HISTORY_CHARS = 12000
 _OMITTED = "\n[contenido omitido por límite de contexto]"
+_IMAGE_PART_BUDGET_CHARS = 1200
 
 
 def clipped(text: str, limit: int) -> str:
@@ -19,6 +20,45 @@ def clipped(text: str, limit: int) -> str:
     if limit <= len(_OMITTED):
         return ""
     return text[:limit - len(_OMITTED)].rstrip() + _OMITTED
+
+
+def _content_size(content) -> int:
+    """Count multimodal images as bounded input, not as base64 prompt text."""
+    if not isinstance(content, list):
+        return len(str(content))
+    total = 0
+    for part in content:
+        if isinstance(part, dict) and part.get("type") in {"image_url", "image"}:
+            total += _IMAGE_PART_BUDGET_CHARS
+        elif isinstance(part, dict):
+            total += len(str(part.get("text") or part))
+        else:
+            total += len(str(part))
+    return total
+
+
+def _clip_content(content, limit: int):
+    """Clip only multimodal text parts; never turn an image into plain text."""
+    if not isinstance(content, list):
+        return clipped(str(content), limit)
+    image_parts = [
+        part for part in content
+        if isinstance(part, dict) and part.get("type") in {"image_url", "image"}
+    ]
+    text_parts = [
+        part for part in content
+        if not (isinstance(part, dict) and part.get("type") in {"image_url", "image"})
+    ]
+    image_budget = len(image_parts) * _IMAGE_PART_BUDGET_CHARS
+    text_limit = max(0, limit - image_budget)
+    clipped_parts = []
+    for part in text_parts:
+        if isinstance(part, dict) and "text" in part:
+            clipped_parts.append({**part, "text": clipped(str(part.get("text") or ""), text_limit)})
+            text_limit = max(0, text_limit - len(str(clipped_parts[-1]["text"])))
+        else:
+            clipped_parts.append(part)
+    return clipped_parts + image_parts
 
 
 def context_message(sources: dict[str, str], limit: int) -> SystemMessage:
@@ -133,7 +173,7 @@ def budget_messages(messages: list) -> list:
 
     def size(message):
         calls = getattr(message, "tool_calls", None)
-        return len(str(message.content)) + (len(json.dumps(calls, ensure_ascii=False)) if calls else 0)
+        return _content_size(message.content) + (len(json.dumps(calls, ensure_ascii=False)) if calls else 0)
 
     required = {
         i for i, message in enumerate(copies)
@@ -193,7 +233,7 @@ def budget_messages(messages: list) -> list:
             context_cap = MAX_RAG_CHARS
         cap = min(context_cap if is_tool or message.additional_kwargs.get("budget_context") else 400,
                   available)
-        message.content = clipped(str(message.content), cap)
+        message.content = _clip_content(message.content, cap)
         if is_tool and not message.content:
             message.content = _OMITTED[:cap]
         if message.content or is_tool:

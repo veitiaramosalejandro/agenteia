@@ -62,6 +62,13 @@ from app.services.related_records_context import (
     resolve_sys_tasks_evidence,
     verified_related_records_context,
 )
+from app.services.solidset_attachments import (
+    attachment_prompt_metadata,
+    extract_solidset_file_guids,
+    replace_file_references_with_labels,
+    resolve_solidset_file_attachments,
+    build_multimodal_content,
+)
 from app.system.module_constants import ModuleConstants
 from app.agent.schema_query_planner import plan_related_record_query
 from app.agent.semantic_text import language_signal, requested_output_language
@@ -1635,17 +1642,20 @@ def _reason_about_related_record(
         'Put each independent answer in its own suggestions element. This object replaces '
         'the bare array mentioned above. Do not put JSON inside a string.'
     )
+    current_request_payload = json.dumps({
+        "current_request": request_text[:1200],
+        "previous_attempt": previous_output[:4000],
+        "validation_reason": metadata.get("record_validation_reason", "format_or_content"),
+        "verified_record": record_context[:6000],
+        "historical_vector_context": str(metadata.get("record_vector_context") or "")[:5000],
+        "supporting_research": research_context[:4000],
+        "tool_evidence": metadata.get("suggestion_tool_evidence") or [],
+    }, ensure_ascii=False)
     result = request_llm.invoke([
         SystemMessage(content=instructions),
-        HumanMessage(content=json.dumps({
-            "current_request": request_text[:1200],
-            "previous_attempt": previous_output[:4000],
-            "validation_reason": metadata.get("record_validation_reason", "format_or_content"),
-            "verified_record": record_context[:6000],
-            "historical_vector_context": str(metadata.get("record_vector_context") or "")[:5000],
-            "supporting_research": research_context[:4000],
-            "tool_evidence": metadata.get("suggestion_tool_evidence") or [],
-        }, ensure_ascii=False)),
+        HumanMessage(content=build_multimodal_content(
+            current_request_payload, metadata.get("solidset_attachments")
+        )),
     ])
     response_metadata = getattr(result, "response_metadata", {}) or {}
     finish = response_metadata.get("finish_reason") or response_metadata.get("done_reason")
@@ -1788,6 +1798,30 @@ async def _process_chat_question_response_suggestion(
         if not solidset_instance or not solidset_instance.get("DataAPI"):
             raise LookupError(
                 "A instância SolidSET não tem um fornecedor de dados configurado."
+            )
+        attachment_values = (
+            context["quoted_message"],
+            current_message,
+            str(_get_payload_value(chat_payload, "rawMessage", "RawMessage") or ""),
+        )
+        attachment_refs = extract_solidset_file_guids(*attachment_values)
+        attachments = await asyncio.to_thread(
+            resolve_solidset_file_attachments,
+            solidset_instance,
+            *attachment_values,
+        ) if attachment_refs else []
+        if attachments:
+            context["quoted_message"] = replace_file_references_with_labels(
+                context["quoted_message"], attachments
+            )
+            effective_request_text = replace_file_references_with_labels(
+                effective_request_text, attachments
+            )
+            print(
+                "SUGGESTION_ATTACHMENT_CONTEXT "
+                f"request_id={request_id} refs={len(attachment_refs)} "
+                f"resolved={sum(1 for item in attachments if item.get('status') == 'resolved')}",
+                flush=True,
             )
         identity_started = perf_counter()
         identity = await asyncio.to_thread(
@@ -2195,6 +2229,9 @@ async def _process_chat_question_response_suggestion(
             "requester_name": context["requester_name"]
             or str(identity.get("FullName") or identity.get("Name") or "").strip(),
             "requester_login": context["requester_login"],
+            "attachment_references": attachment_refs,
+            "solidset_attachments": attachments,
+            "attachment_context": attachment_prompt_metadata(attachments),
             "resource_id": context["requester_resource"],
             "login_id": context["requester_login"],
             "agent_resource_id": context["requester_resource"],

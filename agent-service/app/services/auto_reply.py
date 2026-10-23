@@ -58,6 +58,12 @@ from app.services.related_records_context import (
     resolve_sys_tasks_evidence,
     verified_related_records_context,
 )
+from app.services.solidset_attachments import (
+    attachment_prompt_metadata,
+    extract_solidset_file_guids,
+    replace_file_references_with_labels,
+    resolve_solidset_file_attachments,
+)
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.system.schema import Actividad
@@ -2073,15 +2079,51 @@ async def _process_auto_replies_impl(
         }
         payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
         related_records = extract_related_records(payload)
+        payload_chat = _get_payload_value(payload, "Chat", "chat")
+        payload_chat = payload_chat if isinstance(payload_chat, dict) else {}
+        attachment_refs = extract_solidset_file_guids(
+            raw_incoming_text,
+            candidate.get("quoted_message"),
+            _get_payload_value(payload_chat, "rawMessage", "RawMessage"),
+        )
+        message_metadata["attachment_references"] = attachment_refs
+        related_instance = None
         related_task_evidence: list[dict[str, Any]] = []
-        if related_records:
-            message_metadata["related_records"] = related_records
+        if related_records or attachment_refs:
             try:
                 related_instance = await asyncio.to_thread(
                     get_solidset_instance,
                     code=str(candidate.get("solidset_instance_code") or "").strip() or None,
                     source_ip=None,
                 )
+            except Exception as exc:
+                print(
+                    "SOLIDSET_CONTEXT_INSTANCE_FAILED "
+                    f"chat={candidate.get('chat_id')} type={type(exc).__name__}",
+                    flush=True,
+                )
+        if attachment_refs:
+            attachments = await asyncio.to_thread(
+                resolve_solidset_file_attachments,
+                related_instance,
+                raw_incoming_text,
+                candidate.get("quoted_message"),
+                _get_payload_value(payload_chat, "rawMessage", "RawMessage"),
+            )
+            message_metadata["solidset_attachments"] = attachments
+            message_metadata["attachment_context"] = attachment_prompt_metadata(attachments)
+            incoming_text = _sanitize_auto_reply_input(
+                replace_file_references_with_labels(raw_incoming_text, attachments)
+            )
+            print(
+                "AGENT_ATTACHMENT_CONTEXT "
+                f"chat={candidate.get('chat_id')} refs={len(attachment_refs)} "
+                f"resolved={sum(1 for item in attachments if item.get('status') == 'resolved')}",
+                flush=True,
+            )
+        if related_records:
+            message_metadata["related_records"] = related_records
+            try:
                 if related_instance:
                     requester_resource = str(candidate.get("sender_resource") or "").strip()
                     related_task_evidence = await asyncio.to_thread(

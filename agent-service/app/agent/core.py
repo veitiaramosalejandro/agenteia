@@ -21,6 +21,7 @@ from app.agent.prompts_maestro import SYSTEM_PROMPT_MAESTRO
 from app.agent.runtime_prompts import runtime_prompt
 from app.agent.prompt_budget import budget_messages, compact_system, context_message, clipped
 from app.agent.response_validation import looks_like_raw_tool_response
+from app.services.solidset_attachments import build_multimodal_content
 from app.agent.identity import AgentIdentityService
 from app.agent.audit import PostgresToolAudit
 from app.agent.knowledge import AgentKnowledge
@@ -4156,6 +4157,17 @@ class MachiningAgent:
                     "estadística, memoria conversacional y metadatos regionales; no vuelvas a "
                     "inferir el idioma a partir del tema o de nombres propios."
                 )
+            attachment_context = str(
+                message_metadata.get("attachment_context") or ""
+            ).strip()
+            if attachment_context:
+                system_prompt += (
+                    "\n\n=== IMÁGENES ADJUNTAS DEL MENSAJE ACTUAL ===\n"
+                    f"{attachment_context}\n"
+                    "Las imágenes resueltas se entregan al modelo como entradas visuales del turno actual. "
+                    "Analízalas solo si la pregunta las relaciona. Si una imagen figura como no disponible, "
+                    "declara esa limitación y no describas su contenido por inferencia."
+                )
             quoted_message = str(
                 message_metadata.get("quoted_message") or ""
             ).strip()
@@ -4563,7 +4575,12 @@ class MachiningAgent:
             )
 
         # Añadir mensaje del usuario
-        messages.append(HumanMessage(content=user_text, additional_kwargs={"budget_current": True}))
+        messages.append(HumanMessage(
+            content=build_multimodal_content(
+                user_text, metadata_identity.get("solidset_attachments")
+            ),
+            additional_kwargs={"budget_current": True},
+        ))
 
         # --- 7. BUCLE DE EJECUCIÓN DE HERRAMIENTAS ---
         iteration = 0
@@ -5192,7 +5209,11 @@ class MachiningAgent:
                     "esquemas ni pasos para buscar datos salvo que la pregunta los solicite. "
                     "Si no sabes la respuesta, dilo brevemente y no inventes información."
                 )),
-                HumanMessage(content=user_text),
+                HumanMessage(
+                    content=build_multimodal_content(
+                        user_text, metadata_identity.get("solidset_attachments")
+                    )
+                ),
             ]
             retried = request_llm.invoke(retry_messages)
             retry_text = self._llm_response_text(retried).strip()

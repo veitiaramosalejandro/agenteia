@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import re
@@ -934,6 +935,8 @@ def query_sql_server(query: str, parameters_json: str = "[]") -> str:
         def date_serializer(obj):
             if isinstance(obj, (datetime, pd.Timestamp)):
                 return obj.isoformat()
+            if isinstance(obj, (bytes, bytearray, memoryview)):
+                return base64.b64encode(bytes(obj)).decode("ascii")
             return str(obj)
 
         # 🚨 NUEVA VALIDACIÓN: Si son más de 50 filas, advertir
