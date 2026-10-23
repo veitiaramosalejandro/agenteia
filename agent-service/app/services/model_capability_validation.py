@@ -12,12 +12,17 @@ from dataclasses import replace
 from typing import Any
 
 import httpx
+from langchain_core.messages import HumanMessage
 
 from app.llm import LLMProviderConfig, create_chat_model
 from app.llm.text import response_text
 
 
-CAPABILITIES = ("general", "structured_json", "tool_calling")
+CAPABILITIES = ("general", "structured_json", "tool_calling", "vision")
+VISION_PROBE_IMAGE = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+AAAAAIAAUQ0N6YAAAAASUVORK5CYII="
+)
 _DECISION_SCHEMA = {
     "title": "CapabilityDecision",
     "type": "object",
@@ -53,7 +58,8 @@ def _ollama_model_available(config: LLMProviderConfig) -> tuple[bool, str]:
 
 
 def _invoke_ollama(config: LLMProviderConfig, *, schema: dict[str, Any] | None = None,
-                   tools: list[dict[str, Any]] | None = None) -> tuple[Any, float]:
+                   tools: list[dict[str, Any]] | None = None,
+                   vision: bool = False) -> tuple[Any, float]:
     import time
 
     payload: dict[str, Any] = {
@@ -75,6 +81,12 @@ def _invoke_ollama(config: LLMProviderConfig, *, schema: dict[str, Any] | None =
             "role": "user",
             "content": "Usa la herramienta de prueba para indicar que puedes llamar herramientas.",
         }]
+    if vision:
+        payload["messages"] = [{
+            "role": "user",
+            "content": "Describe brevemente la imagen de prueba.",
+            "images": [VISION_PROBE_IMAGE],
+        }]
     started = time.perf_counter()
     response = httpx.post(
         f"{config.base_url.rstrip('/')}/api/chat",
@@ -87,7 +99,11 @@ def _invoke_ollama(config: LLMProviderConfig, *, schema: dict[str, Any] | None =
 
 def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None = None) -> dict[str, Any]:
     """Probe a provider and return machine-readable contract results."""
-    requested = list(dict.fromkeys(capabilities or list(CAPABILITIES)))
+    aliases = {"multimodal": "vision", "image": "vision", "visual": "vision", "imagen": "vision"}
+    requested = list(dict.fromkeys(
+        aliases.get(str(item).strip().casefold(), str(item).strip().casefold())
+        for item in (capabilities or list(CAPABILITIES))
+    ))
     unknown = [item for item in requested if item not in CAPABILITIES]
     if unknown:
         raise ValueError(f"Capacidades no soportadas por el validador: {', '.join(unknown)}")
@@ -120,6 +136,15 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                     parsed = json.loads(content)
                     ok = isinstance(parsed, dict) and parsed.get("decision") in {"allow", "decline"}
                     results.append(_result(capability, ok, detail="JSON estructurado válido" if ok else "JSON no cumple el esquema", latency_ms=latency))
+                elif capability == "vision":
+                    payload, latency = _invoke_ollama(config, vision=True)
+                    content = ((payload.get("message") or {}).get("content") or "").strip()
+                    results.append(_result(
+                        capability, bool(content),
+                        detail=("Entrada visual aceptada y respuesta recibida" if content
+                                else "El modelo no devolvió respuesta para la entrada visual"),
+                        latency_ms=latency,
+                    ))
                 else:
                     payload, latency = _invoke_ollama(config, tools=[{
                         "type": "function",
@@ -140,7 +165,16 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                         "description": "Herramienta de prueba sin efectos",
                         "parameters": {"type": "object", "properties": {}},
                     }])
-                response = model.invoke("Responde a esta prueba de compatibilidad.")
+                response = model.invoke(
+                    [HumanMessage(content=[
+                        {"type": "text", "text": "Describe brevemente la imagen de prueba."},
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/png;base64,{VISION_PROBE_IMAGE}"
+                        }},
+                    ])]
+                    if capability == "vision"
+                    else "Responde a esta prueba de compatibilidad."
+                )
                 content = response_text(response).strip()
                 if capability == "general":
                     ok, detail = bool(content), "Respuesta de texto recibida" if content else "Respuesta vacía"
@@ -148,6 +182,11 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                     parsed = response if isinstance(response, dict) else json.loads(content)
                     ok = isinstance(parsed, dict) and parsed.get("decision") in {"allow", "decline"}
                     detail = "JSON estructurado válido" if ok else "JSON no cumple el esquema"
+                elif capability == "vision":
+                    ok, detail = bool(content), (
+                        "Entrada visual aceptada y respuesta recibida"
+                        if content else "El modelo no devolvió respuesta para la entrada visual"
+                    )
                 else:
                     tool_calls = getattr(response, "tool_calls", None) or []
                     ok, detail = bool(tool_calls), "El modelo devolvió una llamada de herramienta" if tool_calls else "No devolvió una llamada de herramienta"
@@ -155,7 +194,7 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
             status = "adapter_error" if (
-                capability in {"structured_json", "tool_calling"}
+                capability in {"structured_json", "tool_calling", "vision"}
                 and not isinstance(exc, json.JSONDecodeError)
             ) else "failed"
             results.append(_result(capability, False, detail=detail, status=status))

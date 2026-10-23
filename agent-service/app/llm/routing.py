@@ -1,12 +1,17 @@
 """Capability selection before any provider-specific shortcut."""
 import re
 
+from app.agent.capabilities import normalize_capabilities
+
 
 def requested_capability(text: str, metadata: dict | None = None) -> str:
     metadata = metadata or {}
+    if metadata.get('attachment_references') or metadata.get('solidset_attachments'):
+        return 'vision'
     explicit = str(metadata.get('model_capability') or '').strip().lower()
     if explicit:
-        return explicit
+        normalized = normalize_capabilities([explicit])
+        return next(iter(normalized), explicit)
     if metadata.get('response_suggestion_mode') and not metadata.get('advice_request'):
         return 'general'
     text = str(text or '').casefold()

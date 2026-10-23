@@ -15,6 +15,7 @@ from uuid import UUID
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.config import settings
 from app.connectors.db_client import _postgres_connection
+from app.agent.capabilities import normalize_capabilities
 from app.llm import create_chat_model, provider_config_from_record
 from app.llm.secrets import decrypt_api_key
 from app.llm.text import response_text
@@ -131,6 +132,7 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
     if not resource_id:
         return None
     resource_id = UUID(str(resource_id))
+    capability = next(iter(normalize_capabilities([capability or 'general'])), 'general')
     with _postgres_connection() as db:
         row = db.execute('''SELECT p.*, m."ID" AS "AgentModelID",
                                    m."LocalExecution" AS "AgentLocalExecution",
@@ -141,10 +143,23 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
             WHERE m."IDResource"=%s
               AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
               AND m.active AND p.active AND r.active
-              AND (m."Capabilities" ? %s OR (%s='general' AND m."IsDefault"))
-            ORDER BY CASE WHEN m."Capabilities" ? %s THEN 0 ELSE 1 END,
+              AND (
+                    m."Capabilities" ? %s
+                    OR (%s='vision' AND m."Capabilities" ? 'multimodal')
+                    OR (%s='vision' AND m."Capabilities" ? 'imagen')
+                    OR (%s='general' AND m."IsDefault")
+                  )
+            ORDER BY CASE WHEN (
+                              m."Capabilities" ? %s
+                              OR (%s='vision' AND m."Capabilities" ? 'multimodal')
+                              OR (%s='vision' AND m."Capabilities" ? 'imagen')
+                          ) THEN 0 ELSE 1 END,
                      m."Priority", p."Code" LIMIT 1''',
-            (resource_id, instance_id, instance_id, capability, capability, capability)).fetchone()
+            (
+                resource_id, instance_id, instance_id,
+                capability, capability, capability, capability,
+                capability, capability, capability,
+            )).fetchone()
     if row:
         row = dict(row)
         print(f'AGENT_MODEL_ROUTE agent={resource_id} capability={capability} '

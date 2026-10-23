@@ -4,7 +4,7 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agent.capabilities import normalize_capabilities, tool_permissions
+from app.agent.capabilities import has_visual_capability, normalize_capabilities, tool_permissions
 from app.connectors.db_client import get_agent_model_configurations, get_active_agent_prompt, get_llm_provider_configuration
 from app.llm.providers import bind_structured_json, create_chat_model, provider_config_from_record
 from app.llm.text import response_text
@@ -26,6 +26,24 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
     if metadata.get('tool_permissions') is not None:
         permissions &= tool_permissions(metadata['tool_permissions'])
     metadata['tool_permissions'] = permissions
+    visual_requested = bool(
+        metadata.get('attachment_references')
+        or metadata.get('solidset_attachments')
+    )
+    if visual_requested:
+        visual_available = any(
+            has_visual_capability(row.get('Capabilities'))
+            for row in configurations
+        )
+        metadata['model_capability'] = 'vision'
+        metadata['vision_model_unavailable'] = not visual_available
+        metadata['_capability_route_prepared'] = True
+        print(
+            f'AGENT_CAPABILITY_PLAN agent={resource} capability=vision '
+            f'available={visual_available} reason=message_attachment',
+            flush=True,
+        )
+        return
     if metadata.get('conversational_recommendation_mode'):
         # A recommendation about the user's goal is not a coding request just
         # because the selected agent is capable of writing code. Keep the

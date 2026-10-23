@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 class ModelValidationRequest(BaseModel):
     capabilities: list[str] = Field(
-        default_factory=lambda: ["general", "structured_json", "tool_calling"],
+        default_factory=lambda: ["general", "structured_json", "tool_calling", "vision"],
         min_length=1,
     )
 

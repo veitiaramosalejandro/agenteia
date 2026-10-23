@@ -10,6 +10,7 @@ from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
 
+from app.agent.capabilities import normalize_capabilities
 from app.config import settings
 from app.llm.secrets import decrypt_api_key, encrypt_api_key
 
@@ -817,7 +818,10 @@ def get_llm_provider_configuration(
     normalized = UUID(str(resource_id)) if resource_id else None
     with _postgres_connection() as connection:
         with connection.cursor() as cursor:
-            requested_capability = str(capability or "general").strip().lower()
+            requested_capability = next(
+                iter(normalize_capabilities([capability or "general"])),
+                "general",
+            )
             cursor.execute(
                 '''SELECT p.*, m."ID" AS "AgentModelID",
                           m."LocalExecution" AS "AgentLocalExecution"
@@ -827,16 +831,27 @@ def get_llm_provider_configuration(
                         AND m."IDResource"=%s::uuid
                         AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
                    WHERE p.active=true AND (%s::text IS NULL OR lower(p."Provider")=%s)
-                     AND ((m."ID" IS NOT NULL AND (m."Capabilities" ? %s OR (%s='general' AND m."IsDefault")))
+                     AND ((m."ID" IS NOT NULL AND (
+                            m."Capabilities" ? %s
+                            OR (%s='vision' AND m."Capabilities" ? 'multimodal')
+                            OR (%s='vision' AND m."Capabilities" ? 'imagen')
+                            OR (%s='general' AND m."IsDefault")
+                         ))
                      OR (%s='general' AND p."IsDefault"=true))
-                   ORDER BY CASE WHEN m."ID" IS NOT NULL AND m."Capabilities" ? %s THEN 0
+                   ORDER BY CASE WHEN m."ID" IS NOT NULL AND (
+                                      m."Capabilities" ? %s
+                                      OR (%s='vision' AND m."Capabilities" ? 'multimodal')
+                                      OR (%s='vision' AND m."Capabilities" ? 'imagen')
+                                  ) THEN 0
                                  WHEN m."ID" IS NOT NULL AND m."IsDefault" THEN 1
                                  WHEN p."IsDefault" THEN 2
                                  ELSE 3 END,
                             m."Priority" NULLS LAST, p."Code" LIMIT 1''',
                 (
                     normalized, instance_id, instance_id, provider, provider,
-                    requested_capability, requested_capability, requested_capability, requested_capability,
+                    requested_capability, requested_capability, requested_capability,
+                    requested_capability, requested_capability,
+                    requested_capability, requested_capability, requested_capability,
                 ),
             )
             row = cursor.fetchone()

@@ -64,6 +64,7 @@ from app.services.solidset_attachments import (
     replace_file_references_with_labels,
     resolve_solidset_file_attachments,
 )
+from app.agent.capabilities import has_visual_capability
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.system.schema import Actividad
@@ -2210,7 +2211,23 @@ async def _process_auto_replies_impl(
                         str(value).strip().lower() for value in values if str(value).strip()
                     )
             message_metadata["declared_capabilities"] = declared_capabilities
+            if attachment_refs:
+                visual_available = has_visual_capability(declared_capabilities)
+                message_metadata["model_capability"] = "vision"
+                message_metadata["vision_model_unavailable"] = not visual_available
+                message_metadata["_capability_route_prepared"] = True
+                print(
+                    "AGENT_VISION_MODEL_ROUTE "
+                    f"chat={candidate.get('chat_id')} available={visual_available}",
+                    flush=True,
+                )
         except Exception as exc:
+            if attachment_refs:
+                # Do not silently send an image to a text-only fallback when
+                # the capability lookup itself is unavailable.
+                message_metadata["model_capability"] = "vision"
+                message_metadata["vision_model_unavailable"] = True
+                message_metadata["_capability_route_prepared"] = True
             print(f"AGENT_CAPABILITIES_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
         print(
             "🧠 Conocimiento privado preseleccionado "
@@ -2292,7 +2309,7 @@ async def _process_auto_replies_impl(
                 incoming_text, related_records,
             )
             message_metadata["related_record_guidance_mode"] = related_record_guidance
-            response_text = None if related_record_guidance else answer_related_records_question(
+            response_text = None if related_record_guidance or attachment_refs else answer_related_records_question(
                 incoming_text, payload, related_records, related_task_evidence,
                 _language(incoming_text),
             )
@@ -2304,9 +2321,10 @@ async def _process_auto_replies_impl(
                 message_metadata["_agent_scope_prechecked"] = True
                 message_metadata["orchestrator_route"] = "related_record_guidance"
                 declared = set(message_metadata.get("declared_capabilities") or set())
-                message_metadata["model_capability"] = (
-                    "reasoning" if "reasoning" in declared else "general"
-                )
+                if not attachment_refs:
+                    message_metadata["model_capability"] = (
+                        "reasoning" if "reasoning" in declared else "general"
+                    )
                 # This is an explicit capability decision based on the current
                 # task reference. Do not let a second generic classifier erase
                 # it before the assigned model is selected.

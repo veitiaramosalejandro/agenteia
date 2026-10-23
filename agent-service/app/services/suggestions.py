@@ -69,6 +69,7 @@ from app.services.solidset_attachments import (
     resolve_solidset_file_attachments,
     build_multimodal_content,
 )
+from app.agent.capabilities import has_visual_capability
 from app.system.module_constants import ModuleConstants
 from app.agent.schema_query_planner import plan_related_record_query
 from app.agent.semantic_text import language_signal, requested_output_language
@@ -1578,7 +1579,10 @@ def _reason_about_related_record(
     """Generate independent proposals from the current record, without chat memory."""
     request_llm, _, provider = agent.get_llm_for_metadata({
         **metadata,
-        "model_capability": "reasoning",
+        "model_capability": (
+            "vision" if metadata.get("attachment_references")
+            or metadata.get("solidset_attachments") else "reasoning"
+        ),
         "max_output_tokens": max(1024, settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS),
     })
     count = max(1, min(3, int(metadata.get("response_suggestion_count") or 3)))
@@ -2260,6 +2264,27 @@ async def _process_chat_question_response_suggestion(
             "solidset_instance_id": str(solidset_instance["ID"]),
             "solidset_instance_code": str(solidset_instance["Code"]),
         }
+        if attachment_refs:
+            try:
+                visual_available = any(
+                    has_visual_capability(model.get("Capabilities"))
+                    for model in get_agent_model_configurations(
+                        context["requester_resource"], str(solidset_instance["ID"])
+                    )
+                )
+            except Exception as exc:
+                visual_available = False
+                print(
+                    f"SUGGESTION_VISION_CAPABILITY_LOOKUP_FAILED type={type(exc).__name__}",
+                    flush=True,
+                )
+            metadata["model_capability"] = "vision"
+            metadata["vision_model_unavailable"] = not visual_available
+            print(
+                "SUGGESTION_VISION_MODEL_ROUTE "
+                f"request_id={request_id} available={visual_available}",
+                flush=True,
+            )
         if learned_fact:
             # This response only acknowledges user-authored content that has
             # already passed the learning gate. Avoid a cold model-backed scope
@@ -2282,7 +2307,7 @@ async def _process_chat_question_response_suggestion(
         metadata["system_utc_time"] = reference_utc.isoformat()
 
         metadata["suggestion_intent"] = request_intent
-        if related_records_context:
+        if related_records_context and not attachment_refs:
             metadata["model_capability"] = "reasoning"
             # The UI wrapper can retain a title from another selected record.
             # Preserve the actual question; use resolved SQL for record content.
@@ -2302,7 +2327,7 @@ async def _process_chat_question_response_suggestion(
             # Social and writing advice is answered from language reasoning.
             # A person's name alone is never justification for SQL or web lookup.
             suggestion_tool_allowlist = set()
-        if related_guidance_mode:
+        if related_guidance_mode and not attachment_refs:
             metadata["model_capability"] = "reasoning"
             metadata["quoted_request_mode"] = False
             suggestion_tool_allowlist = {"query_sql_server", "get_db_schema"}
@@ -2339,16 +2364,31 @@ async def _process_chat_question_response_suggestion(
             effective_request_text, payload, context["related_records"],
             related_task_evidence, metadata["response_language"],
         ) if related_records_context else None
-        direct_answer = (
-            None
-            if learned_fact or request_intent == "internal" or related_records_context
-            else await asyncio.to_thread(
+        visual_unavailable_answer = {
+            "es": (
+                "El mensaje contiene una imagen, pero este agente no tiene asignado "
+                "un modelo con capacidad visual (vision/multimodal)."
+            ),
+            "pt": (
+                "A mensagem contém uma imagem, mas este agente não tem atribuído "
+                "um modelo com capacidade visual (vision/multimodal)."
+            ),
+            "en": (
+                "The message contains an image, but this agent has no model assigned "
+                "with visual (vision/multimodal) capability."
+            ),
+        }.get(str(metadata.get("response_language") or "es").split("-")[0], "")
+        if metadata.get("vision_model_unavailable"):
+            direct_answer = json.dumps([visual_unavailable_answer], ensure_ascii=False)
+        elif learned_fact or request_intent == "internal" or related_records_context:
+            direct_answer = None
+        else:
+            direct_answer = await asyncio.to_thread(
                 agent.answer_with_assigned_openai,
                 effective_request_text,
                 metadata,
                 scoped_session,
             )
-        )
         if learned_fact:
             print(
                 f"SUGGESTION_LEARNED_ASSERTION request_id={request_id} "

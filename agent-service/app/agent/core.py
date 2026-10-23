@@ -3013,18 +3013,39 @@ class MachiningAgent:
             try:
                 prepare_capability_route(user_text, metadata)
             except Exception as exc:
-                # A malformed capability contract must not turn an otherwise
-                # allowed request into an out-of-scope response.  General is
-                # the least-privileged route: it uses no capability-specific
-                # tools and lets the assigned general model answer normally.
-                metadata["model_capability"] = "general"
+                # A malformed capability contract must not grant a capability.
+                # Image requests fail closed because a text model cannot
+                # safely interpret their content; text requests use general.
+                has_attachment = bool(
+                    metadata.get("attachment_references")
+                    or metadata.get("solidset_attachments")
+                )
+                metadata["model_capability"] = "vision" if has_attachment else "general"
+                metadata["vision_model_unavailable"] = has_attachment
                 metadata["external_information_mode"] = False
                 metadata["_capability_route_prepared"] = True
                 print(
                     f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__} "
-                    "fallback=general",
+                    f"fallback={'vision_unavailable' if has_attachment else 'general'}",
                     flush=True,
                 )
+
+        if metadata.get("vision_model_unavailable"):
+            return self._localized(
+                user_text,
+                es=(
+                    "El mensaje contiene una imagen, pero este agente no tiene asignado "
+                    "un modelo con capacidad visual (vision/multimodal)."
+                ),
+                pt=(
+                    "A mensagem contém uma imagem, mas este agente não tem atribuído "
+                    "um modelo com capacidade visual (vision/multimodal)."
+                ),
+                en=(
+                    "The message contains an image, but this agent has no model assigned "
+                    "with visual (vision/multimodal) capability."
+                ),
+            )
 
         if not metadata.get("_assigned_direct_prechecked"):
             direct_answer = self.answer_with_assigned_openai(user_text, metadata, session_id)

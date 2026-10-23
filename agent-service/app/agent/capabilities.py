@@ -15,6 +15,16 @@ CAPABILITY_PERMISSIONS = {
     "google_web_search": frozenset({"external_web"}),
 }
 
+# ``vision`` is the canonical routing capability. ``multimodal`` remains a
+# supported alias so existing model assignments do not need to be recreated.
+CAPABILITY_ALIASES = {
+    "multimodal": "vision",
+    "image": "vision",
+    "visual": "vision",
+    "imagen": "vision",
+}
+VISUAL_CAPABILITIES = frozenset({"vision"})
+
 
 def normalize_capabilities(values: Any) -> set[str]:
     if isinstance(values, str):
@@ -26,7 +36,17 @@ def normalize_capabilities(values: Any) -> set[str]:
             values = [values]
     if not isinstance(values, (list, tuple, set, frozenset)):
         return set()
-    return {value.strip().casefold() for value in values if isinstance(value, str) and value.strip()}
+    normalized: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        capability = value.strip().casefold()
+        normalized.add(CAPABILITY_ALIASES.get(capability, capability))
+    return normalized
+
+
+def has_visual_capability(values: Any) -> bool:
+    return bool(VISUAL_CAPABILITIES.intersection(normalize_capabilities(values)))
 
 
 def tool_permissions(values: Any) -> set[str]:
