@@ -90,6 +90,75 @@ def format_related_records_context(records: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _payload_task(payload: dict[str, Any]) -> dict[str, Any]:
+    chat = _value(payload, "Chat", "chat")
+    chat = chat if isinstance(chat, dict) else {}
+    for node in (
+        _value(payload, "task", "Task"),
+        _value(payload, "taskData", "TaskData"),
+        _value(chat, "task", "Task"),
+    ):
+        if isinstance(node, dict) and any(node.values()):
+            return node
+    return {}
+
+
+def build_related_record_prompt_context(
+    payload: dict[str, Any], records: list[dict[str, Any]], verified_context: str,
+) -> str:
+    """Adds an explicit entity contract so the model cannot reinterpret "this task"."""
+    task_records = [record for record in records if _is_sys_tasks(record)]
+    if not task_records:
+        return verified_context
+    task = _payload_task(payload)
+    first = task_records[0]
+    code = str(task.get("code") or task.get("Code") or first.get("recordCode") or "").strip()
+    title = str(
+        task.get("shortName") or task.get("ShortName") or task.get("taskShortName")
+        or first.get("recordShortName") or ""
+    ).strip()
+    fallback_fields = [
+        ("Código", code),
+        ("Título", title),
+        ("Descripción", task.get("description") or task.get("Description") or ""),
+        ("Estado", task.get("statusStr") or task.get("StatusStr") or task.get("status") or ""),
+        ("Progreso", task.get("progressPercentage") or task.get("ProgressPercentage") or ""),
+        ("Inicio", task.get("start") or task.get("StartDate") or ""),
+        ("Fin", task.get("end") or task.get("EndDate") or task.get("dueDate") or ""),
+        ("Responsables", task.get("assignments") or ""),
+    ]
+    fallback = "\n".join(f"{key}: {_sanitize(value)}" for key, value in fallback_fields if value not in (None, ""))
+    context = verified_context.strip()
+    if "SQL_VERIFICATION: retrieved" not in context and fallback:
+        context = "\n\n".join(value for value in (context, "PAYLOAD_TASK_FALLBACK: verified framework payload\n" + fallback) if value)
+    focus = (
+        "\n\n=== CONTRATO OBLIGATORIO DEL REGISTRO ACTUAL ===\n"
+        f"La pregunta se refiere a la tarea {code or title or first.get('gidRecord')}. "
+        "Responde sobre esta tarea usando primero los datos verificados. "
+        "No preguntes nuevamente cuál es la tarea ni solicites datos que ya aparecen en este contexto. "
+        "Si un dato concreto no está disponible, indícalo sin descartar el resto de la información."
+    )
+    return context + focus
+
+
+def related_record_response_needs_repair(response: str, records: list[dict[str, Any]]) -> bool:
+    """Detect generic clarification answers that ignored an authoritative task reference."""
+    if not response or not any(_is_sys_tasks(record) for record in records):
+        return False
+    text = response.casefold()
+    markers = (
+        "necesito saber cuál es la tarea",
+        "necesito saber que tarea",
+        "necesito saber qué tarea",
+        "cuál es la tarea concreta",
+        "qué tarea concreta",
+        "qual é a tarefa concreta",
+        "qual tarefa concreta",
+        "compartir más información sobre la tarea",
+    )
+    return any(marker in text for marker in markers)
+
+
 _SYS_TASK_COLUMNS = (
     "IDTask", "IDResource", "IDModule", "IDResourceCreation", "IDResourceAssign",
     "Code", "Status", "DateCompletion", "Description", "importance", "StartDate",

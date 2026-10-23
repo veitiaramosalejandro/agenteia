@@ -3997,6 +3997,12 @@ class MachiningAgent:
                 "sobre el historial, RAG y conocimiento privado no relacionado. No cambies el "
                 "tema ni reutilices respuestas de turnos anteriores."
             )
+            if metadata_identity.get("related_record_response_repair"):
+                system_prompt += (
+                    " Esta es una corrección obligatoria: la respuesta anterior pidió "
+                    "identificar una tarea que ya estaba identificada. Responde ahora "
+                    "directamente sobre el registro actual."
+                )
         if agent_private_knowledge:
             system_prompt += (
                 "\n\n=== CONOCIMIENTO PRIVADO DEL AGENTE ===\n"

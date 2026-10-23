@@ -53,6 +53,7 @@ from app.services.response_status import update as _update_response_status
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.services.related_records_context import (
+    build_related_record_prompt_context,
     extract_related_records,
     format_related_records_context,
     verified_related_records_context,
@@ -1981,6 +1982,9 @@ async def _process_chat_question_response_suggestion(
                     _verified_task_code_context, solidset_instance,
                     effective_request_text, context["requester_resource"],
                 )
+            related_records_context = build_related_record_prompt_context(
+                payload, context["related_records"], related_records_context
+            )
             log_stage("related_record_sql", related_started)
         research_context = ""
         # The channel/meeting is read only for the initial empty payload. Later

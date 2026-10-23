@@ -49,7 +49,9 @@ from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.services.agent_restrictions import answer_restricted_topic, _language, _uncertain_response
 from app.services.related_records_context import (
+    build_related_record_prompt_context,
     extract_related_records,
+    related_record_response_needs_repair,
     verified_related_records_context,
 )
 from app.system.reaction_capture import get_agent_reinforcement_context
@@ -2076,11 +2078,14 @@ async def _process_auto_replies_impl(
                     source_ip=None,
                 )
                 if related_instance:
-                    message_metadata["related_records_context"] = await asyncio.to_thread(
+                    verified_context = await asyncio.to_thread(
                         verified_related_records_context,
                         related_instance,
                         related_records,
                         str(candidate.get("sender_resource") or "").strip(),
+                    )
+                    message_metadata["related_records_context"] = build_related_record_prompt_context(
+                        payload, related_records, verified_context
                     )
                     print(
                         "AGENT_RELATED_RECORDS_CONTEXT "
@@ -2409,6 +2414,14 @@ async def _process_auto_replies_impl(
             )
         ):
             response_text = _uncertain_response(_language(incoming_text))
+        if (
+            related_record_response_needs_repair(response_text, related_records)
+            and not message_metadata.get("related_record_response_repair")
+        ):
+            message_metadata["related_record_response_repair"] = True
+            message_metadata["response_repair_required"] = (
+                "La respuesta ignoró el registro de tarea relacionado; responde sobre la tarea actual."
+            )
         unsafe_reason = _unsafe_auto_reply_reason(response_text)
         if unsafe_reason is None and message_metadata.get("response_repair_required"):
             unsafe_reason = str(message_metadata["response_repair_required"])
