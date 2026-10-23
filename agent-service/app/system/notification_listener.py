@@ -22,6 +22,7 @@ from app.connectors.db_client import (
 )
 from app.system.learning import SistemaAprendizaje
 from app.system.schema import Actividad
+from app.services.solidset_attachments import extract_solidset_audio_media_ids
 
 
 class NotificationApiListener:
@@ -907,7 +908,12 @@ class NotificationApiListener:
             return None
 
         raw_message = data.get("RawMessage") or data.get("Message") or data.get("Text")
-        if not isinstance(raw_message, str) or not raw_message.strip():
+        raw_message = raw_message if isinstance(raw_message, str) else ""
+        # Voice notes intentionally have no textual RawMessage. They still
+        # must enter the candidate pipeline so the media segment can be
+        # resolved and sent to an audio-capable model.
+        has_audio_attachment = bool(extract_solidset_audio_media_ids(data))
+        if not raw_message.strip() and not has_audio_attachment:
             return None
 
         channel_id = (

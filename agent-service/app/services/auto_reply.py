@@ -888,6 +888,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     payload = (
         candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     )
+    has_audio_attachment = bool(extract_solidset_audio_media_ids(payload))
     if _payload_has_learning_only_destination(payload):
         return "contenido_solo_aprendizaje"
     if (
@@ -915,7 +916,7 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     can_reply_direct = bool(
         candidate.get("is_direct") and candidate.get("reply_resource")
     )
-    if not message:
+    if not message and not has_audio_attachment:
         return "mensaje_vacio"
     if not channel_id and not can_reply_direct:
         return "sin_destino_para_responder"

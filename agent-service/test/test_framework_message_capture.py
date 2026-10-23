@@ -1,8 +1,10 @@
 import unittest
+import json
 import threading
 from unittest.mock import Mock, patch
 
 from app.system.notification_listener import NotificationApiListener
+from app.services.auto_reply import _auto_reply_rejection_reason
 
 
 class TestFrameworkMessageCapture(unittest.TestCase):
@@ -258,6 +260,62 @@ class TestFrameworkMessageCapture(unittest.TestCase):
         self.assertNotEqual(candidate["meeting_id"], "old-meeting-id")
         self.assertTrue(candidate["kind_reply_eligible"])
         self.assertEqual(candidate["message_kind_value"], 7)
+
+    def test_voice_note_with_empty_raw_message_enters_auto_reply_pipeline(self):
+        listener = NotificationApiListener.__new__(NotificationApiListener)
+        listener.current_login_id = "agent-login"
+        listener.current_resource_id = "agent-resource"
+        listener.metrics_lock = threading.Lock()
+        listener.recent_auto_reply_candidates = []
+        listener.max_recent_auto_reply_candidates = 10
+        media_id = "15acf1c0-d7ee-4ee6-8c18-6fefa790f80c"
+        entry = {
+            "source": "framework",
+            "endpoint": "/FrameworkHub/SendMessage",
+            "channel_id": "room-1",
+            "data": {
+                "RawMessage": "",
+                "Kind": 7,
+                "IDWorkRoom": "room-1",
+                "IDSenderResource": "sender-resource",
+                "IDSenderLogin": "sender-login",
+                "FrameworkDestiny": {
+                    "workRoom": "room-1",
+                    "dests": [{
+                        "login": "agent-login",
+                        "resource": "agent-resource",
+                        "kind": 2,
+                    }],
+                },
+                "Chat": {
+                    "questionType": 3,
+                    "extraData": json.dumps({
+                        "voiceNote": {"id": media_id, "mimeType": "audio/mp4"}
+                    }),
+                    "resourceTable": [{
+                        "idResource": "agent-resource",
+                        "type": 2,
+                        "talkWithAgent": True,
+                    }],
+                },
+                "ExtraData": json.dumps({
+                    "voiceNote": {"id": media_id, "mimeType": "audio/mp4"}
+                }),
+            },
+        }
+
+        candidate = listener._build_auto_reply_candidate(entry, "voice-fingerprint")
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["message"], "")
+        with (
+            patch("app.services.auto_reply._auto_reply_seen", return_value=False),
+            patch("app.services.auto_reply.settings.SOLIDSET_LOGIN_RESOURCE_ID", ""),
+            patch("app.services.auto_reply.settings.SOLIDSET_RESOURCE_ID", ""),
+            patch("app.services.auto_reply.settings.SOLIDSET_AUTO_REPLY_ALLOW_SELF", True),
+            patch("app.services.auto_reply.settings.SOLIDSET_AUTO_REPLY_REQUIRE_MENTION", False),
+        ):
+            self.assertIsNone(_auto_reply_rejection_reason(candidate))
 
     def test_normalizes_all_visibility_level_values(self):
         listener = NotificationApiListener.__new__(NotificationApiListener)
