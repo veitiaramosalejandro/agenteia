@@ -52,7 +52,12 @@ from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
-from app.system.module_constants import ModuleConstants, resolve_record_module
+from app.services.related_records_context import (
+    extract_related_records,
+    format_related_records_context,
+    verified_related_records_context,
+)
+from app.system.module_constants import ModuleConstants
 from app.agent.schema_query_planner import plan_related_record_query
 from app.agent.semantic_text import language_signal, requested_output_language
 from app.agent.tools import google_web_search, query_sql_server
@@ -91,53 +96,7 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, Any]
     workroom_data = workroom_data if isinstance(workroom_data, dict) else {}
     quoted = _get_payload_value(chat, "chatQuestion", "ChatQuestion")
     quoted = quoted if isinstance(quoted, dict) else {}
-    related_raw = _get_payload_value(
-        payload, "RelatedRecordsData", "relatedRecordsData"
-    )
-    nested_related_raw = _get_payload_value(
-        chat, "relatedRecords", "RelatedRecords"
-    )
-    related_sources: list[Any] = []
-    if isinstance(nested_related_raw, list):
-        related_sources.extend(nested_related_raw)
-    if isinstance(related_raw, list):
-        related_sources.extend(related_raw)
-    related_records: list[dict[str, str]] = []
-    seen_related_records: set[tuple[str, str, str]] = set()
-    for item in related_sources:
-        if not isinstance(item, dict):
-            continue
-        normalized = {
-            "idRecordModule": str(
-                _get_payload_value(item, "idRecordModule", "IDRecordModule") or ""
-            ).strip(),
-            "gidRecord": str(
-                _get_payload_value(item, "gidRecord", "GIDRecord") or ""
-            ).strip(),
-            "recordCode": str(
-                _get_payload_value(item, "recordCode", "RecordCode") or ""
-            ).strip(),
-            "recordShortName": str(
-                _get_payload_value(item, "recordShortName", "RecordShortName") or ""
-            ).strip(),
-            "recordTypeName": str(
-                _get_payload_value(item, "recordTypeName", "RecordTypeName") or ""
-            ).strip(),
-        }
-        module_info = resolve_record_module(normalized["idRecordModule"])
-        normalized["idRecordModule"] = module_info["idRecordModule"] or normalized["idRecordModule"]
-        normalized["recordModuleName"] = module_info["moduleName"]
-        normalized["recordModuleKnown"] = module_info["known"]
-        dedupe_key = (
-            normalized["idRecordModule"].lower(),
-            normalized["gidRecord"].lower(),
-            normalized["recordCode"].lower(),
-        )
-        if dedupe_key in seen_related_records:
-            continue
-        seen_related_records.add(dedupe_key)
-        if any(normalized.values()):
-            related_records.append(normalized)
+    related_records = extract_related_records(payload)
 
     current_chat_id = str(
         _get_payload_value(chat, "idChat2", "IDChat2", "idChat")
@@ -218,6 +177,7 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, Any]
 
 def _format_related_records_context(records: list[dict[str, Any]]) -> str:
     """Serializa referencias autoritativas sin exponer identificadores internos al usuario."""
+    return format_related_records_context(records)
     lines: list[str] = []
     for record in records[:10]:
         record_type = str(record.get("recordTypeName") or "Registro").strip()
@@ -336,6 +296,8 @@ def _verified_sys_tasks_context(
 def _verified_related_records_context(
     solidset_instance: dict[str, Any], records: list[dict[str, Any]], requester_resource: str = ""
 ) -> str:
+    """Compatibility wrapper for the shared related-record resolver."""
+    return verified_related_records_context(solidset_instance, records, requester_resource)
     """Amplía RelatedRecordsData con campos descriptivos verificados mediante el catálogo SQL."""
     if not records:
         return ""

@@ -48,6 +48,10 @@ from app.response_queue import AgentResponseQueue
 from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.services.agent_restrictions import answer_restricted_topic, _language, _uncertain_response
+from app.services.related_records_context import (
+    extract_related_records,
+    verified_related_records_context,
+)
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.system.schema import Actividad
@@ -2061,6 +2065,35 @@ async def _process_auto_replies_impl(
             "current_reference_time": datetime.now(ZoneInfo(candidate.get("time_zone") or "Europe/Lisbon")).isoformat(),
             "system_utc_time": datetime.utcnow().isoformat()
         }
+        payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+        related_records = extract_related_records(payload)
+        if related_records:
+            message_metadata["related_records"] = related_records
+            try:
+                related_instance = await asyncio.to_thread(
+                    get_solidset_instance,
+                    code=str(candidate.get("solidset_instance_code") or "").strip() or None,
+                    source_ip=None,
+                )
+                if related_instance:
+                    message_metadata["related_records_context"] = await asyncio.to_thread(
+                        verified_related_records_context,
+                        related_instance,
+                        related_records,
+                        str(candidate.get("sender_resource") or "").strip(),
+                    )
+                    print(
+                        "AGENT_RELATED_RECORDS_CONTEXT "
+                        f"chat={candidate.get('chat_id')} records={len(related_records)} "
+                        f"resolved={bool(message_metadata.get('related_records_context'))}",
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(
+                    "AGENT_RELATED_RECORDS_CONTEXT_FAILED "
+                    f"chat={candidate.get('chat_id')} type={type(exc).__name__}",
+                    flush=True,
+                )
         print(
             "AGENT_QUOTED_CONTEXT "
             f"chat={candidate.get('chat_id')} quoted_chat={candidate.get('quoted_chat_id')} "

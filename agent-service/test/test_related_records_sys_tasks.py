@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 from app.services.suggestions import (
     _chat_question_suggestion_context,
-    _verified_sys_tasks_context,
 )
+from app.services.related_records_context import verified_sys_tasks_context
 
 
 def test_nested_chat_related_records_are_read_and_deduplicated():
@@ -43,7 +43,7 @@ def test_nested_chat_related_records_are_read_and_deduplicated():
     assert context["related_records"][0]["recordModuleKnown"] == "true"
 
 
-@patch("app.services.suggestions.query_sql_server")
+@patch("app.services.related_records_context.query_sql_server")
 def test_sys_tasks_related_records_use_fixed_parameterized_projection(query_tool):
     query_tool.invoke.return_value = json.dumps([{
         "IDTask": "af9b433e-f36b-1410-81eb-001be220af91",
@@ -58,7 +58,7 @@ def test_sys_tasks_related_records_use_fixed_parameterized_projection(query_tool
         "recordTypeName": "Task",
     }
 
-    context = _verified_sys_tasks_context({"ID": "instance-1"}, [record])
+    context = verified_sys_tasks_context({"ID": "instance-1"}, [record])
 
     request = query_tool.invoke.call_args.args[0]
     assert "FROM dbo.SysTask WHERE IDTask IN (%s)" in request["query"]
