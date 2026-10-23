@@ -455,7 +455,6 @@ class SolidSETOrchestrator:
             return translate_response(
                 response,
                 target_language=expected,
-                language_detector=self.agent._detect_user_language,
                 fallback_llm=selected_llm,
             )
         except Exception as exc:
