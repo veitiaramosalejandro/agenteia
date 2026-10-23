@@ -46,6 +46,26 @@ def test_resolves_sysfilesystem_image_to_openai_compatible_data_url(query_tool):
     assert attachments[0]["data_url"].startswith("data:image/png;base64,")
 
 
+@patch("app.services.solidset_attachments.query_sql_server")
+def test_resolves_hexadecimal_varbinary_without_0x_prefix(query_tool):
+    content = b"\x89PNG\r\n\x1a\nvalid-png-payload"
+    query_tool.invoke.return_value = json.dumps([{
+        "Guid": GUID,
+        "FileName": "captura.png",
+        "MimeType": "image/png",
+        "FileSize": len(content),
+        "FileContent": content.hex(),
+    }])
+
+    attachments = resolve_solidset_file_attachments(
+        {"ID": "instance-1"}, f"Analiza solidset://file/{GUID}"
+    )
+
+    encoded = attachments[0]["data_url"].split(",", 1)[1]
+    assert attachments[0]["status"] == "resolved"
+    assert base64.b64decode(encoded).startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_builds_image_part_and_replaces_uri_only_in_visible_text():
     attachments = [{
         "guid": GUID,

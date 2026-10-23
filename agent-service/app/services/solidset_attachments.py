@@ -66,6 +66,15 @@ def _decode_file_content(value: Any) -> bytes:
             return bytes.fromhex(text[2:])
         except ValueError:
             return b""
+    # SolidSET may expose varbinary FileContent as hexadecimal text without
+    # the usual ``0x`` prefix.  Decode that representation before trying
+    # Base64; otherwise a valid PNG/JPEG is transformed into invalid bytes and
+    # Ollama rejects it with "Failed to load image or audio file".
+    if len(text) % 2 == 0 and text and re.fullmatch(r"[0-9a-fA-F]+", text):
+        try:
+            return bytes.fromhex(text)
+        except ValueError:
+            return b""
     try:
         return base64.b64decode(text, validate=True)
     except (binascii.Error, ValueError):
