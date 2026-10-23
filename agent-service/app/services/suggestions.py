@@ -52,6 +52,7 @@ from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
+from app.system.module_constants import resolve_record_module
 from app.agent.schema_query_planner import plan_related_record_query
 from app.agent.semantic_text import language_signal, requested_output_language
 from app.agent.tools import google_web_search, query_sql_server
@@ -114,6 +115,10 @@ def _chat_question_suggestion_context(payload: dict[str, Any]) -> dict[str, Any]
                 _get_payload_value(item, "recordTypeName", "RecordTypeName") or ""
             ).strip(),
         }
+        module_info = resolve_record_module(normalized["idRecordModule"])
+        normalized["idRecordModule"] = module_info["idRecordModule"] or normalized["idRecordModule"]
+        normalized["recordModuleName"] = module_info["moduleName"]
+        normalized["recordModuleKnown"] = module_info["known"]
         if any(normalized.values()):
             related_records.append(normalized)
 
@@ -199,9 +204,12 @@ def _format_related_records_context(records: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for record in records[:10]:
         record_type = str(record.get("recordTypeName") or "Registro").strip()
+        module_name = str(record.get("recordModuleName") or "").strip()
         code = str(record.get("recordCode") or "").strip()
         name = str(record.get("recordShortName") or "").strip()
         label = " — ".join(value for value in (code, name) if value)
+        if module_name:
+            record_type = f"{record_type} [{module_name}]"
         lines.append(f"{record_type}: {label or 'referencia asociada al turno'}")
     return "\n".join(lines)
 
