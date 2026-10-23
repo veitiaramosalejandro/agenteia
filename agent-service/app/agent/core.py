@@ -4003,6 +4003,15 @@ class MachiningAgent:
                     "identificar una tarea que ya estaba identificada. Responde ahora "
                     "directamente sobre el registro actual."
                 )
+            if metadata_identity.get("related_record_guidance_mode"):
+                system_prompt += (
+                    " La persona solicita cómo realizar o resolver esta tarea. Usa el título, "
+                    "la descripción y los campos verificados como base para explicar un plan "
+                    "práctico y ordenado. Distingue hechos verificados de recomendaciones. "
+                    "No rechaces la petición solo porque falten criterios de aceptación; formula "
+                    "supuestos o puntos a confirmar cuando sean necesarios, sin presentarlos "
+                    "como hechos existentes. No vuelvas a preguntar cuál es la tarea."
+                )
         if agent_private_knowledge:
             system_prompt += (
                 "\n\n=== CONOCIMIENTO PRIVADO DEL AGENTE ===\n"

@@ -49,9 +49,13 @@ from app.services.response_status import load as _load_response_status
 from app.services.response_status import update as _update_response_status
 from app.services.agent_restrictions import answer_restricted_topic, _language, _uncertain_response
 from app.services.related_records_context import (
+    answer_related_records_question,
     build_related_record_prompt_context,
     extract_related_records,
+    format_sys_tasks_evidence,
     related_record_response_needs_repair,
+    related_record_question_needs_guidance,
+    resolve_sys_tasks_evidence,
     verified_related_records_context,
 )
 from app.system.reaction_capture import get_agent_reinforcement_context
@@ -2069,6 +2073,7 @@ async def _process_auto_replies_impl(
         }
         payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
         related_records = extract_related_records(payload)
+        related_task_evidence: list[dict[str, Any]] = []
         if related_records:
             message_metadata["related_records"] = related_records
             try:
@@ -2078,19 +2083,32 @@ async def _process_auto_replies_impl(
                     source_ip=None,
                 )
                 if related_instance:
+                    requester_resource = str(candidate.get("sender_resource") or "").strip()
+                    related_task_evidence = await asyncio.to_thread(
+                        resolve_sys_tasks_evidence, related_instance, related_records,
+                        requester_resource,
+                    )
                     verified_context = await asyncio.to_thread(
-                        verified_related_records_context,
-                        related_instance,
-                        related_records,
-                        str(candidate.get("sender_resource") or "").strip(),
+                        verified_related_records_context, related_instance,
+                        [record for record in related_records if str(record.get("recordModuleName") or "") != "SysTasks"],
+                        requester_resource,
+                    )
+                    task_context = format_sys_tasks_evidence(related_task_evidence)
+                    verified_context = "\n\n".join(
+                        value for value in (task_context, verified_context) if value
                     )
                     message_metadata["related_records_context"] = build_related_record_prompt_context(
                         payload, related_records, verified_context
                     )
+                    message_metadata["related_task_evidence_status"] = [
+                        str(item.get("verification") or "") for item in related_task_evidence
+                    ]
                     print(
                         "AGENT_RELATED_RECORDS_CONTEXT "
                         f"chat={candidate.get('chat_id')} records={len(related_records)} "
-                        f"resolved={bool(message_metadata.get('related_records_context'))}",
+                        f"resolved={bool(message_metadata.get('related_records_context'))} "
+                        f"task_sql_retrieved={sum(1 for item in related_task_evidence if item.get('verification') == 'retrieved')} "
+                        f"task_payload_fallback={sum(1 for item in related_task_evidence if item.get('verification') != 'retrieved')}",
                         flush=True,
                     )
             except Exception as exc:
@@ -2228,11 +2246,42 @@ async def _process_auto_replies_impl(
                     f"channel={channel_id} chars={len(conversation_history)}",
                     flush=True,
                 )
-            response_text = await asyncio.to_thread(
-                answer_restricted_topic,
-                incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
-                scope_context=message_metadata,
+            related_record_guidance = related_record_question_needs_guidance(
+                incoming_text, related_records,
             )
+            message_metadata["related_record_guidance_mode"] = related_record_guidance
+            response_text = None if related_record_guidance else answer_related_records_question(
+                incoming_text, payload, related_records, related_task_evidence,
+                _language(incoming_text),
+            )
+            if related_record_guidance:
+                # The record identifies the subject; the assigned model must
+                # now reason over it. Do not replace a request for a plan with
+                # a hard-coded refusal merely because the task has no detailed
+                # acceptance criteria.
+                message_metadata["_agent_scope_prechecked"] = True
+                message_metadata["orchestrator_route"] = "related_record_guidance"
+                print(
+                    "AGENT_RELATED_RECORDS_GUIDANCE "
+                    f"chat={candidate.get('chat_id')} tasks={len(related_task_evidence)}",
+                    flush=True,
+                )
+            elif response_text is not None:
+                message_metadata["related_records_direct_answer"] = True
+                message_metadata["orchestrator_route"] = "related_record_evidence"
+                message_metadata["_agent_scope_prechecked"] = True
+                print(
+                    "AGENT_RELATED_RECORDS_DIRECT_ANSWER "
+                    f"chat={candidate.get('chat_id')} tasks={len(related_task_evidence)} "
+                    f"verification={message_metadata.get('related_task_evidence_status') or ['payload_only']}",
+                    flush=True,
+                )
+            elif not related_record_guidance:
+                response_text = await asyncio.to_thread(
+                    answer_restricted_topic,
+                    incoming_text, candidate.get("solidset_instance_id"), agent_resource_id,
+                    scope_context=message_metadata,
+                )
             if response_text is None:
                 # The dialogue core receives the same metadata. Record that the
                 # published prompt scope was already evaluated so it does not
@@ -2414,14 +2463,24 @@ async def _process_auto_replies_impl(
             )
         ):
             response_text = _uncertain_response(_language(incoming_text))
-        if (
-            related_record_response_needs_repair(response_text, related_records)
-            and not message_metadata.get("related_record_response_repair")
-        ):
-            message_metadata["related_record_response_repair"] = True
-            message_metadata["response_repair_required"] = (
-                "La respuesta ignoró el registro de tarea relacionado; responde sobre la tarea actual."
+        if related_record_response_needs_repair(response_text, related_records):
+            evidence_fallback = answer_related_records_question(
+                incoming_text, payload, related_records, related_task_evidence,
+                _language(incoming_text), allow_guidance_fallback=True,
             )
+            if evidence_fallback:
+                response_text = evidence_fallback
+                message_metadata["related_records_direct_answer"] = True
+                message_metadata.pop("response_repair_required", None)
+                print(
+                    "AGENT_RELATED_RECORDS_GENERIC_RESPONSE_REPLACED "
+                    f"chat={candidate.get('chat_id')}", flush=True,
+                )
+            elif not message_metadata.get("related_record_response_repair"):
+                message_metadata["related_record_response_repair"] = True
+                message_metadata["response_repair_required"] = (
+                    "La respuesta ignoró el registro de tarea relacionado; responde sobre la tarea actual."
+                )
         unsafe_reason = _unsafe_auto_reply_reason(response_text)
         if unsafe_reason is None and message_metadata.get("response_repair_required"):
             unsafe_reason = str(message_metadata["response_repair_required"])
@@ -2464,6 +2523,10 @@ async def _process_auto_replies_impl(
                     incoming_text, repaired, repair_metadata
                 ).strip()
                 repair_reason = _unsafe_auto_reply_reason(repaired)
+                if repair_reason is None and related_record_response_needs_repair(
+                    repaired, related_records
+                ):
+                    repair_reason = "La respuesta reparada volvió a ignorar la tarea relacionada."
                 if repair_reason is None:
                     response_text = repaired
                     print(
@@ -2482,6 +2545,15 @@ async def _process_auto_replies_impl(
                     "AGENT_RESPONSE_REPAIR_FAILED "
                     f"chat={candidate.get('chat_id')} type={type(exc).__name__}: {exc}",
                     flush=True,
+                )
+            if related_record_response_needs_repair(response_text, related_records):
+                response_text = answer_related_records_question(
+                    incoming_text, payload, related_records, related_task_evidence,
+                    _language(incoming_text), allow_guidance_fallback=True,
+                ) or response_text
+                print(
+                    "AGENT_RELATED_RECORDS_REPAIR_FALLBACK "
+                    f"chat={candidate.get('chat_id')}", flush=True,
                 )
             if _unsafe_auto_reply_reason(response_text):
                 print(
