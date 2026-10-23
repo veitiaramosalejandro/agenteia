@@ -153,6 +153,43 @@ def _conversation_history_matches_request(message: str, history: str) -> bool:
     return bool((current_terms - stop_words) & history_terms)
 
 
+def _is_conversational_followup(message: str) -> bool:
+    """Recognize a request to clarify the previous answer, not a new task.
+
+    Short clarification turns often contain no domain term at all.  Requiring
+    topic-word overlap for those turns makes the scope classifier treat them
+    as unrelated requests, even though the preceding conversation is clear.
+    This helper is deliberately narrow: it accepts only common conversational
+    forms and does not authorize a new action or any tool.
+    """
+    text = re.sub(r"\s+", " ", str(message or "").strip().casefold())
+    if not text or len(text) > 180:
+        return False
+    text = re.sub(r"[¿?¡!.,;:]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    generic_words = {
+        "mejor", "bien", "nuevo", "nuevamente", "favor", "poco", "con",
+        "más", "detalle", "detalles", "correctamente", "claramente", "la",
+        "explicación", "anterior", "eso", "esto", "qué", "quieres", "decir",
+        "como", "así", "paso", "a", "por", "explicame", "explícame",
+        "explicar", "aclarame", "aclarar", "repite", "repetirlo", "vuelve",
+    }
+    prefixes = (
+        r"no (?:entend[ií]|entiendo|comprend[ií]|comprendo)",
+        r"(?:expl[ií]came|explique(?:me)?|aclara(?:me)?|detalla(?:me)?)",
+        r"(?:puedes|podrías|podrias) (?:explicarme|explicar|aclararme|aclarar|repetirlo?)",
+        r"(?:repite(?:lo)?|vuelve a explicar(?:me)?|explica(?:me)? de nuevo)",
+    )
+    for prefix in prefixes:
+        match = re.fullmatch(rf"({prefix})(?: (.*))?", text)
+        if match:
+            remainder = match.group(2) or ""
+            words = set(re.findall(r"[\wáéíóúüñ]+", remainder))
+            if words <= generic_words:
+                return True
+    return False
+
+
 _INTERNAL_SCOPE_RESPONSE_MARKERS = (
     "out_of_scope_action",
     "published_agent_policy",
@@ -535,15 +572,16 @@ def answer_restricted_topic(
                 "reason=quoted_chat_question_context",
                 flush=True,
             )
-        elif conversation_history and _conversation_history_matches_request(
-            message, conversation_history
+        elif conversation_history and (
+            _conversation_history_matches_request(message, conversation_history)
+            or _is_conversational_followup(message)
         ):
             # A channel turn that names a topic already discussed by an
             # authorized participant is a contextual continuation, even when
             # SolidSET did not provide ChatQuestion/quoted_message. This keeps
             # the published scope gate, but avoids treating the follow-up as a
-            # new unrelated domain. Explicit restrictions are still handled by
-            # the policy before this branch in the caller.
+            # new unrelated domain. The narrow follow-up detector covers
+            # clarification turns that contain no topic word at all.
             decision = "scoped"
             if scope_context is not None:
                 scope_context["_scope_conversation_context"] = True

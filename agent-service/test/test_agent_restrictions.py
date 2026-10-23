@@ -8,6 +8,7 @@ import httpx
 from app.agent.prompt_budget import compact_system
 from app.services.agent_restrictions import (
     _clarification,
+    _is_conversational_followup,
     _language,
     _request_instruction,
     answer_restricted_topic,
@@ -215,6 +216,28 @@ def test_channel_follow_up_keeps_the_topic_from_intervenient_history():
          patch("app.services.agent_restrictions._clarification") as clarify:
         assert answer_restricted_topic(
             "¿Qué es Kanban?", "instance", "agent", scope_context=context
+        ) is None
+
+    decide.assert_not_called()
+    clarify.assert_not_called()
+    assert context["_agent_scope_decision"] == "scoped"
+    assert context["_scope_conversation_context"] is True
+
+
+def test_vague_clarification_follow_up_inherits_conversation_scope():
+    context = {
+        "conversation_history": (
+            "[2026-10-22 12:00:00] Usuario: ¿Cómo configuro N8N en Docker?\n"
+            "[2026-10-22 12:01:00] Dev20 [IA]: Explicación sobre Docker y N8N."
+        )
+    }
+    assert _is_conversational_followup("No entendi correctamente explicame bien por favor?")
+    with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
+         patch("app.services.agent_restrictions._scope_decision") as decide, \
+         patch("app.services.agent_restrictions._clarification") as clarify:
+        assert answer_restricted_topic(
+            "No entendi correctamente explicame bien por favor?",
+            "instance", "agent", scope_context=context,
         ) is None
 
     decide.assert_not_called()
