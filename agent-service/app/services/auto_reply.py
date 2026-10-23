@@ -2261,6 +2261,14 @@ async def _process_auto_replies_impl(
                 # acceptance criteria.
                 message_metadata["_agent_scope_prechecked"] = True
                 message_metadata["orchestrator_route"] = "related_record_guidance"
+                declared = set(message_metadata.get("declared_capabilities") or set())
+                message_metadata["model_capability"] = (
+                    "reasoning" if "reasoning" in declared else "general"
+                )
+                # This is an explicit capability decision based on the current
+                # task reference. Do not let a second generic classifier erase
+                # it before the assigned model is selected.
+                message_metadata["_capability_route_prepared"] = True
                 print(
                     "AGENT_RELATED_RECORDS_GUIDANCE "
                     f"chat={candidate.get('chat_id')} tasks={len(related_task_evidence)}",
@@ -2289,7 +2297,10 @@ async def _process_auto_replies_impl(
                 message_metadata["_agent_scope_prechecked"] = True
                 from app.services.capability_planner import prepare_capability_route
                 try:
-                    await asyncio.to_thread(prepare_capability_route, incoming_text, message_metadata)
+                    if not message_metadata.get("_capability_route_prepared"):
+                        await asyncio.to_thread(
+                            prepare_capability_route, incoming_text, message_metadata
+                        )
                 except Exception as exc:
                     # A capability-planning failure is not an authorization
                     # failure. Continue with the least-privileged general

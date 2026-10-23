@@ -1,6 +1,9 @@
 import json
 from unittest.mock import patch
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.agent.prompt_budget import budget_messages
 from app.services.suggestions import (
     _chat_question_suggestion_context,
 )
@@ -167,3 +170,35 @@ def test_zero_progress_is_preserved_in_task_summary():
     )
 
     assert "progreso 0.0%" in answer
+
+
+def test_current_task_brief_is_mandatory_when_history_exceeds_prompt_budget():
+    current_title = "Preparação da consulta de tarefas"
+    current_description = "Aplicação de consultas para que o agente de IA possa obter conhecimento sobre as tarefas."
+    messages = [
+        SystemMessage(content="Política del agente. " * 300),
+        SystemMessage(
+            content=(
+                "Historial anterior: T-26-2330 Crear trabajo con kubernate. "
+                * 250
+            ),
+            additional_kwargs={"history_context": True, "budget_context": True},
+        ),
+        SystemMessage(
+            content=(
+                "=== FICHA OBLIGATORIA DE LA TAREA DEL TURNO ACTUAL ===\n"
+                f"Título: {current_title}\nDescripción: {current_description}"
+            ),
+            additional_kwargs={"budget_current": True, "related_record_current": True},
+        ),
+        HumanMessage(
+            content="¿Podrías explicarme cómo resolver esta tarea?",
+            additional_kwargs={"budget_current": True},
+        ),
+    ]
+
+    bounded = budget_messages(messages)
+    prompt = "\n".join(str(message.content) for message in bounded)
+
+    assert current_title in prompt
+    assert current_description in prompt

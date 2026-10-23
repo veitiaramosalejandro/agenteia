@@ -3988,22 +3988,35 @@ class MachiningAgent:
         related_records_context = str(
             metadata_identity.get("related_records_context") or ""
         ).strip()
+        related_record_guidance_mode = bool(
+            metadata_identity.get("related_record_guidance_mode")
+        )
         if related_records_context:
-            system_prompt += (
-                "\n\n=== REGISTROS RELACIONADOS AL TURNO ACTUAL ===\n"
-                f"{related_records_context}\n"
-                "Estos registros proceden del payload actual y son la evidencia primaria para "
-                "referencias como 'esta tarea', 'esta actividad' o 'este registro'. Prevalecen "
-                "sobre el historial, RAG y conocimiento privado no relacionado. No cambies el "
-                "tema ni reutilices respuestas de turnos anteriores."
-            )
+            if related_record_guidance_mode:
+                # The full record is placed immediately before the current
+                # user turn below. Keeping it out of this long policy avoids
+                # an older history item displacing the actual task under the
+                # local prompt budget.
+                system_prompt += (
+                    "\n\nExiste un registro relacionado obligatorio para el turno actual. "
+                    "Se entregará junto a la pregunta y prevalece sobre cualquier tarea del historial."
+                )
+            else:
+                system_prompt += (
+                    "\n\n=== REGISTROS RELACIONADOS AL TURNO ACTUAL ===\n"
+                    f"{related_records_context}\n"
+                    "Estos registros proceden del payload actual y son la evidencia primaria para "
+                    "referencias como 'esta tarea', 'esta actividad' o 'este registro'. Prevalecen "
+                    "sobre el historial, RAG y conocimiento privado no relacionado. No cambies el "
+                    "tema ni reutilices respuestas de turnos anteriores."
+                )
             if metadata_identity.get("related_record_response_repair"):
                 system_prompt += (
                     " Esta es una corrección obligatoria: la respuesta anterior pidió "
                     "identificar una tarea que ya estaba identificada. Responde ahora "
                     "directamente sobre el registro actual."
                 )
-            if metadata_identity.get("related_record_guidance_mode"):
+            if related_record_guidance_mode:
                 system_prompt += (
                     " La persona solicita cómo realizar o resolver esta tarea. Usa el título, "
                     "la descripción y los campos verificados como base para explicar un plan "
@@ -4400,7 +4413,7 @@ class MachiningAgent:
             )
             if not isolated_context:
                 local_context_messages.append(context_message({
-                    "Registro actual": related_records_context,
+                    "Registro actual": "" if related_record_guidance_mode else related_records_context,
                     "Catálogo SQL verificado": business_schema_context,
                     "Mensaje citado": str(message_metadata.get("quoted_message") or ""),
                 }, 1400))
@@ -4444,7 +4457,7 @@ class MachiningAgent:
                     "Conocimiento pertinente": agent_rag_context,
                     "Registros sincronizados": system_snapshot_context,
                     "Documentación": rag_context,
-                    "Registro actual": related_records_context,
+                    "Registro actual": "" if related_record_guidance_mode else related_records_context,
                 }, 2000))
             # The compact context replaces the duplicate legacy context messages.
             chat_context_bd = canal_operativo_context = aprendizaje_relevante = ""
@@ -4528,6 +4541,26 @@ class MachiningAgent:
             "referencias, elipsis y continuaciones (por ejemplo: 'sí', 'la temporada actual' o una URL). "
             "No cambies de tema salvo que el usuario introduzca claramente uno nuevo."
         )))
+
+        if related_record_guidance_mode and related_records_context:
+            current_record_brief = clipped(related_records_context, 3800)
+            messages.append(SystemMessage(
+                content=(
+                    "=== FICHA OBLIGATORIA DE LA TAREA DEL TURNO ACTUAL ===\n"
+                    f"{current_record_brief}\n"
+                    "Esta ficha corresponde exactamente a la expresión 'esta tarea'. Ignora cualquier "
+                    "tarea diferente que aparezca en el historial. Responde usando su título y descripción; "
+                    "para una solicitud de solución, propone pasos prácticos y separa los hechos verificados "
+                    "de las recomendaciones o supuestos. No pidas que identifiquen la tarea."
+                ),
+                additional_kwargs={"budget_current": True, "related_record_current": True},
+            ))
+            print(
+                "AGENT_RELATED_RECORDS_MODEL_BRIEF "
+                f"chars={len(current_record_brief)} "
+                f"preview={current_record_brief[:180]!r}",
+                flush=True,
+            )
 
         # Añadir mensaje del usuario
         messages.append(HumanMessage(content=user_text, additional_kwargs={"budget_current": True}))
