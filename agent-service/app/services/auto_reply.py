@@ -1343,6 +1343,7 @@ def _load_intervenient_conversation_history(candidate: dict) -> str:
 
     lines: list[str] = []
     total_chars = 0
+    selected_agent_id = str(candidate.get("agent_resource_id") or "").strip().casefold()
     # The data access method returns newest first.  The model must receive the
     # dialogue in chronological order, excluding the current turn if it has
     # already been persisted by SolidSET.
@@ -1357,9 +1358,25 @@ def _load_intervenient_conversation_history(candidate: dict) -> str:
             .strip()
         )
         resource_id = str(row.get("sender_resource_id") or "").strip()
+        recipients = [
+            str(value).strip()
+            for value in (row.get("recipient_resource_ids") or [])
+            if str(value).strip() and str(value).strip() != resource_id
+        ]
+        # Do not leak a turn explicitly addressed to another agent into the
+        # selected agent's conversational memory. Messages without a resolved
+        # recipient remain eligible as channel/self-agent learning context.
+        if recipients and selected_agent_id and selected_agent_id not in {
+            value.casefold() for value in recipients
+        }:
+            continue
+        recipient_text = ", ".join(recipients) if recipients else "sin destinatario identificado"
         stamp = row.get("timestamp")
         stamp_text = stamp.strftime("%Y-%m-%d %H:%M:%S") if hasattr(stamp, "strftime") else str(stamp or "")[:19]
-        line = f"[{stamp_text}] {author} ({resource_id or 'recurso no disponible'}): {text[:900]}"
+        line = (
+            f"[{stamp_text}] {author} ({resource_id or 'recurso no disponible'}) "
+            f"-> destinatarios: {recipient_text}: {text[:900]}"
+        )
         if total_chars + len(line) > 10000:
             break
         lines.append(line)
@@ -1720,6 +1737,20 @@ def _learn_direct_agent_assertion(candidate: dict[str, Any]) -> bool:
     assertion = _sanitize_auto_reply_input(str(candidate.get("message") or ""))
     agent_resource_id = str(candidate.get("agent_resource_id") or "").strip()
     channel_id = str(candidate.get("channel_id") or "").strip()
+    recipient_ids = {
+        str(value).strip().casefold()
+        for value in (candidate.get("recipient_resource_ids") or [])
+        if str(value).strip()
+    }
+    # An explicit destination is authoritative. A message addressed to a
+    # different agent must never be learned by the currently routed agent.
+    if recipient_ids and agent_resource_id.casefold() not in recipient_ids:
+        print(
+            "🛑 Aprendizaje omitido: mensaje dirigido a otro agente "
+            f"agent={agent_resource_id} recipients={sorted(recipient_ids)}",
+            flush=True,
+        )
+        return False
     if (
         not assertion
         or not agent_resource_id
@@ -2003,6 +2034,8 @@ async def _process_auto_replies_impl(
             "quoted_chat_id": candidate.get("quoted_chat_id"),
             "quoted_message": candidate.get("quoted_message"),
             "quoted_sender_resource": candidate.get("quoted_sender_resource"),
+            "recipient_resource_ids": candidate.get("recipient_resource_ids") or [],
+            "addressed_to_agent": bool(candidate.get("addressed_to_agent")),
             "recipient_count": int(candidate.get("recipient_count", 0)),
             "importance": importance,
             "agent_resource_id": candidate.get("agent_resource_id"),

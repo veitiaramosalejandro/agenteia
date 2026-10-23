@@ -475,6 +475,9 @@ class MachiningAgent:
             r"qu[eé]n\s+est[aá]\s+hablando\s+contigo",
             r"con\s+qu[ií]en\s+est[aá]s\s+hablando",
             r"qui[eé]n\s+soy",
+            r"c[oó]mo\s+me\s+llamo",
+            r"cu[aá]l\s+es\s+mi\s+nombre",
+            r"recuerdas\s+mi\s+nombre",
             r"mi\s+usuario",
             r"cu[aá]l\s+es\s+mi\s+recurso",
             r"qu[eé]\s+recurso\s+(?:tengo|soy|est[aá])",
@@ -524,6 +527,7 @@ class MachiningAgent:
         user_id: Optional[str],
         canal_id: Optional[str],
         authenticated_identity: Optional[dict[str, Any]] = None,
+        conversation_history: str = "",
     ) -> str:
         """Construye respuesta de identidad usando user_id de sesión y contexto opcional desde BD."""
         if not self._is_valid_guid(user_id):
@@ -538,6 +542,23 @@ class MachiningAgent:
         resource_model_id = ""
         resource_guid = ""
         resource_alias = ""
+
+        # Facts explicitly stated by the resource in the authoritative
+        # ChatQuestion chain have priority for conversational identity. This
+        # prevents a question such as "¿cómo me llamo?" from going through a
+        # generic model path that does not synchronously query learned facts.
+        name_match = re.search(
+            r"\b(?:me\s+llamo|mi\s+nombre\s+es)\s+([A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ'-]*(?:\s+[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ'-]*){0,2})",
+            str(conversation_history or ""),
+            flags=re.IGNORECASE,
+        )
+        if name_match:
+            learned_name = " ".join(name_match.group(1).strip(" .,!?:;").split())
+            if learned_name:
+                return (
+                    "Según nuestra conversación, me indicaste que tu nombre es "
+                    f"**{learned_name}**."
+                )
 
         try:
             identity = authenticated_identity or self.sistema_aprendizaje._resolve_user_identity(user_id)
@@ -3276,6 +3297,7 @@ class MachiningAgent:
                 user_id=user_id,
                 canal_id=canal_id,
                 authenticated_identity=authenticated_identity,
+                conversation_history=str(metadata.get("conversation_history") or ""),
             )
 
             if history:

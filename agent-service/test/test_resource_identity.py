@@ -21,6 +21,26 @@ class TestResourceIdentity(unittest.TestCase):
             with self.subTest(question=question):
                 self.assertTrue(self.agent._is_identity_intent(question))
 
+        self.assertTrue(self.agent._is_identity_intent("¿Cómo me llamo?"))
+        self.assertTrue(self.agent._is_identity_intent("¿Cuál es mi nombre?"))
+
+    def test_identity_question_uses_name_from_authoritative_conversation(self):
+        response = self.agent._build_identity_response(
+            user_id="272700d8-d1ba-46a6-a121-b76fce8ecb9f",
+            canal_id="d8e82821-d52f-44bf-9b70-682651a6196e",
+            authenticated_identity={
+                "resource_id": "272700d8-d1ba-46a6-a121-b76fce8ecb9f",
+                "display_name": "Otro nombre de directorio",
+            },
+            conversation_history=(
+                "[2026-10-23 09:26:23] Alejandro (human) "
+                "-> destinatarios: sin destinatario identificado: Hola, me llamo Alejandro."
+            ),
+        )
+
+        self.assertIn("Alejandro", response)
+        self.assertNotIn("Otro nombre de directorio", response)
+
     def test_identity_response_is_formal_and_does_not_expose_internal_ids(self):
         resource_guid = "272700d8-d1ba-46a6-a121-b76fce8ecb9f"
         login_guid = "1790fc78-023d-4506-a7e8-5c030e9386d1"

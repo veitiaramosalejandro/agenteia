@@ -940,6 +940,24 @@ class NotificationApiListener:
         destiny_lower = {str(key).lower(): value for key, value in destiny.items()}
         destiny_resource = str(destiny_lower.get("resource") or destiny_lower.get("idresource") or "").strip()
         destiny_dests = destiny_lower.get("dests") if isinstance(destiny_lower.get("dests"), list) else []
+        chat_resource_table = (
+            {str(key).casefold(): value for key, value in raw_chat_payload.items()}
+            .get("resourcetable")
+        )
+        chat_participants = resolve_resource_table(chat_resource_table)
+        recipient_resource_ids = []
+        for item in destiny_dests:
+            if not isinstance(item, dict):
+                continue
+            lowered_item = {str(key).casefold(): value for key, value in item.items()}
+            resource_id = str(
+                lowered_item.get("resource") or lowered_item.get("idresource") or ""
+            ).strip()
+            if resource_id and resource_id not in recipient_resource_ids:
+                recipient_resource_ids.append(resource_id)
+        for resource_id in chat_participants.agent_recipient_ids:
+            if resource_id not in recipient_resource_ids:
+                recipient_resource_ids.append(resource_id)
         addressed_to_agent = self._destiny_addresses_agent(destiny)
         meeting = self._extract_meeting_context(
             data.get("Info"), data.get("ExtraData"), data.get("Chat")
@@ -1000,6 +1018,7 @@ class NotificationApiListener:
                 quoted_lower.get("idsenderresource") or ""
             ).strip(),
             "destiny_resource": destiny_resource,
+            "recipient_resource_ids": recipient_resource_ids,
             "addressed_to_agent": addressed_to_agent,
             "is_direct": is_direct,
             "reply_resource": str(sender_resource or "").strip(),

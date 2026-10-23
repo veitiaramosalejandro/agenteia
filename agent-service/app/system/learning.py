@@ -1098,6 +1098,48 @@ class SistemaAprendizaje:
                         context="chat_question_chain_query",
                     )
                     rows = cursor.fetchall() or []
+                    # SysChat2SysResource is the authoritative participant
+                    # relation for each message. Load it separately so a
+                    # temporary failure here never destroys the already valid
+                    # ChatQuestion chain.
+                    participant_map: Dict[str, Dict[str, List[str]]] = {}
+                    chat_ids = []
+                    for row in rows:
+                        raw_id = str(row.get("IDChat2") or "").strip()
+                        if raw_id.isdigit():
+                            chat_ids.append(raw_id)
+                    if chat_ids:
+                        try:
+                            placeholders = ",".join("%s" for _ in sorted(set(chat_ids)))
+                            self._execute_with_retry(
+                                cursor,
+                                query=(
+                                    "SELECT IDChat, IDResource, IDLogin "
+                                    "FROM dbo.SysChat2SysResource WITH (NOLOCK) "
+                                    f"WHERE IDChat IN ({placeholders})"
+                                ),
+                                params=tuple(int(value) for value in sorted(set(chat_ids))),
+                                context="chat_question_participants",
+                            )
+                            for participant in cursor.fetchall() or []:
+                                message_id = str(participant.get("IDChat") or "").strip()
+                                resource_id = str(participant.get("IDResource") or "").strip()
+                                login_id = str(participant.get("IDLogin") or "").strip()
+                                if not message_id:
+                                    continue
+                                bucket = participant_map.setdefault(
+                                    message_id, {"resources": [], "logins": []}
+                                )
+                                if resource_id and resource_id not in bucket["resources"]:
+                                    bucket["resources"].append(resource_id)
+                                if login_id and login_id not in bucket["logins"]:
+                                    bucket["logins"].append(login_id)
+                        except Exception as exc:
+                            print(
+                                "AGENT_CHAT_QUESTION_PARTICIPANTS_FAILED "
+                                f"chat={current_chat_id} type={type(exc).__name__}",
+                                flush=True,
+                            )
             return [
                 {
                     "chat_id": str(row.get("IDChat2") or ""),
@@ -1109,6 +1151,15 @@ class SistemaAprendizaje:
                     "sender_display_name": str(row.get("SenderDisplayName") or "").strip(),
                     "sender_full_name": str(row.get("SenderFullName") or "").strip(),
                     "sender_username": str(row.get("SenderUsername") or "").strip(),
+                    "recipient_resource_ids": [
+                        value for value in participant_map.get(
+                            str(row.get("IDChat2") or ""), {}
+                        ).get("resources", [])
+                        if value != str(row.get("SenderResourceId") or "").strip()
+                    ],
+                    "recipient_login_ids": participant_map.get(
+                        str(row.get("IDChat2") or ""), {}
+                    ).get("logins", []),
                     "depth": int(row.get("Depth") or 0),
                 }
                 for row in rows
