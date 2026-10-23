@@ -54,6 +54,13 @@ _REQUEST_ACTION_SCHEMA = {
     "additionalProperties": False,
 }
 
+# The scope classifier receives the published behavior as JSON.  This is a
+# character guard (not a model token limit): it protects the classifier from
+# pathological profiles while allowing normal profiles with several
+# specialties, response rules, and visual-capability instructions.
+_SCOPE_MESSAGE_MAX_CHARS = 4000
+_SCOPE_POLICY_MAX_CHARS = 12000
+
 
 class ScopeOutputError(ValueError):
     """Fixed error message with separately bounded field diagnostics."""
@@ -277,7 +284,15 @@ def _scope_decision(message: str, behavior: dict, instance_id: str, resource_id:
         "out_of_scope_action": behavior.get("out_of_scope_action"),
         "declared_capabilities": sorted(available_capabilities or set()),
     }
-    if len(message) > 4000 or len(json.dumps(policy, ensure_ascii=False)) > 6000:
+    policy_size = len(json.dumps(policy, ensure_ascii=False))
+    if len(message) > _SCOPE_MESSAGE_MAX_CHARS or policy_size > _SCOPE_POLICY_MAX_CHARS:
+        print(
+            f"AGENT_SCOPE_INPUT_REJECTED agent={resource_id} "
+            f"message_chars={len(message)} policy_chars={policy_size} "
+            f"message_limit={_SCOPE_MESSAGE_MAX_CHARS} "
+            f"policy_limit={_SCOPE_POLICY_MAX_CHARS}",
+            flush=True,
+        )
         raise ScopeOutputError("input_limit")
     bounded_history = str(conversation_history or "").strip()[:10000]
     messages = [

@@ -544,3 +544,55 @@ def test_algorithmic_scope_prompt_allows_basic_math_support():
     prompt = model.invoke.call_args.args[0][0].content
     assert "operaciones matemáticas básicas" in prompt
     assert "raíces" in prompt
+
+
+def test_visual_agent_policy_is_not_rejected_by_scope_input_guard():
+    """The published visual profile must reach the classifier before routing."""
+    config = SimpleNamespace(timeout_seconds=30, provider="ollama", model="gemma4:31b")
+    model = Mock()
+    model.bind.return_value = model
+    model.invoke.return_value = SimpleNamespace(content='{"decision":"allow"}')
+    policy = {
+        "role": "Developer Senior Full-Stack",
+        "objective": (
+            "Ayudar con software, infraestructura y SolidSET. Analizar imágenes "
+            "proporcionadas por el usuario cuando la consulta solicite explicar, "
+            "describir, comparar o extraer información visible en ellas."
+        ),
+        "specialties": [
+            "Desarrollo full-stack y revisión de código.",
+            "Análisis e interpretación de imágenes adjuntas.",
+            "Descripción de capturas de pantalla, diagramas, documentos e interfaces.",
+            "Lectura de texto visible en imágenes y relación con consultas de software.",
+        ],
+        "code_review_instructions": ["Propón cambios compilables y pruebas."],
+        # Mirrors the size of the published profile currently used by the
+        # agent, which is above the former 6,000-character guard.
+        "response_format": [
+            f"Regla de respuesta {index}: " + "Mantén el análisis verificable y accionable. " * 12
+            for index in range(16)
+        ],
+        "restrictions": ["No inventes datos que no sean visibles o verificables."],
+        "out_of_scope_action": (
+            "Permitir analizar imágenes adjuntas cuando el agente tenga la capacidad "
+            "imagen/vision asignada y la consulta lo solicite."
+        ),
+    }
+    policy_size = len(json.dumps(policy, ensure_ascii=False))
+    assert policy_size > 6000
+    assert policy_size <= 12000
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        assert _scope_decision(
+            "[imagen adjunta: captura.png] Que significa para esta imagen?",
+            policy,
+            "instance",
+            "agent",
+            {"general", "vision"},
+        ) == "allow"
+
+    payload = json.loads(model.invoke.call_args.args[0][-1].content)
+    assert payload["published_agent_policy"]["declared_capabilities"] == ["general", "vision"]
+    assert "Análisis e interpretación de imágenes adjuntas." in payload["published_agent_policy"]["specialties"]
