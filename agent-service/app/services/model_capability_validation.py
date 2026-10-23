@@ -18,11 +18,12 @@ from app.llm import LLMProviderConfig, create_chat_model
 from app.llm.text import response_text
 
 
-CAPABILITIES = ("general", "structured_json", "tool_calling", "vision")
+CAPABILITIES = ("general", "structured_json", "tool_calling", "vision", "audio")
 VISION_PROBE_IMAGE = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
     "+AAAAAIAAUQ0N6YAAAAASUVORK5CYII="
 )
+AUDIO_PROBE_WAV = "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA=="
 _DECISION_SCHEMA = {
     "title": "CapabilityDecision",
     "type": "object",
@@ -99,7 +100,10 @@ def _invoke_ollama(config: LLMProviderConfig, *, schema: dict[str, Any] | None =
 
 def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None = None) -> dict[str, Any]:
     """Probe a provider and return machine-readable contract results."""
-    aliases = {"multimodal": "vision", "image": "vision", "visual": "vision", "imagen": "vision"}
+    aliases = {
+        "multimodal": "vision", "image": "vision", "visual": "vision", "imagen": "vision",
+        "audio_input": "audio", "speech": "audio",
+    }
     requested = list(dict.fromkeys(
         aliases.get(str(item).strip().casefold(), str(item).strip().casefold())
         for item in (capabilities or list(CAPABILITIES))
@@ -126,7 +130,18 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
     for capability in requested:
         try:
             if config.provider == "ollama":
-                if capability == "general":
+                if capability == "audio":
+                    results.append(_result(
+                        capability,
+                        False,
+                        status="unsupported",
+                        detail=(
+                            "Ollama /api/chat admite imágenes, pero no entrada de audio "
+                            "conversacional. Usa OpenAI, Azure o un servidor OpenAI-compatible "
+                            "con un modelo de audio."
+                        ),
+                    ))
+                elif capability == "general":
                     payload, latency = _invoke_ollama(config)
                     content = ((payload.get("message") or {}).get("content") or "").strip()
                     results.append(_result(capability, bool(content), detail="Respuesta de texto recibida" if content else "Respuesta vacía", latency_ms=latency))
@@ -153,7 +168,13 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                     tool_calls = ((payload.get("message") or {}).get("tool_calls") or [])
                     results.append(_result(capability, bool(tool_calls), detail="El modelo devolvió una llamada de herramienta" if tool_calls else "No devolvió una llamada de herramienta", latency_ms=latency))
             else:
-                model = create_chat_model(replace(config, temperature=0, max_output_tokens=128, max_retries=0))
+                model = create_chat_model(replace(
+                    config,
+                    temperature=0,
+                    max_output_tokens=128,
+                    max_retries=0,
+                    use_responses_api=False if capability == "audio" else config.use_responses_api,
+                ))
                 if capability == "structured_json":
                     structured_factory = getattr(model, "with_structured_output", None)
                     if not callable(structured_factory):
@@ -165,16 +186,23 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                         "description": "Herramienta de prueba sin efectos",
                         "parameters": {"type": "object", "properties": {}},
                     }])
-                response = model.invoke(
-                    [HumanMessage(content=[
+                if capability == "vision":
+                    probe_message = HumanMessage(content=[
                         {"type": "text", "text": "Describe brevemente la imagen de prueba."},
                         {"type": "image_url", "image_url": {
                             "url": f"data:image/png;base64,{VISION_PROBE_IMAGE}"
                         }},
-                    ])]
-                    if capability == "vision"
-                    else "Responde a esta prueba de compatibilidad."
-                )
+                    ])
+                elif capability == "audio":
+                    probe_message = HumanMessage(content=[
+                        {"type": "text", "text": "Describe brevemente el audio de prueba."},
+                        {"type": "input_audio", "input_audio": {
+                            "data": AUDIO_PROBE_WAV, "format": "wav"
+                        }},
+                    ])
+                else:
+                    probe_message = "Responde a esta prueba de compatibilidad."
+                response = model.invoke([probe_message] if capability in {"vision", "audio"} else probe_message)
                 content = response_text(response).strip()
                 if capability == "general":
                     ok, detail = bool(content), "Respuesta de texto recibida" if content else "Respuesta vacía"
@@ -182,10 +210,14 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                     parsed = response if isinstance(response, dict) else json.loads(content)
                     ok = isinstance(parsed, dict) and parsed.get("decision") in {"allow", "decline"}
                     detail = "JSON estructurado válido" if ok else "JSON no cumple el esquema"
-                elif capability == "vision":
+                elif capability in {"vision", "audio"}:
                     ok, detail = bool(content), (
-                        "Entrada visual aceptada y respuesta recibida"
-                        if content else "El modelo no devolvió respuesta para la entrada visual"
+                        ("Entrada visual aceptada y respuesta recibida" if capability == "vision"
+                         else "Entrada de audio aceptada y respuesta recibida")
+                        if content else
+                        ("El modelo no devolvió respuesta para la entrada visual"
+                         if capability == "vision"
+                         else "El modelo no devolvió respuesta para la entrada de audio")
                     )
                 else:
                     tool_calls = getattr(response, "tool_calls", None) or []
@@ -194,7 +226,7 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
             status = "adapter_error" if (
-                capability in {"structured_json", "tool_calling", "vision"}
+                capability in {"structured_json", "tool_calling", "vision", "audio"}
                 and not isinstance(exc, json.JSONDecodeError)
             ) else "failed"
             results.append(_result(capability, False, detail=detail, status=status))

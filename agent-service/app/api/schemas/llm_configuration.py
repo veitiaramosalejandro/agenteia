@@ -102,7 +102,8 @@ class AgentIAModelConfiguration(BaseModel):
     Capabilities: list[str] = Field(
         default_factory=lambda: ["general"], min_length=1,
         description=("Model capabilities do not implicitly grant actions. sql grants solidset_sql "
-                     "and solidset_schema; external_web grants web search; imagen/vision enables image input. "
+                     "and solidset_schema; external_web grants web search; imagen/vision enables image input; "
+                     "audio enables audio input only through a compatible provider. "
                      "Other tools require "
                      "tool:<registered_name>. Legacy solidset_sql/solidset_schema remain supported."),
     )

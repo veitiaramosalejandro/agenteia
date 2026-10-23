@@ -6,6 +6,8 @@ from app.agent.capabilities import normalize_capabilities
 
 def requested_capability(text: str, metadata: dict | None = None) -> str:
     metadata = metadata or {}
+    if metadata.get('audio_references') or metadata.get('solidset_audio'):
+        return 'audio'
     if metadata.get('attachment_references') or metadata.get('solidset_attachments'):
         return 'vision'
     explicit = str(metadata.get('model_capability') or '').strip().lower()

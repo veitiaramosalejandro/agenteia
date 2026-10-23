@@ -327,6 +327,15 @@ class Settings(BaseSettings):
     
     # Audio
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_samples")
+    MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "services.isicom.pt:19000")
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "")
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "")
+    MINIO_USE_SSL: bool = _env_bool("MINIO_USE_SSL", "true")
+    MINIO_CERT_CHECK: bool = _env_bool("MINIO_CERT_CHECK", "true")
+    MINIO_BUCKET_VOICE: str = os.getenv("MINIO_BUCKET_VOICE", "chats")
+    MINIO_MAX_AUDIO_BYTES: int = max(
+        64 * 1024, int(os.getenv("MINIO_MAX_AUDIO_BYTES", str(32 * 1024 * 1024)))
+    )
     GENERATED_DOCS_DIR: str = os.getenv("GENERATED_DOCS_DIR", "./data/generated_docs")
     INGEST_INTERVAL_SECONDS: int = int(os.getenv("INGEST_INTERVAL_SECONDS", "3600"))
 

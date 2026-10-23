@@ -60,11 +60,17 @@ from app.services.related_records_context import (
 )
 from app.services.solidset_attachments import (
     attachment_prompt_metadata,
+    extract_solidset_audio_media_ids,
     extract_solidset_file_guids,
+    resolve_solidset_audio_attachments,
     replace_file_references_with_labels,
     resolve_solidset_file_attachments,
 )
-from app.agent.capabilities import has_visual_capability
+from app.agent.capabilities import (
+    has_audio_capability,
+    has_visual_capability,
+    supports_audio_provider,
+)
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.system.schema import Actividad
@@ -2087,10 +2093,16 @@ async def _process_auto_replies_impl(
             candidate.get("quoted_message"),
             _get_payload_value(payload_chat, "rawMessage", "RawMessage"),
         )
+        audio_refs = extract_solidset_audio_media_ids(
+            payload,
+            payload_chat,
+            candidate.get("quoted_message"),
+        )
         message_metadata["attachment_references"] = attachment_refs
+        message_metadata["audio_references"] = audio_refs
         related_instance = None
         related_task_evidence: list[dict[str, Any]] = []
-        if related_records or attachment_refs:
+        if related_records or attachment_refs or audio_refs:
             try:
                 related_instance = await asyncio.to_thread(
                     get_solidset_instance,
@@ -2103,22 +2115,38 @@ async def _process_auto_replies_impl(
                     f"chat={candidate.get('chat_id')} type={type(exc).__name__}",
                     flush=True,
                 )
+        attachments: list[dict[str, Any]] = []
         if attachment_refs:
-            attachments = await asyncio.to_thread(
+            attachments.extend(await asyncio.to_thread(
                 resolve_solidset_file_attachments,
                 related_instance,
                 raw_incoming_text,
                 candidate.get("quoted_message"),
                 _get_payload_value(payload_chat, "rawMessage", "RawMessage"),
-            )
+            ))
+        if audio_refs:
+            attachments.extend(await asyncio.to_thread(
+                resolve_solidset_audio_attachments,
+                related_instance,
+                payload,
+                payload_chat,
+                candidate.get("quoted_message"),
+            ))
+        if attachment_refs or audio_refs:
             message_metadata["solidset_attachments"] = attachments
+            message_metadata["solidset_audio"] = [
+                item for item in attachments if item.get("media_kind") == "audio"
+            ]
             message_metadata["attachment_context"] = attachment_prompt_metadata(attachments)
-            incoming_text = _sanitize_auto_reply_input(
-                replace_file_references_with_labels(raw_incoming_text, attachments)
-            )
+            incoming_text = _sanitize_auto_reply_input(replace_file_references_with_labels(
+                raw_incoming_text, attachments
+            ))
+            if audio_refs and not incoming_text:
+                incoming_text = "Analiza el audio adjunto y responde a su contenido."
             print(
                 "AGENT_ATTACHMENT_CONTEXT "
-                f"chat={candidate.get('chat_id')} refs={len(attachment_refs)} "
+                f"chat={candidate.get('chat_id')} image_refs={len(attachment_refs)} "
+                f"audio_refs={len(audio_refs)} "
                 f"resolved={sum(1 for item in attachments if item.get('status') == 'resolved')}",
                 flush=True,
             )
@@ -2211,7 +2239,23 @@ async def _process_auto_replies_impl(
                         str(value).strip().lower() for value in values if str(value).strip()
                     )
             message_metadata["declared_capabilities"] = declared_capabilities
-            if attachment_refs:
+            if audio_refs:
+                audio_available = any(
+                    has_audio_capability(model_config.get("Capabilities"))
+                    and supports_audio_provider(model_config.get("Provider"))
+                    for model_config in get_agent_model_configurations(
+                        agent_resource_id, solidset_instance_id
+                    )
+                )
+                message_metadata["model_capability"] = "audio"
+                message_metadata["audio_model_unavailable"] = not audio_available
+                message_metadata["_capability_route_prepared"] = True
+                print(
+                    "AGENT_AUDIO_MODEL_ROUTE "
+                    f"chat={candidate.get('chat_id')} available={audio_available}",
+                    flush=True,
+                )
+            elif attachment_refs:
                 visual_available = has_visual_capability(declared_capabilities)
                 message_metadata["model_capability"] = "vision"
                 message_metadata["vision_model_unavailable"] = not visual_available
@@ -2222,7 +2266,11 @@ async def _process_auto_replies_impl(
                     flush=True,
                 )
         except Exception as exc:
-            if attachment_refs:
+            if audio_refs:
+                message_metadata["model_capability"] = "audio"
+                message_metadata["audio_model_unavailable"] = True
+                message_metadata["_capability_route_prepared"] = True
+            elif attachment_refs:
                 # Do not silently send an image to a text-only fallback when
                 # the capability lookup itself is unavailable.
                 message_metadata["model_capability"] = "vision"
@@ -2309,7 +2357,7 @@ async def _process_auto_replies_impl(
                 incoming_text, related_records,
             )
             message_metadata["related_record_guidance_mode"] = related_record_guidance
-            response_text = None if related_record_guidance or attachment_refs else answer_related_records_question(
+            response_text = None if related_record_guidance or attachment_refs or audio_refs else answer_related_records_question(
                 incoming_text, payload, related_records, related_task_evidence,
                 _language(incoming_text),
             )
@@ -2321,7 +2369,7 @@ async def _process_auto_replies_impl(
                 message_metadata["_agent_scope_prechecked"] = True
                 message_metadata["orchestrator_route"] = "related_record_guidance"
                 declared = set(message_metadata.get("declared_capabilities") or set())
-                if not attachment_refs:
+                if not attachment_refs and not audio_refs:
                     message_metadata["model_capability"] = (
                         "reasoning" if "reasoning" in declared else "general"
                     )

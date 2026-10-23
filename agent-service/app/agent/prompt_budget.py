@@ -10,7 +10,7 @@ MAX_PROMPT_CHARS = 12000
 MAX_RAG_CHARS = 2000
 MAX_HISTORY_CHARS = 12000
 _OMITTED = "\n[contenido omitido por límite de contexto]"
-_IMAGE_PART_BUDGET_CHARS = 1200
+_MEDIA_PART_BUDGET_CHARS = 1200
 
 
 def clipped(text: str, limit: int) -> str:
@@ -28,8 +28,10 @@ def _content_size(content) -> int:
         return len(str(content))
     total = 0
     for part in content:
-        if isinstance(part, dict) and part.get("type") in {"image_url", "image"}:
-            total += _IMAGE_PART_BUDGET_CHARS
+        if isinstance(part, dict) and part.get("type") in {
+            "image_url", "image", "input_audio", "audio",
+        }:
+            total += _MEDIA_PART_BUDGET_CHARS
         elif isinstance(part, dict):
             total += len(str(part.get("text") or part))
         else:
@@ -41,16 +43,20 @@ def _clip_content(content, limit: int):
     """Clip only multimodal text parts; never turn an image into plain text."""
     if not isinstance(content, list):
         return clipped(str(content), limit)
-    image_parts = [
+    media_parts = [
         part for part in content
-        if isinstance(part, dict) and part.get("type") in {"image_url", "image"}
+        if isinstance(part, dict) and part.get("type") in {
+            "image_url", "image", "input_audio", "audio",
+        }
     ]
     text_parts = [
         part for part in content
-        if not (isinstance(part, dict) and part.get("type") in {"image_url", "image"})
+        if not (isinstance(part, dict) and part.get("type") in {
+            "image_url", "image", "input_audio", "audio",
+        })
     ]
-    image_budget = len(image_parts) * _IMAGE_PART_BUDGET_CHARS
-    text_limit = max(0, limit - image_budget)
+    media_budget = len(media_parts) * _MEDIA_PART_BUDGET_CHARS
+    text_limit = max(0, limit - media_budget)
     clipped_parts = []
     for part in text_parts:
         if isinstance(part, dict) and "text" in part:
@@ -58,7 +64,7 @@ def _clip_content(content, limit: int):
             text_limit = max(0, text_limit - len(str(clipped_parts[-1]["text"])))
         else:
             clipped_parts.append(part)
-    return clipped_parts + image_parts
+    return clipped_parts + media_parts
 
 
 def context_message(sources: dict[str, str], limit: int) -> SystemMessage:

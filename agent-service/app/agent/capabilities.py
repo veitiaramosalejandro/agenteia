@@ -22,8 +22,14 @@ CAPABILITY_ALIASES = {
     "image": "vision",
     "visual": "vision",
     "imagen": "vision",
+    "audio_input": "audio",
+    "speech": "audio",
 }
 VISUAL_CAPABILITIES = frozenset({"vision"})
+AUDIO_CAPABILITIES = frozenset({"audio"})
+AUDIO_INPUT_PROVIDERS = frozenset({
+    "openai", "openai_compatible", "local_openai", "azure_openai",
+})
 
 
 def normalize_capabilities(values: Any) -> set[str]:
@@ -47,6 +53,15 @@ def normalize_capabilities(values: Any) -> set[str]:
 
 def has_visual_capability(values: Any) -> bool:
     return bool(VISUAL_CAPABILITIES.intersection(normalize_capabilities(values)))
+
+
+def has_audio_capability(values: Any) -> bool:
+    return bool(AUDIO_CAPABILITIES.intersection(normalize_capabilities(values)))
+
+
+def supports_audio_provider(provider: Any) -> bool:
+    normalized = str(provider or "").strip().casefold().replace("-", "_")
+    return normalized in AUDIO_INPUT_PROVIDERS
 
 
 def tool_permissions(values: Any) -> set[str]:

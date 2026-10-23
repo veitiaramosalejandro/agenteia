@@ -225,6 +225,11 @@ class MachiningAgent:
             provider_config_from_record(record)
             if record else self.llm_provider_config
         )
+        # Audio is represented as a Chat Completions ``input_audio`` part.
+        # Do not let a provider record configured for Responses API silently
+        # transform that content into an incompatible request.
+        if capability.casefold() == "audio":
+            config = replace(config, use_responses_api=False)
         if not str(config.provider or "").strip():
             raise ValueError("La configuración LLM efectiva no tiene proveedor.")
         if not str(config.model or "").strip():
@@ -3014,21 +3019,45 @@ class MachiningAgent:
                 prepare_capability_route(user_text, metadata)
             except Exception as exc:
                 # A malformed capability contract must not grant a capability.
-                # Image requests fail closed because a text model cannot
+                # Media requests fail closed because a text model cannot
                 # safely interpret their content; text requests use general.
+                has_audio = bool(
+                    metadata.get("audio_references")
+                    or metadata.get("solidset_audio")
+                )
                 has_attachment = bool(
                     metadata.get("attachment_references")
                     or metadata.get("solidset_attachments")
                 )
-                metadata["model_capability"] = "vision" if has_attachment else "general"
-                metadata["vision_model_unavailable"] = has_attachment
+                metadata["model_capability"] = (
+                    "audio" if has_audio else "vision" if has_attachment else "general"
+                )
+                metadata["audio_model_unavailable"] = has_audio
+                metadata["vision_model_unavailable"] = has_attachment and not has_audio
                 metadata["external_information_mode"] = False
                 metadata["_capability_route_prepared"] = True
                 print(
                     f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__} "
-                    f"fallback={'vision_unavailable' if has_attachment else 'general'}",
+                    f"fallback={'audio_unavailable' if has_audio else 'vision_unavailable' if has_attachment else 'general'}",
                     flush=True,
                 )
+
+        if metadata.get("audio_model_unavailable"):
+            return self._localized(
+                user_text,
+                es=(
+                    "El mensaje contiene un audio, pero este agente no tiene asignado "
+                    "un modelo compatible con entrada de audio."
+                ),
+                pt=(
+                    "A mensagem contém um áudio, mas este agente não tem atribuído "
+                    "um modelo compatível com entrada de áudio."
+                ),
+                en=(
+                    "The message contains audio, but this agent has no model assigned "
+                    "with audio-input capability."
+                ),
+            )
 
         if metadata.get("vision_model_unavailable"):
             return self._localized(

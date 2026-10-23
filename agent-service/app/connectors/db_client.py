@@ -831,6 +831,8 @@ def get_llm_provider_configuration(
                         AND m."IDResource"=%s::uuid
                         AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
                    WHERE p.active=true AND (%s::text IS NULL OR lower(p."Provider")=%s)
+                     AND (%s <> 'audio' OR lower(p."Provider") IN
+                          ('openai', 'openai_compatible', 'local_openai', 'azure_openai'))
                      AND ((m."ID" IS NOT NULL AND (
                             m."Capabilities" ? %s
                             OR (%s='vision' AND m."Capabilities" ? 'multimodal')
@@ -849,6 +851,7 @@ def get_llm_provider_configuration(
                             m."Priority" NULLS LAST, p."Code" LIMIT 1''',
                 (
                     normalized, instance_id, instance_id, provider, provider,
+                    requested_capability,
                     requested_capability, requested_capability, requested_capability,
                     requested_capability, requested_capability,
                     requested_capability, requested_capability, requested_capability,

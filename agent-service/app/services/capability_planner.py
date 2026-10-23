@@ -4,7 +4,13 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agent.capabilities import has_visual_capability, normalize_capabilities, tool_permissions
+from app.agent.capabilities import (
+    has_audio_capability,
+    has_visual_capability,
+    normalize_capabilities,
+    supports_audio_provider,
+    tool_permissions,
+)
 from app.connectors.db_client import get_agent_model_configurations, get_active_agent_prompt, get_llm_provider_configuration
 from app.llm.providers import bind_structured_json, create_chat_model, provider_config_from_record
 from app.llm.text import response_text
@@ -30,6 +36,26 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
         metadata.get('attachment_references')
         or metadata.get('solidset_attachments')
     )
+    audio_requested = bool(
+        metadata.get('audio_references')
+        or metadata.get('solidset_audio')
+    )
+    if audio_requested:
+        audio_available = any(
+            has_audio_capability(row.get('Capabilities'))
+            and supports_audio_provider(row.get('Provider'))
+            and (not visual_requested or has_visual_capability(row.get('Capabilities')))
+            for row in configurations
+        )
+        metadata['model_capability'] = 'audio'
+        metadata['audio_model_unavailable'] = not audio_available
+        metadata['_capability_route_prepared'] = True
+        print(
+            f'AGENT_CAPABILITY_PLAN agent={resource} capability=audio '
+            f'available={audio_available} reason=message_audio',
+            flush=True,
+        )
+        return
     if visual_requested:
         visual_available = any(
             has_visual_capability(row.get('Capabilities'))

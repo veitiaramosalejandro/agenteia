@@ -26,6 +26,7 @@ streamlit
 requests
 pyodbc
 pymssql
+minio>=7.2,<8
 psycopg[binary]>=3.2,<4.0
 cryptography>=42,<46
 pytest>=8,<9

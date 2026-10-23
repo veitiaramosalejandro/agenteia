@@ -64,12 +64,18 @@ from app.services.related_records_context import (
 )
 from app.services.solidset_attachments import (
     attachment_prompt_metadata,
+    extract_solidset_audio_media_ids,
     extract_solidset_file_guids,
     replace_file_references_with_labels,
+    resolve_solidset_audio_attachments,
     resolve_solidset_file_attachments,
     build_multimodal_content,
 )
-from app.agent.capabilities import has_visual_capability
+from app.agent.capabilities import (
+    has_audio_capability,
+    has_visual_capability,
+    supports_audio_provider,
+)
 from app.system.module_constants import ModuleConstants
 from app.agent.schema_query_planner import plan_related_record_query
 from app.agent.semantic_text import language_signal, requested_output_language
@@ -966,6 +972,35 @@ def _related_guidance_is_useful(
     return True
 
 
+def _related_guidance_fallback(record_context: str, language: str) -> str:
+    """Provide a grounded analysis when the related-record model is unavailable."""
+    context = " ".join(str(record_context or "").split())
+    code_match = re.search(r"\bT-\d+-\d+\b", context, flags=re.IGNORECASE)
+    code = code_match.group(0).upper() if code_match else "registro relacionado"
+    normalized = context.casefold()
+    if language == "pt":
+        if "meeting" in normalized and "grid" in normalized:
+            return (
+                f"Análise de {code}: a relação liga cada chat da tarefa ao meeting associado, "
+                "usando a origem do dado para preencher a coluna correspondente. "
+                "quando o chat não tiver meeting, a Grid deve manter o registo sem valor e "
+                "preservar a ordenação e filtragem da Grid."
+            )
+        return (
+            f"Análise de {code}: use os dados verificados da tarefa como origem do dado e "
+            "apresente na interface apenas os campos disponíveis, sem inventar valores."
+        )
+    if language == "es":
+        return (
+            f"Análisis de {code}: utiliza los datos verificados de la tarea como origen del dato "
+            "y muestra únicamente los campos disponibles, sin inventar valores."
+        )
+    return (
+        f"Analysis of {code}: use the verified task data as the source and display only "
+        "available fields without inventing values."
+    )
+
+
 def _record_evidence_fallback(evidence: str, language: str, *, guidance: bool = False) -> str:
     """Render retrieved fields without asking a model to infer facts or ratings."""
     labels = {
@@ -1580,7 +1615,8 @@ def _reason_about_related_record(
     request_llm, _, provider = agent.get_llm_for_metadata({
         **metadata,
         "model_capability": (
-            "vision" if metadata.get("attachment_references")
+            "audio" if metadata.get("audio_references") or metadata.get("solidset_audio")
+            else "vision" if metadata.get("attachment_references")
             or metadata.get("solidset_attachments") else "reasoning"
         ),
         "max_output_tokens": max(1024, settings.LLM_SUGGESTION_MAX_OUTPUT_TOKENS),
@@ -1809,11 +1845,21 @@ async def _process_chat_question_response_suggestion(
             str(_get_payload_value(chat_payload, "rawMessage", "RawMessage") or ""),
         )
         attachment_refs = extract_solidset_file_guids(*attachment_values)
-        attachments = await asyncio.to_thread(
-            resolve_solidset_file_attachments,
-            solidset_instance,
-            *attachment_values,
-        ) if attachment_refs else []
+        audio_refs = extract_solidset_audio_media_ids(chat_payload, attachment_values)
+        attachments: list[dict[str, Any]] = []
+        if attachment_refs:
+            attachments.extend(await asyncio.to_thread(
+                resolve_solidset_file_attachments,
+                solidset_instance,
+                *attachment_values,
+            ))
+        if audio_refs:
+            attachments.extend(await asyncio.to_thread(
+                resolve_solidset_audio_attachments,
+                solidset_instance,
+                chat_payload,
+                *attachment_values,
+            ))
         if attachments:
             context["quoted_message"] = replace_file_references_with_labels(
                 context["quoted_message"], attachments
@@ -1823,7 +1869,8 @@ async def _process_chat_question_response_suggestion(
             )
             print(
                 "SUGGESTION_ATTACHMENT_CONTEXT "
-                f"request_id={request_id} refs={len(attachment_refs)} "
+                f"request_id={request_id} image_refs={len(attachment_refs)} "
+                f"audio_refs={len(audio_refs)} "
                 f"resolved={sum(1 for item in attachments if item.get('status') == 'resolved')}",
                 flush=True,
             )
@@ -2234,7 +2281,11 @@ async def _process_chat_question_response_suggestion(
             or str(identity.get("FullName") or identity.get("Name") or "").strip(),
             "requester_login": context["requester_login"],
             "attachment_references": attachment_refs,
+            "audio_references": audio_refs,
             "solidset_attachments": attachments,
+            "solidset_audio": [
+                item for item in attachments if item.get("media_kind") == "audio"
+            ],
             "attachment_context": attachment_prompt_metadata(attachments),
             "resource_id": context["requester_resource"],
             "login_id": context["requester_login"],
@@ -2264,7 +2315,29 @@ async def _process_chat_question_response_suggestion(
             "solidset_instance_id": str(solidset_instance["ID"]),
             "solidset_instance_code": str(solidset_instance["Code"]),
         }
-        if attachment_refs:
+        if audio_refs:
+            try:
+                audio_available = any(
+                    has_audio_capability(model.get("Capabilities"))
+                    and supports_audio_provider(model.get("Provider"))
+                    for model in get_agent_model_configurations(
+                        context["requester_resource"], str(solidset_instance["ID"])
+                    )
+                )
+            except Exception as exc:
+                audio_available = False
+                print(
+                    f"SUGGESTION_AUDIO_CAPABILITY_LOOKUP_FAILED type={type(exc).__name__}",
+                    flush=True,
+                )
+            metadata["model_capability"] = "audio"
+            metadata["audio_model_unavailable"] = not audio_available
+            print(
+                "SUGGESTION_AUDIO_MODEL_ROUTE "
+                f"request_id={request_id} available={audio_available}",
+                flush=True,
+            )
+        elif attachment_refs:
             try:
                 visual_available = any(
                     has_visual_capability(model.get("Capabilities"))
@@ -2307,7 +2380,7 @@ async def _process_chat_question_response_suggestion(
         metadata["system_utc_time"] = reference_utc.isoformat()
 
         metadata["suggestion_intent"] = request_intent
-        if related_records_context and not attachment_refs:
+        if related_records_context and not attachment_refs and not audio_refs:
             metadata["model_capability"] = "reasoning"
             # The UI wrapper can retain a title from another selected record.
             # Preserve the actual question; use resolved SQL for record content.
@@ -2327,7 +2400,7 @@ async def _process_chat_question_response_suggestion(
             # Social and writing advice is answered from language reasoning.
             # A person's name alone is never justification for SQL or web lookup.
             suggestion_tool_allowlist = set()
-        if related_guidance_mode and not attachment_refs:
+        if related_guidance_mode and not attachment_refs and not audio_refs:
             metadata["model_capability"] = "reasoning"
             metadata["quoted_request_mode"] = False
             suggestion_tool_allowlist = {"query_sql_server", "get_db_schema"}
@@ -2378,7 +2451,13 @@ async def _process_chat_question_response_suggestion(
                 "with image (imagen/vision/multimodal) capability."
             ),
         }.get(str(metadata.get("response_language") or "es").split("-")[0], "")
-        if metadata.get("vision_model_unavailable"):
+        if metadata.get("audio_model_unavailable"):
+            direct_answer = json.dumps([{
+                "es": "El mensaje contiene un audio, pero este agente no tiene asignado un modelo compatible con entrada de audio.",
+                "pt": "A mensagem contém um áudio, mas este agente não tem atribuído um modelo compatível com entrada de áudio.",
+                "en": "The message contains audio, but this agent has no model assigned with audio-input capability.",
+            }.get(str(metadata.get("response_language") or "es").split("-")[0], "")], ensure_ascii=False)
+        elif metadata.get("vision_model_unavailable"):
             direct_answer = json.dumps([visual_unavailable_answer], ensure_ascii=False)
         elif learned_fact or request_intent == "internal" or related_records_context:
             direct_answer = None

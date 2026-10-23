@@ -6,6 +6,7 @@ import json
 import threading
 import time
 import re
+from dataclasses import replace
 from functools import lru_cache
 import traceback
 from pathlib import Path
@@ -52,7 +53,14 @@ def _invoke_direct_model(record, messages, metadata):
     incident_id = uuid4().hex
     for attempt in (1, 2):
         try:
-            model = create_chat_model(provider_config_from_record(record))
+            config = provider_config_from_record(record)
+            # ``input_audio`` is a Chat Completions content part.  Some
+            # OpenAI-compatible records default to Responses API, whose
+            # payload contract is different, so audio must force the chat
+            # adapter while keeping the model assignment unchanged.
+            if str(metadata.get('model_capability') or '').strip().lower() == 'audio':
+                config = replace(config, use_responses_api=False)
+            model = create_chat_model(config)
             return model.invoke(messages)
         except Exception as exc:
             _log_model_failure(exc, metadata, record.get('Model'), attempt, incident_id)
@@ -143,6 +151,8 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
             WHERE m."IDResource"=%s
               AND (%s::uuid IS NULL OR m."IDSolidSETInstance"=%s::uuid)
               AND m.active AND p.active AND r.active
+              AND (%s <> 'audio' OR lower(p."Provider") IN
+                   ('openai', 'openai_compatible', 'local_openai', 'azure_openai'))
               AND (
                     m."Capabilities" ? %s
                     OR (%s='vision' AND m."Capabilities" ? 'multimodal')
@@ -156,7 +166,7 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
                           ) THEN 0 ELSE 1 END,
                      m."Priority", p."Code" LIMIT 1''',
             (
-                resource_id, instance_id, instance_id,
+                resource_id, instance_id, instance_id, capability,
                 capability, capability, capability, capability,
                 capability, capability, capability,
             )).fetchone()
