@@ -4339,6 +4339,11 @@ class MachiningAgent:
                 "sin Markdown, títulos ni explicaciones externas al array."
             )
         local_context_messages = []
+        authoritative_chat_context = bool(
+            chat_context_bd
+            and str(metadata_identity.get("conversation_history_source") or "").strip()
+            == "chat_question_chain"
+        )
         if compact_local_prompt:
             if message_metadata.get("general_knowledge_mode") or isolated_quoted_request or strict_current_question:
                 local_output_contract = system_prompt
@@ -4374,10 +4379,28 @@ class MachiningAgent:
                     "Preferencias aprendidas (no hechos)": agent_reinforcement,
                     "Estilo del gemelo": str((identity_snapshot.get("identity") or {}).get("style") or ""),
                     "Contexto del interlocutor": contexto_usuario,
-                    "Chat reciente": chat_context_bd,
                     "Resumen del canal": canal_operativo_context,
                     "Reunión actual": f"{meeting_id or ''} {meeting_code or ''}".strip(),
                 }, 700))
+                if chat_context_bd:
+                    # ChatQuestionMessage is the authoritative conversational
+                    # chain. Keep it in its own budgeted message so style,
+                    # RAG and identity metadata cannot consume its space.
+                    local_context_messages.append(SystemMessage(
+                        content=(
+                            "🧭 CONTEXTO CONVERSACIONAL AUTORITATIVO (ChatQuestionMessage):\n"
+                            "La petición actual es una continuación de esta conversación. "
+                            "Resuelve la petición usando primero este contexto y la respuesta "
+                            "anterior; no preguntes cuál es el tema si el historial lo permite. "
+                            "El mensaje actual determina qué debe aclararse o corregirse.\n"
+                            f"{chat_context_bd}"
+                        ),
+                        additional_kwargs={
+                            "budget_context": True,
+                            "history_context": True,
+                            "authoritative_context": authoritative_chat_context,
+                        },
+                    ))
             elif strict_current_question and not message_metadata.get("general_knowledge_mode"):
                 local_context_messages.append(context_message({
                     "Conocimiento pertinente": agent_rag_context,
@@ -4389,6 +4412,13 @@ class MachiningAgent:
             chat_context_bd = canal_operativo_context = aprendizaje_relevante = ""
         from app.services.agent_restrictions import SCOPED_RESPONSE_INSTRUCTION
         system_prompt += "\n\n" + SCOPED_RESPONSE_INSTRUCTION
+        if authoritative_chat_context:
+            system_prompt += (
+                "\n\nLa conversación reconstruida mediante ChatQuestionMessage es contexto "
+                "obligatorio para este turno. Interpreta expresiones de seguimiento como "
+                "'explícame mejor' sobre el tema anterior y responde directamente con la "
+                "información disponible en esa conversación."
+            )
         if metadata.get("_agent_scope_decision") == "scoped":
             system_prompt += " Esta solicitud requiere una respuesta delimitada a la especialidad publicada."
         system_msg = SystemMessage(content=system_prompt)

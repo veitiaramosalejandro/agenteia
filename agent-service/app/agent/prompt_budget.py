@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 # retrieved context while leaving capacity for the configured response.
 MAX_PROMPT_CHARS = 12000
 MAX_RAG_CHARS = 2000
+MAX_HISTORY_CHARS = 12000
 _OMITTED = "\n[contenido omitido por límite de contexto]"
 
 
@@ -165,7 +166,18 @@ def budget_messages(messages: list) -> list:
     optional = [i for i in range(len(copies)) if i not in required]
     # Latest tool evidence first, then retrieved context, then recent conversation.
     order = list(reversed(tool_indices))
-    order += [i for i in optional if i not in order and copies[i].additional_kwargs.get("budget_context")]
+    # Conversation history reconstructed from ChatQuestionMessage is the
+    # primary evidence for a follow-up. Preserve it before generic RAG/style
+    # context when the local-model prompt reaches its global budget.
+    history_context = [
+        i for i in optional
+        if copies[i].additional_kwargs.get("history_context")
+    ]
+    order += [i for i in history_context if i not in order]
+    order += [
+        i for i in optional
+        if i not in order and copies[i].additional_kwargs.get("budget_context")
+    ]
     order += [i for i in reversed(optional) if i not in order]
     selected = set(required)
     pending_tools = len(tool_indices)
@@ -175,7 +187,11 @@ def budget_messages(messages: list) -> list:
         if is_tool:
             pending_tools -= 1
         available = max(0, remaining - pending_tools * len(_OMITTED))
-        cap = min(MAX_RAG_CHARS if is_tool or message.additional_kwargs.get("budget_context") else 400,
+        if message.additional_kwargs.get("history_context"):
+            context_cap = MAX_HISTORY_CHARS
+        else:
+            context_cap = MAX_RAG_CHARS
+        cap = min(context_cap if is_tool or message.additional_kwargs.get("budget_context") else 400,
                   available)
         message.content = clipped(str(message.content), cap)
         if is_tool and not message.content:
