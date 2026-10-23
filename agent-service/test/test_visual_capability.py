@@ -5,8 +5,10 @@ from app.llm.providers import LLMProviderConfig
 
 def test_multimodal_is_normalized_to_visual_capability():
     assert normalize_capabilities(["multimodal"]) == {"vision"}
+    assert normalize_capabilities(["imagen"]) == {"vision"}
     assert has_visual_capability(["vision"])
     assert has_visual_capability(["multimodal"])
+    assert has_visual_capability(["imagen"])
 
 
 def test_message_attachment_requires_vision_route():
@@ -37,7 +39,7 @@ def test_ollama_vision_probe_sends_image_payload(monkeypatch):
     monkeypatch.setattr(validation, "_invoke_ollama", fake_invoke)
     result = validation.validate_provider(
         LLMProviderConfig(provider="ollama", model="vision-model", base_url="http://ollama"),
-        ["multimodal"],
+        ["imagen"],
     )
 
     assert result["passed"] is True

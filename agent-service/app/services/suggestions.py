@@ -2367,15 +2367,15 @@ async def _process_chat_question_response_suggestion(
         visual_unavailable_answer = {
             "es": (
                 "El mensaje contiene una imagen, pero este agente no tiene asignado "
-                "un modelo con capacidad visual (vision/multimodal)."
+                "un modelo con capacidad de imagen (imagen/vision/multimodal)."
             ),
             "pt": (
                 "A mensagem contém uma imagem, mas este agente não tem atribuído "
-                "um modelo com capacidade visual (vision/multimodal)."
+                "um modelo com capacidade de imagem (imagen/vision/multimodal)."
             ),
             "en": (
                 "The message contains an image, but this agent has no model assigned "
-                "with visual (vision/multimodal) capability."
+                "with image (imagen/vision/multimodal) capability."
             ),
         }.get(str(metadata.get("response_language") or "es").split("-")[0], "")
         if metadata.get("vision_model_unavailable"):
