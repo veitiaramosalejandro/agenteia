@@ -2426,7 +2426,7 @@ async def _process_auto_replies_impl(
             for key in (
                 "conversation_history", "scope_context", "quoted_message",
                 "agent_relevant_knowledge", "agent_knowledge",
-                "agent_reinforcement", "related_records_context",
+                "agent_reinforcement",
                 "response_repair_required",
             ):
                 repair_metadata.pop(key, None)

@@ -3142,8 +3142,10 @@ class MachiningAgent:
             agent_private_knowledge = ""
             agent_reinforcement = ""
         if capability_tool_free and not response_suggestion_mode and not code_reference_mode:
+            # The current turn's related-record data is verified framework
+            # context, not durable RAG. Keep it available even on a tool-free
+            # general route so the assigned model can answer "esta tarea".
             metadata_identity["agent_relevant_knowledge"] = ""
-            metadata_identity["related_records_context"] = ""
             agent_private_knowledge = ""
             agent_reinforcement = ""
         if repair_isolated_context:
@@ -3156,7 +3158,6 @@ class MachiningAgent:
             metadata_identity["agent_relevant_knowledge"] = ""
             metadata_identity["agent_knowledge"] = ""
             metadata_identity["agent_reinforcement"] = ""
-            metadata_identity["related_records_context"] = ""
             agent_private_knowledge = ""
             agent_reinforcement = ""
         suggestion_refine_mode = bool(
