@@ -53,9 +53,13 @@ from app.services.response_status import update as _update_response_status
 from app.system.reaction_capture import get_agent_reinforcement_context
 from app.system.resource_ingest import verify_and_sync_solidset_agent_mapping
 from app.services.related_records_context import (
+    answer_related_records_question,
     build_related_record_prompt_context,
     extract_related_records,
     format_related_records_context,
+    format_sys_tasks_evidence,
+    related_record_question_needs_guidance,
+    resolve_sys_tasks_evidence,
     verified_related_records_context,
 )
 from app.system.module_constants import ModuleConstants
@@ -1949,6 +1953,7 @@ async def _process_chat_question_response_suggestion(
             request_intent = "related_record"
             use_related_record = True
         related_records_context = ""
+        related_task_evidence: list[dict[str, Any]] = []
         vector_record_context = ""
         if use_related_record:
             vector_started = perf_counter()
@@ -1973,11 +1978,24 @@ async def _process_chat_question_response_suggestion(
                 print(f"SUGGESTION_VECTOR_UNAVAILABLE request_id={request_id} type={type(exc).__name__}", flush=True)
             log_stage("related_record_vector", vector_started)
             related_started = perf_counter()
-            related_records_context = await asyncio.to_thread(
-                _verified_related_records_context, solidset_instance, context["related_records"],
+            related_task_evidence = await asyncio.to_thread(
+                resolve_sys_tasks_evidence, solidset_instance, context["related_records"],
                 context["requester_resource"],
             )
-            if explicit_task:
+            generic_records = [
+                record for record in context["related_records"]
+                if str(record.get("recordModuleName") or "") != "SysTasks"
+            ]
+            generic_context = await asyncio.to_thread(
+                _verified_related_records_context, solidset_instance, generic_records,
+                context["requester_resource"],
+            )
+            related_records_context = "\n\n".join(
+                value for value in (
+                    format_sys_tasks_evidence(related_task_evidence), generic_context,
+                ) if value
+            )
+            if explicit_task and not context["related_records"]:
                 related_records_context = await asyncio.to_thread(
                     _verified_task_code_context, solidset_instance,
                     effective_request_text, context["requester_resource"],
@@ -2128,6 +2146,9 @@ async def _process_chat_question_response_suggestion(
         response_language = _suggestion_request_language(
             effective_request_text, language_decision.language
         )
+        related_record_guidance = related_record_question_needs_guidance(
+            effective_request_text, context["related_records"],
+        )
         metadata = {
             "response_suggestion_mode": True,
             # El solicitante humano y el agente verificado comparten dueño y
@@ -2142,6 +2163,7 @@ async def _process_chat_question_response_suggestion(
                 learned_fact or (concrete_answer_mode and advice_request)
             ),
             "related_guidance_mode": related_guidance_mode,
+            "related_record_guidance_mode": related_record_guidance,
             "conversation_followup_mode": answer_meta_question,
             "conversational_recommendation_mode": conversational_recommendation,
             "response_suggestion_scope": (
@@ -2276,6 +2298,10 @@ async def _process_chat_question_response_suggestion(
             if advice_request
             else None
         )
+        related_evidence_answer = answer_related_records_question(
+            effective_request_text, payload, context["related_records"],
+            related_task_evidence, metadata["response_language"],
+        ) if related_records_context else None
         direct_answer = (
             None
             if learned_fact or request_intent == "internal" or related_records_context
@@ -2312,6 +2338,10 @@ async def _process_chat_question_response_suggestion(
                 [verified_business_context], ensure_ascii=False
             )
             suggestions = [verified_business_context]
+        elif related_evidence_answer:
+            raw_suggestions = json.dumps([related_evidence_answer], ensure_ascii=False)
+            suggestions = [related_evidence_answer]
+            metadata["direct_related_generation"] = True
         elif concrete_answer_mode and related_records_context:
             # SQL already supplied the task fields. A factual record question
             # must not depend on a model completing absent status or rating data.
