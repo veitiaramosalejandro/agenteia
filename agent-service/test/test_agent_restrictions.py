@@ -208,9 +208,9 @@ def test_scope_classifier_receives_intervenient_history_as_context_only():
         published_prompt=PUBLISHED["SystemPrompt"], conversation_history=history,
         ) == "allow"
 
-    payload = json.loads(model.invoke.call_args.args[0][-1].content)
-    assert payload["requested_task"] == "¿Qué es Kanban?"
-    assert payload["conversation_history"] == history
+    classifier_request = model.invoke.call_args.args[0][-1].content
+    assert classifier_request.startswith("¿Qué es Kanban?")
+    assert history in classifier_request
 
 
 def test_channel_follow_up_keeps_the_topic_from_intervenient_history():
@@ -352,6 +352,23 @@ def test_attached_code_does_not_change_request_language():
 
 def test_request_instruction_normalizes_unicode_math_notation_without_scope_rules():
     assert _request_instruction("Factorial de n³?") == "Factorial de n3?"
+
+
+def test_scope_classifier_contract_keeps_symbolic_operations_in_scope():
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(content='{"decision":"allow"}')
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        assert _scope_decision(
+            "Factorial de (n+3)?", {}, "instance", "agent",
+            published_prompt="ESPECIALIDADES VERIFICADAS\n- Algoritmos y estructuras de datos.",
+        ) == "allow"
+    classifier_prompt = model.invoke.call_args.args[0][0].content
+    assert "expresiones simbólicas" in classifier_prompt
+    assert "paréntesis" in classifier_prompt
 
 
 def test_unknown_detected_language_uses_published_default():
@@ -538,8 +555,8 @@ def test_external_web_capability_instruction_covers_entity_facts():
             '¿Qué tipos de modelos genera FinModeler?', {}, 'instance', 'agent',
             published_prompt=PUBLISHED['SystemPrompt'],
         ) == 'scoped'
-    payload = json.loads(model.invoke.call_args.args[0][-1].content)
-    assert "declared_capabilities" not in payload
+    classifier_request = model.invoke.call_args.args[0][-1].content
+    assert "declared_capabilities" not in classifier_request
 
 
 def test_external_web_does_not_change_scope_decision():
@@ -573,8 +590,8 @@ def test_scope_prompt_uses_published_policy_without_embedded_domain_rules():
             published_prompt=published_prompt,
         ) == "allow"
 
-    payload = json.loads(model.invoke.call_args.args[0][-1].content)
-    assert payload["requested_task"] == "¿Cuál es la raíz décima de 1024?"
+    classifier_request = model.invoke.call_args.args[0][-1].content
+    assert classifier_request == "¿Cuál es la raíz décima de 1024?"
     assert published_prompt in model.invoke.call_args.args[0][0].content
     assert "operaciones matemáticas básicas" not in model.invoke.call_args.args[0][0].content
 
@@ -598,8 +615,8 @@ def test_scope_classifier_prefers_the_stored_published_system_prompt():
             "instance", "agent", published_prompt=published_prompt,
         ) == "scoped"
 
-    payload = json.loads(model.invoke.call_args.args[0][-1].content)
-    assert payload["requested_task"] == "Factorial de n3?"
+    classifier_request = model.invoke.call_args.args[0][-1].content
+    assert classifier_request == "Factorial de n3?"
     assert published_prompt in model.invoke.call_args.args[0][0].content
 
 
@@ -650,6 +667,6 @@ def test_visual_agent_policy_is_not_rejected_by_scope_input_guard():
             published_prompt=json.dumps(policy, ensure_ascii=False),
         ) == "allow"
 
-    payload = json.loads(model.invoke.call_args.args[0][-1].content)
-    assert "declared_capabilities" not in payload
+    classifier_request = model.invoke.call_args.args[0][-1].content
+    assert "declared_capabilities" not in classifier_request
     assert "Análisis e interpretación de imágenes adjuntas." in model.invoke.call_args.args[0][0].content
