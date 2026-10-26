@@ -6,9 +6,9 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 # Keep enough room for normal coding requests, agent policy, history and
 # retrieved context while leaving capacity for the configured response.
-MAX_PROMPT_CHARS = 12000
-MAX_RAG_CHARS = 2000
-MAX_HISTORY_CHARS = 12000
+MAX_PROMPT_CHARS = 25000
+MAX_RAG_CHARS = 5500
+MAX_HISTORY_CHARS = 25000
 _OMITTED = "\n[contenido omitido por límite de contexto]"
 _MEDIA_PART_BUDGET_CHARS = 1200
 

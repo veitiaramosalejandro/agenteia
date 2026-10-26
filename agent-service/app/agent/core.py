@@ -3852,6 +3852,7 @@ class MachiningAgent:
             and not record_focused
             and not suggestion_refine_mode
             and not external_query_mode
+            and not general_conversation_mode
         ):
             aprendizaje_relevante = self.sistema_aprendizaje.consultar_aprendizaje(
                 context_query,

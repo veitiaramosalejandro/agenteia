@@ -848,7 +848,10 @@ def get_llm_provider_configuration(
                                  WHEN m."ID" IS NOT NULL AND m."IsDefault" THEN 1
                                  WHEN p."IsDefault" THEN 2
                                  ELSE 3 END,
-                            m."Priority" NULLS LAST, p."Code" LIMIT 1''',
+                            m."Priority" NULLS LAST,
+                            m."IsDefault" DESC,
+                            p."IsDefault" DESC,
+                            p."Code" LIMIT 1''',
                 (
                     normalized, instance_id, instance_id, provider, provider,
                     requested_capability,

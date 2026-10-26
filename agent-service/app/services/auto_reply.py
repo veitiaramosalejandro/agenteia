@@ -2208,21 +2208,6 @@ async def _process_auto_replies_impl(
             candidate.get("solidset_instance_id") or ""
         ).strip()
         relevant_agent_knowledge = ""
-        if agent_resource_id and solidset_instance_id:
-            try:
-                relevant_agent_knowledge = await asyncio.to_thread(
-                    agent.sistema_aprendizaje.consultar_conocimiento_agente,
-                    incoming_text,
-                    agent_resource_id=agent_resource_id,
-                    solidset_instance_id=solidset_instance_id,
-                    canal_id=channel_id,
-                    min_score=settings.BUSINESS_RAG_MIN_SCORE,
-                )
-            except Exception as exc:
-                print(
-                    "⚠️ No se pudo preseleccionar conocimiento privado "
-                    f"para enrutamiento: {exc}"
-                )
         message_metadata["agent_relevant_knowledge"] = relevant_agent_knowledge
         try:
             declared_capabilities = set()
@@ -2278,11 +2263,6 @@ async def _process_auto_replies_impl(
                 message_metadata["vision_model_unavailable"] = True
                 message_metadata["_capability_route_prepared"] = True
             print(f"AGENT_CAPABILITIES_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
-        print(
-            "🧠 Conocimiento privado preseleccionado "
-            f"resource={agent_resource_id or '-'} workroom={channel_id or '-'} "
-            f"found={bool(relevant_agent_knowledge)} chars={len(relevant_agent_knowledge)}"
-        )
         status_agent_id = agent_identity_id or agent_resource_id
         _update_response_status(
             response_request_id,
@@ -2422,6 +2402,41 @@ async def _process_auto_replies_impl(
                         "fallback=general",
                         flush=True,
                     )
+            # Knowledge lookup is only useful for routes that may consume
+            # private/internal context. General, coding, reasoning and media
+            # capabilities are tool-free conversational routes and must not
+            # hit Qdrant before the dialogue core.
+            if (
+                agent_resource_id
+                and solidset_instance_id
+                and (
+                    message_metadata.get("response_suggestion_mode")
+                    or message_metadata.get("model_capability")
+                    not in {
+                        "general", "coding", "reasoning", "vision", "audio", "external_web"
+                    }
+                )
+            ):
+                try:
+                    relevant_agent_knowledge = await asyncio.to_thread(
+                        agent.sistema_aprendizaje.consultar_conocimiento_agente,
+                        incoming_text,
+                        agent_resource_id=agent_resource_id,
+                        solidset_instance_id=solidset_instance_id,
+                        canal_id=channel_id,
+                        min_score=settings.BUSINESS_RAG_MIN_SCORE,
+                    )
+                except Exception as exc:
+                    print(
+                        "⚠️ No se pudo preseleccionar conocimiento privado "
+                        f"para enrutamiento: {exc}"
+                    )
+                message_metadata["agent_relevant_knowledge"] = relevant_agent_knowledge
+            print(
+                "🧠 Conocimiento privado preseleccionado "
+                f"resource={agent_resource_id or '-'} workroom={channel_id or '-'} "
+                f"found={bool(relevant_agent_knowledge)} chars={len(relevant_agent_knowledge)}"
+            )
             if response_text is None:
                 response_text = await asyncio.to_thread(
                     answer_direct, incoming_text, message_metadata, session_id

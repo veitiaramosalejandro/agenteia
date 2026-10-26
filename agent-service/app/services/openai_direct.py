@@ -164,7 +164,10 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
                               OR (%s='vision' AND m."Capabilities" ? 'multimodal')
                               OR (%s='vision' AND m."Capabilities" ? 'imagen')
                           ) THEN 0 ELSE 1 END,
-                     m."Priority", p."Code" LIMIT 1''',
+                     m."Priority" NULLS LAST,
+                     m."IsDefault" DESC,
+                     p."IsDefault" DESC,
+                     p."Code" LIMIT 1''',
             (
                 resource_id, instance_id, instance_id, capability,
                 capability, capability, capability, capability,
