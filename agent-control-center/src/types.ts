@@ -37,13 +37,16 @@ export type Provider = {
 export type ModelValidation = {
   provider: string
   model: string
+  modelType: 'chat' | 'embedding' | 'unknown' | string
+  declaredCapabilities: string[]
+  embeddingDimension?: number | null
   available: boolean
   availableDetail: string
   passed: boolean
   capabilities: Array<{
     capability: string
     ok: boolean
-    status: 'passed' | 'failed' | 'unavailable' | 'adapter_error'
+    status: 'passed' | 'failed' | 'unavailable' | 'adapter_error' | 'not_applicable' | 'embedding_only' | string
     detail: string
     latencyMs?: number | null
   }>

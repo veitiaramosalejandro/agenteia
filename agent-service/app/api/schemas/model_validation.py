@@ -19,6 +19,9 @@ class ModelCapabilityResult(BaseModel):
 class ModelValidationResponse(BaseModel):
     provider: str
     model: str
+    modelType: str = "unknown"
+    declaredCapabilities: list[str] = Field(default_factory=list)
+    embeddingDimension: int | None = None
     available: bool
     availableDetail: str
     capabilities: list[ModelCapabilityResult]

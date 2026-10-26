@@ -49,6 +49,15 @@ def test_ollama_vision_probe_sends_image_payload(monkeypatch):
     observed = {}
 
     monkeypatch.setattr(validation.httpx, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(
+        validation,
+        "_ollama_model_profile",
+        lambda config: {
+            "model_type": "chat",
+            "declared_capabilities": ["completion", "vision"],
+            "embedding_dimension": None,
+        },
+    )
 
     def fake_invoke(config, **kwargs):
         observed.update(kwargs)
@@ -87,3 +96,39 @@ def test_ollama_audio_validation_executes_a_real_audio_probe(monkeypatch):
     assert result["passed"] is True
     assert result["capabilities"][0]["status"] == "passed"
     assert observed == {"provider": "ollama", "model": "gemma4:31b"}
+
+
+def test_ollama_embedding_model_uses_embedding_endpoint_for_each_modality(monkeypatch):
+    from app.services import model_capability_validation as validation
+
+    with patch.object(validation, "_ollama_model_available", return_value=(True, "ok")), \
+         patch.object(
+             validation,
+             "_ollama_model_profile",
+             return_value={
+                 "model_type": "embedding",
+                 "declared_capabilities": ["embedding", "vision", "audio"],
+                 "embedding_dimension": 768,
+             },
+         ):
+        observed = []
+
+        def fake_embed(config, input_value):
+            observed.append(input_value)
+            return {"embeddings": [[0.1] * 768]}, 2.0
+
+        monkeypatch.setattr(validation, "_invoke_ollama_embed", fake_embed)
+        result = validation.validate_provider(
+            LLMProviderConfig(provider="ollama", model="embeddinggemma-2:latest", base_url="http://ollama"),
+            ["general", "embedding", "vision", "audio"],
+        )
+
+    assert result["modelType"] == "embedding"
+    assert result["embeddingDimension"] == 768
+    assert [item["capability"] for item in result["capabilities"]] == [
+        "embedding", "general", "vision", "audio",
+    ]
+    assert result["capabilities"][0]["status"] == "passed"
+    assert result["capabilities"][2]["status"] == "embedding_only"
+    assert result["capabilities"][3]["status"] == "embedding_only"
+    assert len(observed) == 3

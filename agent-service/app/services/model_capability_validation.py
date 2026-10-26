@@ -7,7 +7,9 @@ executes a returned tool call.
 
 from __future__ import annotations
 
+import base64
 import json
+import struct
 from dataclasses import replace
 from typing import Any
 
@@ -18,12 +20,25 @@ from app.llm import LLMProviderConfig, create_chat_model
 from app.llm.text import response_text
 
 
-CAPABILITIES = ("general", "structured_json", "tool_calling", "vision", "audio")
+CAPABILITIES = ("general", "structured_json", "tool_calling", "vision", "audio", "embedding")
+EMBEDDING_CAPABILITY = "embedding"
 VISION_PROBE_IMAGE = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
     "+AAAAAIAAUQ0N6YAAAAASUVORK5CYII="
 )
-AUDIO_PROBE_WAV = "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA=="
+def _build_audio_probe_wav() -> str:
+    """Create a small valid PCM/WAV sample for provider probes."""
+    samples = b"\x00\x00" * 1600  # 100 ms, mono, 16 kHz, PCM16
+    header = (
+        b"RIFF" + struct.pack("<I", 36 + len(samples)) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16)
+        + b"data" + struct.pack("<I", len(samples))
+    )
+    return base64.b64encode(header + samples).decode("ascii")
+
+
+AUDIO_PROBE_WAV = _build_audio_probe_wav()
+EMBEDDING_PROBE_TEXT = "Prueba de embedding multimodal del agente."
 _DECISION_SCHEMA = {
     "title": "CapabilityDecision",
     "type": "object",
@@ -56,6 +71,138 @@ def _ollama_model_available(config: LLMProviderConfig) -> tuple[bool, str]:
         return True, "Modelo disponible en Ollama"
     except Exception as exc:
         return False, f"No se pudo consultar Ollama: {type(exc).__name__}: {exc}"
+
+
+def _ollama_model_profile(config: LLMProviderConfig) -> dict[str, Any]:
+    """Read the local model contract before selecting chat or embed probes."""
+    response = httpx.post(
+        f"{config.base_url.rstrip('/')}/api/show",
+        json={"name": config.model},
+        timeout=max(3, config.timeout_seconds),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    declared = [str(item).strip().casefold() for item in (payload.get("capabilities") or [])]
+    model_info = payload.get("model_info") or {}
+    dimension = (
+        model_info.get("general.embedding_length_out")
+        or model_info.get("general.embedding_length")
+    )
+    model_type = (
+        "embedding"
+        if EMBEDDING_CAPABILITY in declared and "completion" not in declared
+        else "chat"
+    )
+    return {
+        "model_type": model_type,
+        "declared_capabilities": declared,
+        "embedding_dimension": int(dimension) if dimension else None,
+    }
+
+
+def _invoke_ollama_embed(config: LLMProviderConfig, input_value: Any) -> tuple[Any, float]:
+    """Call Ollama's embedding endpoint with text or multimodal input."""
+    import time
+
+    started = time.perf_counter()
+    response = httpx.post(
+        f"{config.base_url.rstrip('/')}/api/embed",
+        json={"model": config.model, "input": input_value},
+        timeout=max(5, config.timeout_seconds),
+    )
+    response.raise_for_status()
+    return response.json(), (time.perf_counter() - started) * 1000
+
+
+def _embedding_dimension(payload: Any) -> int | None:
+    try:
+        embeddings = payload.get("embeddings") or []
+        vector = embeddings[0]
+        return len(vector) if isinstance(vector, list) and vector else None
+    except (AttributeError, IndexError, TypeError):
+        return None
+
+
+def _validate_embedding_provider(
+    config: LLMProviderConfig,
+    requested: list[str],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate an embedding model without treating it as a chat model."""
+    results: list[dict[str, Any]] = []
+    declared = set(profile.get("declared_capabilities") or [])
+    embedding_dimension = profile.get("embedding_dimension")
+
+    try:
+        payload, latency = _invoke_ollama_embed(config, EMBEDDING_PROBE_TEXT)
+        actual_dimension = _embedding_dimension(payload)
+        ok = actual_dimension is not None
+        if actual_dimension is not None:
+            embedding_dimension = actual_dimension
+        results.append(_result(
+            EMBEDDING_CAPABILITY,
+            ok,
+            detail=(f"Vector de embedding recibido ({actual_dimension} dimensiones)"
+                    if ok else "Ollama devolvió un embedding vacío o inválido"),
+            latency_ms=latency,
+        ))
+    except Exception as exc:
+        results.append(_result(
+            EMBEDDING_CAPABILITY,
+            False,
+            detail=f"{type(exc).__name__}: {exc}",
+            status="failed",
+        ))
+
+    modality_inputs = {
+        "vision": {"text": "Describe esta imagen en un vector.", "image": VISION_PROBE_IMAGE},
+        "audio": {"text": "Representa este audio en un vector.", "audio": AUDIO_PROBE_WAV},
+    }
+    for capability in requested:
+        if capability == EMBEDDING_CAPABILITY:
+            continue
+        if capability in {"vision", "audio"} and capability in declared:
+            try:
+                payload, latency = _invoke_ollama_embed(config, modality_inputs[capability])
+                actual_dimension = _embedding_dimension(payload)
+                ok = actual_dimension is not None
+                results.append(_result(
+                    capability,
+                    False,
+                    status="embedding_only" if ok else "failed",
+                    detail=(
+                        f"Modalidad verificada como embedding ({actual_dimension} dimensiones); "
+                        "no es entrada conversacional"
+                        if ok else "Ollama no devolvió un embedding válido"
+                    ),
+                    latency_ms=latency,
+                ))
+            except Exception as exc:
+                results.append(_result(
+                    capability,
+                    False,
+                    detail=f"{type(exc).__name__}: {exc}",
+                    status="failed",
+                ))
+        else:
+            results.append(_result(
+                capability,
+                False,
+                status="not_applicable",
+                detail="Modelo de embeddings: esta capacidad conversacional no aplica.",
+            ))
+
+    requested_passed = all(
+        item["ok"] for item in results
+        if item["capability"] in requested
+    )
+    return {
+        "modelType": "embedding",
+        "declaredCapabilities": sorted(declared),
+        "embeddingDimension": embedding_dimension,
+        "capabilities": results,
+        "passed": requested_passed,
+    }
 
 
 def _invoke_ollama(config: LLMProviderConfig, *, schema: dict[str, Any] | None = None,
@@ -174,16 +321,45 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
     results: list[dict[str, Any]] = []
     availability = True
     availability_detail = "Proveedor remoto; se valida durante la prueba"
+    model_profile: dict[str, Any] = {
+        "model_type": "unknown",
+        "declared_capabilities": [],
+        "embedding_dimension": None,
+    }
     if config.provider == "ollama":
         availability, availability_detail = _ollama_model_available(config)
+        if availability:
+            try:
+                model_profile = _ollama_model_profile(config)
+                availability_detail = (
+                    f"Modelo disponible en Ollama; tipo={model_profile['model_type']}"
+                )
+            except Exception as exc:
+                availability_detail = (
+                    f"Modelo disponible en Ollama; no se pudo leer su perfil: "
+                    f"{type(exc).__name__}: {exc}"
+                )
     if not availability:
         return {
             "provider": config.provider,
             "model": config.model,
+            "modelType": model_profile["model_type"],
+            "declaredCapabilities": model_profile["declared_capabilities"],
+            "embeddingDimension": model_profile["embedding_dimension"],
             "available": False,
             "availableDetail": availability_detail,
             "capabilities": [_result(capability, False, detail=availability_detail, status="unavailable") for capability in requested],
             "passed": False,
+        }
+
+    if config.provider == "ollama" and model_profile["model_type"] == "embedding":
+        embedding_result = _validate_embedding_provider(config, requested, model_profile)
+        return {
+            "provider": config.provider,
+            "model": config.model,
+            "available": True,
+            "availableDetail": availability_detail,
+            **embedding_result,
         }
 
     for capability in requested:
@@ -311,6 +487,9 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
     return {
         "provider": config.provider,
         "model": config.model,
+        "modelType": model_profile["model_type"],
+        "declaredCapabilities": model_profile["declared_capabilities"],
+        "embeddingDimension": model_profile["embedding_dimension"],
         "available": availability,
         "availableDetail": availability_detail,
         "capabilities": results,
