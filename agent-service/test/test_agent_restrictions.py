@@ -350,6 +350,10 @@ def test_attached_code_does_not_change_request_language():
     assert _language(message) == "es"
 
 
+def test_request_instruction_normalizes_unicode_math_notation_without_scope_rules():
+    assert _request_instruction("Factorial de n³?") == "Factorial de n3?"
+
+
 def test_unknown_detected_language_uses_published_default():
     class Decision:
         language = "eo"

@@ -6,6 +6,7 @@ from dataclasses import replace
 from functools import lru_cache
 import json
 import re
+import unicodedata
 
 import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -108,7 +109,9 @@ def _request_instruction(message: str) -> str:
     if not text:
         return ""
     first_paragraph = re.split(r"\r?\n\s*\r?\n", text, maxsplit=1)[0].strip()
-    return first_paragraph if first_paragraph else text
+    # Keep semantically equivalent Unicode notation comparable to its plain
+    # text form (for example, n³ -> n3) without encoding any domain policy.
+    return unicodedata.normalize("NFKC", first_paragraph if first_paragraph else text)
 
 
 def _language(message: str, default_language: str | None = None) -> str:
