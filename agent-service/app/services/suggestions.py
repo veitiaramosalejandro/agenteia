@@ -891,6 +891,22 @@ def _is_related_record_guidance_request(text: str) -> bool:
     )
 
 
+def _related_record_guidance_mode(
+    request_intent: str,
+    related_records_context: str,
+    user_text: str,
+    records: list[dict[str, Any]],
+) -> bool:
+    """Keep task guidance enabled after the related-record intent override."""
+    return bool(
+        related_records_context
+        and (
+            request_intent == "recommendation"
+            or related_record_question_needs_guidance(user_text, records)
+        )
+    )
+
+
 def _suggestion_request_language(text: str, detected: str) -> str:
     """Prefer unambiguous grammar in the current request over old session state."""
     requested = requested_output_language(text)
@@ -2128,8 +2144,24 @@ async def _process_chat_question_response_suggestion(
         if learned_fact:
             suggestion_count = 1
         concrete_answer_mode = request_intent in {"internal", "general", "external"}
-        related_guidance_mode = bool(
-            request_intent == "recommendation" and related_records_context
+        # RelatedRecordsData is authoritative and changes the classifier intent
+        # to ``related_record`` above.  That must not erase the user's actual
+        # request for a plan or ideas to solve the selected task: guidance is a
+        # different validation contract from a factual SQL answer.
+        related_record_guidance = related_record_question_needs_guidance(
+            effective_request_text, context["related_records"],
+        )
+        related_guidance_mode = _related_record_guidance_mode(
+            request_intent,
+            related_records_context,
+            effective_request_text,
+            context["related_records"],
+        )
+        print(
+            f"SUGGESTION_RELATED_MODE request_id={request_id} "
+            f"intent={request_intent} guidance_requested={related_record_guidance} "
+            f"guidance_mode={related_guidance_mode}",
+            flush=True,
         )
         if related_guidance_mode:
             suggestion_count = 1
@@ -2230,9 +2262,6 @@ async def _process_chat_question_response_suggestion(
         )
         response_language = _suggestion_request_language(
             effective_request_text, language_decision.language
-        )
-        related_record_guidance = related_record_question_needs_guidance(
-            effective_request_text, context["related_records"],
         )
         metadata = {
             "response_suggestion_mode": True,

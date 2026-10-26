@@ -23,6 +23,7 @@ from app.services.suggestions import (
     _is_concrete_suggestion_answer_request,
     _is_research_suggestion_request,
     _is_related_record_guidance_request,
+    _related_record_guidance_mode,
     _suggestion_request_language,
     _suggestion_matches_related_records,
     _related_guidance_is_useful,
@@ -370,6 +371,33 @@ class TestChatQuestionSuggestion(unittest.TestCase):
             with self.subTest(request=request):
                 self.assertTrue(_is_related_record_guidance_request(request))
                 self.assertTrue(_is_business_recommendation_request(request))
+
+    def test_related_record_override_preserves_task_guidance_mode(self):
+        records = [
+            {
+                "idRecordModule": "241a28aa-2dd2-481a-bfe0-86c800c45ed5",
+                "recordCode": "T-26-2330",
+                "recordShortName": "Crear trabajo con kubernate",
+            }
+        ]
+        request = "Que ideas puedes darme para resolver esta tarea?"
+
+        self.assertTrue(
+            _related_record_guidance_mode(
+                "related_record",
+                "SQL_VERIFICATION: retrieved\nCode: T-26-2330",
+                request,
+                records,
+            )
+        )
+        self.assertFalse(
+            _related_record_guidance_mode(
+                "related_record",
+                "SQL_VERIFICATION: retrieved\nCode: T-26-2330",
+                "Cual es el estado de esta tarea?",
+                records,
+            )
+        )
 
     def test_screenshot_requests_are_not_misclassified_as_factual_answers(self):
         for request in (
