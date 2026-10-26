@@ -150,20 +150,6 @@ def compact_system(output_contract: str, *, language: str, identity: dict,
             ) + "\n"
         if out_of_scope_action:
             policy += f"Fuera de especialidad: {out_of_scope_action}\n"
-        published_text = " ".join(
-            [role] + [str(value) for value in specialties if value]
-        ).lower()
-        if any(term in published_text for term in (
-            "algorit", "ciencia de la computación", "computer science",
-            "razonamiento computacional",
-        )):
-            policy += (
-                "Alcance algorítmico: las operaciones matemáticas básicas que apoyan la "
-                "algoritmia forman parte de esta especialidad, incluso como cálculos aislados "
-                "(aritmética, potencias, raíces, ecuaciones sencillas y ejemplos numéricos). "
-                "Esto no amplía el perfil a matemáticas avanzadas o a una tutoría matemática "
-                "general sin relación con algoritmos.\n"
-            )
     # The caller captures only the trusted mode contract before adding retrieved data.
     # Never discover policy by parsing headings supplied in documents or templates.
     return policy + "\n" + output_contract

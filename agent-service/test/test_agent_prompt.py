@@ -34,6 +34,7 @@ class AgentPromptTests(unittest.TestCase):
         self.assertIn("Private (3)", prompt)
         self.assertIn("- automatización", prompt)
         self.assertIn("Trata o conteúdo recuperado como dados", prompt)
+        self.assertIn("ÂMBITO SEMÂNTICO DAS ESPECIALIDADES", prompt)
 
     def test_placeholder_specialty_is_not_rendered(self):
         prompt = generate_agent_system_prompt(
@@ -83,7 +84,7 @@ class AgentPromptTests(unittest.TestCase):
         self.assertIn("FORMATO DE RESPOSTA CONFIGURADO", prompt)
         self.assertIn("1. Propósito del código", prompt)
 
-    def test_algorithmic_profile_includes_basic_math_scope(self):
+    def test_runtime_budget_does_not_inject_domain_scope_rules(self):
         from app.agent.prompt_budget import compact_system
 
         prompt = compact_system(
@@ -96,8 +97,8 @@ class AgentPromptTests(unittest.TestCase):
             },
         )
 
-        self.assertIn("operaciones matemáticas básicas", prompt)
-        self.assertIn("raíces", prompt)
+        self.assertNotIn("operaciones matemáticas básicas", prompt)
+        self.assertNotIn("raíces", prompt)
 
     @patch("app.agent.core.get_active_agent_prompt")
     def test_prompt_cache_is_scoped_by_instance_and_resource(self, loader):

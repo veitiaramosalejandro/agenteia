@@ -8,7 +8,6 @@ import httpx
 from app.agent.prompt_budget import compact_system
 from app.services.agent_restrictions import (
     _clarification,
-    _is_conversational_followup,
     _language,
     _request_instruction,
     answer_restricted_topic,
@@ -33,7 +32,10 @@ def _classify_output(payload):
          patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
          patch("app.services.agent_restrictions.replace", return_value=config), \
          patch("app.services.agent_restrictions.create_chat_model", return_value=model):
-        return _scope_decision("Ayúdame a evaluar una idea", {}, "instance", "agent")
+        return _scope_decision(
+            "Ayúdame a evaluar una idea", {}, "instance", "agent",
+            published_prompt="Prompt publicado de prueba",
+        )
 
 
 @pytest.mark.parametrize("payload", [
@@ -60,7 +62,7 @@ def test_scoped_cannot_grant_cross_domain_reasoning_or_coding():
     context = {"declared_capabilities": {"reasoning", "coding"}}
     model = Mock()
     model.invoke.side_effect = [
-        SimpleNamespace(content='{"decision":"scoped"}'),
+        SimpleNamespace(content='{"decision":"decline"}'),
         SimpleNamespace(content='{"decision":"decline"}'),
     ]
     config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
@@ -75,11 +77,12 @@ def test_scoped_cannot_grant_cross_domain_reasoning_or_coding():
             "Necesito hacer un sistema web", "instance", "agent", scope_context=context
         )
     assert context["_agent_scope_decision"] == "decline"
-    refusal.assert_called_once()
-    assert "programación" in answer
+    refusal.assert_not_called()
+    assert "No puedo responder" in answer
+    assert "programación" not in answer
 
 
-def test_published_code_review_scope_cannot_be_downgraded_to_decline():
+def test_scope_classifier_uses_published_code_review_policy():
     policy = {
         "role": "ingeniero de software senior",
         "specialties": ["Backend C#"],
@@ -88,10 +91,7 @@ def test_published_code_review_scope_cannot_be_downgraded_to_decline():
     }
     config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
     model = Mock()
-    model.invoke.side_effect = [
-        SimpleNamespace(content='{"decision":"clarify"}'),
-        SimpleNamespace(content='{"decision":"decline"}'),
-    ]
+    model.invoke.return_value = SimpleNamespace(content='{"decision":"scoped"}')
     with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
          patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
          patch("app.services.agent_restrictions.replace", return_value=config), \
@@ -100,7 +100,8 @@ def test_published_code_review_scope_cannot_be_downgraded_to_decline():
         from app.services.agent_restrictions import _scope_decision
         decision = _scope_decision(
             "Refactoriza: public async Task Foo() { return; }",
-            policy, "instance", "agent", {"coding"},
+            policy, "instance", "agent",
+            published_prompt=json.dumps(policy, ensure_ascii=False),
         )
     assert decision == "scoped"
 
@@ -125,7 +126,8 @@ def test_published_programming_scope_allows_code_request_without_artifact():
          patch("app.services.agent_restrictions._normalize_requested_action", return_value="implementar un método de hola mundo"):
         from app.services.agent_restrictions import _scope_decision
         decision = _scope_decision(
-            "Implementa un método de hola mundo", policy, "instance", "agent", {"coding"}
+            "Implementa un método de hola mundo", policy, "instance", "agent",
+            published_prompt=json.dumps(policy, ensure_ascii=False),
         )
     assert decision == "scoped"
 
@@ -150,6 +152,12 @@ def test_malformed_policy_fails_closed():
 
 
 PUBLISHED = {
+    "SystemPrompt": (
+        "OBJETIVO\nAyudar con finanzas corporativas y mercados.\n"
+        "ESPECIALIDADES VERIFICADAS\n- Valoración de empresas.\n"
+        "RESTRIÇÕES DE ESPECIALIDADE\n"
+        "- No proporcionar diagnósticos médicos ni consejos de salud física."
+    ),
     "BehaviorConfig": {
         "role": "especialista en finanzas corporativas y mercados",
         "specialties": ["Valoración de empresas"],
@@ -159,7 +167,6 @@ PUBLISHED = {
         "response_format": ["Problemas por severidad", "Código propuesto"],
     }
 }
-
 
 def test_scope_decision_uses_published_agent_policy_for_any_question():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
@@ -171,10 +178,12 @@ def test_scope_decision_uses_published_agent_policy_for_any_question():
     decide.assert_called_once_with(
         "¿Qué ejercicios son buenos para aliviar el dolor lumbar?",
         PUBLISHED["BehaviorConfig"], "instance", "agent",
+        published_prompt=PUBLISHED["SystemPrompt"],
+        conversation_history="",
     )
-    assert "finanzas corporativas" in answer
     assert "No puedo responder" in answer
-    assert refusal.call_args.kwargs == {"decline": True}
+    assert "finanzas corporativas" not in answer
+    refusal.assert_not_called()
 
 
 def test_allowed_request_continues_to_agent():
@@ -196,7 +205,7 @@ def test_scope_classifier_receives_intervenient_history_as_context_only():
          patch("app.services.agent_restrictions.create_chat_model", return_value=model):
         assert _scope_decision(
             "¿Qué es Kanban?", PUBLISHED["BehaviorConfig"], "instance", "agent",
-            conversation_history=history,
+        published_prompt=PUBLISHED["SystemPrompt"], conversation_history=history,
         ) == "allow"
 
     payload = json.loads(model.invoke.call_args.args[0][-1].content)
@@ -212,16 +221,19 @@ def test_channel_follow_up_keeps_the_topic_from_intervenient_history():
         )
     }
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
-         patch("app.services.agent_restrictions._scope_decision") as decide, \
+         patch("app.services.agent_restrictions._scope_decision", return_value="scoped") as decide, \
          patch("app.services.agent_restrictions._clarification") as clarify:
         assert answer_restricted_topic(
             "¿Qué es Kanban?", "instance", "agent", scope_context=context
         ) is None
 
-    decide.assert_not_called()
+    decide.assert_called_once_with(
+        "¿Qué es Kanban?", PUBLISHED["BehaviorConfig"], "instance", "agent",
+        published_prompt=PUBLISHED["SystemPrompt"],
+        conversation_history=context["conversation_history"],
+    )
     clarify.assert_not_called()
     assert context["_agent_scope_decision"] == "scoped"
-    assert context["_scope_conversation_context"] is True
 
 
 def test_vague_clarification_follow_up_inherits_conversation_scope():
@@ -231,19 +243,22 @@ def test_vague_clarification_follow_up_inherits_conversation_scope():
             "[2026-10-22 12:01:00] Dev20 [IA]: Explicación sobre Docker y N8N."
         )
     }
-    assert _is_conversational_followup("No entendi correctamente explicame bien por favor?")
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
-         patch("app.services.agent_restrictions._scope_decision") as decide, \
+         patch("app.services.agent_restrictions._scope_decision", return_value="scoped") as decide, \
          patch("app.services.agent_restrictions._clarification") as clarify:
         assert answer_restricted_topic(
             "No entendi correctamente explicame bien por favor?",
             "instance", "agent", scope_context=context,
         ) is None
 
-    decide.assert_not_called()
+    decide.assert_called_once_with(
+        "No entendi correctamente explicame bien por favor?",
+        PUBLISHED["BehaviorConfig"], "instance", "agent",
+        published_prompt=PUBLISHED["SystemPrompt"],
+        conversation_history=context["conversation_history"],
+    )
     clarify.assert_not_called()
     assert context["_agent_scope_decision"] == "scoped"
-    assert context["_scope_conversation_context"] is True
 
 
 def test_clarification_rejects_internal_policy_leak():
@@ -260,12 +275,13 @@ def test_clarification_rejects_internal_policy_leak():
          pytest.raises(ValueError, match="internal_contract_leak"):
         _clarification(
             "¿Qué es Kanban?", PUBLISHED["BehaviorConfig"], "instance", "agent", "es",
-            decline=True,
+            decline=True, published_prompt=PUBLISHED["SystemPrompt"],
         )
 
 
 def test_role_and_specialties_alone_enforce_published_scope():
     policy_without_explicit_restrictions = {
+        "SystemPrompt": "ESPECIALIDADES VERIFICADAS\n- Análisis financiero.\n- Mercados.",
         "BehaviorConfig": {
             "role": "especialista financiero",
             "specialties": ["Análisis financiero", "Mercados"],
@@ -286,21 +302,17 @@ def test_role_and_specialties_alone_enforce_published_scope():
         )
 
     decide.assert_called_once()
-    refusal.assert_called_once_with(
-        "¿Qué sabes de algoritmos de programación?",
-        policy_without_explicit_restrictions["BehaviorConfig"],
-        "instance",
-        "agent",
-        "es",
-        decline=True,
-    )
-    assert "programación" in answer
+    refusal.assert_not_called()
+    assert "No puedo responder" in answer
+    assert "programación" not in answer
 
 
 def test_unpublished_policy_does_not_trigger_model_call():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=None), \
          patch("app.services.agent_restrictions._scope_decision") as decide:
-        assert answer_restricted_topic("¿Qué ejercicios alivian el dolor lumbar?", "instance", "agent") is None
+        assert "No puedo confirmar" in answer_restricted_topic(
+            "¿Qué ejercicios alivian el dolor lumbar?", "instance", "agent"
+        )
     decide.assert_not_called()
 
 
@@ -384,9 +396,12 @@ def test_invalid_output_is_repaired_once_without_logging_content(first, code, ca
          patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
          patch('app.services.agent_restrictions.replace', return_value=config), \
          patch('app.services.agent_restrictions.create_chat_model', return_value=model):
-        assert _scope_decision('Solicitud ambigua', {}, 'instance', 'agent') == 'clarify'
+        assert _scope_decision(
+            'Solicitud ambigua', {}, 'instance', 'agent',
+            published_prompt='Prompt publicado',
+        ) == 'clarify'
     assert model.invoke.call_count == 2
-    model.bind.assert_called_once_with(format=_SCOPE_SCHEMA)
+    model.bind.assert_called_once_with(format=_SCOPE_SCHEMA, think=False)
     output = capsys.readouterr().out
     assert code in output
     assert 'SECRET' not in output
@@ -414,7 +429,7 @@ def test_failed_repair_stops_without_authorizing(second):
     assert '_agent_scope_decision' not in context
 
 
-def test_refusal_failure_returns_localized_redirection():
+def test_decline_returns_localized_safe_redirection_without_second_llm_call():
     with patch('app.services.agent_restrictions.get_active_agent_prompt', return_value=PUBLISHED), \
          patch('app.services.agent_restrictions._language', return_value='pt'), \
          patch('app.services.agent_restrictions._scope_decision', return_value='decline'), \
@@ -440,9 +455,15 @@ def test_scope_stages_respect_provider_timeout(timeout, stage):
          patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
          patch('app.services.agent_restrictions.create_chat_model', return_value=model) as create:
         if stage == 'classification':
-            _scope_decision('Solicitud', {}, 'instance', 'agent')
+            _scope_decision(
+                'Solicitud', {}, 'instance', 'agent',
+                published_prompt=PUBLISHED['SystemPrompt'],
+            )
         else:
-            _clarification('Solicitud', {}, 'instance', 'agent', 'es', decline=stage == 'refusal')
+            _clarification(
+                'Solicitud', {}, 'instance', 'agent', 'es',
+                decline=stage == 'refusal', published_prompt=PUBLISHED['SystemPrompt'],
+            )
     effective = create.call_args.args[0]
     assert effective.timeout_seconds == timeout
     assert effective.max_retries == 0
@@ -480,7 +501,10 @@ def test_scope_diagnostic_reports_pair_attempt_and_model(capsys):
          patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
          patch('app.services.agent_restrictions.create_chat_model', return_value=model), \
          pytest.raises(ValueError):
-        _scope_decision('PRIVATE QUESTION', {}, 'instance', 'agent')
+        _scope_decision(
+            'PRIVATE QUESTION', {}, 'instance', 'agent',
+            published_prompt=PUBLISHED['SystemPrompt'],
+        )
     logs = capsys.readouterr().out
     assert 'attempt=1' in logs and 'attempt=2' in logs
     assert 'decision="scoped" reason_code="in_scope"' in logs
@@ -506,10 +530,12 @@ def test_external_web_capability_instruction_covers_entity_facts():
          patch('app.services.agent_restrictions.provider_config_from_record', return_value=config), \
          patch('app.services.agent_restrictions.replace', return_value=config), \
          patch('app.services.agent_restrictions.create_chat_model', return_value=model):
-        assert _scope_decision('¿Qué tipos de modelos genera FinModeler?', {}, 'instance', 'agent', {'external_web'}) == 'scoped'
-    prompt = model.invoke.call_args.args[0][0].content
-    assert 'entidad externa identificada' in prompt
-    assert 'external_web' in prompt
+        assert _scope_decision(
+            '¿Qué tipos de modelos genera FinModeler?', {}, 'instance', 'agent',
+            published_prompt=PUBLISHED['SystemPrompt'],
+        ) == 'scoped'
+    payload = json.loads(model.invoke.call_args.args[0][-1].content)
+    assert "declared_capabilities" not in payload
 
 
 def test_external_web_does_not_change_scope_decision():
@@ -524,7 +550,7 @@ def test_external_web_does_not_change_scope_decision():
     assert context["_agent_scope_decision"] == "clarify"
 
 
-def test_algorithmic_scope_prompt_allows_basic_math_support():
+def test_scope_prompt_uses_published_policy_without_embedded_domain_rules():
     config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
     model = Mock()
     model.invoke.return_value = SimpleNamespace(content='{"decision":"allow"}')
@@ -537,13 +563,40 @@ def test_algorithmic_scope_prompt_allows_basic_math_support():
          patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
          patch("app.services.agent_restrictions.replace", return_value=config), \
          patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        published_prompt = json.dumps(policy, ensure_ascii=False)
         assert _scope_decision(
-            "¿Cuál es la raíz décima de 1024?", policy, "instance", "agent"
+            "¿Cuál es la raíz décima de 1024?", policy, "instance", "agent",
+            published_prompt=published_prompt,
         ) == "allow"
 
-    prompt = model.invoke.call_args.args[0][0].content
-    assert "operaciones matemáticas básicas" in prompt
-    assert "raíces" in prompt
+    payload = json.loads(model.invoke.call_args.args[0][-1].content)
+    assert payload["requested_task"] == "¿Cuál es la raíz décima de 1024?"
+    assert published_prompt in model.invoke.call_args.args[0][0].content
+    assert "operaciones matemáticas básicas" not in model.invoke.call_args.args[0][0].content
+
+
+def test_scope_classifier_prefers_the_stored_published_system_prompt():
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(content='{"decision":"scoped"}')
+    published_prompt = (
+        "ESPECIALIDADES VERIFICADAS\n"
+        "- Algoritmos y estructuras de datos\n"
+        "RESTRIÇÕES DE ESPECIALIDADE\n"
+        "- No inventar resultados."
+    )
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        assert _scope_decision(
+            "Factorial de n3?", {"specialties": ["otro ámbito"]},
+            "instance", "agent", published_prompt=published_prompt,
+        ) == "scoped"
+
+    payload = json.loads(model.invoke.call_args.args[0][-1].content)
+    assert payload["requested_task"] == "Factorial de n3?"
+    assert published_prompt in model.invoke.call_args.args[0][0].content
 
 
 def test_visual_agent_policy_is_not_rejected_by_scope_input_guard():
@@ -590,9 +643,9 @@ def test_visual_agent_policy_is_not_rejected_by_scope_input_guard():
             policy,
             "instance",
             "agent",
-            {"general", "vision"},
+            published_prompt=json.dumps(policy, ensure_ascii=False),
         ) == "allow"
 
     payload = json.loads(model.invoke.call_args.args[0][-1].content)
-    assert payload["published_agent_policy"]["declared_capabilities"] == ["general", "vision"]
-    assert "Análisis e interpretación de imágenes adjuntas." in payload["published_agent_policy"]["specialties"]
+    assert "declared_capabilities" not in payload
+    assert "Análisis e interpretación de imágenes adjuntas." in model.invoke.call_args.args[0][0].content
