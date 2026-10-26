@@ -311,7 +311,7 @@ services:
   # servicio; embeddings e ingestión usan el runtime CPU independiente.
   ollama-chat:
     # 0.33.2 está fijada para mantener reproducibilidad del runtime CUDA.
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.40.10}
     container_name: machining_ollama_chat
     hostname: ollama-chat
     restart: always
@@ -356,7 +356,7 @@ services:
     logging: *default-logging
 
   ollama-embeddings:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.40.10}
     container_name: machining_ollama_embeddings
     hostname: ollama-embeddings
     restart: always
@@ -385,7 +385,7 @@ services:
     logging: *default-logging
 
   ollama-system-embeddings:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.40.10}
     container_name: machining_ollama_system_embeddings
     hostname: ollama-system-embeddings
     restart: always
@@ -414,7 +414,7 @@ services:
     logging: *default-logging
 
   ollama-chat-init:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.40.10}
     restart: "no"
     environment:
       OLLAMA_HOST: http://ollama-chat:11434
@@ -427,7 +427,7 @@ services:
       - machining-network
 
   ollama-embeddings-init:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.40.10}
     restart: "no"
     environment:
       OLLAMA_HOST: http://ollama-embeddings:11434
@@ -440,7 +440,7 @@ services:
       - machining-network
 
   ollama-system-embeddings-init:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.33.2}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.40.10}
     restart: "no"
     environment:
       OLLAMA_HOST: http://ollama-system-embeddings:11434
@@ -616,4 +616,4 @@ services:
 
 networks:
   machining-network:
-    driver: bridge
+    driver: bridge 

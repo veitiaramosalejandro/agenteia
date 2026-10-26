@@ -65,15 +65,25 @@ def test_ollama_vision_probe_sends_image_payload(monkeypatch):
     assert observed["vision"] is True
 
 
-def test_ollama_audio_validation_is_explicitly_unsupported():
+def test_ollama_audio_validation_executes_a_real_audio_probe(monkeypatch):
     from app.services import model_capability_validation as validation
 
     with patch.object(validation, "_ollama_model_available", return_value=(True, "ok")):
+        observed = {}
+
+        def fake_audio_probe(config):
+            observed["provider"] = config.provider
+            observed["model"] = config.model
+            return {
+                "choices": [{"message": {"content": "Audio recibido"}}]
+            }, 4.0
+
+        monkeypatch.setattr(validation, "_invoke_ollama_audio", fake_audio_probe)
         result = validation.validate_provider(
             LLMProviderConfig(provider="ollama", model="gemma4:31b", base_url="http://ollama"),
             ["audio"],
         )
 
-    assert result["passed"] is False
-    assert result["capabilities"][0]["status"] == "unsupported"
-    assert "no entrada de audio" in result["capabilities"][0]["detail"]
+    assert result["passed"] is True
+    assert result["capabilities"][0]["status"] == "passed"
+    assert observed == {"provider": "ollama", "model": "gemma4:31b"}

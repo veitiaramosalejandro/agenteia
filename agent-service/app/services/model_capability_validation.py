@@ -98,6 +98,65 @@ def _invoke_ollama(config: LLMProviderConfig, *, schema: dict[str, Any] | None =
     return response.json(), (time.perf_counter() - started) * 1000
 
 
+def _invoke_ollama_audio(config: LLMProviderConfig) -> tuple[Any, float]:
+    """Send a real audio probe through Ollama's OpenAI-compatible endpoint.
+
+    Ollama's native ``/api/chat`` contract represents multimodal input with
+    ``images`` and its older versions reject an ``input_audio`` content part.
+    The OpenAI-compatible endpoint is the contract that can carry audio, so
+    this probe must use ``/v1/chat/completions``.  A provider response is
+    required; metadata or a model-name claim is not enough to mark audio as
+    supported.
+    """
+    import time
+
+    payload = {
+        "model": config.model,
+        "stream": False,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe brevemente este audio."},
+                {"type": "input_audio", "input_audio": {
+                    "data": AUDIO_PROBE_WAV,
+                    "format": "wav",
+                }},
+            ],
+        }],
+        "temperature": 0,
+        "max_tokens": 32,
+    }
+    headers = {"Content-Type": "application/json"}
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+    started = time.perf_counter()
+    response = httpx.post(
+        f"{config.base_url.rstrip('/')}/v1/chat/completions",
+        json=payload,
+        headers=headers,
+        timeout=max(5, config.timeout_seconds),
+    )
+    response.raise_for_status()
+    return response.json(), (time.perf_counter() - started) * 1000
+
+
+def _openai_content(payload: Any) -> str:
+    """Extract text from an OpenAI-compatible non-streaming response."""
+    try:
+        content = payload["choices"][0]["message"].get("content")
+    except (AttributeError, IndexError, KeyError, TypeError):
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        return " ".join(
+            str(part.get("text") or "").strip()
+            for part in content
+            if isinstance(part, dict) and part.get("text")
+        ).strip()
+    return ""
+
+
 def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None = None) -> dict[str, Any]:
     """Probe a provider and return machine-readable contract results."""
     aliases = {
@@ -130,18 +189,7 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
     for capability in requested:
         try:
             if config.provider == "ollama":
-                if capability == "audio":
-                    results.append(_result(
-                        capability,
-                        False,
-                        status="unsupported",
-                        detail=(
-                            "Ollama /api/chat admite imágenes, pero no entrada de audio "
-                            "conversacional. Usa OpenAI, Azure o un servidor OpenAI-compatible "
-                            "con un modelo de audio."
-                        ),
-                    ))
-                elif capability == "general":
+                if capability == "general":
                     payload, latency = _invoke_ollama(config)
                     content = ((payload.get("message") or {}).get("content") or "").strip()
                     results.append(_result(capability, bool(content), detail="Respuesta de texto recibida" if content else "Respuesta vacía", latency_ms=latency))
@@ -158,6 +206,17 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                         capability, bool(content),
                         detail=("Entrada visual aceptada y respuesta recibida" if content
                                 else "El modelo no devolvió respuesta para la entrada visual"),
+                        latency_ms=latency,
+                    ))
+                elif capability == "audio":
+                    payload, latency = _invoke_ollama_audio(config)
+                    content = _openai_content(payload)
+                    results.append(_result(
+                        capability,
+                        bool(content),
+                        detail=("Entrada de audio aceptada y respuesta recibida"
+                                if content else
+                                "El proveedor aceptó la petición, pero devolvió una respuesta vacía"),
                         latency_ms=latency,
                     ))
                 else:
@@ -225,10 +284,28 @@ def validate_provider(config: LLMProviderConfig, capabilities: list[str] | None 
                 results.append(_result(capability, ok, detail=detail))
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
-            status = "adapter_error" if (
-                capability in {"structured_json", "tool_calling", "vision", "audio"}
-                and not isinstance(exc, json.JSONDecodeError)
-            ) else "failed"
+            if capability == "audio" and isinstance(exc, httpx.HTTPStatusError):
+                # Keep the provider's actual rejection visible.  A 400 while
+                # decoding the sample is a failed runtime probe, not proof
+                # that the model metadata lacks audio.
+                try:
+                    body = exc.response.json()
+                    provider_error = body.get("error") if isinstance(body, dict) else None
+                    if isinstance(provider_error, dict):
+                        provider_error = provider_error.get("message") or provider_error
+                    if provider_error:
+                        detail = f"HTTP {exc.response.status_code}: {provider_error}"
+                except (ValueError, TypeError):
+                    pass
+                status = "unsupported" if any(
+                    marker in detail.casefold()
+                    for marker in ("not supported", "unsupported", "no soporta")
+                ) else "failed"
+            else:
+                status = "adapter_error" if (
+                    capability in {"structured_json", "tool_calling", "vision", "audio"}
+                    and not isinstance(exc, json.JSONDecodeError)
+                ) else "failed"
             results.append(_result(capability, False, detail=detail, status=status))
 
     return {
