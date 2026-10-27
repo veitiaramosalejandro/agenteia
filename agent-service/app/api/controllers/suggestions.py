@@ -114,7 +114,11 @@ async def suggest_chat_question_response(
     if not _payload_allows_agent_response(payload):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="El Modo IA está inactivo (Info.talk_with_agent_to debe ser 1); el mensaje se tratará solo como aprendizaje.",
+            detail=(
+                "El Modo IA no autoriza responder en este canal: "
+                "talk_with_agent_to debe ser 2 o 1 en el canal comunicador. "
+                "El mensaje se tratará solo como aprendizaje."
+            ),
         )
     context = _chat_question_suggestion_context(payload)
     request_id = context["request_id"]

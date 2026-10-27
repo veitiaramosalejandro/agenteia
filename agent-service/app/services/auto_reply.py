@@ -78,6 +78,8 @@ from app.system.schema import Actividad
 agent = None
 orchestrator = None
 response_queue: AgentResponseQueue | None = None
+
+MODE_AI_WORKROOM_COMMUNICATOR_ID = "DEBF64B2-3B3E-EB11-870C-D850E63F5833"
 _dialogue_redis = redis_client(settings.REDIS_URL, decode_responses=True)
 _auto_reply_lock = threading.Lock()
 _auto_reply_seen_fingerprints: "OrderedDict[str, float]" = OrderedDict()
@@ -889,7 +891,9 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     )
     has_audio_attachment = bool(extract_solidset_audio_media_ids(payload))
-    if not _payload_allows_agent_response(payload):
+    if not _payload_allows_agent_response(
+        payload, channel_id=candidate.get("channel_id")
+    ):
         return "talk_with_agent_to_no_activo"
     if _payload_has_learning_only_destination(payload):
         return "contenido_solo_aprendizaje"
@@ -978,8 +982,25 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
     return None
 
 
-def _payload_allows_agent_response(payload: dict[str, Any]) -> bool:
-    """Autoriza respuesta únicamente cuando el Modo IA está activo (valor 1)."""
+def _payload_workroom_id(payload: dict[str, Any]) -> str:
+    chat = _get_payload_value(payload, "Chat", "chat")
+    chat = chat if isinstance(chat, dict) else {}
+    destiny = _get_payload_value(payload, "Destiny", "destiny")
+    destiny = destiny if isinstance(destiny, dict) else {}
+    workroom_data = _get_payload_value(payload, "WorkRoomData", "workRoomData")
+    workroom_data = workroom_data if isinstance(workroom_data, dict) else {}
+    return str(
+        _get_payload_value(chat, "idWorkRoom", "IDWorkRoom", "workRoom")
+        or _get_payload_value(destiny, "workRoom", "IDWorkRoom")
+        or _get_payload_value(workroom_data, "id", "ID")
+        or ""
+    ).strip()
+
+
+def _payload_allows_agent_response(
+    payload: dict[str, Any], *, channel_id: Any = None
+) -> bool:
+    """Autoriza según talk_with_agent_to y el alcance del canal."""
     info = _get_payload_value(payload, "Info", "info")
     info = info if isinstance(info, dict) else {}
     mode = _get_payload_value(
@@ -988,9 +1009,16 @@ def _payload_allows_agent_response(payload: dict[str, Any]) -> bool:
         "talkWithAgentTo",
         "TalkWithAgentTo",
     )
-    if mode in (1, True):
+    try:
+        mode_value = int(mode)
+    except (TypeError, ValueError):
+        return False
+    if mode_value == 2:
         return True
-    return str(mode or "").strip() == "1"
+    if mode_value != 1:
+        return False
+    effective_channel_id = str(channel_id or _payload_workroom_id(payload) or "").strip()
+    return effective_channel_id.casefold() == MODE_AI_WORKROOM_COMMUNICATOR_ID.casefold()
 
 
 def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
@@ -1440,7 +1468,10 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             print("AGENT_ROUTING_SKIPPED reason=generated_by_ia", flush=True)
             continue
         payload = candidate.get("payload")
-        if not _payload_allows_agent_response(payload if isinstance(payload, dict) else {}):
+        if not _payload_allows_agent_response(
+            payload if isinstance(payload, dict) else {},
+            channel_id=candidate.get("channel_id"),
+        ):
             print("AGENT_ROUTING_SKIPPED reason=talk_with_agent_to_no_activo", flush=True)
             continue
         channel_id = str(candidate.get("channel_id") or "").strip()
