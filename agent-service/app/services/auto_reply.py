@@ -889,6 +889,8 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
         candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     )
     has_audio_attachment = bool(extract_solidset_audio_media_ids(payload))
+    if not _payload_allows_agent_response(payload):
+        return "talk_with_agent_to_no_activo"
     if _payload_has_learning_only_destination(payload):
         return "contenido_solo_aprendizaje"
     if (
@@ -974,6 +976,21 @@ def _auto_reply_rejection_reason(candidate: dict) -> Optional[str]:
             return "mencion_o_destino_directo_requerido"
 
     return None
+
+
+def _payload_allows_agent_response(payload: dict[str, Any]) -> bool:
+    """Autoriza respuesta únicamente cuando el Modo IA está activo (valor 1)."""
+    info = _get_payload_value(payload, "Info", "info")
+    info = info if isinstance(info, dict) else {}
+    mode = _get_payload_value(
+        info,
+        "talk_with_agent_to",
+        "talkWithAgentTo",
+        "TalkWithAgentTo",
+    )
+    if mode in (1, True):
+        return True
+    return str(mode or "").strip() == "1"
 
 
 def _payload_has_talk_with_agent(payload: dict[str, Any]) -> bool:
@@ -1421,6 +1438,10 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
         )
         if candidate.get("generated_by_ia"):
             print("AGENT_ROUTING_SKIPPED reason=generated_by_ia", flush=True)
+            continue
+        payload = candidate.get("payload")
+        if not _payload_allows_agent_response(payload if isinstance(payload, dict) else {}):
+            print("AGENT_ROUTING_SKIPPED reason=talk_with_agent_to_no_activo", flush=True)
             continue
         channel_id = str(candidate.get("channel_id") or "").strip()
         instance = get_solidset_instance(

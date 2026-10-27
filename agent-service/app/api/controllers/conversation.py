@@ -16,7 +16,11 @@ from app.api.schemas.common import (
 from app.api.examples import _FRAMEWORK_MESSAGE_EXAMPLES
 from app.config import settings
 from app.services import dialogue_runtime
-from app.services.auto_reply import _get_payload_value, _payload_has_talk_with_agent
+from app.services.auto_reply import (
+    _get_payload_value,
+    _payload_allows_agent_response,
+    _payload_has_talk_with_agent,
+)
 from app.services.dialogue_runtime import (
     active_count as _get_active_dialogues,
     build_cache_key as _build_dialogue_cache_key,
@@ -250,6 +254,11 @@ def handle_dialogue(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="RawMessage ou Chat.rawMessage é obrigatório para processar um FrameworkMessage em /dialogue.",
+        )
+    if not _payload_allows_agent_response(dialogue_payload):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="O Modo IA está inativo (Info.talk_with_agent_to deve ser 1); a mensagem será tratada apenas como aprendizagem.",
         )
     if not _payload_has_talk_with_agent(dialogue_payload):
         raise HTTPException(

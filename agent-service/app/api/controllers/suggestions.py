@@ -16,6 +16,7 @@ from app.api.examples import _CHAT_QUESTION_SUGGESTION_EXAMPLES
 from app.api.controllers.notifications import _trace_initial_request, _trace_resolved_instance
 from app.config import settings
 from app.services.instance_resolution import _resolve_request_solidset_instance
+from app.services.auto_reply import _payload_allows_agent_response
 from app.services.response_status import CODES as _RESPONSE_STATUS_CODES
 from app.services.response_status import create as _create_response_status
 from app.services.response_status import load as _load_response_status
@@ -110,6 +111,11 @@ async def suggest_chat_question_response(
     """Encola de forma durable y espera asincrónicamente el resultado del worker."""
     payload = message.model_dump(mode="json")
     _trace_initial_request(request, payload)
+    if not _payload_allows_agent_response(payload):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El Modo IA está inactivo (Info.talk_with_agent_to debe ser 1); el mensaje se tratará solo como aprendizaje.",
+        )
     context = _chat_question_suggestion_context(payload)
     request_id = context["request_id"]
     if (
