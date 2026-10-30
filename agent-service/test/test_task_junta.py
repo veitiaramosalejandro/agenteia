@@ -1,4 +1,5 @@
 from uuid import uuid4
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -12,16 +13,21 @@ def test_receive_junta_tasks_accepts_list():
     client = TestClient(app)
     task_id = uuid4()
 
-    response = client.post(
-        "/api/v1/agent/tasks/junta",
-        json=[{"IDTask": str(task_id), "Code": "J-001", "ProgressPercentage": 25.5}],
-    )
+    with patch(
+        "app.api.controllers.task_junta.analyze_task_similarity",
+        return_value={"tasks": [], "mergeGroups": []},
+    ):
+        response = client.post(
+            "/api/v1/agent/tasks/junta",
+            json=[{"IDTask": str(task_id), "Code": "J-001", "ProgressPercentage": 25.5}],
+        )
 
     assert response.status_code == 200
     assert response.json() == {
-        "status": "accepted",
+        "status": "analyzed",
         "count": 1,
-        "taskIds": [str(task_id)],
+        "tasks": [],
+        "mergeGroups": [],
     }
 
 

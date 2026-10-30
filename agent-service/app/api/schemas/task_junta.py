@@ -7,10 +7,22 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+def _task_json_alias(field_name: str) -> str:
+    """Convierte nombres C# PascalCase a camelCase, incluyendo IDTask -> idTask."""
+
+    if field_name.startswith("ID"):
+        return "id" + field_name[2:]
+    return field_name[:1].lower() + field_name[1:]
+
+
 class TaskJuntaData(BaseModel):
     """Representación del contrato TaskJuntaData recibido desde SolidSET."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=_task_json_alias,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
     IDTask: UUID
     Code: str | None = Field(default=None, max_length=255)

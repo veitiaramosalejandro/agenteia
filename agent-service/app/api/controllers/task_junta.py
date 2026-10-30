@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
-
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, HTTPException
 
 from app.api.schemas.task_junta import TaskJuntaData
+from app.services.task_similarity import analyze_task_similarity
 
 
 router = APIRouter(tags=["Tasks"])
@@ -20,19 +19,12 @@ def receive_junta_tasks(
     definirse explícitamente para evitar sobrescribir datos de SysTask por
     accidente.
     """
-    print("Received tasks:", request)
+    try:
+        result = analyze_task_similarity(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except Exception as exc:
+        print(f"TASK_JUNTA_ANALYSIS_FAILED type={type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="No se pudo analizar la similitud de las tareas.") from None
 
-    print(
-        "Received tasks:",
-        json.dumps(
-            [task.model_dump(mode="json") for task in request],
-            ensure_ascii=False,
-        ),
-        flush=True,
-    )
-
-    return {
-        "status": "accepted",
-        "count": len(request),
-        "taskIds": [str(task.IDTask) for task in request],
-    }
+    return {"status": "analyzed", "count": len(request), **result}
