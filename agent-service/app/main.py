@@ -28,6 +28,7 @@ from app.api.controllers.llm_configuration import router as llm_configuration_ro
 from app.api.controllers.nvidia import router as nvidia_router
 from app.api.controllers.responses import router as responses_router
 from app.api.controllers import diagnostics
+from app.api.controllers import task_junta
 from app.api.controllers.history import router as history_router
 from app.api.controllers import feedback
 from app.api.controllers import conversation
@@ -264,6 +265,7 @@ app.include_router(llm_configuration_router)
 app.include_router(nvidia_router)
 app.include_router(responses_router)
 app.include_router(diagnostics.router)
+app.include_router(task_junta.router)
 app.include_router(history_router)
 feedback.configure(agent)
 app.include_router(feedback.router)
