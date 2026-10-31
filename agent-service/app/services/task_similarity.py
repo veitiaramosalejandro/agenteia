@@ -21,10 +21,35 @@ class TaskMatch:
     reason: str
 
 
+RUNNING_STATUS_NAMES = {
+    2723: "NotReady",
+    2724: "Ready",
+    2725: "Ongoing",
+    2731: "Suspended",
+    2732: "InTest",
+    2733: "InRedo",
+    2726: "Completed",
+    2727: "Cancelled",
+    2734: "NewReady",
+}
+
+
 def _task_text(task: TaskJuntaData) -> str:
     short_name = (task.ShortName or "").strip()
     description = (task.Description or "").strip()
     return f"Nome: {short_name}\nDescrição: {description}".strip()
+
+
+def _task_context(task: TaskJuntaData) -> dict[str, Any]:
+    """Contexto auxiliar; ShortName y Description siguen siendo la fuente principal."""
+    return {
+        "importance": task.Importance,
+        "complexity": task.Complexity,
+        "priority": task.Priority,
+        "progressPercentage": str(task.ProgressPercentage) if task.ProgressPercentage is not None else None,
+        "runningStatus": task.RunningStatus,
+        "runningStatusName": RUNNING_STATUS_NAMES.get(task.RunningStatus, "Unknown"),
+    }
 
 
 def _all_pairs(tasks: list[TaskJuntaData]) -> list[TaskMatch]:
@@ -84,6 +109,11 @@ def _ask_model(
         content=(
             "Compara cada pareja de tareas de forma independiente. Decide si tienen exactamente "
             "el mismo sentido de trabajo: mismo objetivo funcional, resultado esperado y alcance. "
+            "La fuente principal de decisión es ShortName y Description. Usa Importance, Complexity, "
+            "Priority, ProgressPercentage y RunningStatus solo como contexto auxiliar para confirmar "
+            "o descartar la interpretación; no hagas merge solo porque compartan estado, prioridad "
+            "o progreso. Estados posibles: NotReady=2723, Ready=2724, Ongoing=2725, Suspended=2731, "
+            "InTest=2732, InRedo=2733, Completed=2726, Cancelled=2727 y NewReady=2734. "
             "No confundas palabras parecidas, pertenecer al mismo módulo, ser pruebas genéricas o "
             "tener una descripción vacía con el mismo trabajo. Si no puedes demostrar el mismo "
             "objetivo, no incluyas la pareja en matches. No uses una pareja para inferir otra. "
@@ -99,10 +129,12 @@ def _ask_model(
                     "left": {
                         "id": str(pair.left_id),
                         "text": _task_text(tasks_by_id[pair.left_id])[:600],
+                        "context": _task_context(tasks_by_id[pair.left_id]),
                     },
                     "right": {
                         "id": str(pair.right_id),
                         "text": _task_text(tasks_by_id[pair.right_id])[:600],
+                        "context": _task_context(tasks_by_id[pair.right_id]),
                     },
                 }
                 for pair in batch
