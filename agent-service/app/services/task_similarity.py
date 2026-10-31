@@ -65,23 +65,47 @@ def _match_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "matches": {
+            "evaluations": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
                         "leftId": {"type": "string"},
                         "rightId": {"type": "string"},
+                        "decision": {
+                            "type": "string",
+                            "enum": ["same_work", "different", "insufficient_information"],
+                        },
                         "reason": {"type": "string", "maxLength": 240},
                     },
-                    "required": ["leftId", "rightId", "reason"],
+                    "required": ["leftId", "rightId", "decision", "reason"],
                     "additionalProperties": False,
                 },
             }
         },
-        "required": ["matches"],
+        "required": ["evaluations"],
         "additionalProperties": False,
     }
+
+
+def _reason_contradicts_same_work(reason: str) -> bool:
+    normalized = re.sub(r"\s+", " ", reason.casefold()).strip()
+    negative_patterns = (
+        "tareas diferentes",
+        "tarefas diferentes",
+        "objetivo funcional diferente",
+        "objetivos funcionales diferentes",
+        "objetivo funcional distinto",
+        "no tienen el mismo objetivo",
+        "não têm o mesmo objetivo",
+        "descripciones diferentes",
+        "descrições diferentes",
+        "no parecen estar relacionadas",
+        "no parecen relacionadas",
+        "não parecem relacionadas",
+        "conteúdo e objetivo não coincidem",
+    )
+    return any(pattern in normalized for pattern in negative_patterns)
 
 
 def _ask_model(
@@ -115,9 +139,10 @@ def _ask_model(
             "o progreso. Estados posibles: NotReady=2723, Ready=2724, Ongoing=2725, Suspended=2731, "
             "InTest=2732, InRedo=2733, Completed=2726, Cancelled=2727 y NewReady=2734. "
             "No confundas palabras parecidas, pertenecer al mismo módulo, ser pruebas genéricas o "
-            "tener una descripción vacía con el mismo trabajo. Si no puedes demostrar el mismo "
-            "objetivo, no incluyas la pareja en matches. No uses una pareja para inferir otra. "
-            "Devuelve únicamente JSON. Incluye solo IDs recibidos y razones de máximo 120 caracteres."
+            "tener una descripción vacía con el mismo trabajo. Devuelve una evaluación para cada "
+            "pareja con decision= same_work, different o insufficient_information. No uses una "
+            "pareja para inferir otra. Devuelve únicamente JSON con evaluaciones, solo IDs recibidos "
+            "y razones de máximo 120 caracteres."
         )
     )
 
@@ -153,10 +178,10 @@ def _ask_model(
             decoded = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError("invalid_task_similarity_output") from exc
-        if not isinstance(decoded, dict) or not isinstance(decoded.get("matches"), list):
+        if not isinstance(decoded, dict) or not isinstance(decoded.get("evaluations"), list):
             raise ValueError("invalid_task_similarity_output")
 
-        for item in decoded["matches"]:
+        for item in decoded["evaluations"]:
             if not isinstance(item, dict):
                 continue
             try:
@@ -167,11 +192,15 @@ def _ask_model(
             pair = valid_pairs.get(frozenset((left_id, right_id)))
             if pair is None or left_id == right_id:
                 continue
+            decision = str(item.get("decision") or "").strip().casefold()
+            reason = str(item.get("reason") or "").strip()
+            if decision != "same_work" or _reason_contradicts_same_work(reason):
+                continue
             matches.append(
                 TaskMatch(
                     left_id=pair.left_id,
                     right_id=pair.right_id,
-                    reason=str(item.get("reason") or "Mismo objetivo funcional.")[:240],
+                    reason=reason[:240] or "Mismo objetivo funcional.",
                 )
             )
     return matches
