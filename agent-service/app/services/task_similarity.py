@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable
@@ -80,7 +81,7 @@ def _match_schema() -> dict[str, Any]:
                     "properties": {
                         "leftId": {"type": "string"},
                         "rightId": {"type": "string"},
-                        "reason": {"type": "string", "maxLength": 500},
+                        "reason": {"type": "string", "maxLength": 240},
                     },
                     "required": ["leftId", "rightId", "reason"],
                     "additionalProperties": False,
@@ -104,7 +105,7 @@ def _ask_model(
     config = replace(
         config,
         temperature=0.0,
-        max_output_tokens=min(max(config.max_output_tokens, 1024), 4096),
+        max_output_tokens=max(config.max_output_tokens, 1536),
         max_retries=1,
     )
     model = (model_factory or (lambda: create_chat_model(config)))()
@@ -123,15 +124,15 @@ def _ask_model(
             "o tema. La puntuación candidateScore solo sirve para priorizar la revisión y "
             "nunca es una decisión. Devuelve únicamente JSON con matches. Incluye solo parejas "
             "que realmente podrían representar una única tarea funcional; no inventes IDs. "
-            "La respuesta debe estar en español y cada reason debe ser breve."
+            "La respuesta debe estar en español y cada reason debe tener como máximo 120 caracteres."
         )
     )
-    for start in range(0, len(candidates), 20):
-        batch = candidates[start : start + 20]
+    for start in range(0, len(candidates), 4):
+        batch = candidates[start : start + 4]
         candidate_payload = [
             {
-                "left": {"id": str(candidate.left_id), "text": _task_text(tasks_by_id[candidate.left_id])[:900]},
-                "right": {"id": str(candidate.right_id), "text": _task_text(tasks_by_id[candidate.right_id])[:900]},
+                "left": {"id": str(candidate.left_id), "text": _task_text(tasks_by_id[candidate.left_id])[:600]},
+                "right": {"id": str(candidate.right_id), "text": _task_text(tasks_by_id[candidate.right_id])[:600]},
                 "candidateScore": candidate.candidate_score,
             }
             for candidate in batch
@@ -143,7 +144,11 @@ def _ask_model(
             ]
         )
         raw = response_text(result).strip()
-        payload = json.loads(raw)
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("invalid_task_similarity_output") from exc
         if not isinstance(payload, dict) or not isinstance(payload.get("matches"), list):
             raise ValueError("invalid_task_similarity_output")
         for item in payload["matches"]:

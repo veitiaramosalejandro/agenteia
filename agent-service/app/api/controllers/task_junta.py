@@ -22,6 +22,11 @@ def receive_junta_tasks(
     try:
         result = analyze_task_similarity(request)
     except ValueError as exc:
+        if str(exc) == "invalid_task_similarity_output":
+            raise HTTPException(
+                status_code=502,
+                detail="El modelo devolvió una respuesta JSON incompleta o inválida.",
+            ) from None
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except Exception as exc:
         print(f"TASK_JUNTA_ANALYSIS_FAILED type={type(exc).__name__}", flush=True)
