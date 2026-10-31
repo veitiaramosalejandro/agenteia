@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import json
-import math
-import os
 import re
-from collections import defaultdict, deque
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_ollama import OllamaEmbeddings
 
 from app.api.schemas.task_junta import TaskJuntaData
 from app.config import settings
@@ -22,17 +18,7 @@ from app.llm.text import response_text
 class TaskMatch:
     left_id: UUID
     right_id: UUID
-    candidate_score: float
     reason: str
-
-
-def _cosine(left: list[float], right: list[float]) -> float:
-    numerator = sum(a * b for a, b in zip(left, right))
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if not left_norm or not right_norm:
-        return 0.0
-    return numerator / (left_norm * right_norm)
 
 
 def _task_text(task: TaskJuntaData) -> str:
@@ -41,33 +27,13 @@ def _task_text(task: TaskJuntaData) -> str:
     return f"Nome: {short_name}\nDescrição: {description}".strip()
 
 
-def _candidate_pairs(
-    tasks: list[TaskJuntaData],
-    vectors: list[list[float]],
-    threshold: float,
-    top_k: int,
-) -> list[TaskMatch]:
-    candidates: list[TaskMatch] = []
-    for index, task in enumerate(tasks):
-        nearest: list[tuple[float, int]] = []
-        for other_index in range(len(tasks)):
-            if index == other_index:
-                continue
-            score = _cosine(vectors[index], vectors[other_index])
-            if score >= threshold:
-                nearest.append((score, other_index))
-        for score, other_index in sorted(nearest, reverse=True)[:top_k]:
-            if task.IDTask.int >= tasks[other_index].IDTask.int:
-                continue
-            candidates.append(
-                TaskMatch(
-                    left_id=task.IDTask,
-                    right_id=tasks[other_index].IDTask,
-                    candidate_score=round(score, 4),
-                    reason="",
-                )
-            )
-    return candidates
+def _all_pairs(tasks: list[TaskJuntaData]) -> list[TaskMatch]:
+    """Compara cada tarea solo con las tareas posteriores de la lista."""
+    return [
+        TaskMatch(left_id=tasks[index].IDTask, right_id=tasks[other].IDTask, reason="")
+        for index in range(len(tasks))
+        for other in range(index + 1, len(tasks))
+    ]
 
 
 def _match_schema() -> dict[str, Any]:
@@ -95,10 +61,10 @@ def _match_schema() -> dict[str, Any]:
 
 def _ask_model(
     tasks_by_id: dict[UUID, TaskJuntaData],
-    candidates: list[TaskMatch],
+    pairs: list[TaskMatch],
     model_factory: Callable[[], Any] | None = None,
 ) -> list[TaskMatch]:
-    if not candidates:
+    if not pairs:
         return []
 
     config = provider_config_from_settings(settings)
@@ -110,48 +76,55 @@ def _ask_model(
     )
     model = (model_factory or (lambda: create_chat_model(config)))()
     model = bind_structured_json(model, config, _match_schema())
-
-    candidate_by_pair = {
-        frozenset((candidate.left_id, candidate.right_id)): candidate
-        for candidate in candidates
+    valid_pairs = {
+        frozenset((pair.left_id, pair.right_id)): pair for pair in pairs
     }
-    validated: list[TaskMatch] = []
+    matches: list[TaskMatch] = []
     system_message = SystemMessage(
         content=(
-            "Analiza parejas de tareas y decide si tienen el mismo sentido de trabajo: "
-            "si persiguen el mismo objetivo funcional, resultado y alcance, aunque usen "
-            "palabras diferentes. No marques una pareja solo porque comparta palabras, módulo "
-            "o tema. La puntuación candidateScore solo sirve para priorizar la revisión y "
-            "nunca es una decisión. Devuelve únicamente JSON con matches. Incluye solo parejas "
-            "que realmente podrían representar una única tarea funcional; no inventes IDs. "
-            "La respuesta debe estar en español y cada reason debe tener como máximo 120 caracteres."
+            "Compara cada pareja de tareas de forma independiente. Decide si tienen exactamente "
+            "el mismo sentido de trabajo: mismo objetivo funcional, resultado esperado y alcance. "
+            "No confundas palabras parecidas, pertenecer al mismo módulo, ser pruebas genéricas o "
+            "tener una descripción vacía con el mismo trabajo. Si no puedes demostrar el mismo "
+            "objetivo, no incluyas la pareja en matches. No uses una pareja para inferir otra. "
+            "Devuelve únicamente JSON. Incluye solo IDs recibidos y razones de máximo 120 caracteres."
         )
     )
-    for start in range(0, len(candidates), 4):
-        batch = candidates[start : start + 4]
-        candidate_payload = [
-            {
-                "left": {"id": str(candidate.left_id), "text": _task_text(tasks_by_id[candidate.left_id])[:600]},
-                "right": {"id": str(candidate.right_id), "text": _task_text(tasks_by_id[candidate.right_id])[:600]},
-                "candidateScore": candidate.candidate_score,
-            }
-            for candidate in batch
-        ]
-        result = model.invoke(
-            [
-                system_message,
-                HumanMessage(content=json.dumps({"candidates": candidate_payload}, ensure_ascii=False)),
+
+    for start in range(0, len(pairs), 4):
+        batch = pairs[start : start + 4]
+        payload = {
+            "pairs": [
+                {
+                    "left": {
+                        "id": str(pair.left_id),
+                        "text": _task_text(tasks_by_id[pair.left_id])[:600],
+                    },
+                    "right": {
+                        "id": str(pair.right_id),
+                        "text": _task_text(tasks_by_id[pair.right_id])[:600],
+                    },
+                }
+                for pair in batch
             ]
+        }
+        result = model.invoke(
+            [system_message, HumanMessage(content=json.dumps(payload, ensure_ascii=False))]
         )
-        raw = response_text(result).strip()
-        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(
+            r"^```(?:json)?\s*|\s*```$",
+            "",
+            response_text(result).strip(),
+            flags=re.IGNORECASE,
+        )
         try:
-            payload = json.loads(raw)
+            decoded = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError("invalid_task_similarity_output") from exc
-        if not isinstance(payload, dict) or not isinstance(payload.get("matches"), list):
+        if not isinstance(decoded, dict) or not isinstance(decoded.get("matches"), list):
             raise ValueError("invalid_task_similarity_output")
-        for item in payload["matches"]:
+
+        for item in decoded["matches"]:
             if not isinstance(item, dict):
                 continue
             try:
@@ -159,28 +132,30 @@ def _ask_model(
                 right_id = UUID(str(item.get("rightId")))
             except (TypeError, ValueError):
                 continue
-            if left_id == right_id or left_id not in tasks_by_id or right_id not in tasks_by_id:
+            pair = valid_pairs.get(frozenset((left_id, right_id)))
+            if pair is None or left_id == right_id:
                 continue
-            candidate = candidate_by_pair.get(frozenset((left_id, right_id)))
-            if candidate is None:
-                continue
-            validated.append(
+            matches.append(
                 TaskMatch(
-                    left_id=candidate.left_id,
-                    right_id=candidate.right_id,
-                    candidate_score=candidate.candidate_score,
-                    reason=str(item.get("reason") or "Tarefas com objetivo e alcance relacionados.")[:500],
+                    left_id=pair.left_id,
+                    right_id=pair.right_id,
+                    reason=str(item.get("reason") or "Mismo objetivo funcional.")[:240],
                 )
             )
-    return validated
+    return matches
 
 
 def analyze_task_similarity(tasks: list[TaskJuntaData]) -> dict[str, Any]:
-    """Identifica tarefas relacionadas sem executar agentes nem alterar SolidSET."""
+    """Evalúa todas las parejas en orden, sin cierre transitivo de relaciones."""
     if len(tasks) < 2:
         return {
             "tasks": [
-                {"taskId": str(task.IDTask), "identifiedTasks": [], "mergeCandidate": False}
+                {
+                    "taskId": str(task.IDTask),
+                    "identifiedTasks": [],
+                    "mergeCandidate": False,
+                    "mergeGroupIds": [],
+                }
                 for task in tasks
             ],
             "mergeGroups": [],
@@ -190,78 +165,51 @@ def analyze_task_similarity(tasks: list[TaskJuntaData]) -> dict[str, Any]:
     if len(by_id) != len(tasks):
         raise ValueError("duplicate_task_ids")
 
-    embeddings = OllamaEmbeddings(
-        base_url=settings.EMBEDDING_BASE_URL,
-        model=settings.EMBEDDING_MODEL_NAME,
-    )
-    vectors = embeddings.embed_documents([_task_text(task) for task in tasks])
-    threshold = float(os.getenv("TASK_SIMILARITY_EMBEDDING_THRESHOLD", "0.50"))
-    top_k = max(1, min(int(os.getenv("TASK_SIMILARITY_TOP_K", "8")), 20))
-    candidates = _candidate_pairs(tasks, vectors, threshold, top_k)
-    matches = _ask_model(by_id, candidates)
-
-    adjacency: dict[UUID, set[UUID]] = defaultdict(set)
-    reason_by_pair: dict[frozenset[UUID], str] = {}
+    matches = _ask_model(by_id, _all_pairs(tasks))
+    relations_by_task: dict[UUID, list[TaskMatch]] = {task.IDTask: [] for task in tasks}
     for match in matches:
-        pair = frozenset((match.left_id, match.right_id))
-        adjacency[match.left_id].add(match.right_id)
-        adjacency[match.right_id].add(match.left_id)
-        reason_by_pair[pair] = match.reason
+        relations_by_task[match.left_id].append(match)
+        relations_by_task[match.right_id].append(match)
 
-    groups: list[list[UUID]] = []
-    visited: set[UUID] = set()
-    for root in adjacency:
-        if root in visited:
-            continue
-        component: list[UUID] = []
-        queue = deque([root])
-        visited.add(root)
-        while queue:
-            current = queue.popleft()
-            component.append(current)
-            for neighbour in adjacency[current]:
-                if neighbour not in visited:
-                    visited.add(neighbour)
-                    queue.append(neighbour)
-        if len(component) > 1:
-            groups.append(sorted(component, key=lambda value: str(value)))
+    merge_groups = [
+        {
+            "mergeGroupId": f"merge-{index}",
+            "taskIds": [str(match.left_id), str(match.right_id)],
+        }
+        for index, match in enumerate(matches, start=1)
+    ]
+    group_id_by_pair = {
+        frozenset((match.left_id, match.right_id)): f"merge-{index}"
+        for index, match in enumerate(matches, start=1)
+    }
 
-    group_by_task: dict[UUID, str] = {}
-    for index, group in enumerate(groups, start=1):
-        group_id = f"merge-{index}"
-        for task_id in group:
-            group_by_task[task_id] = group_id
-
-    response_tasks = []
+    result_tasks = []
     for task in tasks:
         identified = []
-        for other_id in sorted(adjacency.get(task.IDTask, set()), key=lambda value: str(value)):
-            pair = frozenset((task.IDTask, other_id))
+        group_ids = []
+        for match in relations_by_task[task.IDTask]:
+            other_id = match.right_id if match.left_id == task.IDTask else match.left_id
             other = by_id[other_id]
+            pair = frozenset((task.IDTask, other_id))
+            group_ids.append(group_id_by_pair[pair])
             identified.append(
                 {
                     "taskId": str(other.IDTask),
                     "code": other.Code,
                     "shortName": other.ShortName,
                     "sameWork": True,
-                    "reason": reason_by_pair.get(pair, ""),
+                    "reason": match.reason,
                 }
             )
-        response_tasks.append(
+        result_tasks.append(
             {
                 "taskId": str(task.IDTask),
                 "code": task.Code,
                 "shortName": task.ShortName,
                 "identifiedTasks": identified,
                 "mergeCandidate": bool(identified),
-                "mergeGroupId": group_by_task.get(task.IDTask),
+                "mergeGroupIds": group_ids,
             }
         )
 
-    return {
-        "tasks": response_tasks,
-        "mergeGroups": [
-            {"mergeGroupId": f"merge-{index}", "taskIds": [str(task_id) for task_id in group]}
-            for index, group in enumerate(groups, start=1)
-        ],
-    }
+    return {"tasks": result_tasks, "mergeGroups": merge_groups}
