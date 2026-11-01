@@ -112,6 +112,7 @@ def _ask_model(
     tasks_by_id: dict[UUID, TaskJuntaData],
     pairs: list[TaskMatch],
     model_factory: Callable[[], Any] | None = None,
+    on_batch: Callable[[int, int, list[TaskMatch]], None] | None = None,
 ) -> list[TaskMatch]:
     if not pairs:
         return []
@@ -119,7 +120,7 @@ def _ask_model(
     config = provider_config_from_settings(settings)
     config = replace(
         config,
-        temperature=0.0,
+        temperature=config.temperature,
         max_output_tokens=max(config.max_output_tokens, 1536),
         max_retries=1,
     )
@@ -146,6 +147,7 @@ def _ask_model(
         )
     )
 
+    processed = 0
     for start in range(0, len(pairs), 4):
         batch = pairs[start : start + 4]
         payload = {
@@ -181,6 +183,7 @@ def _ask_model(
         if not isinstance(decoded, dict) or not isinstance(decoded.get("evaluations"), list):
             raise ValueError("invalid_task_similarity_output")
 
+        batch_matches: list[TaskMatch] = []
         for item in decoded["evaluations"]:
             if not isinstance(item, dict):
                 continue
@@ -196,17 +199,23 @@ def _ask_model(
             reason = str(item.get("reason") or "").strip()
             if decision != "same_work" or _reason_contradicts_same_work(reason):
                 continue
-            matches.append(
-                TaskMatch(
-                    left_id=pair.left_id,
-                    right_id=pair.right_id,
-                    reason=reason[:240] or "Mismo objetivo funcional.",
-                )
+            match = TaskMatch(
+                left_id=pair.left_id,
+                right_id=pair.right_id,
+                reason=reason[:240] or "Mismo objetivo funcional.",
             )
+            matches.append(match)
+            batch_matches.append(match)
+        processed += len(batch)
+        if on_batch is not None:
+            on_batch(processed, len(pairs), batch_matches)
     return matches
 
 
-def analyze_task_similarity(tasks: list[TaskJuntaData]) -> dict[str, Any]:
+def analyze_task_similarity(
+    tasks: list[TaskJuntaData],
+    on_batch: Callable[[int, int, list[TaskMatch]], None] | None = None,
+) -> dict[str, Any]:
     """Evalúa todas las parejas en orden, sin cierre transitivo de relaciones."""
     if len(tasks) < 2:
         return {
@@ -226,7 +235,7 @@ def analyze_task_similarity(tasks: list[TaskJuntaData]) -> dict[str, Any]:
     if len(by_id) != len(tasks):
         raise ValueError("duplicate_task_ids")
 
-    matches = _ask_model(by_id, _all_pairs(tasks))
+    matches = _ask_model(by_id, _all_pairs(tasks), on_batch=on_batch)
     relations_by_task: dict[UUID, list[TaskMatch]] = {task.IDTask: [] for task in tasks}
     for match in matches:
         relations_by_task[match.left_id].append(match)

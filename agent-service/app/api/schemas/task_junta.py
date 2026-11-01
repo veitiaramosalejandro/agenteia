@@ -49,3 +49,24 @@ class TaskJuntaData(BaseModel):
     LockQuestionEdit: int | None = None
     RunningStatus: int | None = None
     ProgressPercentage: Decimal | None = None
+
+
+class JuntaRequestedBy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idLogin: UUID
+    idResource: UUID
+    idSession: UUID
+
+
+class JuntaTasksStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contractVersion: str = Field(default="junta.v1", min_length=1, max_length=32)
+    operationId: UUID
+    instance: str = Field(min_length=1, max_length=128)
+    workRoomId: UUID
+    requestedBy: JuntaRequestedBy
+    taskSetVersion: str | None = Field(default=None, max_length=128)
+    payloadHash: str | None = Field(default=None, max_length=128)
+    tasks: list[TaskJuntaData] = Field(max_length=1000)
