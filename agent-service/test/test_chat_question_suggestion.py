@@ -271,6 +271,7 @@ class TestChatQuestionSuggestion(unittest.TestCase):
     def test_related_record_answer_cannot_reuse_previous_company_topic(self):
         answer = _related_record_direct_answer(
             "Task: T-26-11369 — Implementação de formação melhorada.\n"
+            "SQL_VERIFICATION: retrieved\n"
             "Description: Modificação para aceitação de reações com emojis.",
             "es",
         )

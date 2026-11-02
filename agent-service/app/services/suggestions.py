@@ -465,7 +465,10 @@ def _related_record_direct_answer(
     for line in lines[1:]:
         key, separator, value = line.partition(":")
         if separator and value.strip():
-            fields[key.strip().casefold()] = value.strip()
+            field_name = key.strip()
+            technical_name = re.search(r"\(([^()]+)\)$", field_name)
+            canonical_name = technical_name.group(1) if technical_name else field_name
+            fields[canonical_name.casefold()] = value.strip()
     if not fields or fields.get("sql_verification", "").casefold() != "retrieved" and len(fields) == 1:
         return ""
     # Description is the business description. TechnicalSpecification is only
@@ -2141,13 +2144,24 @@ async def _process_chat_question_response_suggestion(
         )
         if learned_fact:
             suggestion_count = 1
-        concrete_answer_mode = request_intent in {"internal", "general", "external"}
         # RelatedRecordsData is authoritative and changes the classifier intent
         # to ``related_record`` above.  That must not erase the user's actual
         # request for a plan or ideas to solve the selected task: guidance is a
         # different validation contract from a factual SQL answer.
         related_record_guidance = related_record_question_needs_guidance(
             effective_request_text, context["related_records"],
+        )
+        # A factual question about an already verified task must not be routed
+        # through the suggestion generator. The related-record classifier uses
+        # ``related_record`` for both facts and recommendations, so infer this
+        # mode from the actual question as well.
+        concrete_answer_mode = (
+            request_intent in {"internal", "general", "external"}
+            or bool(
+                related_records_context
+                and _is_concrete_suggestion_answer_request(effective_request_text)
+                and not related_record_guidance
+            )
         )
         related_guidance_mode = _related_record_guidance_mode(
             request_intent,
@@ -2617,19 +2631,15 @@ async def _process_chat_question_response_suggestion(
             not verified_business_context or business_recommendation
         ) and not suggestions:
             if related_records_context:
-                # One bounded retry retains the actual task and current focus.
-                try:
-                    repaired_raw = await asyncio.to_thread(
-                        _reason_about_related_record,
-                        request_text=effective_request_text,
-                        record_context=related_records_context,
-                        research_context=research_context,
-                        language=metadata["response_language"],
-                        metadata={**metadata, "response_suggestion_count": 1},
-                        previous_output=str(raw_suggestions or ""),
-                    )
-                except SuggestionOutputError:
-                    repaired_raw = ""
+                # A second full model call adds tens of seconds and can repeat
+                # the same truncation. Use the grounded fallback when a
+                # recommendation response violates the output contract.
+                print(
+                    f"SUGGESTION_REPAIR_SKIPPED request_id={request_id} "
+                    "reason=related_record_fallback",
+                    flush=True,
+                )
+                repaired_raw = ""
 
             else:
                 repair_started = perf_counter()
