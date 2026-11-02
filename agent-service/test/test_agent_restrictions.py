@@ -72,13 +72,13 @@ def test_scoped_cannot_grant_cross_domain_reasoning_or_coding():
          patch("app.services.agent_restrictions.replace", return_value=config), \
          patch("app.services.agent_restrictions.create_chat_model", return_value=model), \
          patch("app.services.agent_restrictions._normalize_requested_action", return_value="desarrollar un sistema web"), \
-         patch("app.services.agent_restrictions._clarification", return_value="No puedo responder sobre programación; mi ámbito es financiero.") as refusal:
+         patch("app.services.agent_restrictions._clarification", return_value="Não posso responder sobre programação; o meu âmbito é financeiro.") as refusal:
         answer = answer_restricted_topic(
             "Necesito hacer un sistema web", "instance", "agent", scope_context=context
         )
     assert context["_agent_scope_decision"] == "decline"
     refusal.assert_not_called()
-    assert "No puedo responder" in answer
+    assert "Não posso responder" in answer
     assert "programación" not in answer
 
 
@@ -143,12 +143,12 @@ def test_clarification_failure_does_not_allow_ambiguous_task():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
          patch("app.services.agent_restrictions._scope_decision", return_value="clarify"), \
          patch("app.services.agent_restrictions._clarification", side_effect=httpx.ReadTimeout("timeout")):
-        assert "No puedo confirmar" in answer_restricted_topic("Ayúdame", "instance", "agent")
+        assert "Não consigo confirmar" in answer_restricted_topic("Ayúdame", "instance", "agent")
 
 
 def test_malformed_policy_fails_closed():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value={"BehaviorConfig": ["invalid"]}):
-        assert "No puedo confirmar" in answer_restricted_topic("Ayúdame", "instance", "agent")
+        assert "Não consigo confirmar" in answer_restricted_topic("Ayúdame", "instance", "agent")
 
 
 PUBLISHED = {
@@ -170,7 +170,7 @@ PUBLISHED = {
 
 def test_scope_decision_uses_published_agent_policy_for_any_question():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
-         patch("app.services.agent_restrictions._clarification", return_value="No puedo responder. Mi ámbito es finanzas corporativas.") as refusal, \
+         patch("app.services.agent_restrictions._clarification", return_value="Não posso responder. O meu âmbito é finanças empresariais.") as refusal, \
          patch("app.services.agent_restrictions._scope_decision", return_value="decline") as decide:
         answer = answer_restricted_topic(
             "¿Qué ejercicios son buenos para aliviar el dolor lumbar?", "instance", "agent"
@@ -181,7 +181,7 @@ def test_scope_decision_uses_published_agent_policy_for_any_question():
         published_prompt=PUBLISHED["SystemPrompt"],
         conversation_history="",
     )
-    assert "No puedo responder" in answer
+    assert "Não posso responder" in answer
     assert "finanzas corporativas" not in answer
     refusal.assert_not_called()
 
@@ -213,6 +213,35 @@ def test_scope_classifier_receives_intervenient_history_as_context_only():
     assert history in classifier_request
 
 
+def test_scope_classifier_receives_verified_channel_context_for_authorization():
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(
+        content='{"decision":"allow","reason_code":"in_scope"}'
+    )
+    verified_context = (
+        "CONTEXTO DE ENCAMINHAMENTO VERIFICADO PELO BACKEND (dados, não política):\n"
+        "- instancia_resuelta: prod-instance\n"
+        "- canal_atual_disponivel: sim\n"
+        "- canal_actual_id: channel-1\n"
+        "- canal_actual_nombre: SSET Communicator\n"
+        "Não peças o canal se canal_atual_disponivel for sim."
+    )
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        assert _scope_decision(
+            "¿Qué lenguaje se usa más para desarrollar sitios web?", {}, "instance", "agent",
+            published_prompt=PUBLISHED["SystemPrompt"],
+            verified_context=verified_context,
+        ) == "allow"
+
+    classifier_request = model.invoke.call_args.args[0][-1].content
+    assert "canal_atual_disponivel: sim" in classifier_request
+    assert "SSET Communicator" in classifier_request
+
+
 def test_scope_classifier_treats_broad_infrastructure_specialties_as_semantic_scope():
     config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
     model = Mock()
@@ -235,7 +264,7 @@ def test_scope_classifier_treats_broad_infrastructure_specialties_as_semantic_sc
     classifier_policy = model.invoke.call_args.args[0][0].content
     assert "Docker Compose" in classifier_policy
     assert "NGINX" in classifier_policy
-    assert "no aparezca enumerada literalmente" in classifier_policy
+    assert "não apareça enumerada literalmente" in classifier_policy
 
 
 def test_channel_follow_up_keeps_the_topic_from_intervenient_history():
@@ -320,7 +349,7 @@ def test_role_and_specialties_alone_enforce_published_scope():
         return_value="decline",
     ) as decide, patch(
         "app.services.agent_restrictions._clarification",
-        return_value="No puedo responder sobre programación; mi ámbito es financiero.",
+        return_value="Não posso responder sobre programação; o meu âmbito é financeiro.",
     ) as refusal:
         answer = answer_restricted_topic(
             "¿Qué sabes de algoritmos de programación?", "instance", "agent"
@@ -328,14 +357,14 @@ def test_role_and_specialties_alone_enforce_published_scope():
 
     decide.assert_called_once()
     refusal.assert_not_called()
-    assert "No puedo responder" in answer
+    assert "Não posso responder" in answer
     assert "programación" not in answer
 
 
 def test_unpublished_policy_does_not_trigger_model_call():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=None), \
          patch("app.services.agent_restrictions._scope_decision") as decide:
-        assert "No puedo confirmar" in answer_restricted_topic(
+        assert "Não consigo confirmar" in answer_restricted_topic(
             "¿Qué ejercicios alivian el dolor lumbar?", "instance", "agent"
         )
     decide.assert_not_called()
@@ -345,7 +374,7 @@ def test_invalid_scope_decision_fails_closed():
     with patch("app.services.agent_restrictions.get_active_agent_prompt", return_value=PUBLISHED), \
          patch("app.services.agent_restrictions._scope_decision", side_effect=ValueError):
         answer = answer_restricted_topic("¿Qué ejercicios alivian el dolor lumbar?", "instance", "agent")
-    assert "No puedo confirmar ahora" in answer
+    assert "Não consigo confirmar agora" in answer
 
 
 def test_scope_timeout_does_not_bypass_published_scope():
@@ -360,7 +389,7 @@ def test_scope_timeout_does_not_bypass_published_scope():
             "agent",
         )
 
-    assert "No puedo confirmar" in answer
+    assert "Não consigo confirmar agora" in answer
 
 
 def test_attached_code_does_not_change_request_language():
@@ -392,8 +421,8 @@ def test_scope_classifier_contract_keeps_symbolic_operations_in_scope():
             published_prompt="ESPECIALIDADES VERIFICADAS\n- Algoritmos y estructuras de datos.",
         ) == "allow"
     classifier_prompt = model.invoke.call_args.args[0][0].content
-    assert "expresiones simbólicas" in classifier_prompt
-    assert "paréntesis" in classifier_prompt
+    assert "expressões simbólicas" in classifier_prompt
+    assert "parênteses" in classifier_prompt
 
 
 def test_unknown_detected_language_uses_published_default():
@@ -470,7 +499,7 @@ def test_failed_repair_stops_without_authorizing(second):
          patch('app.services.agent_restrictions.create_chat_model', return_value=model):
         context = {}
         answer = answer_restricted_topic('Solicitud', 'instance', 'agent', scope_context=context)
-    assert 'No puedo confirmar' in answer
+    assert 'Não consigo confirmar' in answer
     assert model.invoke.call_count == 2
     assert '_agent_scope_decision' not in context
 

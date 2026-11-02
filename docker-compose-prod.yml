@@ -216,7 +216,7 @@ services:
       redis-cache: {condition: service_healthy}
       vector-db: {condition: service_healthy}
     deploy:
-      replicas: 1
+      replicas: 2
     cpus: ${SUGGESTION_WORKER_CPUS:-4.0}
     mem_limit: ${SUGGESTION_WORKER_MEMORY_LIMIT:-6g}
     networks: [machining-network]
