@@ -810,7 +810,8 @@ function AgentResponses({ agents, notify }: Pick<Shared, 'agents' | 'notify'>) {
     }
     if (!silent) setBusy(true)
     try {
-      const result = await api.responseHistoryByAgent(resourceId)
+      const selectedAgent = agents.find(agent => agent.IDResource === resourceId)
+      const result = await api.responseHistoryByAgent(resourceId, selectedAgent?.IDAgentResource || '')
       setHistory(result.items)
       setSelectedId(current => result.items.some(item => item.requestId === current) ? current : result.items[0]?.requestId || '')
     } catch (error) {
@@ -822,7 +823,7 @@ function AgentResponses({ agents, notify }: Pick<Shared, 'agents' | 'notify'>) {
     } finally {
       if (!silent) setBusy(false)
     }
-  }, [agentId, notify])
+  }, [agentId, agents, notify])
 
   useEffect(() => {
     const nextAgentId = agents.some(agent => agent.IDResource === agentId) ? agentId : agents[0]?.IDResource || ''

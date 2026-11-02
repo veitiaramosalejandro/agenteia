@@ -49,10 +49,23 @@ def read_suggestion_queue_status() -> dict[str, Any]:
 @router.get("/by-agent")
 def read_agent_response_history(
     agentResourceId: str = Query(..., min_length=1),
+    agentIdentityId: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     lang: str | None = Query(None, pattern="^(es|en|pt)$"),
 ) -> dict[str, Any]:
-    states = list_by_agent(agentResourceId, limit)
+    resource_ids = [agentResourceId.strip()]
+    if agentIdentityId and agentIdentityId.strip() not in resource_ids:
+        resource_ids.append(agentIdentityId.strip())
+    states_by_request = {
+        item["requestId"]: item
+        for resource_id in resource_ids
+        for item in list_by_agent(resource_id, limit)
+    }
+    states = sorted(
+        states_by_request.values(),
+        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        reverse=True,
+    )[:limit]
     return {
         "agentResourceId": agentResourceId.strip(),
         "total": len(states),
