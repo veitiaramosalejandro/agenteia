@@ -58,6 +58,7 @@ from app.services.related_records_context import (
     extract_related_records,
     format_related_records_context,
     format_sys_tasks_evidence,
+    format_sys_task_row,
     related_record_question_needs_guidance,
     resolve_sys_tasks_evidence,
     verified_related_records_context,
@@ -298,11 +299,8 @@ def _verified_sys_tasks_context(
         if not row:
             blocks.append(base + "\nSQL_VERIFICATION: no task rows; client reference only.")
             continue
-        details = [
-            f"{key}: {_sanitize_related_record_value(row.get(key)) if row.get(key) not in (None, '') else 'NO DISPONIBLE'}"
-            for key in _SYS_TASK_RELATED_COLUMNS
-        ]
-        blocks.append(base + "\nSQL_VERIFICATION: retrieved\n" + "\n".join(details))
+        details = format_sys_task_row(row, _SYS_TASK_RELATED_COLUMNS)
+        blocks.append(base + "\nSQL_VERIFICATION: retrieved\n" + details)
         if requester_resource:
             from app.services.record_snapshot import schedule_record_snapshot
             schedule_record_snapshot(

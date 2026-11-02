@@ -7,7 +7,7 @@ from app.agent.prompt_budget import budget_messages
 from app.services.suggestions import (
     _chat_question_suggestion_context,
 )
-from app.services.related_records_context import verified_sys_tasks_context
+from app.services.related_records_context import format_sys_task_row, verified_sys_tasks_context
 from app.services.related_records_context import (
     answer_related_records_question,
     build_related_record_prompt_context,
@@ -74,8 +74,24 @@ def test_sys_tasks_related_records_use_fixed_parameterized_projection(query_tool
     request = query_tool.invoke.call_args.args[0]
     assert "FROM dbo.SysTask WHERE IDTask IN (%s)" in request["query"]
     assert json.loads(request["parameters_json"]) == [record["gidRecord"]]
-    assert "Code: T-26-2330" in context
+    assert "Código (Code): T-26-2330" in context
     assert "SQL_VERIFICATION: retrieved" in context
+
+
+def test_sys_task_context_localizes_missing_values_and_formats_duration():
+    rendered = format_sys_task_row({
+        "Code": "T-26-12841",
+        "DateCompletion": None,
+        "Duration": 108895072795,
+        "RunningStatus": 2725,
+        "ProgressPercentage": 70,
+    })
+
+    assert "Código (Code): T-26-12841" in rendered
+    assert "Data de conclusão (DateCompletion): Não disponível" in rendered
+    assert "Duração (Duration): 3 h 1 min 29,5 s" in rendered
+    assert "Estado de execução (RunningStatus): Em curso (2725)" in rendered
+    assert "Percentagem de progresso (ProgressPercentage): 70%" in rendered
 
 
 def test_payload_task_is_used_as_fallback_and_forces_entity_focus():

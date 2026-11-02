@@ -8,6 +8,7 @@ import unicodedata
 from typing import Any
 
 from app.agent.schema_query_planner import plan_related_record_query
+from app.agent.task_status import task_running_status
 from app.agent.tools import query_sql_server
 from app.connectors.db_client import get_solidset_schema_snapshot
 from app.connectors.solidset_sql import instance_context as solidset_sql_instance_context
@@ -214,6 +215,88 @@ _SYS_TASK_COLUMNS = (
     "ProgressPercentage",
 )
 
+_SYS_TASK_DISPLAY_NAMES = {
+    "IDTask": "ID da tarefa",
+    "IDResource": "ID do recurso",
+    "IDModule": "ID do módulo",
+    "IDResourceCreation": "ID do criador",
+    "IDResourceAssign": "ID do responsável",
+    "Code": "Código",
+    "Status": "Estado",
+    "DateCompletion": "Data de conclusão",
+    "Description": "Descrição",
+    "importance": "Importância",
+    "StartDate": "Data de início",
+    "EndDate": "Data de fim",
+    "Duration": "Duração",
+    "ShortName": "Nome curto",
+    "RunningStatus": "Estado de execução",
+    "WorkStatus": "Estado de trabalho",
+    "ProgressPercentage": "Percentagem de progresso",
+}
+
+_SOLIDSET_TICKS_PER_SECOND = 10_000_000
+
+
+def _format_duration(value: Any, language: str = "pt") -> str:
+    """Format SysTask.Duration, stored by SolidSET as 100-nanosecond ticks."""
+    try:
+        ticks = int(str(value).strip())
+    except (TypeError, ValueError):
+        return _display(value, "Não disponível")
+    seconds = max(0.0, ticks / _SOLIDSET_TICKS_PER_SECOND)
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    remaining = seconds - (hours * 3600) - (minutes * 60)
+    if abs(remaining - round(remaining)) < 0.05:
+        seconds_text = str(int(round(remaining)))
+    else:
+        seconds_text = f"{remaining:.1f}".replace(".", ",")
+    if language == "en":
+        parts = []
+        if hours:
+            parts.append(f"{hours} h")
+        if minutes:
+            parts.append(f"{minutes} min")
+        if remaining or not parts:
+            parts.append(f"{seconds_text} s")
+        return " ".join(parts)
+    parts = []
+    if hours:
+        parts.append(f"{hours} h")
+    if minutes:
+        parts.append(f"{minutes} min")
+    if remaining or not parts:
+        parts.append(f"{seconds_text} s")
+    return " ".join(parts)
+
+
+def format_sys_task_field(key: str, value: Any, language: str = "pt") -> str:
+    """Render a verified SysTask field without exposing raw sentinels or units."""
+    unavailable = {
+        "en": "Not available",
+        "es": "No disponible",
+    }.get(language, "Não disponível")
+    if value in (None, ""):
+        return unavailable
+    if key == "RunningStatus":
+        return task_running_status(value, language)
+    if key == "Duration":
+        return _format_duration(value, language)
+    if key == "ProgressPercentage":
+        return f"{_sanitize(value)}%"
+    return _sanitize(value)
+
+
+def format_sys_task_row(row: dict[str, Any], columns: tuple[str, ...] = _SYS_TASK_COLUMNS,
+                        language: str = "pt") -> str:
+    """Render SQL task evidence with localized labels and verified conversions."""
+    return "\n".join(
+        f"{_SYS_TASK_DISPLAY_NAMES.get(key, key)} ({key}): "
+        f"{format_sys_task_field(key, row.get(key), language)}"
+        for key in columns
+    )
+
 
 def _is_sys_tasks(record: dict[str, Any]) -> bool:
     return str(record.get("idRecordModule") or "").replace("-", "").upper() == ModuleConstants.SysTasks.replace("-", "").upper()
@@ -269,10 +352,7 @@ def format_sys_tasks_evidence(evidence: list[dict[str, Any]]) -> str:
         if verification != "retrieved":
             blocks.append(base + "\nSQL_VERIFICATION: " + status_labels.get(verification, "unavailable; client reference only."))
             continue
-        details = "\n".join(
-            f"{key}: {_sanitize(row.get(key)) if row.get(key) not in (None, '') else 'NO DISPONIBLE'}"
-            for key in _SYS_TASK_COLUMNS
-        )
+        details = format_sys_task_row(row)
         blocks.append(base + "\nSQL_VERIFICATION: retrieved\n" + details)
     return "\n\n".join(blocks)
 
