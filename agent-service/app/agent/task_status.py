@@ -1,6 +1,7 @@
 """Authoritative SolidSET task running-status catalog."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 SYS_TASK_RUNNING_STATUS = {
@@ -17,9 +18,15 @@ SYS_TASK_RUNNING_STATUS = {
 
 
 def task_running_status(value: Any, language: str = "es") -> str:
-    """Return a localized label while preserving an unknown source code."""
+    """Return a localized label for a raw code or an already formatted value."""
+    text = str(value or "").strip()
+    # Context formatters may pass values such as ``Em curso (2725)`` back
+    # through this helper. Recover the authoritative code instead of treating
+    # the localized label as an unknown status.
+    code_match = re.search(r"\((\d+)\)\s*$", text)
+    normalized = code_match.group(1) if code_match else text
     try:
-        code = int(str(value).strip())
+        code = int(normalized)
     except (TypeError, ValueError):
         return ""
     labels = SYS_TASK_RUNNING_STATUS.get(code)
