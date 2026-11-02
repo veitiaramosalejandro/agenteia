@@ -19,7 +19,7 @@ class LLMProviderConfig:
     base_url: str = ""
     api_key: str = ""
     temperature: float = 0.5
-    max_output_tokens: int = 1024
+    max_output_tokens: int = 2048
     timeout_seconds: int = 60
     azure_endpoint: str = ""
     azure_api_version: str = ""

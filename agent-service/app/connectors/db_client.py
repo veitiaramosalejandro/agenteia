@@ -35,6 +35,7 @@ def _postgres_connection(max_retries: int = 10, retry_delay: float = 1.5) -> psy
                 password=settings.POSTGRES_PASSWORD,
                 dbname=settings.POSTGRES_DB,
                 row_factory=dict_row,
+                connect_timeout=int(getattr(settings, "POSTGRES_CONNECT_TIMEOUT_SECONDS", 5)),
             )
         except psycopg.OperationalError as exc:
             last_exc = exc
@@ -474,15 +475,18 @@ def save_solidset_instance(configuration: dict[str, Any]) -> dict[str, Any]:
 
 def get_solidset_instance(
     *, code: str | None = None, source_ip: str | None = None,
-    active_only: bool = True,
+    active_only: bool = True, ensure_schema: bool = True, max_retries: int = 10,
 ) -> dict[str, Any] | None:
     """Resolve by Code, or by the destination host declared by the caller."""
-    ensure_solidset_instance_location_schema()
+    if ensure_schema:
+        ensure_solidset_instance_location_schema()
     if code and source_ip:
         raise ValueError("Indique Code ou SourceIP, não ambos.")
     if not code and not source_ip:
         return None
-    with _postgres_connection() as connection:
+    with _postgres_connection(
+        max_retries=max_retries, retry_delay=0 if max_retries <= 1 else 1.5
+    ) as connection:
         with connection.cursor() as cursor:
             if code:
                 cursor.execute(
@@ -527,9 +531,14 @@ def get_solidset_instance(
     return result
 
 
-def list_active_solidset_instances(*, active_only: bool = True) -> list[dict[str, Any]]:
-    ensure_solidset_instance_location_schema()
-    with _postgres_connection() as connection:
+def list_active_solidset_instances(
+    *, active_only: bool = True, ensure_schema: bool = True, max_retries: int = 10
+) -> list[dict[str, Any]]:
+    if ensure_schema:
+        ensure_solidset_instance_location_schema()
+    with _postgres_connection(
+        max_retries=max_retries, retry_delay=0 if max_retries <= 1 else 1.5
+    ) as connection:
         with connection.cursor() as cursor:
             cursor.execute('''SELECT * FROM public."SysSolidSETInstance"
               WHERE (%s = false OR active=true) ORDER BY "Code"''', (active_only,))

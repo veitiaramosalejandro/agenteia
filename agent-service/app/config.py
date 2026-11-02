@@ -222,6 +222,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "user")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "pass")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "machining_db")
+    POSTGRES_CONNECT_TIMEOUT_SECONDS: int = int(os.getenv("POSTGRES_CONNECT_TIMEOUT_SECONDS", "5"))
     
     # Compatibilidad transitoria para módulos de diagnóstico antiguos. Las
     # conexiones operativas se resuelven exclusivamente desde PostgreSQL.
@@ -283,6 +284,9 @@ class Settings(BaseSettings):
     NOTIF_API_START_DELAY_SECONDS: int = int(os.getenv("NOTIF_API_START_DELAY_SECONDS", "30"))
     NOTIF_API_TIMEOUT_SECONDS: int = int(os.getenv("NOTIF_API_TIMEOUT_SECONDS", "15"))
     NOTIF_API_VERIFY_TLS: bool = _env_bool("NOTIF_API_VERIFY_TLS", "false")
+    JUNTA_NOTIFICATION_SHARED_SECRET: str = os.getenv("JUNTA_NOTIFICATION_SHARED_SECRET", "")
+    JUNTA_EVENT_TIMEOUT_SECONDS: int = max(2, int(os.getenv("JUNTA_EVENT_TIMEOUT_SECONDS", "10")))
+    JUNTA_EVENT_MAX_RETRIES: int = max(0, min(8, int(os.getenv("JUNTA_EVENT_MAX_RETRIES", "3"))))
     NOTIF_AUDIT_LOG_ENABLED: bool = _env_bool("NOTIF_AUDIT_LOG_ENABLED", "true")
     NOTIF_MESSAGE_TRACE_ENABLED: bool = _env_bool("NOTIF_MESSAGE_TRACE_ENABLED", "true")
     NOTIF_MESSAGE_TRACE_MAX_LEN: int = int(os.getenv("NOTIF_MESSAGE_TRACE_MAX_LEN", "220"))
