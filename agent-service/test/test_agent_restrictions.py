@@ -213,6 +213,31 @@ def test_scope_classifier_receives_intervenient_history_as_context_only():
     assert history in classifier_request
 
 
+def test_scope_classifier_treats_broad_infrastructure_specialties_as_semantic_scope():
+    config = SimpleNamespace(timeout_seconds=30, provider="openai", model="test")
+    model = Mock()
+    model.invoke.return_value = SimpleNamespace(
+        content='{"decision":"allow","reason_code":"in_scope"}'
+    )
+    with patch("app.services.agent_restrictions.get_llm_provider_configuration", return_value={"id": "model"}), \
+         patch("app.services.agent_restrictions.provider_config_from_record", return_value=config), \
+         patch("app.services.agent_restrictions.replace", return_value=config), \
+         patch("app.services.agent_restrictions.create_chat_model", return_value=model):
+        assert _scope_decision(
+            "Olá, necessito de criar um ficheiro docker-compose.yml para o nginx?",
+            {}, "instance", "agent",
+            published_prompt=(
+                "ESPECIALIDADES VERIFICADAS\n"
+                "- DevOps, Docker, Kubernetes, cloud e CI/CD."
+            ),
+        ) == "allow"
+
+    classifier_policy = model.invoke.call_args.args[0][0].content
+    assert "Docker Compose" in classifier_policy
+    assert "NGINX" in classifier_policy
+    assert "no aparezca enumerada literalmente" in classifier_policy
+
+
 def test_channel_follow_up_keeps_the_topic_from_intervenient_history():
     context = {
         "conversation_history": (
