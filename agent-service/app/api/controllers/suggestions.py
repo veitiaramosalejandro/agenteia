@@ -132,7 +132,12 @@ async def suggest_chat_question_response(
         if not existing or existing.get("status") not in {
             "queued", "processing", "searching", "thinking", "completed"
         }:
-            _create_response_status(request_id, request_id, 1)
+            _create_response_status(
+                request_id,
+                request_id,
+                1,
+                question=str(context.get("quoted_message") or ""),
+            )
             await asyncio.to_thread(
                 suggestion_queue.enqueue, request_id, payload, dict(instance)
             )

@@ -224,10 +224,14 @@ async def receive_framework_notification(
     _trace_resolved_instance(instance)
     payload["_SolidSETInstanceID"] = str(instance["ID"])
     chat_id = _framework_message_chat_id(payload, [])
+    chat_payload = payload.get("Chat") if isinstance(payload.get("Chat"), dict) else {}
+    question_payload = chat_payload.get("ChatQuestion") or chat_payload.get("chatQuestion")
+    question = question_payload.get("RawMessage") if isinstance(question_payload, dict) else None
+    question = question or chat_payload.get("RawMessage") or chat_payload.get("rawMessage") or payload.get("RawMessage") or payload.get("rawMessage")
     # IDChat2 es la referencia compartida con WPF/SolidSET. Solo se genera un
     # UUID defensivo para notificaciones técnicas que no contienen chat.
     request_id = chat_id or str(uuid.uuid4())
-    _create_response_status(request_id, chat_id, 0)
+    _create_response_status(request_id, chat_id, 0, question=str(question or ""))
     try:
         if settings.AGENT_RESPONSE_QUEUE_ENABLED:
             await asyncio.to_thread(

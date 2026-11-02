@@ -122,7 +122,7 @@ function App() {
     if (view === 'automation') return <Automation {...shared} />
     if (view === 'observability') return <Observability {...shared} />
     if (view === 'governance') return <Governance selectedInstance={selectedInstance} currentUser={currentUser!} notify={notify} authEnabled={authEnabled} />
-    if (view === 'responses') return <AgentResponses notify={notify} />
+    if (view === 'responses') return <AgentResponses agents={agents} notify={notify} />
     if (view === 'lab') return <Lab key={selectedInstance?.Code || 'no-instance'} {...shared} />
     return <Overview health={health} instances={instances} agents={agents} providers={providers} selected={selectedInstance} />
   }, [view, health, instances, agents, providers, selectedInstance, instanceCode, notify, loadAgents, currentUser, authEnabled])
@@ -796,72 +796,75 @@ function Governance({ selectedInstance, currentUser, notify, authEnabled }: { se
   </>
 }
 
-function AgentResponses({ notify }: { notify: Shared['notify'] }) {
-  const [lookupMode, setLookupMode] = useState<'request' | 'chat'>('request')
-  const [identifier, setIdentifier] = useState('')
-  const [response, setResponse] = useState<AgentResponseStatus | null>(null)
+function AgentResponses({ agents, notify }: Pick<Shared, 'agents' | 'notify'>) {
+  const [agentId, setAgentId] = useState('')
+  const [history, setHistory] = useState<AgentResponseStatus[]>([])
+  const [selectedId, setSelectedId] = useState('')
   const [busy, setBusy] = useState(false)
-  const [autoRefresh, setAutoRefresh] = useState(true)
+  const response = history.find(item => item.requestId === selectedId) || history[0] || null
 
-  const load = useCallback(async (silent = false) => {
-    const value = identifier.trim()
-    if (!value) {
-      if (!silent) notify('error', 'Introduce un requestId o chatId para consultar la respuesta.')
+  const load = useCallback(async (resourceId = agentId, silent = false) => {
+    if (!resourceId) {
+      if (!silent) notify('error', 'Selecciona un Recurso del agente para consultar sus respuestas.')
       return
     }
     if (!silent) setBusy(true)
     try {
-      const result = lookupMode === 'request'
-        ? await api.responseStatus(value)
-        : await api.responseStatusByChat(value)
-      setResponse(result)
+      const result = await api.responseHistoryByAgent(resourceId)
+      setHistory(result.items)
+      setSelectedId(current => result.items.some(item => item.requestId === current) ? current : result.items[0]?.requestId || '')
     } catch (error) {
       if (!silent) {
-        setResponse(null)
-        notify('error', error instanceof Error ? error.message : 'No fue posible consultar la respuesta.')
+        setHistory([])
+        setSelectedId('')
+        notify('error', error instanceof Error ? error.message : 'No fue posible cargar las respuestas del agente.')
       }
     } finally {
       if (!silent) setBusy(false)
     }
-  }, [identifier, lookupMode, notify])
+  }, [agentId, notify])
 
   useEffect(() => {
-    if (!autoRefresh || !response || ['completed', 'failed', 'cancelled', 'learned'].includes(response.status)) return
-    const timer = window.setInterval(() => void load(true), 2500)
+    const nextAgentId = agents.some(agent => agent.IDResource === agentId) ? agentId : agents[0]?.IDResource || ''
+    if (nextAgentId !== agentId) {
+      setAgentId(nextAgentId)
+      setHistory([])
+      setSelectedId('')
+      return
+    }
+    if (agentId) void load(agentId)
+  }, [agents, agentId, load])
+
+  useEffect(() => {
+    if (!agentId) return
+    const timer = window.setInterval(() => void load(agentId, true), 5000)
     return () => window.clearInterval(timer)
-  }, [autoRefresh, load, response])
+  }, [agentId, load])
 
   const result = response?.result
   const suggestions = result?.suggestions || []
-  const question = result?.question || (typeof result?.requestText === 'string' ? result.requestText : '')
-  const statusLabel = response?.displayMessage || response?.status || 'Sin estado'
+  const question = response?.question || result?.question || (typeof result?.requestText === 'string' ? result.requestText : '')
 
   return <>
-    <PageHeader eyebrow="Evidencia" title="Respuestas del agente" copy="Consulta la pregunta original y la respuesta generada por el agente, incluyendo el estado de una ejecución en curso." action={<button className="secondary" disabled={!response || busy} onClick={() => void load()}><RefreshCw className={busy ? 'spin' : ''} size={16} /> Actualizar</button>} />
+    <PageHeader eyebrow="Evidencia" title="Respuestas del agente" copy="Selecciona un Recurso del agente para revisar las preguntas recibidas y las respuestas que generó." action={<button className="secondary" disabled={!agentId || busy} onClick={() => void load()}><RefreshCw className={busy ? 'spin' : ''} size={16} /> Actualizar</button>} />
     <div className="response-viewer">
-      <form className="panel form-panel" onSubmit={event => { event.preventDefault(); void load() }}>
-        <span className="eyebrow">Consulta</span>
-        <h2>Localizar ejecución</h2>
-        <label>Buscar por
-          <select value={lookupMode} onChange={event => { setLookupMode(event.target.value as 'request' | 'chat'); setResponse(null) }}>
-            <option value="request">Request ID</option>
-            <option value="chat">Chat ID</option>
-          </select>
-        </label>
-        <label>{lookupMode === 'request' ? 'Request ID' : 'Chat ID'}
-          <input value={identifier} onChange={event => setIdentifier(event.target.value)} placeholder={lookupMode === 'request' ? 'UUID de la petición' : 'Identificador del chat'} />
-        </label>
-        <button className="primary" disabled={busy || !identifier.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Consultar respuesta</button>
-        <label className="inline-check"><input type="checkbox" checked={autoRefresh} onChange={event => setAutoRefresh(event.target.checked)} /> Actualizar mientras procesa</label>
-        <small className="field-help">El estado se conserva temporalmente en Redis. Si ha expirado, la API devolverá que no existe.</small>
-      </form>
+      <section className="panel response-history-panel">
+        <span className="eyebrow">Recurso del agente</span>
+        <h2>Seleccionar recurso</h2>
+        <SearchSelect value={agentId} onChange={value => { setAgentId(value); setHistory([]); setSelectedId('') }} ariaLabel="Recurso del agente" placeholder="Seleccionar recurso…" searchPlaceholder="Buscar recurso…" options={agents.map(agent => ({ value: agent.IDResource, label: agent.Name, detail: agent.FullName || shortId(agent.IDResource) }))} />
+        <small className="field-help">Se muestran las respuestas recientes asociadas al recurso seleccionado.</small>
+        <div className="response-history-list">
+          {!agentId ? <div className="preview-placeholder"><Bot size={26} /><p>Selecciona un recurso.</p></div> : history.length === 0 ? <div className="preview-placeholder"><History size={26} /><p>No hay respuestas registradas para este recurso.</p></div> : history.map(item => <button key={item.requestId} className={`response-history-item ${item.requestId === response?.requestId ? 'active' : ''}`} onClick={() => setSelectedId(item.requestId)}><span className={`status-pill ${statusClass(item.status)}`}>{item.displayMessage || item.status}</span><strong>{item.question || item.result?.question || 'Pregunta no disponible'}</strong><small>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : item.requestId}</small></button>)}
+        </div>
+      </section>
 
       <section className="panel response-result">
-        <div className="panel-title"><div><span className="eyebrow">Resultado</span><h2>{response ? 'Conversación localizada' : 'Sin consulta'}</h2></div>{response && <span className={`status-pill ${statusClass(response.status)}`}>{statusLabel}</span>}</div>
-        {!response ? <div className="preview-placeholder"><MessageSquareText size={32} /><p>Introduce un identificador para visualizar la pregunta y la respuesta exacta del agente.</p></div> : <>
+        <div className="panel-title"><div><span className="eyebrow">Conversación</span><h2>{response ? 'Respuesta del agente' : 'Sin selección'}</h2></div>{response && <span className={`status-pill ${statusClass(response.status)}`}>{response.displayMessage || response.status}</span>}</div>
+        {!response ? <div className="preview-placeholder"><MessageSquareText size={32} /><p>Selecciona una pregunta del historial para ver la respuesta exacta del agente.</p></div> : <>
           <dl className="response-meta">
             <div><dt>Request ID</dt><dd><code>{response.requestId}</code></dd></div>
             <div><dt>Chat ID</dt><dd><code>{response.chatId || '—'}</code></dd></div>
+            <div><dt>Recurso</dt><dd><code>{response.agentName || response.agentResourceId || agentId}</code></dd></div>
             <div><dt>Actualizado</dt><dd>{response.updatedAt ? new Date(response.updatedAt).toLocaleString() : '—'}</dd></div>
           </dl>
           {response.error && <div className="error-box">{response.error}</div>}

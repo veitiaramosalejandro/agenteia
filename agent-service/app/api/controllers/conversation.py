@@ -339,7 +339,12 @@ def handle_dialogue(
         dialogue_request_id = str(info.get("request_id") or "").strip() or str(
             uuid.uuid4()
         )
-        _create_response_status(dialogue_request_id, dialogue_request_id, 1)
+        _create_response_status(
+            dialogue_request_id,
+            dialogue_request_id,
+            1,
+            question=req.message,
+        )
         _update_response_status(dialogue_request_id, "queued")
 
         cached_response_text = _get_cached_dialogue_response(cache_key)

@@ -4,7 +4,7 @@ import redis
 from fastapi import APIRouter, HTTPException, Query
 
 from app.response_queue import AgentResponseQueue
-from app.services.response_status import load, load_by_chat, localize
+from app.services.response_status import list_by_agent, load, load_by_chat, localize
 from app.suggestion_queue import SuggestionQueue
 
 
@@ -44,6 +44,20 @@ def read_suggestion_queue_status() -> dict[str, Any]:
         raise HTTPException(
             status_code=503, detail="A fila de sugestões não está disponível."
         ) from exc
+
+
+@router.get("/by-agent")
+def read_agent_response_history(
+    agentResourceId: str = Query(..., min_length=1),
+    limit: int = Query(50, ge=1, le=200),
+    lang: str | None = Query(None, pattern="^(es|en|pt)$"),
+) -> dict[str, Any]:
+    states = list_by_agent(agentResourceId, limit)
+    return {
+        "agentResourceId": agentResourceId.strip(),
+        "total": len(states),
+        "items": [localize(item, lang) for item in states],
+    }
 
 
 @router.get("/{request_id}/status")

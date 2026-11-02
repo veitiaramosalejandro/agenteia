@@ -4,6 +4,7 @@ from app.redis_runtime import redis_client
 
 import json
 import threading
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -15,6 +16,7 @@ from app.config import settings
 _redis = redis_client(settings.REDIS_URL, decode_responses=True)
 _fallback_lock = threading.Lock()
 _fallback: dict[str, dict[str, Any]] = {}
+_fallback_agent_index: dict[str, dict[str, float]] = {}
 
 DISPLAY_MESSAGES = {
     "queued": {"es": "Esperando…", "en": "Waiting…", "pt": "A aguardar…"},
@@ -97,6 +99,10 @@ def _chat_key(chat_id: str) -> str:
     return f"machining:agent-response-chat:v1:{chat_id}"
 
 
+def _agent_index_key(agent_resource_id: str) -> str:
+    return f"machining:agent-response-agent:v1:{agent_resource_id}"
+
+
 def utc_timestamp() -> str:
     return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
 
@@ -133,9 +139,29 @@ def save(data: dict[str, Any]) -> None:
                 settings.AGENT_RESPONSE_STATUS_TTL_SECONDS,
                 request_id,
             )
+        agent_ids = {
+            str(data.get("agentResourceId") or "").strip(),
+            *(
+                str(item.get("agentResourceId") or "").strip()
+                for item in data.get("agents") or []
+            ),
+        }
+        for agent_id in filter(None, agent_ids):
+            index_key = _agent_index_key(agent_id)
+            _redis.zadd(index_key, {request_id: time.time()})
+            _redis.expire(index_key, settings.AGENT_RESPONSE_STATUS_TTL_SECONDS)
     except redis.RedisError:
         with _fallback_lock:
             _fallback[request_id] = dict(data)
+            for agent_id in {
+                str(data.get("agentResourceId") or "").strip(),
+                *(
+                    str(item.get("agentResourceId") or "").strip()
+                    for item in data.get("agents") or []
+                ),
+            }:
+                if agent_id:
+                    _fallback_agent_index.setdefault(agent_id, {})[request_id] = time.time()
 
 
 def load(request_id: str) -> Optional[dict[str, Any]]:
@@ -164,7 +190,12 @@ def load_by_chat(chat_id: str) -> Optional[dict[str, Any]]:
     return load(str(request_id)) if request_id else None
 
 
-def create(request_id: str, chat_id: str, candidate_count: int) -> dict[str, Any]:
+def create(
+    request_id: str,
+    chat_id: str,
+    candidate_count: int,
+    question: Optional[str] = None,
+) -> dict[str, Any]:
     now = utc_timestamp()
     data = {
         "requestId": request_id,
@@ -183,6 +214,8 @@ def create(request_id: str, chat_id: str, candidate_count: int) -> dict[str, Any
         "agents": [],
         "stageHistory": [{"status": "queued", "at": now}],
     }
+    if question and question.strip():
+        data["question"] = question.strip()
     save(data)
     return data
 
@@ -203,6 +236,9 @@ def update(
     now = utc_timestamp()
     messages = display_messages(status_name)
     if agent_resource_id:
+        data["agentResourceId"] = agent_resource_id
+        if agent_name:
+            data["agentName"] = agent_name
         agents = data.setdefault("agents", [])
         state = next(
             (
@@ -252,6 +288,49 @@ def update(
             {"status": status_name, "at": now, "agentResourceId": agent_resource_id}
         )
     save(data)
+
+
+def list_by_agent(agent_resource_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Return recent response states associated with one agent resource."""
+    agent_id = str(agent_resource_id or "").strip()
+    bounded_limit = max(1, min(int(limit), 200))
+    if not agent_id:
+        return []
+    try:
+        request_ids = _redis.zrevrange(_agent_index_key(agent_id), 0, bounded_limit - 1)
+        indexed_ids = {str(request_id) for request_id in request_ids}
+        # Backfill statuses created before the per-agent index existed. This
+        # keeps the history view useful immediately after deployment while the
+        # normal path remains a sorted-set lookup.
+        if len(indexed_ids) < bounded_limit:
+            for key in _redis.scan_iter(match="machining:agent-response:v1:*"):
+                request_id = str(key).rsplit(":", 1)[-1]
+                if request_id in indexed_ids:
+                    continue
+                data = load(request_id)
+                agent_ids = {
+                    str(data.get("agentResourceId") or "").strip(),
+                    *(str(item.get("agentResourceId") or "").strip() for item in (data or {}).get("agents") or []),
+                } if data else set()
+                if data is not None and agent_id in agent_ids:
+                    indexed_ids.add(request_id)
+                    _redis.zadd(_agent_index_key(agent_id), {request_id: time.time()})
+        request_ids = list(indexed_ids)
+        result = []
+        for request_id in request_ids:
+            data = load(str(request_id))
+            if data is not None:
+                result.append(data)
+        result.sort(key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+        return result[:bounded_limit]
+    except redis.RedisError:
+        with _fallback_lock:
+            entries = sorted(
+                _fallback_agent_index.get(agent_id, {}).items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:bounded_limit]
+            return [dict(_fallback[request_id]) for request_id, _ in entries if request_id in _fallback]
 
 
 def prepare_retry(request_id: str, error: str) -> None:

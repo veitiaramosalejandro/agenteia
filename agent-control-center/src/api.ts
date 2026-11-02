@@ -59,6 +59,7 @@ export const api = {
   observability: (instanceCode: string, params: URLSearchParams) => request<ObservabilitySnapshot>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability?${params}`),
   responseStatus: (requestId: string, lang = 'pt') => request<AgentResponseStatus>(`/api/v1/agent/responses/${encodeURIComponent(requestId)}/status?lang=${lang}`),
   responseStatusByChat: (chatId: string, lang = 'pt') => request<AgentResponseStatus>(`/api/v1/agent/responses/status?chatId=${encodeURIComponent(chatId)}&lang=${lang}`),
+  responseHistoryByAgent: (agentResourceId: string, limit = 50, lang = 'pt') => request<{ agentResourceId: string; total: number; items: AgentResponseStatus[] }>(`/api/v1/agent/responses/by-agent?agentResourceId=${encodeURIComponent(agentResourceId)}&limit=${limit}&lang=${lang}`),
   exportObservability: async (instanceCode: string, params: URLSearchParams) => {
     const token = sessionStorage.getItem('acc-token')
     const response = await fetch(`${API_BASE}/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability/export.csv?${params}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })

@@ -197,6 +197,9 @@ export type ObservabilitySnapshot = {
 export type AgentResponseStatus = {
   requestId: string
   chatId?: string | null
+  agentResourceId?: string | null
+  agentName?: string | null
+  question?: string | null
   status: string
   code?: number
   displayMessage?: string
