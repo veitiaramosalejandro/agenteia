@@ -36,7 +36,9 @@ class JuntaSwaggerInstance(BaseModel):
 )
 def list_junta_test_instances() -> list[JuntaSwaggerInstance]:
     try:
-        instances = list_active_solidset_instances()
+        # Este endpoint es solo de consulta para Swagger. No debe ejecutar
+        # migraciones DDL ni quedarse esperando locks de PostgreSQL.
+        instances = list_active_solidset_instances(ensure_schema=False, max_retries=1)
     except psycopg.Error as exc:
         raise HTTPException(status_code=503, detail="No se pudieron consultar las instancias SolidSET.") from exc
 

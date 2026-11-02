@@ -55,7 +55,10 @@ def _resolve_request_solidset_instance(request: Request) -> dict[str, Any] | Non
     if not host:
         return None
     # Recheck each request: an outbound host may be shared or reassigned.
-    return get_solidset_instance(source_ip=host)
+    # La resolución de una petición no debe ejecutar migraciones DDL. Las
+    # migraciones se ejecutan durante el arranque o mediante administración,
+    # nunca dentro del camino de una solicitud en tiempo real.
+    return get_solidset_instance(source_ip=host, ensure_schema=False, max_retries=1)
 
 
 def _attach_solidset_instance(candidates: list[dict], instance: dict[str, Any]) -> None:

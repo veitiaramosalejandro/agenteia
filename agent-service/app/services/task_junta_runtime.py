@@ -77,11 +77,13 @@ async def _publish(operation: JuntaOperation, event_type: str, payload: dict[str
     encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
     secret = str(getattr(settings, "JUNTA_NOTIFICATION_SHARED_SECRET", "") or "")
     timestamp = str(int(time.time()))
-    signature = hmac.new(secret.encode("utf-8"), f"{timestamp}\n{encoded}".encode("utf-8"), hashlib.sha256).hexdigest() if secret else ""
+    # Debe coincidir con NotificationManager.JuntaEventSecurity:
+    # HMAC-SHA256(timestamp + "." + body), enviado en los encabezados X-Junta-*.
+    signature = hmac.new(secret.encode("utf-8"), f"{timestamp}.{encoded}".encode("utf-8"), hashlib.sha256).hexdigest() if secret else ""
     headers = {
         "Content-Type": "application/json",
-        "X-Internal-Timestamp": timestamp,
-        "X-Internal-Signature": signature,
+        "X-Junta-Timestamp": timestamp,
+        "X-Junta-Signature": signature,
     }
     timeout = max(2, int(getattr(settings, "JUNTA_EVENT_TIMEOUT_SECONDS", 10)))
     retries = max(0, int(getattr(settings, "JUNTA_EVENT_MAX_RETRIES", 3)))
@@ -121,19 +123,22 @@ async def _run(operation: JuntaOperation) -> None:
             operation.processed_pairs = processed
             operation.total_pairs = total
             for match in matches:
-                pending_publications.append(asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
+                pending_publications.append(asyncio.run_coroutine_threadsafe(
                     _publish(operation, "match", _match_payload(match)), loop
-                )))
+                ))
             percent = round((processed / total) * 100, 2) if total else 100
-            pending_publications.append(asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
+            pending_publications.append(asyncio.run_coroutine_threadsafe(
                 _publish(operation, "progress", {
                     "processedPairs": processed, "totalPairs": total, "percent": percent,
                 }), loop
-            )))
+            ))
 
         operation.result = await asyncio.to_thread(analyze_task_similarity, operation.tasks, on_batch)
         if pending_publications:
-            await asyncio.gather(*pending_publications)
+            await asyncio.gather(*(
+                asyncio.wrap_future(future, loop=loop)
+                for future in pending_publications
+            ))
         operation.status = "completed"
         await _publish(operation, "completed", {
             "resultUrl": f"/api/v1/agent/tasks/junta/{operation.operation_id}/result",

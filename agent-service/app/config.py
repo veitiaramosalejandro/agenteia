@@ -222,6 +222,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "user")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "pass")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "machining_db")
+    POSTGRES_CONNECT_TIMEOUT_SECONDS: int = int(os.getenv("POSTGRES_CONNECT_TIMEOUT_SECONDS", "5"))
     
     # Compatibilidad transitoria para módulos de diagnóstico antiguos. Las
     # conexiones operativas se resuelven exclusivamente desde PostgreSQL.
