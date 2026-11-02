@@ -1,4 +1,4 @@
-import type { AdminUser, Agent, Approval, AutomationEvaluation, AutomationRule, ChangeRecord, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ModelValidation, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
+import type { AdminUser, Agent, AgentResponseStatus, Approval, AutomationEvaluation, AutomationRule, ChangeRecord, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ModelValidation, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
 
 const API_BASE = (import.meta.env.VITE_AGENT_API_URL || '').replace(/\/$/, '')
 
@@ -57,6 +57,8 @@ export const api = {
   evaluateAutomationRule: (instanceCode: string, ruleId: string, message: string, approved: boolean) => request<AutomationEvaluation>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}/evaluate`, { method: 'POST', body: JSON.stringify({ Message: message, Approved: approved }) }),
   executeAutomationRule: (instanceCode: string, ruleId: string, body: Record<string, unknown>) => request<{ status: string; evaluation: AutomationEvaluation; dialogue?: { responses: Array<{ AgentName: string; response: string; sent: boolean }> } }>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/automation-rules/${ruleId}/execute`, { method: 'POST', body: JSON.stringify(body) }),
   observability: (instanceCode: string, params: URLSearchParams) => request<ObservabilitySnapshot>(`/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability?${params}`),
+  responseStatus: (requestId: string, lang = 'pt') => request<AgentResponseStatus>(`/api/v1/agent/responses/${encodeURIComponent(requestId)}/status?lang=${lang}`),
+  responseStatusByChat: (chatId: string, lang = 'pt') => request<AgentResponseStatus>(`/api/v1/agent/responses/status?chatId=${encodeURIComponent(chatId)}&lang=${lang}`),
   exportObservability: async (instanceCode: string, params: URLSearchParams) => {
     const token = sessionStorage.getItem('acc-token')
     const response = await fetch(`${API_BASE}/api/v1/agent/solidset/instances/${encodeURIComponent(instanceCode)}/observability/export.csv?${params}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })

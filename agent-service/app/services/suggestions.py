@@ -2723,6 +2723,7 @@ async def _process_chat_question_response_suggestion(
         title = _suggestion_title(language, initial=ambient_mode)
         result = {
             "questionChatId": context["quoted_chat_id"] or request_id,
+            "question": effective_request_text,
             "language": language,
             "title": title,
             "suggestions": [

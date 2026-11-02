@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity, Bot, BrainCircuit, CheckCircle2, ChevronDown, CircleAlert,
   Database, Download, FileSearch, FlaskConical, Gauge, Layers3, LoaderCircle, Menu, Network, PanelLeftClose,
-  History, LogOut, Play, Plus, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
+  History, LogOut, MessageSquareText, Play, Plus, RefreshCw, Save, Search, Send, ServerCog, ShieldCheck,
   Sparkles, Trash2, UploadCloud, UserCog, Waypoints, Workflow, X,
 } from 'lucide-react'
 
 import { api } from './api'
-import type { AdminUser, Agent, Approval, AutomationEvaluation, AutomationRule, ChangeRecord, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ModelValidation, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
+import type { AdminUser, Agent, AgentResponseStatus, Approval, AutomationEvaluation, AutomationRule, ChangeRecord, Health, IngestionRun, Instance, KnowledgeRecord, KnowledgeSearchResult, ModelValidation, ObservabilitySnapshot, PromptDraft, Provider, WorkRoom } from './types'
 
-type View = 'overview' | 'instances' | 'synchronization' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'observability' | 'governance' | 'lab'
+type View = 'overview' | 'instances' | 'synchronization' | 'agents' | 'prompts' | 'models' | 'knowledge' | 'automation' | 'observability' | 'governance' | 'responses' | 'lab'
 type Notice = { type: 'success' | 'error'; text: string } | null
 
 const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
@@ -23,6 +23,7 @@ const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
   { id: 'automation', label: 'Automatización', icon: Workflow },
   { id: 'observability', label: 'Observabilidad', icon: Activity },
   { id: 'governance', label: 'Gobierno', icon: UserCog },
+  { id: 'responses', label: 'Respuestas IA', icon: MessageSquareText },
   { id: 'lab', label: 'Laboratorio', icon: FlaskConical },
 ]
 
@@ -121,6 +122,7 @@ function App() {
     if (view === 'automation') return <Automation {...shared} />
     if (view === 'observability') return <Observability {...shared} />
     if (view === 'governance') return <Governance selectedInstance={selectedInstance} currentUser={currentUser!} notify={notify} authEnabled={authEnabled} />
+    if (view === 'responses') return <AgentResponses notify={notify} />
     if (view === 'lab') return <Lab key={selectedInstance?.Code || 'no-instance'} {...shared} />
     return <Overview health={health} instances={instances} agents={agents} providers={providers} selected={selectedInstance} />
   }, [view, health, instances, agents, providers, selectedInstance, instanceCode, notify, loadAgents, currentUser, authEnabled])
@@ -791,6 +793,83 @@ function Governance({ selectedInstance, currentUser, notify, authEnabled }: { se
     {tab === 'approvals' && <><section className="approval-guide"><article><span>1</span><div><strong>Solicitar</strong><p>Desde Historial, un usuario solicita restaurar una configuración anterior.</p></div></article><article><span>2</span><div><strong>Decidir</strong><p>Un administrador revisa el motivo y aprueba o rechaza la solicitud.</p></div></article><article><span>3</span><div><strong>Consumir</strong><p>La aprobación se usa una sola vez al ejecutar la restauración y queda auditada.</p></div></article></section><section className="panel governance-panel"><div className="panel-title"><div><span className="eyebrow">Control de cambios</span><h2>Aprobaciones de restauración</h2></div><span className="status-pill">{approvals.filter(item => item.Status === 'pending').length} pendientes</span></div><p className="governance-copy">Este listado no crea tareas automáticamente. Las solicitudes nacen en la pestaña Historial al pulsar «Solicitar» sobre un cambio restaurable.</p>{approvals.length === 0 ? <div className="approval-empty"><ShieldCheck size={30} /><strong>No hay solicitudes de aprobación</strong><p>Ve a Historial para solicitar la restauración de un cambio que tenga estado anterior.</p><button className="secondary" onClick={() => setTab('history')}><History size={15} /> Abrir historial</button></div> : <div className="table-wrap"><table><thead><tr><th>Operación</th><th>Recurso</th><th>Solicitud</th><th>Estado</th><th>Acción</th></tr></thead><tbody>{approvals.map(item => <tr key={item.ID}><td><strong>{item.Operation === 'restore' ? 'Restaurar' : item.Operation}</strong><small>{new Date(item.CreatedAt).toLocaleString()}</small></td><td>{item.ResourceType}<code>{item.ResourceID}</code></td><td>{item.Reason}<small>{item.RequestedByName}</small></td><td><span className={`status-pill ${item.Status === 'approved' || item.Status === 'consumed' ? 'success' : item.Status === 'rejected' ? 'danger' : 'warning'}`}>{({ pending: 'Pendiente', approved: 'Aprobada', rejected: 'Rechazada', consumed: 'Utilizada' } as Record<string, string>)[item.Status]}</span></td><td>{canApprove && item.Status === 'pending' ? <div className="button-row"><button className="secondary compact" onClick={() => void decide(item.ID, 'approved')}>Aprobar</button><button className="secondary compact danger-button" onClick={() => void decide(item.ID, 'rejected')}>Rechazar</button></div> : '—'}</td></tr>)}</tbody></table></div>}</section></>}
     {tab === 'history' && <section className="panel governance-panel"><span className="eyebrow">Trazabilidad</span><h2>Historial de cambios</h2><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Actor</th><th>Cambio</th><th>Resultado</th><th>Restauración</th></tr></thead><tbody>{changes.map(change => { const approved = approvals.some(item => item.Operation === 'restore' && item.ResourceID === change.ID && item.Status === 'approved'); return <tr key={change.ID}><td>{new Date(change.CreatedAt).toLocaleString()}</td><td>{change.UserName || 'Sistema'}</td><td><strong>{change.Action} · {change.ResourceType}</strong><code>{change.Path}</code></td><td><span className={`status-pill ${change.StatusCode < 400 ? 'success' : 'danger'}`}>HTTP {change.StatusCode}</span></td><td>{change.BeforeState ? approved && canRestore ? <button className="primary compact" onClick={() => void restore(change)}>Restaurar</button> : <button className="secondary compact" onClick={() => void requestRestore(change)}>Solicitar</button> : <span className="status-pill">Solo auditoría</span>}</td></tr> })}</tbody></table></div></section>}
     {tab === 'users' && canUsers && <div className="governance-users"><form className="panel form-panel" onSubmit={createUser}><span className="eyebrow">Acceso</span><h2>Nuevo usuario</h2><label>Usuario<input minLength={3} pattern="[A-Za-z0-9._-]+" autoComplete="off" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} /><small className={form.username && !usernameValid ? 'validation-error' : 'field-help'}>Mínimo 3 caracteres: letras, números, punto, guion o guion bajo.</small></label><label>Nombre visible<input minLength={2} autoComplete="name" value={form.displayName} onChange={e => setForm({ ...form, displayName: e.target.value })} /><small className={form.displayName && !displayNameValid ? 'validation-error' : 'field-help'}>Mínimo 2 caracteres.</small></label><label>Contraseña temporal<input type="password" minLength={12} autoComplete="new-password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /><small className={form.password && !passwordValid ? 'validation-error' : 'field-help'}>{passwordValid ? 'Longitud válida.' : `Faltan ${Math.max(0, 12 - form.password.length)} caracteres; se requieren al menos 12.`}</small></label><label>Rol<SearchSelect value={form.role} onChange={value => setForm({ ...form, role: value })} ariaLabel="Rol" searchPlaceholder="Buscar rol…" options={[{ value: "operator", label: "Operador" }, { value: "auditor", label: "Auditor" }, { value: "administrator", label: "Administrador" }]} /></label><button className="primary" disabled={!userFormValid}>Crear usuario</button>{!userFormValid && <small className="form-status"><CircleAlert size={13} /> Completa los requisitos indicados para activar el botón.</small>}</form><section className="panel"><span className="eyebrow">RBAC</span><h2>Usuarios administrativos</h2><div className="user-list">{users.map(user => <article key={user.ID}><div><strong>{user.displayName}</strong><small>{user.username} · {user.role}</small></div><span className={`status-pill ${user.active ? 'success' : 'danger'}`}>{user.active ? 'Activo' : 'Inactivo'}</span><button className="secondary compact" disabled={user.ID === currentUser.ID} onClick={() => void api.setAdminUserActive(user.ID, !user.active).then(load)}>{user.active ? 'Desactivar' : 'Activar'}</button></article>)}</div></section></div>}
+  </>
+}
+
+function AgentResponses({ notify }: { notify: Shared['notify'] }) {
+  const [lookupMode, setLookupMode] = useState<'request' | 'chat'>('request')
+  const [identifier, setIdentifier] = useState('')
+  const [response, setResponse] = useState<AgentResponseStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(true)
+
+  const load = useCallback(async (silent = false) => {
+    const value = identifier.trim()
+    if (!value) {
+      if (!silent) notify('error', 'Introduce un requestId o chatId para consultar la respuesta.')
+      return
+    }
+    if (!silent) setBusy(true)
+    try {
+      const result = lookupMode === 'request'
+        ? await api.responseStatus(value)
+        : await api.responseStatusByChat(value)
+      setResponse(result)
+    } catch (error) {
+      if (!silent) {
+        setResponse(null)
+        notify('error', error instanceof Error ? error.message : 'No fue posible consultar la respuesta.')
+      }
+    } finally {
+      if (!silent) setBusy(false)
+    }
+  }, [identifier, lookupMode, notify])
+
+  useEffect(() => {
+    if (!autoRefresh || !response || ['completed', 'failed', 'cancelled', 'learned'].includes(response.status)) return
+    const timer = window.setInterval(() => void load(true), 2500)
+    return () => window.clearInterval(timer)
+  }, [autoRefresh, load, response])
+
+  const result = response?.result
+  const suggestions = result?.suggestions || []
+  const question = result?.question || (typeof result?.requestText === 'string' ? result.requestText : '')
+  const statusLabel = response?.displayMessage || response?.status || 'Sin estado'
+
+  return <>
+    <PageHeader eyebrow="Evidencia" title="Respuestas del agente" copy="Consulta la pregunta original y la respuesta generada por el agente, incluyendo el estado de una ejecución en curso." action={<button className="secondary" disabled={!response || busy} onClick={() => void load()}><RefreshCw className={busy ? 'spin' : ''} size={16} /> Actualizar</button>} />
+    <div className="response-viewer">
+      <form className="panel form-panel" onSubmit={event => { event.preventDefault(); void load() }}>
+        <span className="eyebrow">Consulta</span>
+        <h2>Localizar ejecución</h2>
+        <label>Buscar por
+          <select value={lookupMode} onChange={event => { setLookupMode(event.target.value as 'request' | 'chat'); setResponse(null) }}>
+            <option value="request">Request ID</option>
+            <option value="chat">Chat ID</option>
+          </select>
+        </label>
+        <label>{lookupMode === 'request' ? 'Request ID' : 'Chat ID'}
+          <input value={identifier} onChange={event => setIdentifier(event.target.value)} placeholder={lookupMode === 'request' ? 'UUID de la petición' : 'Identificador del chat'} />
+        </label>
+        <button className="primary" disabled={busy || !identifier.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Consultar respuesta</button>
+        <label className="inline-check"><input type="checkbox" checked={autoRefresh} onChange={event => setAutoRefresh(event.target.checked)} /> Actualizar mientras procesa</label>
+        <small className="field-help">El estado se conserva temporalmente en Redis. Si ha expirado, la API devolverá que no existe.</small>
+      </form>
+
+      <section className="panel response-result">
+        <div className="panel-title"><div><span className="eyebrow">Resultado</span><h2>{response ? 'Conversación localizada' : 'Sin consulta'}</h2></div>{response && <span className={`status-pill ${statusClass(response.status)}`}>{statusLabel}</span>}</div>
+        {!response ? <div className="preview-placeholder"><MessageSquareText size={32} /><p>Introduce un identificador para visualizar la pregunta y la respuesta exacta del agente.</p></div> : <>
+          <dl className="response-meta">
+            <div><dt>Request ID</dt><dd><code>{response.requestId}</code></dd></div>
+            <div><dt>Chat ID</dt><dd><code>{response.chatId || '—'}</code></dd></div>
+            <div><dt>Actualizado</dt><dd>{response.updatedAt ? new Date(response.updatedAt).toLocaleString() : '—'}</dd></div>
+          </dl>
+          {response.error && <div className="error-box">{response.error}</div>}
+          <article className="response-block"><span className="eyebrow">Pregunta original</span><p>{question || 'La pregunta original no está disponible en este registro.'}</p></article>
+          <article className="response-block"><span className="eyebrow">Respuesta del agente</span>{suggestions.length > 0 ? <div className="response-suggestions">{suggestions.map(item => <div key={item.id}><span>{item.id}</span><p>{item.text}</p></div>)}</div> : result?.answer ? <p className="answer">{result.answer}</p> : <p className="field-help">El agente todavía no ha producido una respuesta final.</p>}</article>
+        </>}
+      </section>
+    </div>
   </>
 }
 

@@ -194,6 +194,38 @@ export type ObservabilitySnapshot = {
   events: ObservabilityEvent[]
 }
 
+export type AgentResponseStatus = {
+  requestId: string
+  chatId?: string | null
+  status: string
+  code?: number
+  displayMessage?: string
+  completed?: boolean
+  createdAt?: string
+  updatedAt?: string
+  completedAt?: string | null
+  candidateCount?: number
+  responseCount?: number
+  error?: string | null
+  result?: {
+    questionChatId?: string | null
+    question?: string | null
+    language?: string
+    title?: string | null
+    suggestions?: Array<{ id: string; text: string }>
+    answer?: string | null
+    [key: string]: unknown
+  } | null
+  agents?: Array<{
+    agentResourceId?: string
+    name?: string
+    status?: string
+    displayMessage?: string
+    error?: string | null
+  }>
+  stageHistory?: Array<{ status: string; at: string }>
+}
+
 export type AdminUser = {
   ID: string
   username: string
