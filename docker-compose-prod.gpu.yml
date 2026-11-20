@@ -3,7 +3,7 @@ services:
     environment:
       # El modelo actual ocupa aproximadamente 19 GB. Un solo slot evita
       # duplicar la KV cache y es más estable con agentes concurrentes en cola.
-      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_NUM_PARALLEL=2
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_GPU_OVERHEAD=${OLLAMA_GPU_OVERHEAD:-536870912}
       - NVIDIA_VISIBLE_DEVICES=all
