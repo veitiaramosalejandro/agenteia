@@ -86,40 +86,7 @@ def _trace_initial_request(request: Request, payload: dict[str, Any]) -> None:
     info = section("Info")
     chat = section("Chat")
 
-    print(
-        "📨 INITIAL_REQUEST_IDENTITY "
-        + json.dumps(
-            {
-                "remote_ip": direct_ip,
-                "forwarded_ip": forwarded_ip,
-                "header_names": sorted(str(name).lower() for name in headers.keys()),
-                "headers": {
-                    "x-solidset-instance": safe_header("x-solidset-instance"),
-                    "host": safe_header("host"),
-                    "x-real-ip": safe_header("x-real-ip"),
-                    "user-agent": safe_header("user-agent"),
-                    "x-request-id": safe_header("x-request-id"),
-                },
-                "session": {
-                    "sender": field(sender, "session"),
-                    "framework_sender": field(framework_sender, "session"),
-                    "destiny": field(destiny, "session"),
-                    "info": field(info, "session_id"),
-                },
-                "sender": {
-                    "login": field(sender, "login"),
-                    "resource": field(sender, "resource"),
-                    "framework_login": field(framework_sender, "login"),
-                    "framework_resource": field(framework_sender, "resource"),
-                    "chat_login": field(chat, "idSender"),
-                    "chat_resource": field(chat, "idSenderResource"),
-                },
-                "chat_id": field(chat, "idChat2") or field(chat, "idChat"),
-            },
-            ensure_ascii=False,
-        ),
-        flush=True,
-    )
+    pass
 
 
 def _trace_resolved_instance(instance: dict[str, Any]) -> None:
@@ -134,22 +101,7 @@ def _trace_resolved_instance(instance: dict[str, Any]) -> None:
         return f"{parsed.scheme}://{hostname}{f':{port}' if port else ''}"
 
     data_api = instance.get("DataAPI") if isinstance(instance.get("DataAPI"), dict) else {}
-    print(
-        "📨 INITIAL_REQUEST_DESTINATION "
-        + json.dumps(
-            {
-                "code": str(instance.get("Code") or ""),
-                "instance_id": str(instance.get("ID") or ""),
-                "source_ip": str(instance.get("SourceIP") or ""),
-                "base_url_origin": safe_origin(instance.get("BaseUrl")),
-                "notification_url_origin": safe_origin(instance.get("NotificationUrl")),
-                "data_api_origin": safe_origin(data_api.get("BaseUrl")),
-                "data_api_active": data_api.get("active"),
-            },
-            ensure_ascii=False,
-        ),
-        flush=True,
-    )
+    pass
 
 
 def configure(runtime_notification_listener: Any) -> None:
@@ -194,15 +146,7 @@ async def receive_framework_notification(
             if hasattr(message, "model_dump")
             else message.dict()
         )
-    print(
-        "📨 FRAMEWORK_MESSAGE_PAYLOAD "
-        + json.dumps(
-            _redact_framework_payload(raw_payload),
-            ensure_ascii=False,
-            default=str,
-        ),
-        flush=True,
-    )
+    pass
 
     payload = (
         message.model_dump(mode="json")
@@ -271,8 +215,8 @@ async def receive_framework_notification(
     except psycopg.Error as exc:
         # Redis Stream ya aceptó el trabajo. No se devuelve 503 porque el
         # cliente podría duplicarlo; el worker reintentará el UPSERT terminal.
-        print(f"⚠️ Solicitud encolada sin auditoría inicial PostgreSQL: {exc}")
-    print(f"📥 FrameworkMessage encolado requestId={request_id}")
+        pass
+    pass
     return SendMessageResultDTO(
         Result=0,
         Message=message,
@@ -458,10 +402,7 @@ async def capture_and_forward_framework_message(request: Request):
     # aceptó primero el mensaje original.
     if upstream.status_code < 400 and candidates:
         _schedule_auto_replies(candidates)
-        print(
-            f"📥 FrameworkHub reenviado status={upstream.status_code} "
-            f"respuestas_programadas={len(candidates)}"
-        )
+        pass
 
     response_headers = {}
     if upstream.headers.get("content-type"):

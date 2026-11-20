@@ -25,7 +25,4 @@ class PostgresToolAudit:
 
             save_agent_tool_audit(event)
         except Exception as exc:
-            print(
-                f"⚠️ No se pudo persistir auditoría de herramienta: {type(exc).__name__}",
-                flush=True,
-            )
+            pass

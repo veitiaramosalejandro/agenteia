@@ -18,7 +18,7 @@ def ingestar_audios_a_qdrant(audio_dir: str = "/app/audio"):
     
     pcm_files = glob.glob(os.path.join(audio_dir, "*.pcm"))
     if not pcm_files:
-        print("No se encontraron archivos .pcm en la ruta especificada.")
+        pass
         return
 
     # Verificar si la colección existe
@@ -72,6 +72,6 @@ def ingestar_audios_a_qdrant(audio_dir: str = "/app/audio"):
             collection_name=settings.VECTOR_COLLECTION_NAME,
             points=points
         )
-        print(f"✅ Éxito: {nuevos} nuevos patrones de audio indexados. {duplicados} duplicados omitidos.")
+        pass
     else:
-        print(f"ℹ️ No hay nuevos archivos para indexar. {duplicados} duplicados omitidos.")
+        pass

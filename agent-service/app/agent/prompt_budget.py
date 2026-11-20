@@ -232,10 +232,5 @@ def budget_messages(messages: list) -> list:
             selected.add(i)
             remaining -= size(message)
     result = [message for i, message in enumerate(copies) if i in selected]
-    print(
-        "OLLAMA_PROMPT_BUDGET "
-        f"before_chars={sum(size(message) for message in messages)} "
-        f"after_chars={sum(size(message) for message in result)} messages={len(result)}",
-        flush=True,
-    )
+    pass
     return result

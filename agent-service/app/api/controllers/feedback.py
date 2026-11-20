@@ -107,7 +107,7 @@ def capture_solidset_agent_reaction(
 ) -> SolidSETReactionCaptureResponse:
     """Captura una reacción ya registrada en SolidSET y la aprende para su agente."""
     try:
-        print(req)
+        pass
         if request is not None:
             payload = req.model_dump(mode="json") if hasattr(req, "model_dump") else req.dict()
             _trace_initial_request(request, payload)

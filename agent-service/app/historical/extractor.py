@@ -162,7 +162,7 @@ def extract_agent_task_batch(
             None,
         )
         if not id_column:
-            print("ℹ️ Ingestão histórica SysTask omitida: chave incremental não encontrada", flush=True)
+            pass
             return []
 
         resource_candidates = (
@@ -190,7 +190,7 @@ def extract_agent_task_batch(
         # costosos y timeouts; las relaciones adicionales se incorporarán como
         # extractores explícitos y medibles, nunca mediante un barrido del esquema.
         if not predicates:
-            print("ℹ️ Ingestão histórica SysTask omitida: relação com recurso não encontrada", flush=True)
+            pass
             return []
 
         text_columns = [

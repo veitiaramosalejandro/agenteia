@@ -388,15 +388,3 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Imprimir configuración para debug
-if settings.ENVIRONMENT == "development":
-    print("🔧 Configuración de desarrollo:")
-    print(f"  - Ollama chat: {settings.OLLAMA_BASE_URL}")
-    print(f"  - Ollama embeddings: {settings.EMBEDDING_BASE_URL}")
-    print(f"  - Qdrant: {settings.VECTOR_DB_URL}")
-    print(f"  - Redis: {settings.REDIS_URL}")
-    print(f"  - PostgreSQL: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}")
-    print(f"  - SQL Server: {settings.sql_server_endpoint_label()}")
-    print(f"  - SolidSET RestApi: {settings.SOLIDSET_RESTAPI_BASE_URL}")
-    print(f"  - Notifications Api: {settings.NOTIF_API_BASE_URL}")
-    

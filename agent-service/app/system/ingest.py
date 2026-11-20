@@ -42,7 +42,7 @@ def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
     conn = None
 
     instance_label = str(instance_code or "contexto-actual").strip()
-    print(f"🔄 Ingestando estructura real del sistema instance={instance_label}...")
+    pass
 
     try:
         background_checkpoint()
@@ -57,7 +57,7 @@ def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
             cursor.execute("SET LOCK_TIMEOUT 5000")
 
         # 1. Canales reales del sistema
-        print("📚 Ingestando canales (SysWorkRoom)...")
+        pass
         background_checkpoint()
         cursor.execute("""
             SELECT TOP 500 *
@@ -87,10 +87,10 @@ def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
                 canales_indexados += 1
             canales.append(canal)
 
-        print(f"  ✅ {len(canales)} canales ingeridos ({canales_indexados} indexados en vector DB)")
+        pass
 
         # 2. Roles del sistema
-        print("📚 Ingestando roles (SysRole)...")
+        pass
         background_checkpoint()
         cursor.execute("""
             SELECT TOP 500 *
@@ -118,10 +118,10 @@ def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
             )
             sistema.aprender_actividad(actividad)
 
-        print(f"  ✅ {len(roles)} roles ingeridos")
+        pass
 
         # 3. Usuarios asociados a recursos (consulta real compartida)
-        print("📚 Ingestando usuarios asociados a recursos (SysLogin + SysResources)...")
+        pass
         
         # Paso 3.1: Obtener todos los usuarios activos
         background_checkpoint()
@@ -196,10 +196,10 @@ def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
             sistema.aprender_actividad(actividad)
             recursos_ingestados += 1
 
-        print(f"  ✅ {recursos_ingestados} recursos ingeridos")
+        pass
 
         # 4. Canales en los que cada recurso tiene permiso (consulta real compartida)
-        print("📚 Ingestando permisos de canal por recurso (SysWorkRoom + SysWorkRoomResource + SysResources)...")
+        pass
         background_checkpoint()
         cursor.execute("""
             SELECT TOP 5000
@@ -260,10 +260,10 @@ def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
             sistema.aprender_actividad(actividad)
             permisos_canal_ingestados += 1
 
-        print(f"  ✅ {permisos_canal_ingestados} perfiles de permisos de canal ingeridos")
+        pass
 
         # 5. Historial de conversación por recurso (consulta real compartida)
-        print("📚 Ingestando historial de conversación por recurso (SysChat + Sys* joins)...")
+        pass
         chats_ingestados = 0
         try:
             background_checkpoint()
@@ -352,7 +352,7 @@ def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
         except IngestionCancelled:
             raise
         except Exception as e:
-            print(f"⚠️ Se omite la ingesta de chats por error SQL transitorio: {e}")
+            pass
 
         resumen = {
             "instanceCode": instance_code,
@@ -363,16 +363,16 @@ def _ingestar_sistema_completo_background(*, instance_code: str | None = None):
             "chats": chats_ingestados,
         }
 
-        print(f"\n✅ Sistema real ingerido correctamente instance={instance_label}")
-        print(f"   - Canales: {resumen['canales']}")
-        print(f"   - Canales indexados: {resumen['canales_indexados']}")
-        print(f"   - Roles: {resumen['roles']}")
-        print(f"   - Recursos: {resumen['recursos']}")
-        print(f"   - Chats: {resumen['chats']}")
+        pass
+        pass
+        pass
+        pass
+        pass
+        pass
         return resumen
 
     except Exception as e:
-        print(f"❌ Error en la ingesta real: {e}")
+        pass
         raise
     finally:
         if conn is not None:

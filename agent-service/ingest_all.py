@@ -16,25 +16,25 @@ from app.config import settings
 
 
 def ingest_all_documents():
-    print("\n" + "="*60)
-    print("📚 INGESTA MASIVA DE DOCUMENTOS")
-    print("="*60 + "\n")
+    pass
+    pass
+    pass
     
     # Conectar a Qdrant
-    print("📡 Conectando a Qdrant...")
+    pass
     client = QdrantClient(url=settings.VECTOR_DB_URL)
     collection = settings.VECTOR_COLLECTION_NAME
     
     # Verificar colección
     try:
         info = client.get_collection(collection)
-        print(f"📊 Colección: {collection} (puntos actuales: {info.points_count})")
+        pass
     except Exception as e:
-        print(f"❌ Error: {e}")
+        pass
         return
     
     # Conectar a Ollama
-    print("\n🔧 Conectando a Ollama...")
+    pass
     try:
         embeddings = OllamaEmbeddings(
             base_url=settings.EMBEDDING_BASE_URL,
@@ -42,17 +42,17 @@ def ingest_all_documents():
         )
         # Probar conexión
         test_vector = embeddings.embed_query("test")
-        print(f"   ✅ Embeddings disponibles (tamaño: {len(test_vector)})")
+        pass
     except Exception as e:
-        print(f"   ❌ Error conectando a Ollama: {e}")
+        pass
         return
     
     # Buscar archivos
     knowledge_dir = os.path.join(os.path.dirname(__file__), "knowledge_base")
     
     if not os.path.exists(knowledge_dir):
-        print(f"\n❌ Directorio no encontrado: {knowledge_dir}")
-        print("   Crea la carpeta 'knowledge_base' con tus documentos")
+        pass
+        pass
         return
     
     # Obtener todos los archivos .txt
@@ -62,24 +62,24 @@ def ingest_all_documents():
             files.append(os.path.join(knowledge_dir, f))
     
     if not files:
-        print(f"\n⚠️ No se encontraron archivos .txt en {knowledge_dir}")
+        pass
         return
     
-    print(f"\n📂 Encontrados {len(files)} archivos:")
+    pass
     for f in files:
-        print(f"   - {os.path.basename(f)}")
+        pass
     
     total_points = 0
     
     for file_path in files:
-        print(f"\n📄 Procesando: {os.path.basename(file_path)}")
+        pass
         
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            print(f"   📏 Tamaño: {len(content)} caracteres")
+            pass
         except Exception as e:
-            print(f"   ❌ Error leyendo: {e}")
+            pass
             continue
         
         # Dividir en fragmentos por párrafos
@@ -100,7 +100,7 @@ def ingest_all_documents():
             if current_chunk:
                 chunks.append(current_chunk.strip())
         
-        print(f"   📝 {len(chunks)} fragmentos")
+        pass
         
         points = []
         for i, chunk in enumerate(chunks):
@@ -127,7 +127,7 @@ def ingest_all_documents():
                 )
                 points.append(point)
             except Exception as e:
-                print(f"   ⚠️ Error en fragmento {i}: {e}")
+                pass
                 continue
         
         if points:
@@ -136,22 +136,22 @@ def ingest_all_documents():
                     collection_name=collection,
                     points=points
                 )
-                print(f"   ✅ Indexados {len(points)} fragmentos")
+                pass
                 total_points += len(points)
             except Exception as e:
-                print(f"   ❌ Error insertando: {e}")
+                pass
     
     # Mostrar resultado final
-    print("\n" + "="*60)
-    print(f"📊 RESUMEN FINAL")
-    print("="*60)
+    pass
+    pass
+    pass
     
     info = client.get_collection(collection)
-    print(f"✅ Puntos totales en colección: {info.points_count}")
-    print(f"✅ Nuevos puntos indexados: {total_points}")
+    pass
+    pass
     
-    print("\n✅ ¡Ingesta completada exitosamente!")
-    print("="*60)
+    pass
+    pass
 
 
 if __name__ == "__main__":

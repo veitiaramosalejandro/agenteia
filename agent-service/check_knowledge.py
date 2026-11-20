@@ -15,9 +15,9 @@ from app.config import settings
 def check_knowledge():
     """Verifica el conocimiento del agente sobre la base de datos."""
     
-    print("\n" + "="*60)
-    print("🔍 VERIFICANDO CONOCIMIENTO DE LA BASE DE DATOS")
-    print("="*60 + "\n")
+    pass
+    pass
+    pass
     
     try:
         client = QdrantClient(url=settings.VECTOR_DB_URL)
@@ -36,12 +36,12 @@ def check_knowledge():
                 count = info.vectors_count
             else:
                 count = "desconocido"
-            print(f"📊 Puntos en colección: {count}")
+            pass
         except Exception as e:
-            print(f"⚠️ Error obteniendo información de colección: {e}")
+            pass
         
         # 2. Hacer consultas de prueba
-        print("\n📝 CONSULTAS DE PRUEBA:")
+        pass
         
         queries = [
             ("Clientes", "¿Qué tabla contiene información de clientes?"),
@@ -53,7 +53,7 @@ def check_knowledge():
         ]
         
         for label, query in queries:
-            print(f"\n   🔍 {label}: '{query}'")
+            pass
             try:
                 query_vector = embeddings.embed_query(query)
                 
@@ -81,24 +81,24 @@ def check_knowledge():
                         content = payload.get("page_content", "")
                         if content and len(content) > 50:
                             preview = content[:150].replace('\n', ' ') + "..."
-                            print(f"      ✅ Encontrado: {preview}")
+                            pass
                             found_content = True
                             break
                     if not found_content:
-                        print("      ⚠️ No se encontró contenido relevante")
+                        pass
                 else:
-                    print("      ⚠️ No se encontraron resultados")
+                    pass
                     
             except Exception as e:
-                print(f"      ❌ Error: {e}")
+                pass
         
         # 3. Resumen
-        print("\n" + "="*60)
-        print("✅ VERIFICACIÓN COMPLETADA")
-        print("="*60)
+        pass
+        pass
+        pass
         
     except Exception as e:
-        print(f"❌ Error general: {e}")
+        pass
 
 
 if __name__ == "__main__":

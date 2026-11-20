@@ -109,7 +109,7 @@ def process_batch(batch: dict[str, Any]) -> dict[str, int]:
     if documents:
         waited = wait_for_interactive_idle()
         if waited >= 0.5:
-            print(f"⏸️ Ingesta histórica cedió {waited:.1f}s al chat", flush=True)
+            pass
         embeddings = OllamaEmbeddings(base_url=settings.EMBEDDING_BASE_URL, model=settings.EMBEDDING_MODEL_NAME)
         client = QdrantClient(url=settings.VECTOR_DB_URL)
         ensure_vector_collection(client, settings.VECTOR_COLLECTION_NAME, embeddings)
@@ -137,18 +137,18 @@ def process_batch(batch: dict[str, Any]) -> dict[str, int]:
 
 async def run_worker() -> None:
     ensure_schema(); queue=HistoricalQueue(); consumer=queue.consumer_name()
-    print(f"📚 Historical worker activo consumer={consumer}", flush=True)
+    pass
     while True:
         if queue.paused(): await asyncio.sleep(2); continue
         try: messages=await asyncio.to_thread(queue.read, consumer)
         except redis.RedisError as exc:
-            print(f"⚠️ Redis histórico no disponible: {exc}"); await asyncio.sleep(2); queue=HistoricalQueue(); continue
+            pass; await asyncio.sleep(2); queue=HistoricalQueue(); continue
         for message_id, fields in messages:
             batch=json.loads(fields["batch"]); attempt=int(fields.get("attempt") or 0)
             try:
                 result=await asyncio.to_thread(process_batch, batch)
                 await asyncio.to_thread(queue.ack, message_id)
-                print(f"✅ Lote histórico {batch['batchId']}: {result}", flush=True)
+                pass
             except Exception as exc:
                 if attempt < settings.HISTORICAL_INGESTION_MAX_RETRIES:
                     await asyncio.to_thread(queue.enqueue, batch, attempt+1)

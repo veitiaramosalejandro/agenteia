@@ -65,7 +65,7 @@ def get_cached(cache_key: str) -> Optional[str]:
         if cached := _redis.get(redis_key):
             return cached
     except redis.RedisError as exc:
-        print(f"⚠️ Cache Redis no disponible; usando cache local: {exc}")
+        pass
     now = time()
     ttl = max(1, settings.DIALOGUE_DUPLICATE_CACHE_TTL_SECONDS)
     with _cache_lock:
@@ -89,7 +89,7 @@ def store_cached(cache_key: str, response_text: str) -> None:
         _redis.setex(redis_key, ttl, response_text)
         return
     except redis.RedisError as exc:
-        print(f"⚠️ No se pudo escribir cache Redis; usando cache local: {exc}")
+        pass
     with _cache_lock:
         _cache[cache_key] = (time(), response_text)
         _cache.move_to_end(cache_key)
@@ -146,7 +146,7 @@ def release_when_done(worker: threading.Thread) -> None:
     try:
         worker.join(timeout=max(5, settings.DIALOGUE_TIMEOUT_RELEASE_GRACE_SECONDS))
         if worker.is_alive():
-            print("⚠️ Worker de diálogo sigue activo tras timeout y periodo de gracia.")
+            pass
     finally:
         finish()
         if _app is not None:

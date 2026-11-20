@@ -92,7 +92,7 @@ class ConversationTrainer:
                 collection_name=self.collection,
                 points=points
             )
-            print(f"✅ Aprendidas {len(points)} interacciones de la conversación")
+            pass
             return len(points)
         
         return 0
@@ -120,11 +120,11 @@ class ConversationTrainer:
             for conv in conversations:
                 total += self.train_from_conversation(conv)
             
-            print(f"✅ Total aprendido: {total} interacciones")
+            pass
             return total
             
         except Exception as e:
-            print(f"❌ Error entrenando desde archivo: {e}")
+            pass
             return 0
 
 

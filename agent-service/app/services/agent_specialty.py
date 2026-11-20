@@ -48,7 +48,7 @@ def answer_agent_specialty_question(
     try:
         published = get_active_agent_prompt(instance_id, resource_id)
     except Exception as exc:
-        print(f"AGENT_SPECIALTY_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
+        pass
         return {
             "es": "No puedo confirmar ahora la especialidad configurada para este agente.",
             "pt": "Não consigo confirmar agora a especialidade configurada para este agente.",

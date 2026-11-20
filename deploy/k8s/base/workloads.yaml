@@ -18,7 +18,7 @@ spec:
         - name: agent-service
           image: registry.example.com/agenteia/agent-service:0.0.2
           imagePullPolicy: IfNotPresent
-          command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--log-level", "critical"]
           ports:
             - name: http
               containerPort: 8000

@@ -23,12 +23,12 @@ def train_all():
     """
     Ejecuta todos los métodos de entrenamiento.
     """
-    print("\n" + "="*60)
-    print("🧠 ENTRENANDO AGENTE CON CONOCIMIENTO ESPECÍFICO")
-    print("="*60 + "\n")
+    pass
+    pass
+    pass
     
     # 0. Ingesta de API SOLIDSET (coleccion Postman)
-    print("\n🧩 0. ENTRENANDO API SOLIDSET DESDE COLECCION...")
+    pass
     candidate_paths = [
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "doctus-integracion.json")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "doctus-integracion.json")),
@@ -37,51 +37,47 @@ def train_all():
     if api_collection_file:
         try:
             api_result = ingest_solidset_api_collection(api_collection_file)
-            print(
-                "   ✅ API SOLIDSET indexada: "
-                f"endpoints={api_result.get('endpoints_found', 0)}, "
-                f"upserted={api_result.get('points_upserted', 0)}"
-            )
+            pass
         except Exception as e:
-            print(f"⚠️ Error entrenando API SOLIDSET: {e}")
+            pass
     else:
-        print("⚠️ Archivo no encontrado: doctus-integracion.json (ni en agent-service ni en raíz del workspace)")
+        pass
 
     # 1. Ingesta de documentos técnicos
-    print("\n📚 1. INGESTANDO DOCUMENTOS TÉCNICOS...")
+    pass
     knowledge_dir = os.path.join(os.path.dirname(__file__), "knowledge_base")
     if os.path.exists(knowledge_dir):
         ingest_knowledge_base(knowledge_dir)
     else:
-        print(f"⚠️ Directorio no encontrado: {knowledge_dir}")
-        print("   Crea 'knowledge_base/' con subcarpetas: manuales/, guias/, procedimientos/, datos/")
+        pass
+        pass
     
     # 2. Entrenamiento desde conversaciones
-    print("\n💬 2. APRENDIENDO DE CONVERSACIONES...")
+    pass
     conv_file = os.path.join(os.path.dirname(__file__), "training_data", "conversations.json")
     if os.path.exists(conv_file) and train_from_conversations is not None:
         train_from_conversations(conv_file)
     elif os.path.exists(conv_file) and train_from_conversations is None:
-        print("⚠️ Módulo app.agent.training no disponible; se omite entrenamiento conversacional")
+        pass
     else:
-        print(f"⚠️ Archivo no encontrado: {conv_file}")
-        print("   Crea 'training_data/conversations.json' con conversaciones previas")
+        pass
+        pass
     
     # 3. Ingesta desde SQL
-    print("\n🗄️ 3. INGESTANDO DATOS DESDE SQL...")
+    pass
     try:
         if ingest_sql_knowledge is None:
-            print("⚠️ Módulo app.rag.sql_ingest no disponible; se omite ingesta SQL legacy")
+            pass
         else:
             ingest_sql_knowledge()
     except Exception as e:
-        print(f"⚠️ Error en ingesta SQL: {e}")
-        print("   Verifica la conexión a SQL Server")
+        pass
+        pass
     
-    print("\n" + "="*60)
-    print("✅ ¡ENTRENAMIENTO COMPLETADO!")
-    print("   El agente ahora tiene nuevo conocimiento disponible")
-    print("="*60)
+    pass
+    pass
+    pass
+    pass
 
 
 if __name__ == "__main__":

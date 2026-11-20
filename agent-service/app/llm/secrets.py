@@ -26,11 +26,7 @@ def _credential_key() -> str:
     if configured and _is_valid_fernet_key(configured):
         return configured
     if configured:
-        print(
-            "⚠️ LLM_CREDENTIAL_ENCRYPTION_KEY inválida; será utilizada a chave "
-            "persistente de data/credential.key.",
-            flush=True,
-        )
+        pass
     path = Path(settings.CREDENTIAL_ENCRYPTION_KEY_FILE).expanduser()
     with _key_lock:
         if path.exists():
@@ -40,11 +36,7 @@ def _credential_key() -> str:
             suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
             backup = path.with_name(f"{path.name}.invalid-{suffix}")
             path.replace(backup)
-            print(
-                f"⚠️ Chave de credenciais inválida preservada em {backup}; "
-                "foi gerada uma chave Fernet nova.",
-                flush=True,
-            )
+            pass
         path.parent.mkdir(parents=True, exist_ok=True)
         generated = Fernet.generate_key().decode()
         try:

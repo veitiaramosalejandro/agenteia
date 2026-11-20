@@ -18,7 +18,7 @@ def schedule_record_snapshot(instance_id: str, resource_id: str, table: str,
         return
     # Bound background embedding work on this worker. SQL remains authoritative.
     if not _index_slot.acquire(blocking=False):
-        print("SUGGESTION_SNAPSHOT deferred=busy", flush=True)
+        pass
         return
     anchor = str(record.get("gidRecord") or record.get("idRecord") or record.get("recordCode") or "")
     content = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
@@ -40,7 +40,7 @@ def schedule_record_snapshot(instance_id: str, resource_id: str, table: str,
             ensure_vector_collection(client, settings.VECTOR_COLLECTION_NAME, embeddings)
             existing = client.retrieve(settings.VECTOR_COLLECTION_NAME, [point_id], with_payload=True)
             if existing and (existing[0].payload or {}).get("content_hash") == digest:
-                print("SUGGESTION_SNAPSHOT unchanged=True", flush=True)
+                pass
                 return
             text = f"{record.get('recordCode') or anchor}\n{content}"
             vector = embeddings.embed_query(text)
@@ -53,9 +53,9 @@ def schedule_record_snapshot(instance_id: str, resource_id: str, table: str,
                     "content_hash": digest, "generated_by_ia": False,
                     "indexed_at": datetime.now(timezone.utc).isoformat(),
                 })])
-            print("SUGGESTION_SNAPSHOT indexed=True", flush=True)
+            pass
         except Exception as exc:
-            print(f"SUGGESTION_SNAPSHOT failed={type(exc).__name__}", flush=True)
+            pass
         finally:
             try:
                 if client is not None:

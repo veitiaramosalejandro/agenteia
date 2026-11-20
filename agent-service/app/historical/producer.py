@@ -26,10 +26,7 @@ def verified_ingestion_agents(instance: dict[str, Any]) -> list[dict[str, Any]]:
                 target["IDResource"], target["IDAgentResource"], instance
             )
         except Exception as exc:
-            print(
-                f"⚠️ Verificação histórica do agente {target['IDResource']}: {exc}",
-                flush=True,
-            )
+            pass
             continue
         if not result.get("verified") or not result.get("matchesExpected"):
             continue
@@ -210,14 +207,9 @@ async def run_producer() -> None:
                     settings.HISTORICAL_INGESTION_STALE_SECONDS,
                 )
                 for cursor in recovered:
-                    print(
-                        "🔄 Cursor histórico recuperado após reinício "
-                        f"instance={cursor['IDSolidSETInstance']} "
-                        f"last_id={cursor['LastIDChat2']}",
-                        flush=True,
-                    )
+                    pass
             except Exception as exc:
-                print(f"⚠️ Recuperação de cursor histórico: {exc}", flush=True)
+                pass
             for instance in list_active_solidset_instances():
                 if not instance.get("DataAPI"):
                     continue
@@ -229,19 +221,19 @@ async def run_producer() -> None:
                             settings.HISTORICAL_INGESTION_DRY_RUN, target,
                         )
                     except Exception as exc:
-                        print(f"⚠️ Productor histórico: {exc}", flush=True)
+                        pass
                     try:
                         await asyncio.to_thread(
                             enqueue_next_task_batch, instance,
                             settings.HISTORICAL_INGESTION_DRY_RUN, target,
                         )
                     except Exception as exc:
-                        print(f"⚠️ Productor histórico SysTask: {exc}", flush=True)
+                        pass
                     try:
                         await asyncio.to_thread(enqueue_next_activity_batch, instance,
                                                 settings.HISTORICAL_INGESTION_DRY_RUN, target)
                     except Exception as exc:
-                        print(f"⚠️ Productor histórico Activity: {exc}", flush=True)
+                        pass
         await asyncio.sleep(settings.HISTORICAL_INGESTION_POLL_SECONDS)
 
 

@@ -516,11 +516,7 @@ def get_solidset_instance(
                 )
                 matches = cursor.fetchall()
                 if len(matches) > 1:
-                    print(
-                        "⚠️ X-SolidSET-Instance coincide con varias instancias "
-                        f"activas: host={source_ip}",
-                        flush=True,
-                    )
+                    pass
                     return None
                 row = matches[0] if matches else None
             result = dict(row) if row else None

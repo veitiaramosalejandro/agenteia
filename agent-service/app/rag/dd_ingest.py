@@ -45,7 +45,7 @@ class DataDictionaryIngestor:
         try:
             ensure_vector_collection(self.qdrant, self.collection, self.embeddings)
         except Exception as e:
-            print(f"⚠️ Error verificando colección: {e}")
+            pass
     
     def _create_point(self, text: str, metadata: Dict[str, Any]) -> Optional[PointStruct]:
         """Crea un punto para Qdrant."""
@@ -65,7 +65,7 @@ class DataDictionaryIngestor:
                 payload=payload
             )
         except Exception as e:
-            print(f"   ⚠️ Error creando punto: {e}")
+            pass
             return None
     
     def ingest_table_structure(self, table_name: str, fields: List[Dict], 
@@ -126,7 +126,7 @@ CAMPOS:
         """
         Ingiere todo el contenido del Data Dictionary.
         """
-        print("\n📚 PROCESANDO DATA DICTIONARY...")
+        pass
         
         # Extraer tablas del texto
         # El Data Dictionary está en formato PDF extraído, buscamos patrones
@@ -136,7 +136,7 @@ CAMPOS:
         
         # Buscar todas las tablas
         tables_found = re.findall(table_pattern, dd_content)
-        print(f"   📋 Encontradas {len(tables_found)} tablas en el diccionario")
+        pass
         
         # También extraemos las tablas de la sección de índices
         # Las tablas principales están listadas en el índice del documento
@@ -255,7 +255,7 @@ CAMPOS:
         
         # Ingestar cada tabla con sus campos
         for table_name, fields in table_fields.items():
-            print(f"   📄 Procesando tabla: {table_name}")
+            pass
             
             # Buscar descripción en el contenido
             description = ""
@@ -319,7 +319,7 @@ RELACIONES CLAVE:
             )
             total += 1
         
-        print(f"\n✅ Ingesta completada: {total} puntos indexados")
+        pass
         return total
 
 
@@ -327,9 +327,9 @@ def ingest_data_dictionary(dd_file_path: str = None):
     """
     Función principal para ingestar el Data Dictionary.
     """
-    print("\n" + "="*60)
-    print("📚 INGESTA DE DATA DICTIONARY")
-    print("="*60 + "\n")
+    pass
+    pass
+    pass
     
     ingestor = DataDictionaryIngestor()
     
@@ -341,8 +341,8 @@ def ingest_data_dictionary(dd_file_path: str = None):
     else:
         # Usar el contenido del Data Dictionary que se ha extraído del PDF
         # que está en el contexto de la conversación
-        print("⚠️ No se proporcionó archivo. Usando el Data Dictionary de la base de datos ISIFrameIsicom.")
-        print("📋 El diccionario contiene 810 tablas, 64 vistas y 460 funciones.")
+        pass
+        pass
         content = "ISIFrameIsicom Data Dictionary"  # Placeholder, el contenido real está en el PDF
         
         # Creamos un resumen del Data Dictionary basado en el archivo proporcionado
@@ -351,8 +351,8 @@ def ingest_data_dictionary(dd_file_path: str = None):
     # Ingestar el Data Dictionary
     total = ingestor.ingest_from_data_dictionary(content)
     
-    print(f"\n📊 TOTAL INGESTADO: {total} puntos")
-    print("="*60)
+    pass
+    pass
     
     return total
 
@@ -362,8 +362,8 @@ def check_db_knowledge():
     try:
         from app.rag.retriever import get_rag_context
         
-        print("\n🔍 VERIFICANDO CONOCIMIENTO DE LA BASE DE DATOS")
-        print("="*50)
+        pass
+        pass
         
         queries = [
             "¿Qué tabla contiene información de clientes?",
@@ -374,14 +374,14 @@ def check_db_knowledge():
         ]
         
         for query in queries:
-            print(f"\n📝 Consulta: {query}")
+            pass
             result = get_rag_context(query, limit=2)
             if result and "No se encontró" not in result:
-                print(f"   ✅ Encontrado: {result[:300]}...")
+                pass
             else:
-                print(f"   ⚠️ No se encontró información")
+                pass
     except Exception as e:
-        print(f"❌ Error verificando: {e}")
+        pass
 
 
 if __name__ == "__main__":

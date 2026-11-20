@@ -87,7 +87,7 @@ def _resolve_solidset_meeting_id(
                 if row:
                     return str(row["ID"])
     except (pymssql.Error, RuntimeError) as exc:
-        print(f"⚠️ No se pudo validar el meeting de SolidSET: {exc}")
+        pass
     return None
 
 
@@ -283,11 +283,7 @@ def _solidset_login(
 ) -> tuple[bool, str, str]:
     """Autentica la identidad global o la cuenta del recurso agente solicitado."""
     if agent_resource_id:
-        print(
-            f"🔐 Preparando LoginJson base={base_url} "
-            f"agent_resource={agent_resource_id}",
-            flush=True,
-        )
+        pass
         try:
             login_instance = _solidset_instance_for_base(base_url)
             lookup_kwargs = {"preferred_login_id": agent_login_id}
@@ -295,25 +291,20 @@ def _solidset_login(
                 lookup_kwargs["instance_id"] = login_instance["ID"]
             login = get_solidset_login_for_active_agent(agent_resource_id, **lookup_kwargs)
         except Exception as exc:
-            print(f"❌ No se pudo leer SysLogin del agente: {exc}", flush=True)
+            pass
             return False, "", ""
         # La consulta incluye el filtro SysResourceIA.active=true. Si no devuelve
         # fila, el recurso no puede actuar como agente ni utilizar otra identidad.
         if not login:
-            print("❌ El agente no está activo o no tiene SysLogin asociado", flush=True)
+            pass
             return False, "", ""
         username = str(login.get("Username") or "").strip()
         password = str(login.get("Password") or "")
         selected_login_id = str(login.get("IDLogin") or "").strip()
         if not username or not password:
-            print("❌ SysLogin no contiene Username/Password utilizables", flush=True)
+            pass
             return False, "", ""
-        print(
-            "🔐 SysLogin seleccionado "
-            f"id_login={selected_login_id or '-'} username={username} "
-            f"preferred={str(agent_login_id or '-').strip()}",
-            flush=True,
-        )
+        pass
 
         login_payload = {
             "UserName": username,
@@ -331,17 +322,9 @@ def _solidset_login(
                 data=login_payload,
                 headers=_solidset_action_headers(host_header),
             )
-            print(
-                f"🔐 LoginJson respondió HTTP {response.status_code} "
-                f"base={base_url}",
-                flush=True,
-            )
+            pass
             if response.status_code >= 400:
-                print(
-                    f"❌ LoginJson HTTP {response.status_code}: "
-                    f"{response.text[:500]}",
-                    flush=True,
-                )
+                pass
                 return False, "", ""
             try:
                 result = response.json()
@@ -351,10 +334,7 @@ def _solidset_login(
                 success = result.get("Success", result.get("success"))
                 error = result.get("Error", result.get("error"))
                 if success is False or error:
-                    print(
-                        f"❌ LoginJson rechazado: {str(result)[:300]}",
-                        flush=True,
-                    )
+                    pass
                     if allow_sync_retry:
                         try:
                             from app.system.resource_ingest import ingest_solidset_logins
@@ -363,12 +343,7 @@ def _solidset_login(
                                 sync_result = ingest_solidset_logins(matching_instance)
                             else:
                                 sync_result = ingest_solidset_logins()
-                            print(
-                                "🔄 SysLogin resincronizado después del rechazo "
-                                f"updated={sync_result.get('updated', 0)} "
-                                f"inserted={sync_result.get('inserted', 0)}",
-                                flush=True,
-                            )
+                            pass
                             return _solidset_login(
                                 client,
                                 base_url,
@@ -378,17 +353,11 @@ def _solidset_login(
                                 allow_sync_retry=False,
                             )
                         except Exception as sync_exc:
-                            print(
-                                f"❌ No se pudo resincronizar SysLogin: {sync_exc}",
-                                flush=True,
-                            )
+                            pass
                     return False, "", ""
             return True, "/User/LoginJson", _solidset_extract_access_key(response)
         except Exception as exc:
-            print(
-                f"❌ Error conectando con LoginJson base={base_url}: {exc}",
-                flush=True,
-            )
+            pass
             return False, "", ""
 
     if not settings.SOLIDSET_LOGIN_USERNAME and not settings.SOLIDSET_LOGIN_HASHPASS:
@@ -556,11 +525,7 @@ def _solidset_request_as_agent(
             # IIS puede escuchar físicamente en el host Docker pero aceptar
             # únicamente el binding lógico localhost:puerto.
             logical_host = configured_url.netloc
-        print(
-            f"🌐 Intentando envío autenticado del agente base={base} "
-            f"host_header={logical_host or '-'}",
-            flush=True,
-        )
+        pass
         try:
             with httpx.Client(
                 timeout=20.0,
@@ -575,7 +540,7 @@ def _solidset_request_as_agent(
                     host_header=logical_host or None,
                 )
                 if not authenticated:
-                    print(f"⚠️ Login del agente falló en {base}", flush=True)
+                    pass
                     continue
 
                 cookie_header = _solidset_merge_cookie_headers(
@@ -594,15 +559,11 @@ def _solidset_request_as_agent(
                     headers=headers,
                     data=form_payload,
                 )
-                print(
-                    f"📨 Chat/SendMessageForm respondió HTTP "
-                    f"{response.status_code} base={base}",
-                    flush=True,
-                )
+                pass
                 return response, base, ""
         except Exception as exc:
             last_error = str(exc)
-            print(f"❌ Error enviando mediante {base}: {exc}", flush=True)
+            pass
     return None, "", last_error
 
 
@@ -705,7 +666,7 @@ def _legacy_google_web_search(query: str) -> str:
         #     return f"No se encontraron resultados para '{query}'."
         # return f"Resultados de búsqueda para '{query}':\n" + "\n".join(search_results)
         
-        print(f"--- SIMULANDO BÚSQUEDA WEB PARA: '{query}' ---")
+        pass
         return f"Resultados de búsqueda para '{query}':\n- https://es.wikipedia.org/wiki/Acero\n- https://www.ejemplo-proveedor.com/acero-1045\n- https://www.machining-forums.com/error-f3001-fanuc"
 
     except Exception as e:
@@ -777,9 +738,9 @@ def _schedule_web_search_learning(
             _store_web_search_knowledge(
                 query, results, agent_resource_id, solidset_instance_id
             )
-            print(f"🧠 Resultados web indexados en background; query={query[:80]!r}")
+            pass
         except Exception as exc:
-            print(f"⚠️ No se pudieron indexar resultados web en background: {exc}")
+            pass
 
     timer = threading.Timer(120.0, _learn)
     timer.daemon = True
@@ -859,13 +820,10 @@ def google_web_search(query: str, config: RunnableConfig) -> str:
             "results": results,
         }
         elapsed = perf_counter() - started_at
-        print(
-            f"🌐 Búsqueda web completada en {elapsed:.2f}s; "
-            f"resultados={len(results)} aprendizaje_background={learning_scheduled}"
-        )
+        pass
         return json.dumps(payload, ensure_ascii=False)
     except Exception as exc:
-        print(f"Búsqueda externa fallida: {type(exc).__name__}")
+        pass
         return "Error durante la búsqueda web: no se pudo completar la consulta al proveedor externo."
 
 
@@ -977,7 +935,7 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
             snapshot = get_solidset_schema_snapshot(instance["ID"])
         except Exception as snapshot_error:
             snapshot = None
-            print(f"⚠️ Snapshot de esquema no disponible; usando Data API: {snapshot_error}")
+            pass
         cached_catalog = (snapshot or {}).get("Catalog")
         catalog = None
         if isinstance(cached_catalog, str):
@@ -1039,7 +997,7 @@ def get_db_schema(table_name: Optional[str] = None) -> str:
             try:
                 save_solidset_schema_snapshot(instance["ID"], catalog)
             except Exception as snapshot_error:
-                print(f"⚠️ No se pudo persistir el snapshot de esquema: {snapshot_error}")
+                pass
         tables = catalog.get("tables") or []
         if requested and not tables:
             # El modelo puede proponer un nombre conceptual inexistente
@@ -1250,12 +1208,7 @@ def solidset_send_chat_message(
     - Requiere confirm=true para evitar envíos accidentales.
     - Usa credenciales SOLIDSET_LOGIN_* del .env.
     """
-    print(
-        "📨 Entrando en solidset_send_chat_message "
-        f"base={solidset_base_url or '-'} channel={canal_id or '-'} "
-        f"resource={recurso_id or '-'} meeting={meeting_id or '-'}",
-        flush=True,
-    )
+    pass
     if not preview_only and not settings.SOLIDSET_USER_ACTIONS_ENABLED:
         return (
             "Acción bloqueada: habilita SOLIDSET_USER_ACTIONS_ENABLED=true en .env "
@@ -1340,11 +1293,7 @@ def solidset_send_chat_message(
         solidset_base_url,
     ) if requested_meeting else None
     if requested_meeting and not meeting:
-        print(
-            "⚠️ Meeting descartado para evitar FK inválida: "
-            f"meeting={requested_meeting} code={meeting_label or '-'} "
-            f"channel={channel or '-'}"
-        )
+        pass
     if meeting:
         # SolidSET vincula el chat al meeting a través de ExtraData. El workroom
         # permanece únicamente como ruta técnica; no se marca como espejo general.
@@ -1426,7 +1375,7 @@ def solidset_send_chat_message(
             form_payload["Chat.Destiny[1].Type"] = 2
             form_payload["Chat.Destiny[1].IDChannel"] = channel
             form_payload["Chat.Destiny[1].Sequence"] = 1
-    print(form_payload, flush=True)
+    pass
     if preview_only:
         # Devuelve exactamente los campos de formulario que se enviarían a
         # SendMessageForm, sin autenticar ni efectuar ninguna llamada externa.

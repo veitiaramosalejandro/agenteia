@@ -25,12 +25,12 @@ async def run_worker() -> None:
     consumer = (
         os.getenv("AGENT_RESPONSE_CONSUMER_NAME") or queue.default_consumer_name()
     )
-    print(f"🛠️ Agent response worker activo consumer={consumer}", flush=True)
+    pass
     while True:
         try:
             messages = await asyncio.to_thread(queue.read, consumer)
         except redis.RedisError as exc:
-            print(f"⚠️ Redis Stream temporalmente no disponible: {exc}", flush=True)
+            pass
             await asyncio.sleep(2)
             queue = AgentResponseQueue()
             continue
@@ -39,12 +39,9 @@ async def run_worker() -> None:
                 if not owned:
                     continue
                 request_id = str(fields.get("request_id") or "")
-                print(
-                    f"AGENT_RESPONSE_PROCESSING request={request_id} "
-                    f"message={message_id} consumer={consumer}", flush=True,
-                )
+                pass
                 if request_id and not await asyncio.to_thread(queue.claim_request, request_id):
-                    print(f"AGENT_RESPONSE_DUPLICATE_SKIPPED request={request_id} message={message_id}", flush=True)
+                    pass
                     await asyncio.to_thread(queue.acknowledge, message_id)
                     continue
                 chat_id = str(fields.get("chat_id") or "")
@@ -97,7 +94,7 @@ async def run_worker() -> None:
                     except Exception as audit_exc:
                         # Una respuesta ya enviada nunca se reintenta por un fallo
                         # exclusivo de auditoría, pues duplicaría el chat.
-                        print(f"⚠️ Auditoría PostgreSQL pendiente: {audit_exc}", flush=True)
+                        pass
                     await asyncio.to_thread(queue.acknowledge, message_id)
                 except Exception as exc:
                     if request_id:
@@ -132,7 +129,7 @@ async def run_worker() -> None:
                                 instance.get("ID"),
                             )
                         except Exception as audit_exc:
-                            print(f"⚠️ No se pudo auditar fallo terminal: {audit_exc}")
+                            pass
                     await asyncio.to_thread(queue.acknowledge, message_id)
 
 

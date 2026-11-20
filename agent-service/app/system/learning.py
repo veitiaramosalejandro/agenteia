@@ -84,7 +84,7 @@ class SistemaAprendizaje:
                 if cached:
                     return [float(value) for value in json.loads(cached)]
             except (redis.RedisError, ValueError, TypeError, json.JSONDecodeError) as exc:
-                print(f"⚠️ Cache de embeddings Redis no disponible ({context}): {exc}")
+                pass
         try:
             background_checkpoint()
             vector = self.embeddings.embed_query(normalized)
@@ -97,7 +97,7 @@ class SistemaAprendizaje:
                         json.dumps(vector, separators=(",", ":")),
                     )
                 except redis.RedisError as exc:
-                    print(f"⚠️ No se pudo guardar embedding en Redis ({context}): {exc}")
+                    pass
             return vector
         except IngestionCancelled:
             raise
@@ -105,7 +105,7 @@ class SistemaAprendizaje:
             self._embeddings_enabled = False
             self._embeddings_disabled_at = time.time()
             self._embeddings_disabled_reason = str(e)
-            print(f"⚠️ Embeddings deshabilitados temporalmente (cooldown 30s) por error en Ollama ({context}): {e}")
+            pass
             return None
 
     def _increment_retry_metric(self, metric_key: str, context_key: str):
@@ -134,7 +134,7 @@ class SistemaAprendizaje:
             self._collection_ready = True
             return True
         except Exception as e:
-            print(f"⚠️ Error asegurando colección '{self.collection}': {e}")
+            pass
             return False
 
     def _normalize_learning_text(self, text: str) -> str:
@@ -191,7 +191,7 @@ class SistemaAprendizaje:
                     self._increment_retry_metric("connect_retries", kwargs.get("context", "sql"))
                     # Delay más corto entre reintentos
                     delay = min(1, kwargs.get("base_delay_seconds", 0.5) * attempt)
-                    print(f"⚠️ Conexión SQL falló ({kwargs.get('context', 'sql')}) intento {attempt}/{retries}: {e}. Reintentando en {delay}s...")
+                    pass
                     time.sleep(delay)
         raise last_error
 
@@ -213,7 +213,7 @@ class SistemaAprendizaje:
                 if attempt < retries:
                     self._increment_retry_metric("query_retries", kwargs.get("context", "sql_query"))
                     delay = 0.5 * attempt # Delay fijo corto
-                    print(f"⚠️ Consulta SQL falló ({kwargs.get('context', 'sql_query')}) intento {attempt}/{retries}: {e}. Reintentando en {delay}s...")
+                    pass
                     time.sleep(delay)
         raise last_error
 
@@ -239,10 +239,7 @@ class SistemaAprendizaje:
                 if attempt < max_retries:
                     self._increment_retry_metric("query_retries", context)
                     delay = attempt
-                    print(
-                        f"⚠️ Consulta SQL con reconexión falló ({context}) intento "
-                        f"{attempt}/{max_retries}: {e}. Reintentando en {delay}s..."
-                    )
+                    pass
                     time.sleep(delay)
         raise last_error
 
@@ -263,7 +260,7 @@ class SistemaAprendizaje:
                     "display_name": (row.get("DisplayName") or "").strip() or None,
                 })
         except Exception as e:
-            print(f"⚠️ No se pudo resolver identidad PostgreSQL de '{raw_user}': {e}")
+            pass
         return identity
 
     def resolve_conversation_identity(
@@ -310,12 +307,12 @@ class SistemaAprendizaje:
                 if row:
                     result["workroom_name"] = str(row.get("WorkRoomName") or "").strip() or None
             except Exception as exc:
-                print(f"⚠️ No se pudo validar canal de identidad: {exc}")
+                pass
 
         try:
             self.redis_cache.setex(cache_key, 3600, json.dumps(result, ensure_ascii=False))
         except redis.RedisError as exc:
-            print(f"⚠️ No se pudo cachear identidad de conversación: {exc}")
+            pass
         self._index_conversation_identity(result)
         return result
 
@@ -340,7 +337,7 @@ class SistemaAprendizaje:
             )])
             return True
         except Exception as exc:
-            print(f"⚠️ No se pudo indexar identidad de conversación: {exc}")
+            pass
             return False
 
     def _get_user_details_from_db(self, cursor: pymssql.Cursor, identity: Dict) -> Optional[Dict]:
@@ -480,7 +477,7 @@ class SistemaAprendizaje:
                 if str(row.get("Name") or "").strip()
             ]
         except Exception as exc:
-            print(f"⚠️ Error obteniendo canales accesibles del usuario: {exc}")
+            pass
             return []
 
     def _get_user_activities_from_db(self, cursor: pymssql.Cursor, identity: Dict) -> List[Dict]:
@@ -517,7 +514,7 @@ class SistemaAprendizaje:
             )
             return cursor.fetchall() or []
         except Exception as e:
-            print(f"⚠️ Fallback chat-actividad no disponible: {e}")
+            pass
             return []
 
     def _get_user_resources_from_db(self, cursor: pymssql.Cursor, identity: Dict) -> List[Dict]:
@@ -573,7 +570,7 @@ class SistemaAprendizaje:
             return cursor.fetchall() or []
             
         except Exception as e:
-            print(f"⚠️ Fallback recursos de chat no disponibles: {e}")
+            pass
             return []
 
     def _get_user_resources_from_db_safe(self, cursor: pymssql.Cursor, identity: Dict) -> List[Dict]:
@@ -581,7 +578,7 @@ class SistemaAprendizaje:
         try:
             return self._get_user_resources_from_db(cursor, identity)
         except Exception as e:
-            print(f"⚠️ Se omiten recursos de chat por fallo temporal de SQL Server: {e}")
+            pass
             return []
 
     # ============================================================
@@ -602,7 +599,7 @@ class SistemaAprendizaje:
                     try:
                         usuario_data = self._get_user_details_from_db(cursor, identity)
                     except Exception as e:
-                        print(f"⚠️ get_user_details temporalmente no disponible, usando fallback mínimo: {e}")
+                        pass
 
                     if not usuario_data:
                         fallback_username = (identity.get("username") or user_id or "usuario").strip()
@@ -676,7 +673,7 @@ class SistemaAprendizaje:
                 permisos=self._obtener_permisos_por_rol(usuario.rol)
             )
         except Exception as e:
-            print(f"❌ Error construyendo contexto de usuario: {e}")
+            pass
             return None
 
     def analyze_reaction_patterns(
@@ -788,7 +785,7 @@ class SistemaAprendizaje:
             )
             return self.aprender_actividad(actividad)
         except Exception as e:
-            print(f"❌ Error registrando feedback de usuario: {e}")
+            pass
             return False
 
     def actualizar_perfil_usuario(
@@ -844,7 +841,7 @@ class SistemaAprendizaje:
             )
             return self.aprender_actividad(actividad)
         except Exception as e:
-            print(f"❌ Error actualizando perfil de usuario: {e}")
+            pass
             return False
 
     def obtener_perfil_dinamico(self, user_id: str, canal_id: Optional[str] = None) -> str:
@@ -899,7 +896,7 @@ class SistemaAprendizaje:
                     row = cursor.fetchone()
                     return str(row.get("ResourceId")).strip() if row and row.get("ResourceId") else None
         except Exception as e:
-            print(f"⚠️ Error buscando recurso por nombre '{nombre}': {e}")
+            pass
             return None
 
     def buscar_recursos_por_nombre(self, nombre: str, limit: int = 10) -> List[Dict]:
@@ -927,7 +924,7 @@ class SistemaAprendizaje:
                     )
                     return [dict(row) for row in (cursor.fetchall() or [])]
         except Exception as exc:
-            print(f"⚠️ Error buscando recursos por nombre '{nombre}': {exc}")
+            pass
             return []
 
     # ============================================================
@@ -1009,7 +1006,7 @@ class SistemaAprendizaje:
             ]
             return messages[safe_offset:safe_offset + safe_limit]
         except Exception as e:
-            print(f"⚠️ Error obteniendo mensajes de chat desde BD: {e}")
+            pass
             return []
 
     def obtener_cadena_mensajes_chat_desde_bd(
@@ -1135,11 +1132,7 @@ class SistemaAprendizaje:
                                 if login_id and login_id not in bucket["logins"]:
                                     bucket["logins"].append(login_id)
                         except Exception as exc:
-                            print(
-                                "AGENT_CHAT_QUESTION_PARTICIPANTS_FAILED "
-                                f"chat={current_chat_id} type={type(exc).__name__}",
-                                flush=True,
-                            )
+                            pass
             return [
                 {
                     "chat_id": str(row.get("IDChat2") or ""),
@@ -1166,12 +1159,7 @@ class SistemaAprendizaje:
                 if str(row.get("RawMessage") or "").strip()
             ]
         except Exception as exc:
-            print(
-                "AGENT_CHAT_QUESTION_CHAIN_FAILED "
-                f"chat={current_chat_id} channel={channel or '-'} "
-                f"type={type(exc).__name__}",
-                flush=True,
-            )
+            pass
             return []
 
     def obtener_mensaje_chat_por_id(
@@ -1228,7 +1216,7 @@ class SistemaAprendizaje:
                 "sender_display_name": str(row.get("SenderDisplayName") or "Participante").strip(),
             }
         except Exception as exc:
-            print(f"⚠️ Error obteniendo mensaje citado {chat_id}: {exc}")
+            pass
             return None
 
     def obtener_usuarios_recurso_del_canal(self, user_id: str, canal_id: Optional[str], limit: int = 80) -> List[Dict[str, Any]]:
@@ -1283,7 +1271,7 @@ class SistemaAprendizaje:
                         for row in (cursor.fetchall() or [])
                     ]
         except Exception as e:
-            print(f"⚠️ Error obteniendo usuarios recurso del canal: {e}")
+            pass
             return []
 
     def obtener_contexto_chat_desde_bd(self, user_id: str, canal_id: Optional[str] = None, limit: int = 8) -> str:
@@ -1694,7 +1682,7 @@ class SistemaAprendizaje:
         except IngestionCancelled:
             raise
         except Exception as e:
-            print(f"❌ Error aprendiendo actividad: {e}")
+            pass
             return False
 
     def aprender_conocimiento_agente(self, knowledge: Dict[str, Any]) -> bool:
@@ -1730,7 +1718,7 @@ class SistemaAprendizaje:
             )
             return True
         except Exception as exc:
-            print(f"❌ Error indexando conocimiento del agente: {exc}")
+            pass
             return False
     
     def aprender_canal(self, canal: Canal) -> bool:
@@ -1750,7 +1738,7 @@ class SistemaAprendizaje:
         except IngestionCancelled:
             raise
         except Exception as e:
-            print(f"❌ Error aprendiendo canal: {e}")
+            pass
             return False
     
     # ============================================================
@@ -1877,17 +1865,17 @@ class SistemaAprendizaje:
             return formatted_results
             
         except AttributeError as e:
-            print(f"❌ Error: El cliente Qdrant no tiene el método 'search'")
-            print(f"🔍 Versión instalada: {self._get_version()}")
-            print("💡 Solución: Verifica la instalación de qdrant-client")
+            pass
+            pass
+            pass
             return []
             
         except Exception as e:
             if "timed out" in str(e).lower() or "timeout" in str(e).lower():
-                print(f"⏳ Timeout en búsqueda de aprendizaje: la base de datos de vectores no respondió a tiempo (límite: {timeout}s).")
+                pass
             else:
-                print(f"❌ Error en búsqueda de aprendizaje: {e}")
-                print(f"   Tipo: {type(e).__name__}")
+                pass
+                pass
             return []
 
     def _get_version(self):
@@ -2028,5 +2016,5 @@ class SistemaAprendizaje:
             return [{"id": id, "score": score} for id, score in sorted_colabs[:limit]]
             
         except Exception as e:
-            print(f"❌ Error sugiriendo colaboradores: {e}")
+            pass
             return []

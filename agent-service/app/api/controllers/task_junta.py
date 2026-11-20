@@ -126,7 +126,7 @@ async def receive_junta_tasks(
             raise HTTPException(status_code=502, detail="El modelo devolvió una respuesta JSON incompleta o inválida.") from None
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except Exception as exc:
-        print(f"TASK_JUNTA_ANALYSIS_FAILED type={type(exc).__name__}", flush=True)
+        pass
         raise HTTPException(status_code=503, detail="No se pudo analizar la similitud de las tareas.") from None
     return {"status": "analyzed", "count": len(request), **result}
 

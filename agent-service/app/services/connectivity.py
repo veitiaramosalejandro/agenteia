@@ -297,50 +297,41 @@ def _probe_to_text(probe: dict) -> str:
 def _log_startup_connectivity(report: dict) -> None:
     checks = report.get("checks", {})
     checked_at = report.get("checked_at")
-    print("🔌 Comprobador de conectividad inicial")
+    pass
     if checked_at:
-        print(f"   - Timestamp UTC: {checked_at}")
+        pass
 
     ollama = checks.get("ollama", {})
-    print(f"   - Ollama URL: {settings.OLLAMA_BASE_URL}")
-    print(f"     • TCP: {_probe_to_text(ollama.get('tcp', {}))}")
-    print(f"     • HTTP /api/tags: {_probe_to_text(ollama.get('http', {}))}")
+    pass
+    pass
+    pass
 
     qdrant = checks.get("qdrant", {})
-    print(f"   - Qdrant URL: {settings.VECTOR_DB_URL}")
-    print(f"     • TCP: {_probe_to_text(qdrant.get('tcp', {}))}")
-    print(f"     • HTTP /collections: {_probe_to_text(qdrant.get('http', {}))}")
+    pass
+    pass
+    pass
 
     redis = checks.get("redis", {})
-    print(f"   - Redis URL: {settings.REDIS_URL}")
-    print(f"     • TCP: {_probe_to_text(redis.get('tcp', {}))}")
+    pass
+    pass
 
     postgres = checks.get("postgres_timescaledb", {})
     db_url = os.getenv("DB_URL", "")
     pg_host, pg_port = _extract_host_port_from_url(db_url, 5432)
     pg_endpoint = f"{pg_host}:{pg_port}" if pg_host else "DB_URL_no_configurada"
-    print(f"   - PostgreSQL/TimescaleDB: {pg_endpoint}")
-    print(f"     • TCP: {_probe_to_text(postgres.get('tcp', {}))}")
+    pass
+    pass
 
     configured = checks.get("solidset_instances", {})
-    print("   - Instancias SolidSET configuradas en PostgreSQL:")
+    pass
     if configured.get("error"):
-        print(f"     • ERROR consultando SysSolidSETInstance: {configured['error']}")
+        pass
     elif not configured.get("instances"):
-        print("     • Ninguna instancia activa configurada")
+        pass
     for instance in configured.get("instances", []):
-        print(
-            f"     • [{instance.get('code') or '-'}] {instance.get('name') or '-'} "
-            f"SourceIP={instance.get('source_ip') or '-'}"
-        )
+        pass
         solidset = instance.get("solidset", {})
-        print(
-            f"       SolidSET: {solidset.get('configured_url') or instance.get('base_url') or '-'} "
-            f"-> {solidset.get('effective_url') or '-'}: {_probe_to_text(solidset)}"
-        )
+        pass
         notification = instance.get("notification", {})
-        print(
-            f"       Notification: {notification.get('configured_url') or instance.get('notification_url') or '-'} "
-            f"-> {notification.get('effective_url') or '-'}: {_probe_to_text(notification)}"
-        )
-        print(f"       SQL Server: {_probe_to_text(instance.get('database', {}))}")
+        pass
+        pass

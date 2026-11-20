@@ -416,10 +416,7 @@ def _schedule_auto_replies(candidates: list[dict], request_id: str = "") -> None
     """Mantiene una referencia fuerte y registra fallos de la tarea en background."""
     if not candidates:
         return
-    print(
-        f"🤖 Auto-respuesta encolada; candidatos={len(candidates)}",
-        flush=True,
-    )
+    pass
     if request_id:
         for candidate in candidates:
             candidate["response_request_id"] = request_id
@@ -430,15 +427,15 @@ def _schedule_auto_replies(candidates: list[dict], request_id: str = "") -> None
         _auto_reply_background_tasks.discard(done)
         try:
             sent = done.result()
-            print(f"🤖 Procesamiento de auto-respuesta finalizado; enviadas={sent}")
+            pass
         except asyncio.CancelledError:
             if request_id:
                 _update_response_status(request_id, "cancelled")
-            print("⚠️ Procesamiento de auto-respuesta cancelado")
+            pass
         except Exception as exc:
             if request_id:
                 _update_response_status(request_id, "failed", error=str(exc))
-            print(f"❌ Error no controlado procesando auto-respuesta: {exc}")
+            pass
 
     task.add_done_callback(_completed)
 
@@ -451,11 +448,7 @@ def _enqueue_auto_replies(
 ) -> str:
     """Publica una solicitud durable; la API nunca ejecuta el LLM directamente."""
     stream_id = response_queue.enqueue(request_id, chat_id, payload, instance)
-    print(
-        f"📥 Auto-respuesta en Redis Stream request={request_id} stream_id={stream_id} "
-        "payload=FrameworkMessage",
-        flush=True,
-    )
+    pass
     return stream_id
 
 
@@ -1397,17 +1390,9 @@ def _load_intervenient_conversation_history(candidate: dict) -> str:
                     limit=12,
                 )
                 history_source = "solidset_channel_fallback"
-            print(
-                "AGENT_CONVERSATION_RECONSTRUCTED "
-                f"chat={current_chat_id} source={history_source} messages={len(rows)}",
-                flush=True,
-            )
+            pass
     except Exception as exc:
-        print(
-            "AGENT_CONVERSATION_HISTORY_FAILED "
-            f"channel={channel_id} type={type(exc).__name__}",
-            flush=True,
-        )
+        pass
         return ""
 
     lines: list[str] = []
@@ -1458,21 +1443,16 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
     """Genera una ejecución por agente activo, seleccionado y asignado al canal."""
     routed: list[dict] = []
     for candidate in candidates:
-        print(
-            "AGENT_ROUTING_CANDIDATE "
-            f"generated_by_ia={bool(candidate.get('generated_by_ia'))} "
-            f"has_payload={isinstance(candidate.get('payload'), dict)}",
-            flush=True,
-        )
+        pass
         if candidate.get("generated_by_ia"):
-            print("AGENT_ROUTING_SKIPPED reason=generated_by_ia", flush=True)
+            pass
             continue
         payload = candidate.get("payload")
         if not _payload_allows_agent_response(
             payload if isinstance(payload, dict) else {},
             channel_id=candidate.get("channel_id"),
         ):
-            print("AGENT_ROUTING_SKIPPED reason=talk_with_agent_to_no_activo", flush=True)
+            pass
             continue
         channel_id = str(candidate.get("channel_id") or "").strip()
         instance = get_solidset_instance(
@@ -1480,7 +1460,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
             source_ip=None,
         )
         if not instance or not instance.get("DataAPI"):
-            print("⚠️ Agente omitido: instância sem SolidSET Data API configurada")
+            pass
             continue
         session_id = _candidate_session_id(candidate)
         allow_implicit_agent_destinations = False
@@ -1497,44 +1477,23 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 pymssql.Error,
                 RuntimeError,
             ) as exc:
-                print(
-                    "⚠️ No se pudo verificar la aplicación de la sesión; "
-                    f"se mantiene el routing explícito: session={session_id}: {exc}"
-                )
+                pass
         selected = _selected_agent_resource_ids(
             candidate,
             include_non_talk_agent_destinations=allow_implicit_agent_destinations,
         )
-        print(
-            "AGENT_ROUTING_INPUT "
-            f"channel_present={bool(channel_id)} selected_count={len(selected)} "
-            f"session={session_id} web_or_android={allow_implicit_agent_destinations} "
-            f"payload_type={type(candidate.get('payload')).__name__}",
-            flush=True,
-        )
+        pass
         if not channel_id or not selected:
-            print(
-                "AGENT_ROUTING_SKIPPED "
-                f"reason={'missing_channel' if not channel_id else 'no_selected_agent'}",
-                flush=True,
-            )
+            pass
             continue
         try:
             ensure_payload_agent_workroom_assignments(channel_id, selected)
             configured_agents = get_active_agents_for_workroom(
                 channel_id, selected, instance.get("ID")
             )
-            print(
-                "AGENT_ROUTING_RESOLUTION "
-                f"channel={channel_id} instance={instance.get('ID')} "
-                f"selected_count={len(selected)} configured_count={len(configured_agents)} "
-                f"selected_roles={'agent_resource' if selected else 'none'}",
-                flush=True,
-            )
+            pass
         except (ValueError, psycopg.Error) as exc:
-            print(
-                f"⚠️ No se pudo resolver agentes seleccionados para {channel_id}: {exc}"
-            )
+            pass
             continue
         verified_mappings: dict[str, str] = {}
         for configured_agent in configured_agents:
@@ -1556,24 +1515,14 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 # The SolidSET relation is authoritative for this request.
                 # Never use the local mapping when it cannot be checked:
                 # otherwise a disabled/deleted AI relation could still answer.
-                print(
-                    "⚠️ Agente omitido: validación obligatoria de "
-                    "SysResource2Agent no disponible; fail-closed "
-                    f"IDHumanResource={selected_resource_id}: {exc}"
-                )
+                pass
                 continue
             except (ValueError, pymssql.Error, psycopg.Error, RuntimeError) as exc:
-                print(
-                    "⚠️ Agente omitido: no se pudo verificar SysResource2Agent "
-                    f"IDHumanResource={selected_resource_id}: {exc}"
-                )
+                pass
                 continue
             verified_agent_id = str(verification.get("IDAgentResource") or "").strip()
             if not verification.get("verified") or not verified_agent_id:
-                print(
-                    "⚠️ Agente omitido: no existe relación activa en dbo.SysResource2Agent "
-                    f"para IDHumanResource={selected_resource_id}"
-                )
+                pass
                 continue
             verified_mappings[str(selected_resource_id).lower()] = verified_agent_id
         for configured_agent in configured_agents:
@@ -1585,17 +1534,9 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                 agent_resource_id.lower(), ""
             )
             if cached_agent_resource_id != solidset_agent_resource_id:
-                print(
-                    "🔄 Identidad IA actualizada antes de responder "
-                    f"human={agent_resource_id} "
-                    f"previous={cached_agent_resource_id or '-'} "
-                    f"current={solidset_agent_resource_id or '-'}"
-                )
+                pass
             if not solidset_agent_resource_id:
-                print(
-                    "⚠️ Agente omitido: no existe relación activa en dbo.SysResource2Agent "
-                    f"para IDHumanResource={agent_resource_id}"
-                )
+                pass
                 continue
             try:
                 can_respond = agent_can_respond_in_workroom(
@@ -1604,16 +1545,10 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     channel_id,
                 )
             except (SolidSETDataAPIError, ValueError, pymssql.Error, RuntimeError) as exc:
-                print(
-                    "⚠️ Agente omitido: no se pudo verificar AiResponseMode "
-                    f"IDResource={agent_resource_id} IDWorkRoom={channel_id}: {exc}"
-                )
+                pass
                 continue
             if not can_respond:
-                print(
-                    "⚠️ Agente omitido: AiResponseMode no permite responder "
-                    f"IDResource={agent_resource_id} IDWorkRoom={channel_id}"
-                )
+                pass
                 continue
             automation_rule = None
             try:
@@ -1635,10 +1570,10 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     # enforced by the Control Center automation endpoints only;
                     # it must not prevent replies to selected incoming messages.
                     if required - available:
-                        print(f"AUTOMATION_AUTO_BLOCKED rule={automation_rule['ID']} reason=missing_capabilities", flush=True)
+                        pass
                         continue
             except psycopg.Error as exc:
-                print(f"AUTOMATION_POLICY_UNAVAILABLE agent={agent_resource_id} type={type(exc).__name__}", flush=True)
+                pass
                 automation_rule = None
             routed_candidate = dict(candidate)
             human_destination = _human_reply_destination(candidate)
@@ -1664,9 +1599,7 @@ def _route_candidates_to_selected_agents(candidates: list[dict]) -> list[dict]:
                     candidate.get("solidset_instance_id"),
                 )
             except (ValueError, psycopg.Error) as exc:
-                print(
-                    f"⚠️ Conocimiento privado no disponible para {agent_resource_id}: {exc}"
-                )
+                pass
                 private_knowledge = ""
             try:
                 reinforcement = get_agent_reinforcement_context(
@@ -1821,11 +1754,7 @@ def _learn_direct_agent_assertion(candidate: dict[str, Any]) -> bool:
     # An explicit destination is authoritative. A message addressed to a
     # different agent must never be learned by the currently routed agent.
     if recipient_ids and agent_resource_id.casefold() not in recipient_ids:
-        print(
-            "🛑 Aprendizaje omitido: mensaje dirigido a otro agente "
-            f"agent={agent_resource_id} recipients={sorted(recipient_ids)}",
-            flush=True,
-        )
+        pass
         return False
     if (
         not assertion
@@ -1865,16 +1794,10 @@ def _learn_direct_agent_assertion(candidate: dict[str, Any]) -> bool:
             origin="direct_agent_message",
             solidset_instance_id=str(candidate.get("solidset_instance_id") or ""),
         )
-        print(
-            f"🧠 Afirmación aprendida por agente resource={agent_resource_id} "
-            f"workroom={channel_id or '-'} knowledge_id={saved.get('ID')}",
-            flush=True,
-        )
+        pass
         return True
     except Exception as exc:
-        print(
-            f"⚠️ No se pudo aprender la afirmación dirigida al agente: {exc}", flush=True
-        )
+        pass
         return False
 
 
@@ -1916,10 +1839,7 @@ async def _process_auto_replies_impl(
     # Se usa en la validación final aunque una rama temprana no llegue a
     # calcular el modo externo.
     external_query = False
-    print(
-        f"🤖 Iniciando procesamiento de auto-respuesta; candidatos={len(candidates)}",
-        flush=True,
-    )
+    pass
     response_request_id = str(
         next(
             (
@@ -1941,18 +1861,13 @@ async def _process_auto_replies_impl(
             "failed",
             error="El envío de acciones a SolidSET está desactivado.",
         )
-        print(
-            "⚠️ Auto-reply SOLIDSET activo en config, pero SOLIDSET_USER_ACTIONS_ENABLED=false. No se enviarán respuestas."
-        )
+        pass
         return 0
 
     _update_response_status(response_request_id, "processing")
     if not _already_routed:
         candidates = await asyncio.to_thread(_route_candidates_to_selected_agents, candidates)
-    print(
-        f"🤖 Enrutamiento de auto-respuesta completado; ejecuciones={len(candidates)}",
-        flush=True,
-    )
+    pass
     if response_request_id and not candidates:
         _update_response_status(response_request_id, "completed", response_count=0)
     # Una selección explícita de SolidSET prevalece sobre el límite histórico
@@ -2006,14 +1921,8 @@ async def _process_auto_replies_impl(
                     agent_name=str(candidate.get("agent_name") or ""),
                     error=f"La ejecución del agente falló ({type(result).__name__}).",
                 )
-                print(
-                    f"⚠️ Ejecución paralela de agente fallida: {type(result).__name__}: {result}",
-                    flush=True,
-                )
-                print(
-                    "".join(traceback.format_exception(type(result), result, result.__traceback__)),
-                    flush=True,
-                )
+                pass
+                pass
         if preview_only:
             flattened = [
                 payload
@@ -2075,20 +1984,8 @@ async def _process_auto_replies_impl(
                     str(candidate.get("message") or "")
                 ):
 
-                    print(
-                        "🕒 Afirmación temporal relativa no persistida; "
-                        "se resolverá con el reloj de la instancia",
-                        flush=True,
-                    )
-            print(
-                "ℹ️ Candidato de auto-respuesta descartado por filtros "
-                f"reason={rejection_reason} "
-                f"addressed={bool(candidate.get('addressed_to_agent'))} "
-                f"direct={bool(candidate.get('is_direct'))} "
-                f"sender_resource={candidate.get('sender_resource', '-')} "
-                f"sender={candidate.get('sender_name', 'desconocido')} "
-                f"message={str(candidate.get('message') or '')[:120]!r}"
-            )
+                    pass
+            pass
             continue
 
         raw_incoming_text = str(candidate.get("message") or "").strip()
@@ -2163,11 +2060,7 @@ async def _process_auto_replies_impl(
                     source_ip=None,
                 )
             except Exception as exc:
-                print(
-                    "SOLIDSET_CONTEXT_INSTANCE_FAILED "
-                    f"chat={candidate.get('chat_id')} type={type(exc).__name__}",
-                    flush=True,
-                )
+                pass
         attachments: list[dict[str, Any]] = []
         if attachment_refs:
             attachments.extend(await asyncio.to_thread(
@@ -2196,13 +2089,7 @@ async def _process_auto_replies_impl(
             ))
             if audio_refs and not incoming_text:
                 incoming_text = "Analiza el audio adjunto y responde a su contenido."
-            print(
-                "AGENT_ATTACHMENT_CONTEXT "
-                f"chat={candidate.get('chat_id')} image_refs={len(attachment_refs)} "
-                f"audio_refs={len(audio_refs)} "
-                f"resolved={sum(1 for item in attachments if item.get('status') == 'resolved')}",
-                flush=True,
-            )
+            pass
         if related_records:
             message_metadata["related_records"] = related_records
             try:
@@ -2227,27 +2114,10 @@ async def _process_auto_replies_impl(
                     message_metadata["related_task_evidence_status"] = [
                         str(item.get("verification") or "") for item in related_task_evidence
                     ]
-                    print(
-                        "AGENT_RELATED_RECORDS_CONTEXT "
-                        f"chat={candidate.get('chat_id')} records={len(related_records)} "
-                        f"resolved={bool(message_metadata.get('related_records_context'))} "
-                        f"task_sql_retrieved={sum(1 for item in related_task_evidence if item.get('verification') == 'retrieved')} "
-                        f"task_payload_fallback={sum(1 for item in related_task_evidence if item.get('verification') != 'retrieved')}",
-                        flush=True,
-                    )
+                    pass
             except Exception as exc:
-                print(
-                    "AGENT_RELATED_RECORDS_CONTEXT_FAILED "
-                    f"chat={candidate.get('chat_id')} type={type(exc).__name__}",
-                    flush=True,
-                )
-        print(
-            "AGENT_QUOTED_CONTEXT "
-            f"chat={candidate.get('chat_id')} quoted_chat={candidate.get('quoted_chat_id')} "
-            f"quoted={str(candidate.get('quoted_message') or '')[:180]!r} "
-            f"current={incoming_text[:120]!r}",
-            flush=True,
-        )
+                pass
+        pass
 
         if not incoming_text or (not channel_id and not reply_resource):
             continue
@@ -2288,21 +2158,13 @@ async def _process_auto_replies_impl(
                 message_metadata["model_capability"] = "audio"
                 message_metadata["audio_model_unavailable"] = not audio_available
                 message_metadata["_capability_route_prepared"] = True
-                print(
-                    "AGENT_AUDIO_MODEL_ROUTE "
-                    f"chat={candidate.get('chat_id')} available={audio_available}",
-                    flush=True,
-                )
+                pass
             elif attachment_refs:
                 visual_available = has_visual_capability(declared_capabilities)
                 message_metadata["model_capability"] = "vision"
                 message_metadata["vision_model_unavailable"] = not visual_available
                 message_metadata["_capability_route_prepared"] = True
-                print(
-                    "AGENT_VISION_MODEL_ROUTE "
-                    f"chat={candidate.get('chat_id')} available={visual_available}",
-                    flush=True,
-                )
+                pass
         except Exception as exc:
             if audio_refs:
                 message_metadata["model_capability"] = "audio"
@@ -2314,7 +2176,7 @@ async def _process_auto_replies_impl(
                 message_metadata["model_capability"] = "vision"
                 message_metadata["vision_model_unavailable"] = True
                 message_metadata["_capability_route_prepared"] = True
-            print(f"AGENT_CAPABILITIES_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
+            pass
         status_agent_id = agent_identity_id or agent_resource_id
         _update_response_status(
             response_request_id,
@@ -2337,7 +2199,7 @@ async def _process_auto_replies_impl(
                 chat_id=candidate.get("chat_id"),
             )
         except Exception as exc:
-            print(f"CODE_CONTEXT_STORE_FAILED type={type(exc).__name__}", flush=True)
+            pass
         user_id = str(
             candidate.get("sender_resource")
             or candidate.get("sender_name")
@@ -2376,16 +2238,8 @@ async def _process_auto_replies_impl(
                     message_metadata["quoted_message"] = ""
                     message_metadata["quoted_chat_id"] = ""
                     message_metadata["conversation_history_source"] = "chat_question_chain"
-                    print(
-                        "AGENT_QUOTED_AGENT_ANSWER_NORMALIZED "
-                        f"chat={candidate.get('chat_id')} quoted={candidate.get('quoted_chat_id')}",
-                        flush=True,
-                    )
-                print(
-                    "AGENT_CONVERSATION_HISTORY "
-                    f"channel={channel_id} chars={len(conversation_history)}",
-                    flush=True,
-                )
+                    pass
+                pass
             related_record_guidance = related_record_question_needs_guidance(
                 incoming_text, related_records,
             )
@@ -2410,21 +2264,12 @@ async def _process_auto_replies_impl(
                 # task reference. Do not let a second generic classifier erase
                 # it before the assigned model is selected.
                 message_metadata["_capability_route_prepared"] = True
-                print(
-                    "AGENT_RELATED_RECORDS_GUIDANCE "
-                    f"chat={candidate.get('chat_id')} tasks={len(related_task_evidence)}",
-                    flush=True,
-                )
+                pass
             elif response_text is not None:
                 message_metadata["related_records_direct_answer"] = True
                 message_metadata["orchestrator_route"] = "related_record_evidence"
                 message_metadata["_agent_scope_prechecked"] = True
-                print(
-                    "AGENT_RELATED_RECORDS_DIRECT_ANSWER "
-                    f"chat={candidate.get('chat_id')} tasks={len(related_task_evidence)} "
-                    f"verification={message_metadata.get('related_task_evidence_status') or ['payload_only']}",
-                    flush=True,
-                )
+                pass
             elif not related_record_guidance:
                 response_text = await asyncio.to_thread(
                     answer_restricted_topic,
@@ -2449,11 +2294,7 @@ async def _process_auto_replies_impl(
                     message_metadata["model_capability"] = "general"
                     message_metadata["external_information_mode"] = False
                     message_metadata["_capability_route_prepared"] = True
-                    print(
-                        f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__} "
-                        "fallback=general",
-                        flush=True,
-                    )
+                    pass
             # Knowledge lookup is only useful for routes that may consume
             # private/internal context. General, coding, reasoning and media
             # capabilities are tool-free conversational routes and must not
@@ -2479,16 +2320,9 @@ async def _process_auto_replies_impl(
                         min_score=settings.BUSINESS_RAG_MIN_SCORE,
                     )
                 except Exception as exc:
-                    print(
-                        "⚠️ No se pudo preseleccionar conocimiento privado "
-                        f"para enrutamiento: {exc}"
-                    )
+                    pass
                 message_metadata["agent_relevant_knowledge"] = relevant_agent_knowledge
-            print(
-                "🧠 Conocimiento privado preseleccionado "
-                f"resource={agent_resource_id or '-'} workroom={channel_id or '-'} "
-                f"found={bool(relevant_agent_knowledge)} chars={len(relevant_agent_knowledge)}"
-            )
+            pass
             if response_text is None:
                 response_text = await asyncio.to_thread(
                     answer_direct, incoming_text, message_metadata, session_id
@@ -2564,13 +2398,7 @@ async def _process_auto_replies_impl(
                     if external_query
                     else {"query_sql_server", "get_db_schema"}
                 )
-                print(
-                    f"🤖 Generando auto-respuesta con LLM channel={channel_id} "
-                    f"target={'direct:' + reply_resource if is_direct else 'channel:' + channel_id} "
-                    f"provider={settings.LLM_PROVIDER} model={settings.MODEL_NAME} "
-                    f"base={settings.LLM_BASE_URL or settings.OLLAMA_BASE_URL} route="
-                    f"{'external_web' if external_query else 'work_sql_rag'}"
-                )
+                pass
                 _update_response_status(
                     response_request_id,
                     "thinking",
@@ -2602,21 +2430,11 @@ async def _process_auto_replies_impl(
                     agent_name=agent_name,
                     error=str(exc),
                 )
-                print(
-                    f"⚠️ Error generando auto-respuesta para canal {channel_id}: {exc}"
-                )
+                pass
                 continue
 
         response_text = (response_text or "").strip()
-        print(
-            "AGENT_AUTOREPLY_OUTPUT "
-            f"chat={candidate.get('chat_id')} "
-            f"capability={message_metadata.get('model_capability') or 'unknown'} "
-            f"route={message_metadata.get('orchestrator_route') or 'unknown'} "
-            f"repair_required={message_metadata.get('response_repair_required') or 'none'} "
-            f"chars={len(response_text)} preview={response_text[:240]!r}",
-            flush=True,
-        )
+        pass
         # Las respuestas de alcance/restricción se generan antes del
         # orquestador y salen por este camino directo. Deben respetar también
         # el idioma del mensaje antes de enviarse a SolidSET.
@@ -2627,12 +2445,7 @@ async def _process_auto_replies_impl(
                 message_metadata,
             )
             response_text = (response_text or "").strip()
-        print(
-            "AGENT_FINAL_RESPONSE_GUARD "
-            f"external_query={external_query!r} capability={message_metadata.get('model_capability')!r} "
-            f"external_mode={message_metadata.get('external_information_mode')!r}",
-            flush=True,
-        )
+        pass
         # Una ruta declarada como externa no puede publicar el rechazo de la
         # ruta interna, aunque el modelo lo haya generado durante la síntesis.
         if (
@@ -2659,10 +2472,7 @@ async def _process_auto_replies_impl(
                 response_text = evidence_fallback
                 message_metadata["related_records_direct_answer"] = True
                 message_metadata.pop("response_repair_required", None)
-                print(
-                    "AGENT_RELATED_RECORDS_GENERIC_RESPONSE_REPLACED "
-                    f"chat={candidate.get('chat_id')}", flush=True,
-                )
+                pass
             elif not message_metadata.get("related_record_response_repair"):
                 message_metadata["related_record_response_repair"] = True
                 message_metadata["response_repair_required"] = (
@@ -2672,12 +2482,7 @@ async def _process_auto_replies_impl(
         if unsafe_reason is None and message_metadata.get("response_repair_required"):
             unsafe_reason = str(message_metadata["response_repair_required"])
         if unsafe_reason:
-            print(
-                "AGENT_RESPONSE_REPAIR_REQUIRED "
-                f"chat={candidate.get('chat_id')} reason={unsafe_reason} "
-                f"route={message_metadata.get('orchestrator_route') or 'unknown'}",
-                flush=True,
-            )
+            pass
             repair_metadata = dict(message_metadata)
             repair_metadata["force_general_conversation"] = True
             repair_metadata["response_repair_mode"] = True
@@ -2716,38 +2521,19 @@ async def _process_auto_replies_impl(
                     repair_reason = "La respuesta reparada volvió a ignorar la tarea relacionada."
                 if repair_reason is None:
                     response_text = repaired
-                    print(
-                        "AGENT_RESPONSE_REPAIR_SUCCEEDED "
-                        f"chat={candidate.get('chat_id')} reason={unsafe_reason}",
-                        flush=True,
-                    )
+                    pass
                 else:
-                    print(
-                        "AGENT_RESPONSE_REPAIR_REJECTED "
-                        f"chat={candidate.get('chat_id')} reason={repair_reason}",
-                        flush=True,
-                    )
+                    pass
             except Exception as exc:
-                print(
-                    "AGENT_RESPONSE_REPAIR_FAILED "
-                    f"chat={candidate.get('chat_id')} type={type(exc).__name__}: {exc}",
-                    flush=True,
-                )
+                pass
             if related_record_response_needs_repair(response_text, related_records):
                 response_text = answer_related_records_question(
                     incoming_text, payload, related_records, related_task_evidence,
                     _language(incoming_text), allow_guidance_fallback=True,
                 ) or response_text
-                print(
-                    "AGENT_RELATED_RECORDS_REPAIR_FALLBACK "
-                    f"chat={candidate.get('chat_id')}", flush=True,
-                )
+                pass
             if _unsafe_auto_reply_reason(response_text):
-                print(
-                    "AGENT_MODEL_ASSIGNED_FAILURE stage=auto_reply reason=repair_rejected "
-                    f"chat={candidate.get('chat_id')} preview={response_text[:240]!r}",
-                    flush=True,
-                )
+                pass
                 response_text = (
                     "El modelo asignado al agente no pudo generar una respuesta válida "
                     "para esta solicitud."
@@ -2769,12 +2555,7 @@ async def _process_auto_replies_impl(
                 agent_resource_id=status_agent_id,
                 agent_name=agent_name,
             )
-            print(
-                f"📤 {'Preparando preview' if preview_only else 'Enviando auto-respuesta a SolidSET'} "
-                f"base={candidate.get('solidset_base_url') or '-'} "
-                f"agent_resource={agent_resource_id} meeting={meeting_id or '-'}",
-                flush=True,
-            )
+            pass
             response_parts = _split_solidset_response(response_text)
             send_result: Any = ""
             part_result_texts: list[str] = []
@@ -2840,15 +2621,7 @@ async def _process_auto_replies_impl(
                 )
                 _remember_auto_reply_fingerprint(fingerprint)
                 _remember_auto_reply_followup(candidate)
-                print(
-                    f"🤖 Auto-reply enviado channel={channel_id} "
-                    f"parts={len(response_parts)} "
-                    f"visibility={visibility_level} "
-                    f"importance={importance} "
-                    f"meeting={meeting_code or '-'} "
-                    f"source_kind={message_kind} reply_kind=ChatMessage(7) "
-                    f"sender={candidate.get('sender_name', 'desconocido')}"
-                )
+                pass
                 try:
                     await asyncio.wait_for(
                         asyncio.to_thread(
@@ -2860,11 +2633,7 @@ async def _process_auto_replies_impl(
                         timeout=5,
                     )
                 except Exception as exc:
-                    print(
-                        "⚠️ Respuesta enviada, pero no se pudo actualizar la "
-                        f"sesión del agente: {exc}",
-                        flush=True,
-                    )
+                    pass
                 try:
                     await asyncio.wait_for(
                         asyncio.to_thread(
@@ -2878,11 +2647,7 @@ async def _process_auto_replies_impl(
                         timeout=15,
                     )
                 except Exception as exc:
-                    print(
-                        "⚠️ Respuesta enviada, pero no se pudo guardar su "
-                        f"aprendizaje: {exc}",
-                        flush=True,
-                    )
+                    pass
             elif send_result_text.startswith("🕒"):
                 # La respuesta ya está generada y persistida en la cola de
                 # entrega. Se considera trabajo aceptado para que el worker de
@@ -2897,10 +2662,7 @@ async def _process_auto_replies_impl(
                     response_count=sent,
                 )
                 _remember_auto_reply_fingerprint(fingerprint)
-                print(
-                    f"📮 Auto-reply pendiente de entrega channel={channel_id}",
-                    flush=True,
-                )
+                pass
             else:
                 _update_response_status(
                     response_request_id,
@@ -2910,9 +2672,7 @@ async def _process_auto_replies_impl(
                     error=send_result_text,
                     response_count=sent,
                 )
-                print(
-                    f"⚠️ Auto-reply no enviado en canal {channel_id}: {send_result_text}"
-                )
+                pass
         except Exception as exc:
             _update_response_status(
                 response_request_id,
@@ -2922,9 +2682,7 @@ async def _process_auto_replies_impl(
                 error=str(exc),
                 response_count=sent,
             )
-            print(
-                f"⚠️ Error enviando auto-respuesta a SOLIDSET (canal {channel_id}): {exc}"
-            )
+            pass
 
     if response_request_id and not preview_only and _finalize_status:
         final_status = "completed"

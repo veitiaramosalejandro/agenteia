@@ -34,13 +34,7 @@ def _log_model_failure(exc, metadata, model_name, attempt, incident_id):
         {'file': Path(frame.filename).name, 'function': frame.name, 'line': frame.lineno}
         for frame in traceback.extract_tb(exc.__traceback__)[-12:]
     ]
-    print('OPENAI_DIRECT_FAILURE ' + json.dumps({
-        'incident_id': incident_id,
-        'request_id': str(metadata.get('chat_id') or ''),
-        'agent': str(metadata.get('agent_resource_id') or ''),
-        'model': model_name, 'attempt': attempt,
-        'error_type': type(exc).__name__, 'frames': frames,
-    }), flush=True)
+    pass
 
 
 def _invoke_direct_model(record, messages, metadata):
@@ -175,8 +169,7 @@ def assigned_openai(resource_id, capability='general', instance_id=None):
             )).fetchone()
     if row:
         row = dict(row)
-        print(f'AGENT_MODEL_ROUTE agent={resource_id} capability={capability} '
-              f'provider={row["Provider"]} model={row["Model"]}', flush=True)
+        pass
         if str(row.get('Provider') or '').lower() != 'openai':
             return None
         if bool(row.get('AgentLocalExecution', False)):
@@ -215,7 +208,7 @@ def _learned_answer(user_text, metadata):
             min_score=settings.BUSINESS_RAG_MIN_SCORE,
         ) or None
     except Exception as exc:
-        print(f'OPENAI_LOCAL_LEARNING lookup_failed type={type(exc).__name__}', flush=True)
+        pass
         return None
 
 
@@ -274,7 +267,7 @@ def answer_direct(user_text, metadata, session_id):
                     user_text = message.content
                     break
         except Exception as exc:
-            print(f'OPENAI_RECHECK_CONTEXT_FAILED type={type(exc).__name__}', flush=True)
+            pass
 
     # Resolve live questions before model assignment or historical answer reuse.
     if metadata.get('_agent_scope_decision') != 'scoped' and (
@@ -329,7 +322,7 @@ def answer_direct(user_text, metadata, session_id):
                     if payload.get('answer') and payload.get('results'):
                         answer = payload['answer']
             except Exception as exc:
-                print(f'OPENAI_PUBLIC_RESEARCH_FAILED type={type(exc).__name__}', flush=True)
+                pass
         from app.services.external_search import hide_source_urls
 
         answer = hide_source_urls(answer)
@@ -345,7 +338,7 @@ def answer_direct(user_text, metadata, session_id):
             history.add_user_message(user_text)
             history.add_ai_message(answer)
         except Exception as exc:
-            print(f'OPENAI_PUBLIC_HISTORY_FAILED type={type(exc).__name__}', flush=True)
+            pass
         return result
     # The capability planner is authoritative once it has selected a route.
     # Reclassifying here could turn a general recommendation or learned
@@ -382,12 +375,7 @@ def answer_direct(user_text, metadata, session_id):
     if learned:
         compatible = _compatible_learned_answer(learned, user_text, metadata)
         if compatible is not None:
-            print(
-                'OPENAI_GLOBAL_LEARNING hit '
-                f'instance={metadata.get("solidset_instance_id")} '
-                f'agent={metadata.get("agent_resource_id")}',
-                flush=True,
-            )
+            pass
             return compatible
     language = metadata.get('response_language') or metadata.get('resolved_language') or metadata.get('locale') or 'the language of the user'
     instructions = (
@@ -454,7 +442,7 @@ def answer_direct(user_text, metadata, session_id):
         history.add_user_message(user_text)
         history.add_ai_message(answer)
     except Exception as exc:
-        print(f'OPENAI_DIALOGUE_HISTORY_FAILED type={type(exc).__name__}', flush=True)
+        pass
     try:
         # This endpoint already persists the exchange in agent-private learning.
         # Personal context must never enter the instance-global answer cache.
@@ -462,8 +450,8 @@ def answer_direct(user_text, metadata, session_id):
             enqueue_learning(record, user_text, answer, metadata, session_id)
     except Exception as exc:
         # Never expose credentials/prompts or replace a successful remote answer.
-        print(f'OPENAI_LOCAL_LEARNING enqueue_failed type={type(exc).__name__}', flush=True)
-    print(f'OPENAI_DIRECT model={record["Model"]} agent={metadata.get("agent_resource_id")}', flush=True)
+        pass
+    pass
     return answer
 
 
@@ -519,5 +507,5 @@ def run_learning_worker():
                     learning = None
                 continue
         except Exception as exc:
-            print(f'OPENAI_LOCAL_LEARNING worker_failed type={type(exc).__name__}', flush=True)
+            pass
         time.sleep(5)

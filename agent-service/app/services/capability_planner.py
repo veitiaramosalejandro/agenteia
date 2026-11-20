@@ -50,11 +50,7 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
         metadata['model_capability'] = 'audio'
         metadata['audio_model_unavailable'] = not audio_available
         metadata['_capability_route_prepared'] = True
-        print(
-            f'AGENT_CAPABILITY_PLAN agent={resource} capability=audio '
-            f'available={audio_available} reason=message_audio',
-            flush=True,
-        )
+        pass
         return
     if visual_requested:
         visual_available = any(
@@ -64,11 +60,7 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
         metadata['model_capability'] = 'vision'
         metadata['vision_model_unavailable'] = not visual_available
         metadata['_capability_route_prepared'] = True
-        print(
-            f'AGENT_CAPABILITY_PLAN agent={resource} capability=vision '
-            f'available={visual_available} reason=message_attachment',
-            flush=True,
-        )
+        pass
         return
     if metadata.get('conversational_recommendation_mode'):
         # A recommendation about the user's goal is not a coding request just
@@ -78,19 +70,13 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
         metadata['model_capability'] = 'general'
         metadata['external_information_mode'] = False
         metadata['_capability_route_prepared'] = True
-        print(
-            f'AGENT_CAPABILITY_PLAN agent={resource} capability=general '
-            'reason=conversational_recommendation', flush=True,
-        )
+        pass
         return
     if metadata.get('_scope_external_web_preferred') and 'external_web' in permissions:
         metadata['model_capability'] = 'external_web'
         metadata['external_information_mode'] = True
         metadata['_capability_route_prepared'] = True
-        print(
-            f'AGENT_CAPABILITY_PLAN agent={resource} capability=external_web '
-            'reason=scope_external_web_preferred', flush=True,
-        )
+        pass
         return
     # General is a tool-free baseline, not a grant to perform another capability.
     choices = {'general'} | {
@@ -127,10 +113,7 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
                                          'available': sorted(choices)}, ensure_ascii=False)),
     ])
     raw = response_text(result).strip()
-    print(
-        f'AGENT_CAPABILITY_PLAN_OUTPUT provider={config.provider} model={config.model} '
-        f'content_preview={raw[:160]!r}', flush=True,
-    )
+    pass
     if len(raw) > 1024:
         raise ValueError('capability_plan_too_long')
     payload = json.loads(raw)
@@ -140,4 +123,4 @@ def prepare_capability_route(message: str, metadata: dict) -> None:
     metadata['model_capability'] = selected
     metadata['external_information_mode'] = 'external_web' in tool_permissions([selected])
     metadata['_capability_route_prepared'] = True
-    print(f'AGENT_CAPABILITY_PLAN agent={resource} capability={selected} available={",".join(sorted(choices))}', flush=True)
+    pass

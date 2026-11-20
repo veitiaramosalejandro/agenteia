@@ -1,7 +1,6 @@
 """Bounded NVIDIA connectivity test; no persistence or agent side effects."""
 
 import asyncio
-import logging
 import json
 from time import monotonic
 from typing import Literal
@@ -16,7 +15,6 @@ from app.config import settings
 from app.llm.providers import NVIDIA_BASE_URL, NVIDIA_MODEL, nvidia_model_options
 
 router = APIRouter(tags=["LLM Providers"])
-logger = logging.getLogger(__name__)
 
 
 class NvidiaTestRequest(BaseModel):
@@ -72,8 +70,7 @@ def _error_details(exc, timeout_seconds, started, phase):
         message = "No se pudo completar la petición a NVIDIA."
     details = dict(status=status, code=code, message=message, phase=phase,
                    timeout_seconds=timeout_seconds, elapsed_seconds=round(monotonic() - started, 3))
-    logger.warning("NVIDIA test failed: code=%s phase=%s elapsed_seconds=%s",
-                   code, phase, details["elapsed_seconds"])
+    pass
     return details
 
 

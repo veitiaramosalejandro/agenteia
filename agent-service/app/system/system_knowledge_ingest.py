@@ -756,10 +756,7 @@ def run_system_knowledge_ingestion(
                     for offset in range(0, len(changed), 10):
                         waited = wait_for_interactive_idle()
                         if waited >= 0.5:
-                            print(
-                                f"⏸️ Ingesta de sistema cedió {waited:.1f}s al chat "
-                                f"run={run_id}", flush=True,
-                            )
+                            pass
                         indexed += _upsert_documents(changed[offset:offset + 10], run_id)
                         _run_update(
                             run_id, RowsRead=read, RowsIndexed=indexed,

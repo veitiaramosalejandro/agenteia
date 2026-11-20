@@ -261,13 +261,7 @@ def _scope_decision(
     policy = {"published_system_prompt": published_prompt}
     policy_size = len(json.dumps(policy, ensure_ascii=False))
     if len(message) > _SCOPE_MESSAGE_MAX_CHARS or policy_size > _SCOPE_POLICY_MAX_CHARS:
-        print(
-            f"AGENT_SCOPE_INPUT_REJECTED agent={resource_id} "
-            f"message_chars={len(message)} policy_chars={policy_size} "
-            f"message_limit={_SCOPE_MESSAGE_MAX_CHARS} "
-            f"policy_limit={_SCOPE_POLICY_MAX_CHARS}",
-            flush=True,
-        )
+        pass
         raise ScopeOutputError("input_limit")
     bounded_history = str(conversation_history or "").strip()[:10000]
     classifier_request = _request_instruction(message)
@@ -305,18 +299,13 @@ def _scope_decision(
         except Exception as exc:
             if attempt:
                 # A repair timeout must not take the normal timeout/allow fallback.
-                print(f"AGENT_SCOPE_REPAIR_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
+                pass
                 raise ScopeOutputError("repair_call_failed") from None
             raise
         try:
             decision, reason = _parse_scope_output(response_text(result))
         except ScopeOutputError as exc:
-            print(
-                f"AGENT_SCOPE_OUTPUT_INVALID agent={resource_id} attempt={attempt + 1} "
-                f"code={exc} decision={exc.decision} reason_code={exc.reason_code} "
-                f"provider={_diagnostic_value(config.provider)} "
-                f"model={_diagnostic_value(getattr(config, 'model', None))}", flush=True,
-            )
+            pass
             if attempt:
                 raise
             # Reclassify the original request; do not promote invalid output to instructions.
@@ -360,20 +349,12 @@ def _scope_decision(
                 reviewed, reviewed_reason = _parse_scope_output(
                     response_text(model.invoke(review_messages))
                 )
-                print(
-                    f"AGENT_SCOPE_SEMANTIC_REVIEW agent={resource_id} "
-                    f"initial={initial_decision} reviewed={reviewed}",
-                    flush=True,
-                )
+                pass
                 decision = reviewed
                 reason = reviewed_reason
             except Exception as exc:
-                print(
-                    f"AGENT_SCOPE_SEMANTIC_REVIEW_FAILED agent={resource_id} "
-                    f"type={type(exc).__name__}",
-                    flush=True,
-                )
-        print(f"AGENT_SCOPE_DECISION agent={resource_id} decision={decision} reason={reason}", flush=True)
+                pass
+        pass
         return decision
 
 
@@ -439,7 +420,7 @@ def answer_restricted_topic(
     try:
         published = get_active_agent_prompt(instance_id, resource_id)
     except Exception as exc:
-        print(f"AGENT_SCOPE_POLICY_LOOKUP_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
+        pass
         return _uncertain_response(_language(message))
     if not isinstance(published, dict):
         return _uncertain_response(_language(message))
@@ -448,7 +429,7 @@ def answer_restricted_topic(
         behavior = {}
     published_prompt = str(published.get("SystemPrompt") or "").strip()
     if not published_prompt:
-        print(f"AGENT_SCOPE_POLICY_MISSING agent={resource_id} type=published_prompt", flush=True)
+        pass
         return _uncertain_response(_language(message, behavior.get("default_language")))
     language = _language(message, behavior.get("default_language"))
     try:
@@ -471,15 +452,11 @@ def answer_restricted_topic(
     except httpx.TimeoutException as exc:
         # An unavailable classification is not permission to answer. Keep the
         # request unresolved instead of bypassing the published scope gate.
-        print(
-            f"AGENT_SCOPE_DECISION_TIMEOUT agent={resource_id} "
-            f"type={type(exc).__name__} fallback=uncertain",
-            flush=True,
-        )
+        pass
         return _uncertain_response(language)
     except Exception as exc:
         code = str(exc) if isinstance(exc, ScopeOutputError) else "classification_failed"
-        print(f"AGENT_SCOPE_DECISION_FAILED agent={resource_id} type={type(exc).__name__} code={code}", flush=True)
+        pass
         return _uncertain_response(language)
     if scope_context is not None:
         scope_context["_agent_scope_decision"] = decision
@@ -500,6 +477,6 @@ def answer_restricted_topic(
                 verified_context=verified_context,
             )
         except Exception as exc:
-            print(f"AGENT_SCOPE_CLARIFICATION_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
+            pass
             return _uncertain_response(language)
     return _scope_refusal(language)

@@ -128,7 +128,7 @@ class AgentResponseQueue:
         try:
             owned = self.refresh_pending(consumer, message_id)
         except redis.RedisError as exc:
-            print(f"AGENT_RESPONSE_HEARTBEAT_ERROR message={message_id} type={type(exc).__name__}", flush=True)
+            pass
             owned = False
         if not owned:
             yield False
@@ -140,10 +140,10 @@ class AgentResponseQueue:
             while not stopped.wait(interval):
                 try:
                     if not self.refresh_pending(consumer, message_id):
-                        print(f"AGENT_RESPONSE_OWNERSHIP_LOST message={message_id} consumer={consumer}", flush=True)
+                        pass
                         return
                 except redis.RedisError as exc:
-                    print(f"AGENT_RESPONSE_HEARTBEAT_ERROR message={message_id} type={type(exc).__name__}", flush=True)
+                    pass
 
         heartbeat = threading.Thread(target=renew, name="agent-response-heartbeat", daemon=True)
         heartbeat.start()

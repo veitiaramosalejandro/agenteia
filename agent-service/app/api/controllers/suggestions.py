@@ -146,5 +146,5 @@ async def suggest_chat_question_response(
         raise HTTPException(
             status_code=503, detail="A fila de sugestões não está disponível."
         ) from exc
-    print(f"📥 Sugestão enfileirada requestId={request_id}", flush=True)
+    pass
     return await _wait_for_worker_result(request_id, context)
