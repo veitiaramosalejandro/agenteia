@@ -112,4 +112,4 @@ async def maintenance_loop():
         try:
             await asyncio.to_thread(maintenance_pass, cursors)
         except redis.RedisError as exc:
-            print(f"REDIS_MAINTENANCE deferred type={type(exc).__name__}", flush=True)
+            pass

@@ -221,11 +221,7 @@ def resolve_solidset_audio_attachments(
         rows = json.loads(str(raw))
         rows = rows if isinstance(rows, list) else []
     except Exception as exc:
-        print(
-            "SOLIDSET_AUDIO_SEGMENTS_QUERY_FAILED "
-            f"requested={len(media_ids)} type={type(exc).__name__}",
-            flush=True,
-        )
+        pass
         return [{"guid": media_id, "media_id": media_id, "media_kind": "audio",
                  "status": "query_failed"} for media_id in media_ids]
 
@@ -290,19 +286,10 @@ def resolve_solidset_audio_attachments(
             })
         except Exception as exc:
             metadata["status"] = "download_failed"
-            print(
-                "SOLIDSET_AUDIO_OBJECT_DOWNLOAD_FAILED "
-                f"media_id={media_id} type={type(exc).__name__}",
-                flush=True,
-            )
+            pass
         attachments.append(metadata)
     resolved = sum(1 for item in attachments if item.get("status") == "resolved")
-    print(
-        "SOLIDSET_AUDIO_RESOLVED "
-        f"requested={len(media_ids)} resolved={resolved} "
-        f"unavailable={len(attachments) - resolved}",
-        flush=True,
-    )
+    pass
     return attachments
 
 
@@ -338,11 +325,7 @@ def resolve_solidset_file_attachments(
         if not isinstance(rows, list):
             rows = []
     except Exception as exc:
-        print(
-            "SOLIDSET_ATTACHMENTS_QUERY_FAILED "
-            f"guids={len(guids)} type={type(exc).__name__}",
-            flush=True,
-        )
+        pass
         return [{"guid": guid, "status": "query_failed"} for guid in guids]
 
     by_guid: dict[str, dict[str, Any]] = {}
@@ -383,12 +366,7 @@ def resolve_solidset_file_attachments(
         })
         attachments.append(metadata)
     resolved = sum(1 for item in attachments if item.get("status") == "resolved")
-    print(
-        "SOLIDSET_ATTACHMENTS_RESOLVED "
-        f"requested={len(guids)} resolved={resolved} "
-        f"unavailable={len(attachments) - resolved}",
-        flush=True,
-    )
+    pass
     return attachments
 
 

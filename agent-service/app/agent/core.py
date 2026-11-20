@@ -217,7 +217,7 @@ class MachiningAgent:
                 instance_id=metadata.get("solidset_instance_id"),
             )
         except Exception as exc:
-            print(f"⚠️ No se pudo resolver proveedor LLM en PostgreSQL: {exc}")
+            pass
             record = None
         if resource_id and capability != "general" and not record:
             raise ValueError("No active model assigned for the requested capability")
@@ -281,14 +281,14 @@ class MachiningAgent:
         try:
             record = get_llm_provider_configuration(resource_id, "general", instance_id=instance_id)
         except Exception as exc:
-            print(f"AGENT_RUNTIME_IDENTITY_LOOKUP_FAILED type={type(exc).__name__}", flush=True)
+            pass
             return False
         if not record:
             return False
         try:
             config = provider_config_from_record(record)
         except Exception as exc:
-            print(f"AGENT_RUNTIME_IDENTITY_CONFIG_FAILED type={type(exc).__name__}", flush=True)
+            pass
             return False
         provider = str(config.provider or "").strip()
         model = str(config.model or "").strip()
@@ -587,7 +587,7 @@ class MachiningAgent:
                 identity.get("username"),
             ) or ""
         except Exception as e:
-            print(f"⚠️ Error resolviendo identity/resource_id para '{user_id}': {e}")
+            pass
 
         try:
             contexto = self.sistema_aprendizaje.obtener_contexto_usuario(user_id)
@@ -600,7 +600,7 @@ class MachiningAgent:
                     contexto.usuario.nombre,
                 ) or ""
         except Exception as e:
-            print(f"⚠️ Error resolviendo identidad de usuario '{user_id}': {e}")
+            pass
 
         # Los identificadores técnicos se usan internamente para resolver contexto y
         # permisos, pero no se exponen en una respuesta conversacional normal.
@@ -740,10 +740,7 @@ class MachiningAgent:
         language = self._detect_user_language(user_text)
         language_name = self._language_name(language)
         message_limit = self._channel_summary_limit(user_text)
-        print(
-            f"🗄️ Análisis directo de intervenciones; participante={person_name!r} "
-            f"límite_canal={message_limit}"
-        )
+        pass
         effective_channel = (canal_id or "").strip()
         if not effective_channel:
             return self._localized(
@@ -813,7 +810,7 @@ class MachiningAgent:
             )
             return f"{heading}\n\n{str(final).strip()}"
         except Exception as exc:
-            print(f"⚠️ Error analizando intervenciones del participante: {exc}")
+            pass
             return "Encontrei as intervenções, mas não consegui concluir a análise neste momento."
 
     def _resolve_channel_participant_frequency(
@@ -959,7 +956,7 @@ class MachiningAgent:
             )
             return f"{heading}\n\n{str(final_answer).strip()}"
         except Exception as exc:
-            print(f"⚠️ Error generando resumen directo del canal: {exc}")
+            pass
             return "No pude generar el resumen del canal en este momento."
 
     def _resolve_channel_names_from_db(
@@ -1172,7 +1169,7 @@ class MachiningAgent:
                 self.user_context_cache[cache_key] = (contexto, datetime.now())
                 return contexto
         except Exception as e:
-            print(f"⚠️ Error obteniendo contexto del usuario {user_id}: {e}")
+            pass
         
         return ""
 
@@ -1216,7 +1213,7 @@ class MachiningAgent:
             return aprendizaje
             
         except Exception as e:
-            print(f"⚠️ Error consultando aprendizaje: {e}")
+            pass
             return ""
 
     # ============================================================
@@ -1289,12 +1286,9 @@ class MachiningAgent:
             return summary
         except Exception as e:
             if self._is_llm_connection_error(e):
-                print(
-                    "⚠️ Error generando resumen: LLM no alcanzable "
-                    f"(OLLAMA_BASE_URL={settings.OLLAMA_BASE_URL}) | {e}"
-                )
+                pass
             else:
-                print(f"⚠️ Error generando resumen: {e}")
+                pass
             return None
 
     # ============================================================
@@ -1778,12 +1772,7 @@ class MachiningAgent:
             if not plans:
                 return None
             for plan in plans:
-                print(
-                    "🧭 Plan SQL por grafo FK "
-                    f"concept={plan.concept} path={' -> '.join(plan.path)} "
-                    f"columns={list(plan.selected_columns)}",
-                    flush=True,
-                )
+                pass
                 raw_result = str(self._sql_adapter().query({
                     "query": plan.query,
                     "parameters_json": json.dumps(plan.parameters),
@@ -1791,7 +1780,7 @@ class MachiningAgent:
                 try:
                     rows = json.loads(raw_result)
                 except (json.JSONDecodeError, TypeError, ValueError):
-                    print(f"ℹ️ Ruta FK sin filas utilizables: {raw_result[:220]}", flush=True)
+                    pass
                     continue
                 if not isinstance(rows, list) or not rows:
                     continue
@@ -1803,7 +1792,7 @@ class MachiningAgent:
                 )
             return None
         except Exception as exc:
-            print(f"⚠️ No se pudo resolver la relación mediante el grafo FK: {exc}", flush=True)
+            pass
             return None
 
     def _resolve_schema_record_from_db(
@@ -1833,21 +1822,13 @@ class MachiningAgent:
             )
             if plan is None:
                 return None
-            print(
-                f"🧭 Plan SQL de registros concept={plan.concept} table={plan.table} "
-                f"columns={list(plan.selected_columns)}",
-                flush=True,
-            )
+            pass
             raw_result = str(self._sql_adapter().query({
                 "query": plan.query,
                 "parameters_json": json.dumps(plan.parameters),
             }))
             if raw_result.startswith(("Error ", "⚠️")):
-                print(
-                    f"⚠️ Consulta operacional rechazada concept={plan.concept}: "
-                    f"{raw_result[:300]}",
-                    flush=True,
-                )
+                pass
                 return self._localized(
                     user_text,
                     es="No pude verificar esa información en SQL Server. Para proteger los datos de cada recurso, no responderé usando información de otro recurso ni una suposición.",
@@ -1876,7 +1857,7 @@ class MachiningAgent:
                 subject_label=subject_label,
             )
         except Exception as exc:
-            print(f"⚠️ No se pudo resolver el registro mediante el esquema: {exc}", flush=True)
+            pass
             return None
 
     def _business_subject_resource(
@@ -2330,7 +2311,7 @@ class MachiningAgent:
             "ON sl.ActiveIDLogin2Resource = sr.ActiveIDLogin2Resource "
             f"{where_clause};"
         )
-        print(f"🗄️ Resolviendo conteo de recursos desde SQL Server; filtro={term!r}")
+        pass
         result = str(self._sql_adapter().query({"query": sql}))
         try:
             rows = json.loads(result)
@@ -2410,7 +2391,7 @@ class MachiningAgent:
             "AND ISNULL(mr.IsBanned, 0) = 0 "
             "ORDER BY r.DisplayName ASC"
         )
-        print(f"🗄️ Consultando recursos activos do meeting IDMeeting={meeting_id}")
+        pass
         result = str(self._sql_adapter().query({
             "query": sql.replace("%s", f"'{str(meeting_id)}'", 1)
         }))
@@ -2615,7 +2596,7 @@ class MachiningAgent:
             answer = self._llm_response_text(web_response)
             return self._clean_web_answer(answer) or None
         except Exception as exc:
-            print(f"⚠️ Falló la búsqueda web automática: {exc}")
+            pass
             return None
 
     @staticmethod
@@ -2829,7 +2810,7 @@ class MachiningAgent:
             answer = str(answer or "").strip()
             return answer if answer and not self._looks_like_raw_tool_response(answer) else None
         except Exception as exc:
-            print(f"⚠️ No se pudo sintetizar la salida de herramienta: {exc}")
+            pass
             return None
 
     # ============================================================
@@ -2902,7 +2883,7 @@ class MachiningAgent:
                 self.sistema_aprendizaje.aprender_actividad(actividad)
             
         except Exception as e:
-            print(f"⚠️ Error registrando interacción: {e}")
+            pass
 
     # ============================================================
     # 5. MÉTODO PRINCIPAL DE PROCESAMIENTO
@@ -3000,7 +2981,7 @@ class MachiningAgent:
         try:
             attach_code_context(user_text, metadata, session_id, chat_id=metadata.get("chat_id"))
         except Exception as exc:
-            print(f"CODE_CONTEXT_LOAD_FAILED type={type(exc).__name__}", flush=True)
+            pass
         if self._is_agent_runtime_identity_intent(user_text):
             self._resolve_identity_runtime_metadata(metadata)
             return self._build_agent_runtime_identity_response(metadata)
@@ -3036,11 +3017,7 @@ class MachiningAgent:
                 metadata["vision_model_unavailable"] = has_attachment and not has_audio
                 metadata["external_information_mode"] = False
                 metadata["_capability_route_prepared"] = True
-                print(
-                    f"AGENT_CAPABILITY_PLAN_FAILED type={type(exc).__name__} "
-                    f"fallback={'audio_unavailable' if has_audio else 'vision_unavailable' if has_attachment else 'general'}",
-                    flush=True,
-                )
+                pass
 
         if metadata.get("audio_model_unavailable"):
             return self._localized(
@@ -3101,7 +3078,7 @@ class MachiningAgent:
             )
         except Exception as exc:
             agent_model_policy = None
-            print(f"⚠️ No se pudo leer la política SysAgentIAModel: {exc}")
+            pass
         if agent_model_policy is not None:
             # Tool permissions were resolved from all active assignments before
             # entering the SQL context; the default model only controls learning.
@@ -3239,9 +3216,9 @@ class MachiningAgent:
                     min_score=settings.BUSINESS_RAG_MIN_SCORE,
                 )
             except Exception as exc:
-                print(f"⚠️ No se pudo consultar conocimiento semántico del agente: {exc}")
+                pass
         if agent_rag_context and not self._rag_context_matches_query(user_text, agent_rag_context):
-            print("⚠️ Conocimiento del agente rechazado: no conserva las anclas del turno actual")
+            pass
             agent_rag_context = ""
         system_snapshot_context = ""
         solidset_instance_id = str(
@@ -3266,9 +3243,9 @@ class MachiningAgent:
                     min_score=settings.BUSINESS_RAG_MIN_SCORE,
                 )
             except Exception as exc:
-                print(f"⚠️ No se pudo consultar la fotografía SQL del sistema: {exc}")
+                pass
         if system_snapshot_context and not self._rag_context_matches_query(user_text, system_snapshot_context):
-            print("⚠️ Fotografía SQL rechazada: no conserva las anclas del turno actual")
+            pass
             system_snapshot_context = ""
         if capability_tool_free:
             agent_rag_context = ""
@@ -3326,7 +3303,7 @@ class MachiningAgent:
         try:
             history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
         except Exception as e:
-            print(f"❌ Error conectando a Redis: {e}")
+            pass
 
         previous_user_text = None
         previous_user_texts = []
@@ -3341,7 +3318,7 @@ class MachiningAgent:
                     if isinstance(msg, HumanMessage)
                 ]
             except Exception as e:
-                print(f"⚠️ Error leyendo historial previo: {e}")
+                pass
 
         # --- 2.5 RESPUESTA DIRECTA DE IDENTIDAD DE SESIÓN ---
         if self._is_identity_intent(user_text):
@@ -3357,7 +3334,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(identity_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando respuesta de identidad en Redis: {e}")
+                    pass
 
             if user_id and len(identity_response) > 10:
                 try:
@@ -3370,7 +3347,7 @@ class MachiningAgent:
                         session_id=session_id,
                     )
                 except Exception as e:
-                    print(f"⚠️ Error registrando interacción de identidad: {e}")
+                    pass
 
             return identity_response
 
@@ -3391,7 +3368,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(response_text)
                 except Exception as e:
-                    print(f"⚠️ Error guardando saludo en Redis: {e}")
+                    pass
 
             # Aprender saludos por canal/sesión para contexto histórico.
             if user_id and len(response_text) > 10:
@@ -3405,7 +3382,7 @@ class MachiningAgent:
                         session_id=session_id,
                     )
                 except Exception as e:
-                    print(f"⚠️ Error registrando saludo para aprendizaje: {e}")
+                    pass
 
             return response_text
 
@@ -3442,26 +3419,17 @@ class MachiningAgent:
             if business_rag_context and not self._rag_context_matches_query(
                 business_query_text, business_rag_context
             ):
-                print("⚠️ Referencia vectorial rechazada: corresponde a otro tema")
+                pass
                 business_rag_context = ""
             if business_rag_context and not live_business_query:
                 tool_allowlist = set()
-                print(
-                    "🧠 Consulta de negocio resuelta con referencia vectorial relevante; "
-                    "SQL queda como fallback"
-                )
+                pass
             else:
                 tool_allowlist = {"query_sql_server", "get_db_schema"}
                 if live_business_query:
-                    print(
-                        "🗄️ Consulta operacional actual: el payload y SQL son autoritativos; "
-                        "usando SolidSET Data API/SQL Server"
-                    )
+                    pass
                 else:
-                    print(
-                        "🗄️ Sin referencia vectorial suficiente para la consulta de negocio; "
-                        "usando SolidSET Data API/SQL Server"
-                    )
+                    pass
 
         vector_answers_business_query = bool(
             business_rag_context and not live_business_query
@@ -3495,7 +3463,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(person_information_response)
                 except Exception as exc:
-                    print(f"⚠️ Error guardando respuesta de recurso interno: {exc}")
+                    pass
             return person_information_response
 
         # --- 3.0.1 REGISTROS OPERATIVOS PLANIFICADOS DESDE EL ESQUEMA ---
@@ -3547,7 +3515,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(record_response)
                 except Exception as exc:
-                    print(f"⚠️ Error guardando respuesta del planificador SQL: {exc}")
+                    pass
             return record_response
 
         # --- 3.0.2 PLANIFICADOR GENÉRICO SOBRE EL GRAFO DE CLAVES FORÁNEAS ---
@@ -3572,7 +3540,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(relationship_response)
                 except Exception as exc:
-                    print(f"⚠️ Error guardando respuesta del planificador FK: {exc}")
+                    pass
             return relationship_response
 
         # --- 3.1 ANÁLISIS DE INTERVENCIONES DE UNA PERSONA DESDE SQL SERVER ---
@@ -3589,7 +3557,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(participant_analysis_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando análisis de intervenciones en Redis: {e}")
+                    pass
             return participant_analysis_response
 
         # --- 3.2 FRECUENCIA DE PARTICIPACIÓN EN EL CANAL DESDE SQL SERVER ---
@@ -3606,7 +3574,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(participant_frequency_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando frecuencia de participación en Redis: {e}")
+                    pass
             return participant_frequency_response
 
         # --- 3.3 RESUMEN DIRECTO DEL CANAL DESDE SQL SERVER ---
@@ -3621,7 +3589,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(channel_summary_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando resumen del canal en Redis: {e}")
+                    pass
             return channel_summary_response
 
         # --- 3.4 LISTADO DIRECTO DE CANALES DESDE SQL SERVER ---
@@ -3636,7 +3604,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(channel_names_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando listado de canales en Redis: {e}")
+                    pass
             return channel_names_response
 
         # --- 3.5 CONTEO DIRECTO DE RECURSOS DEL MEETING DESDE SQL SERVER ---
@@ -3651,7 +3619,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(meeting_resource_count_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando conteo del meeting en Redis: {e}")
+                    pass
             return meeting_resource_count_response
 
         # --- 3.6 CONTEO DIRECTO DE RECURSOS DESDE SQL SERVER ---
@@ -3664,7 +3632,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(resource_count_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando conteo de recursos en Redis: {e}")
+                    pass
             return resource_count_response
 
         # --- 3.7 TAREAS ASIGNADAS A UN RECURSO DESDE SYSTASK ---
@@ -3689,7 +3657,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(resource_tasks_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando consulta de tareas en Redis: {e}")
+                    pass
             return resource_tasks_response
 
         # --- 3.8 ACTIVIDADES DE UN RECURSO DESDE ACTIVITY ---
@@ -3702,7 +3670,7 @@ class MachiningAgent:
                     history.add_user_message(user_text)
                     history.add_ai_message(resource_activities_response)
                 except Exception as e:
-                    print(f"⚠️ Error guardando consulta de actividades en Redis: {e}")
+                    pass
             return resource_activities_response
 
         # --- 3.9 CONSULTA DIRECTA DE ÚLTIMO MENSAJE EN CHAT (BD) ---
@@ -3719,7 +3687,7 @@ class MachiningAgent:
                         history.add_user_message(user_text)
                         history.add_ai_message(direct_response)
                     except Exception as e:
-                        print(f"⚠️ Error guardando respuesta directa en Redis: {e}")
+                        pass
 
                 try:
                     self._registrar_interaccion(
@@ -3731,7 +3699,7 @@ class MachiningAgent:
                         session_id=session_id,
                     )
                 except Exception as e:
-                    print(f"⚠️ Error registrando interacción directa para aprendizaje: {e}")
+                    pass
 
                 return direct_response
 
@@ -3743,7 +3711,7 @@ class MachiningAgent:
 
         # --- 4. OBTENER CONTEXTOS ---
         if external_query_mode:
-            print("AGENT_EXTERNAL_ROUTE_SQL_RAG_DISABLED", flush=True)
+            pass
         record_focused = bool(response_suggestion_mode and metadata_identity.get("related_records_context"))
         context_started = perf_counter()
 
@@ -3801,7 +3769,7 @@ class MachiningAgent:
                 canal_id=canal_id,
             )
             if rag_context and not self._rag_context_matches_query(context_query, rag_context):
-                print("⚠️ Documentación RAG rechazada: corresponde a otro tema")
+                pass
                 rag_context = ""
 
         # 4.3 Contexto conversacional desde BD (chat + canal)
@@ -3909,10 +3877,10 @@ class MachiningAgent:
                         limit=settings.WEB_SEARCH_MAX_RESULTS,
                     )
             except Exception as exc:
-                print(f"⚠️ No se pudo consultar la memoria web: {exc}")
+                pass
 
         if response_suggestion_mode:
-            print(f"SUGGESTION_CONTEXT request_id={metadata_identity.get('chat_id')} record_focused={record_focused} elapsed={perf_counter() - context_started:.3f}s", flush=True)
+            pass
 
         # --- 5. CONSTRUIR MENSAJES ---
         request_metadata = dict(message_metadata or {})
@@ -3974,7 +3942,7 @@ class MachiningAgent:
                     solidset_instance_id, agent_resource_id
                 )
             except Exception as exc:
-                print(f"⚠️ Plantilla del agente no disponible: {exc}")
+                pass
         if active_prompt:
             custom_prompt = str(active_prompt.get("SystemPrompt") or "").strip()
             if custom_prompt:
@@ -4618,12 +4586,7 @@ class MachiningAgent:
                 ),
                 additional_kwargs={"budget_current": True, "related_record_current": True},
             ))
-            print(
-                "AGENT_RELATED_RECORDS_MODEL_BRIEF "
-                f"chars={len(current_record_brief)} "
-                f"preview={current_record_brief[:180]!r}",
-                flush=True,
-            )
+            pass
 
         # Añadir mensaje del usuario
         messages.append(HumanMessage(
@@ -4639,10 +4602,7 @@ class MachiningAgent:
         herramientas_usadas = []
         last_tool_result = None
         llm_for_request = request_llm_with_tools
-        print(
-            f"🧠 LLM provider={request_provider_config.provider} "
-            f"model={request_provider_config.model} agent={agent_resource_id or 'default'}"
-        )
+        pass
         if tool_allowlist is None:
             tool_allowlist = set(self.tools_map.names())
         if tool_allowlist is not None:
@@ -4684,14 +4644,10 @@ class MachiningAgent:
                     "Responde con este conocimiento. No busques de nuevo salvo que sea insuficiente."
                 )))
                 llm_for_request = request_llm
-                print(f"🧠 Reutilizando memoria web reciente; query={search_query[:80]!r}")
+                pass
             else:
                 try:
-                    print(
-                        "AGENT_TOOL_ATTEMPT tool=google_web_search "
-                        f"permissions={message_metadata.get('tool_permissions')!r}",
-                        flush=True,
-                    )
+                    pass
                     web_started_at = perf_counter()
                     prefetched_web_result = self.web.search(
                         search_query,
@@ -4700,11 +4656,7 @@ class MachiningAgent:
                         tool_permissions=message_metadata.get("tool_permissions")
                         if message_metadata else None,
                     )
-                    print(
-                        "AGENT_TOOL_STAGE tool=google_web_search "
-                        f"elapsed={perf_counter() - web_started_at:.3f}s",
-                        flush=True,
-                    )
+                    pass
                     if prefetched_web_result and not str(prefetched_web_result).startswith(
                         ("Error", "La búsqueda", "No se encontraron")
                     ):
@@ -4734,16 +4686,10 @@ class MachiningAgent:
                             and str(web_payload.get("source_type") or "").startswith("openai_")
                         ):
                             response_text = self._clean_web_answer(openai_answer)
-                            print(
-                                "✅ Respuesta externa entregada desde la síntesis de OpenAI",
-                                flush=True,
-                            )
+                            pass
                 except Exception as exc:
-                    print(
-                        f"AGENT_TOOL_ERROR tool=google_web_search type={type(exc).__name__} error={exc}",
-                        flush=True,
-                    )
-                    print(f"⚠️ Falló la búsqueda web previa: {exc}")
+                    pass
+                    pass
 
             if not last_tool_result:
                 response_text = self._unverified_concrete_answer(
@@ -4767,7 +4713,7 @@ class MachiningAgent:
                 grounded_answer, last_tool_result
             ):
                 response_text = json.dumps([grounded_answer], ensure_ascii=False)
-                print("✅ Respuesta externa concreta resuelta desde síntesis citada", flush=True)
+                pass
         
         dynamic_sql_attempts = 0
         successful_sql_query = False
@@ -4784,14 +4730,9 @@ class MachiningAgent:
                     for message in messages
                 )
                 marker = "🐢" if llm_elapsed >= settings.LLM_SLOW_CALL_SECONDS else "⏱️"
-                print(
-                    f"{marker} LLM call iteration={iteration + 1} "
-                    f"elapsed={llm_elapsed:.2f}s source_prompt_chars={prompt_chars} "
-                    f"messages={len(messages)}",
-                    flush=True,
-                )
+                pass
             except Exception as e:
-                print(f"❌ Error invocando LLM: {e}")
+                pass
                 if external_query_mode and last_tool_result:
                     response_text = self._web_results_without_llm(last_tool_result, user_text)
                     break
@@ -4887,7 +4828,7 @@ class MachiningAgent:
                                 "Responde indicando brevemente que no fue posible obtener datos fiables."
                             )
                     
-                    print(f"🔧 Ejecutando herramienta: {tool_name} con args: {tool_args}")
+                    pass
                     
                     # Herramienta de confirmación (Human-in-the-loop)
                     if tool_name == "confirm_large_operation":
@@ -4990,7 +4931,7 @@ class MachiningAgent:
                                 )))
                         except Exception as err:
                             error_msg = f"Error al ejecutar la herramienta {tool_name}: {str(err)}"
-                            print(f"❌ {error_msg}")
+                            pass
                             messages.append(
                                 ToolMessage(
                                     content=error_msg,
@@ -5012,22 +4953,9 @@ class MachiningAgent:
                 response_text = self._llm_response_text(response)
                 completion_metadata = getattr(response, "response_metadata", {}) or {}
                 finish = completion_metadata.get("finish_reason") or completion_metadata.get("done_reason")
-                print(
-                    "AGENT_MODEL_OUTPUT "
-                    f"route={message_metadata.get('orchestrator_route') or 'unknown'} "
-                    f"capability={message_metadata.get('model_capability') or 'unknown'} "
-                    f"provider={request_provider_config.provider} "
-                    f"model={request_provider_config.model} iteration={iteration + 1} "
-                    f"finish={finish or 'unknown'} chars={len(response_text or '')} "
-                    f"preview={str(response_text or '')[:240]!r}",
-                    flush=True,
-                )
+                pass
                 if response_suggestion_mode:
-                    print(
-                        f"SUGGESTION_COMPLETION request_id={message_metadata.get('chat_id')} "
-                        f"finish={finish} chars={len(response_text)}",
-                        flush=True,
-                    )
+                    pass
                     if finish in {"length", "max_tokens", "max_output_tokens"}:
                         # The suggestion service performs one bounded rewrite.
                         # Never persist or publish a partial answer as complete.
@@ -5053,7 +4981,7 @@ class MachiningAgent:
                     ])
                     continue
                 if not response_suggestion_mode and self._has_incomplete_response_markup(response_text):
-                    print("⚠️ Respuesta incompleta detectada; solicitando reescritura antes del envío")
+                    pass
                     messages.extend([
                         response,
                         HumanMessage(content=(
@@ -5073,7 +5001,7 @@ class MachiningAgent:
                         self._is_deflecting_concrete_answer(concrete_answer)
                         and not strict_current_question
                     ):
-                        print("⚠️ Resposta concreta evasiva; refazendo com a evidência recuperada")
+                        pass
                         retry_messages = list(messages)
                         retry_messages.append(SystemMessage(content=(
                             "La respuesta anterior desvió al usuario a otra fuente. Contesta ahora "
@@ -5095,12 +5023,7 @@ class MachiningAgent:
         
         # --- 8. MANEJO DE CASOS LÍMITE ---
         if not response_text or response_text.strip() == "":
-            print(
-                "AGENT_RESPONSE_FALLBACK stage=core reason=empty_response "
-                f"route={message_metadata.get('orchestrator_route') or 'unknown'} "
-                f"capability={message_metadata.get('model_capability') or 'unknown'}",
-                flush=True,
-            )
+            pass
             if last_tool_result:
                 response_text = self._synthesize_tool_response(messages, user_text, request_llm=request_llm) or (
                     "Obtuve datos técnicos, pero no pude convertirlos en una respuesta fiable. "
@@ -5110,11 +5033,7 @@ class MachiningAgent:
                 response_text = "Lo siento, no pude generar una respuesta. ¿Podrías reformular tu consulta?"
 
         if self._looks_like_raw_tool_response(response_text):
-            print(
-                "AGENT_MODEL_OUTPUT_REJECTED reason=raw_tool_response "
-                f"preview={str(response_text)[:240]!r}",
-                flush=True,
-            )
+            pass
             synthesized = self._synthesize_tool_response(
                 messages, user_text, request_llm=request_llm
             )
@@ -5122,11 +5041,7 @@ class MachiningAgent:
                 response_text = synthesized
             else:
                 message_metadata["response_repair_required"] = "raw_tool_response"
-                print(
-                    "AGENT_RESPONSE_FALLBACK stage=core reason=raw_tool_response "
-                    f"preview={str(response_text)[:240]!r}",
-                    flush=True,
-                )
+                pass
                 response_text = (
                     "No pude presentar de forma segura los datos obtenidos. "
                     "Inténtalo nuevamente en unos instantes."
@@ -5154,7 +5069,7 @@ class MachiningAgent:
             and not code_reference_mode
             and self._is_deflecting_concrete_answer(response_text)
         ):
-            print("⚠️ Respuesta contradice conocimiento privado; regenerando")
+            pass
             repair_messages = list(messages)
             repair_messages.append(SystemMessage(content=(
                 "La respuesta anterior afirmó que faltaba información, pero existe evidencia "
@@ -5206,10 +5121,7 @@ class MachiningAgent:
         if iteration >= self.max_iterations:
             # Es un limite tecnico interno, no un problema de formulacion del usuario.
             # No se lo atribuimos al usuario ni contaminamos una respuesta util obtenida por tool.
-            print(
-                f"⚠️ Limite interno de {self.max_iterations} iteraciones alcanzado "
-                f"(session_id={session_id}, tools={herramientas_usadas})"
-            )
+            pass
 
         # Aplicar la misma política de presentación tanto a la búsqueda solicitada
         # por el modelo como al respaldo web automático.
@@ -5231,10 +5143,10 @@ class MachiningAgent:
                 if grounded_answer and self._numeric_claims_supported(
                     grounded_answer, last_tool_result
                 ):
-                    print("✅ Respuesta web sustituida por síntesis citada del proveedor")
+                    pass
                     response_text = grounded_answer
                 else:
-                    print("⚠️ Respuesta web rechazada: evidencia insuficiente o cifras sin respaldo")
+                    pass
                     response_text = self._unverified_concrete_answer(
                         str(message_metadata.get("response_language") or "es")
                     )
@@ -5252,7 +5164,7 @@ class MachiningAgent:
         # Última barrera semántica: un modelo pequeño no puede publicar SQL no
         # solicitado ni continuar respondiendo el tema de un turno anterior.
         if self._response_drifted_from_query(user_text, response_text):
-            print("⚠️ Respuesta descartada por cambio de tema; regenerando sin historial ni RAG")
+            pass
             retry_messages = [
                 SystemMessage(content=(
                     "Responde únicamente a la pregunta actual, en el idioma del usuario. "
@@ -5292,7 +5204,7 @@ class MachiningAgent:
                 history.add_user_message(user_text)
                 history.add_ai_message(response_text)
             except Exception as e:
-                print(f"⚠️ Error guardando en Redis: {e}")
+                pass
 
         # --- 10. REGISTRAR PARA APRENDIZAJE ---
         # Los FrameworkMessage ya se capturan antes de la autorrespuesta. Evita
@@ -5308,7 +5220,7 @@ class MachiningAgent:
                     session_id=session_id,
                 )
             except Exception as e:
-                print(f"⚠️ Error registrando interacción: {e}")
+                pass
 
             try:
                 reaction = self.sistema_aprendizaje.analyze_reaction_patterns(
@@ -5329,7 +5241,7 @@ class MachiningAgent:
                         implicit=True,
                     )
             except Exception as e:
-                print(f"⚠️ Error registrando feedback implícito: {e}")
+                pass
 
         return response_text
 
@@ -5342,7 +5254,7 @@ class MachiningAgent:
         Maneja saludos respetuosos usando únicamente el FullName del recurso.
         """
 
-        print(f"👋 Procesando saludo para user_id={user_id}")
+        pass
         full_name = ""
         if self._is_valid_guid(user_id):
             try:
@@ -5350,7 +5262,7 @@ class MachiningAgent:
                 if contexto_obj and contexto_obj.usuario:
                     full_name = str(contexto_obj.usuario.nombre or "").strip()
             except Exception as exc:
-                print(f"⚠️ No se pudo resolver FullName para el saludo: {exc}")
+                pass
 
         # FullName personaliza el trato, pero nunca se incluyen el alias del
         # recurso, perfil, rol, permisos ni membresías de canales.
@@ -5376,7 +5288,7 @@ class MachiningAgent:
     def clear_user_cache(self):
         """Limpia la caché de contextos de usuario."""
         self.user_context_cache = {}
-        print("🧹 Caché de usuarios limpiada")
+        pass
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """Obtiene estadísticas de la caché."""
@@ -5402,7 +5314,7 @@ def create_agent() -> MachiningAgent:
 
 if __name__ == "__main__":
     # Prueba básica del agente
-    print("🧪 Probando agente...")
+    pass
     
     agent = MachiningAgent()
     
@@ -5413,9 +5325,9 @@ if __name__ == "__main__":
         user_id="USR001"
     )
     
-    print("\n" + "="*60)
-    print("RESPUESTA DE PRUEBA:")
-    print("="*60)
-    print(test_response)
-    print("="*60)
-    print(f"\n📊 Estadísticas de caché: {agent.get_cache_stats()}")
+    pass
+    pass
+    pass
+    pass
+    pass
+    pass

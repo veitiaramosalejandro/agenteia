@@ -21,7 +21,6 @@ from app.interactive_priority import (
 from app.api.controllers.agent_prompts import router as agent_prompts_router
 from app.api.controllers.ingestion import router as ingestion_router
 from app.api.controllers.automation import router as automation_router
-from app.api.controllers.observability import router as observability_router
 from app.api.controllers.governance import router as governance_router
 from app.api.controllers.synchronization import router as synchronization_router
 from app.api.controllers.llm_configuration import router as llm_configuration_router
@@ -121,14 +120,6 @@ OPENAPI_TAGS = [
         "name": "Audio, History and Context",
         "description": "Generated audio, conversation history, and user context.",
     },
-    {
-        "name": "Observability",
-        "description": "Health, metrics, recent messages, and internal diagnostics.",
-    },
-    {
-        "name": "Connectivity",
-        "description": "Connectivity checks for configured external services.",
-    },
 ]
 
 
@@ -209,7 +200,7 @@ async def protect_control_center(request: Request, call_next):
                 status_code=response.status_code,
             )
         except Exception as exc:
-            print(f"CONTROL_CENTER_AUDIT_FAILED type={type(exc).__name__}", flush=True)
+            pass
     return response
 
 
@@ -228,14 +219,7 @@ async def log_request_origin_ip(request: Request, call_next):
         return response
     finally:
         elapsed_ms = (perf_counter() - started_at) * 1000
-        print(
-            "🌐 API_REQUEST "
-            f"ip={direct_ip} forwarded_ip={forwarded_ip} "
-            f"solidset_instance_header={instance_header} "
-            f"method={request.method} endpoint={request.url.path} "
-            f"status={status_code} duration_ms={elapsed_ms:.1f}",
-            flush=True,
-        )
+        pass
 
 
 @app.middleware("http")
@@ -258,7 +242,6 @@ app.state.agent = agent
 app.include_router(agent_prompts_router)
 app.include_router(ingestion_router)
 app.include_router(automation_router)
-app.include_router(observability_router)
 app.include_router(governance_router)
 app.include_router(synchronization_router)
 app.include_router(llm_configuration_router)
@@ -277,7 +260,6 @@ app.include_router(agent_management.router)
 app.include_router(solidset_instances_router)
 dialogue_runtime.configure(app)
 conversation.configure(app, orchestrator)
-diagnostics.configure(app, agent, notification_listener)
 notifications.configure(notification_listener)
 suggestions_controller.configure(suggestion_queue)
 configure_openapi(app, OPENAPI_TAGS)
@@ -310,7 +292,7 @@ def _ingestar_instancias_solidset_activas_background() -> dict[str, Any]:
     for instance in eligible:
         background_checkpoint()
         instance_code = str(instance.get("Code") or instance.get("ID") or "unknown")
-        print(f"🔄 Iniciando aprendizagem BD instance={instance_code}")
+        pass
         try:
             with solidset_sql_instance_context(instance):
                 results[instance_code] = ingestar_sistema_completo(
@@ -320,7 +302,7 @@ def _ingestar_instancias_solidset_activas_background() -> dict[str, Any]:
             raise
         except Exception as exc:
             errors[instance_code] = str(exc)
-            print(f"⚠️ Aprendizagem BD falhou instance={instance_code}: {exc}")
+            pass
 
     if not results:
         failed_codes = ", ".join(sorted(errors)) or "unknown"
@@ -337,10 +319,10 @@ def _ingestar_instancias_solidset_activas_background() -> dict[str, Any]:
 async def _ciclo_aprendizaje_bd() -> None:
     """Optional serialized background work, isolated from the chat thread pool."""
     if settings.DB_STUDY_INTERVAL_SECONDS <= 0:
-        print("ℹ️ Ciclo de aprendizaje BD desactivado (DB_STUDY_INTERVAL_SECONDS=0)", flush=True)
+        pass
         return
     intervalo = max(60, settings.DB_STUDY_INTERVAL_SECONDS)
-    print(f"🔄 Ciclo de aprendizaje BD activo cada {intervalo} segundos")
+    pass
     consecutive_failures = 0
 
     # Evita una ingesta inmediata al reiniciar: espera el primer ciclo programado.
@@ -378,17 +360,17 @@ async def _ciclo_aprendizaje_bd() -> None:
                 app.state.last_db_study_result = resultado
                 app.state.last_db_study_error = None
                 consecutive_failures = 0
-                print(f"✅ Aprendizaje BD completado: {resultado}")
+                pass
             except IngestionBusy:
-                print("⏸️ DB_STUDY omitido: otra ingesta mantiene el mutex", flush=True)
+                pass
             except asyncio.TimeoutError:
                 app.state.last_db_study_error = f"Ingesta cancelada al superar {settings.DB_STUDY_MAX_RUN_SECONDS}s"
-                print(f"⚠️ {app.state.last_db_study_error}")
+                pass
             except Exception as exc:
                 app.state.last_db_study_error = str(exc)
                 consecutive_failures += 1
                 wait_seconds = intervalo * min(2 ** min(consecutive_failures, 4), 16)
-                print(f"⚠️ Error en aprendizaje BD: {exc}; reintento en {wait_seconds}s")
+                pass
             finally:
                 stop.set()
             await asyncio.sleep(wait_seconds)
@@ -400,19 +382,15 @@ async def _ciclo_notificaciones_api() -> None:
     """Escucha en segundo plano la API de notificaciones para enriquecer contexto."""
     intervalo = max(10, settings.NOTIF_API_POLL_SECONDS)
     if not notification_listener.is_enabled():
-        print(
-            "ℹ️ Listener de notificaciones deshabilitado (define NOTIF_API_BASE_URL para activarlo)."
-        )
+        pass
         return
 
     initial_delay = max(0, settings.NOTIF_API_START_DELAY_SECONDS)
     if initial_delay > 0:
-        print(
-            f"⏳ Listener Notification API iniciará en {initial_delay}s para priorizar arranque de diálogo"
-        )
+        pass
         await asyncio.sleep(initial_delay)
 
-    print(f"🔔 Listener Notification API activo cada {intervalo} segundos")
+    pass
 
     while True:
         try:
@@ -447,13 +425,10 @@ async def _ciclo_notificaciones_api() -> None:
             skipped = resultado.get("skipped", 0)
             errors = resultado.get("errors", 0)
             if learned or errors or auto_reply_sent:
-                print(
-                    f"🔔 Notification API sync -> learned={learned}, "
-                    f"skipped={skipped}, errors={errors}, auto_replies={auto_reply_sent}"
-                )
+                pass
         except Exception as exc:
             app.state.last_notification_error = str(exc)
-            print(f"⚠️ Error en listener de notificaciones: {exc}")
+            pass
 
         await asyncio.sleep(intervalo)
 
@@ -466,7 +441,7 @@ async def startup_db_learning() -> None:
         await asyncio.wait_for(asyncio.to_thread(require_redis), timeout=4)
     except (asyncio.TimeoutError, RuntimeError):
         raise RuntimeError("Arranque abortado: Redis no responde dentro de 4 segundos.") from None
-    print(f"AGENT_STARTUP_STAGE stage=redis elapsed={perf_counter() - startup_started:.3f}s", flush=True)
+    pass
     if getattr(app.state, "db_study_task", None) is None:
         schema_started = perf_counter()
         max_schema_attempts = 10
@@ -481,26 +456,23 @@ async def startup_db_learning() -> None:
                 await asyncio.to_thread(ensure_historical_schema)
                 quarantined = await asyncio.to_thread(quarantine_legacy_generated_knowledge)
                 if quarantined:
-                    print(
-                        "🧹 Conocimiento legado generado por IA puesto en cuarentena "
-                        f"rows={quarantined}"
-                    )
+                    pass
                 break
             except Exception as exc:
                 if schema_attempt < max_schema_attempts - 1:
-                    print(f"⏳ Esperando inicio de PostgreSQL (intento {schema_attempt + 1}/{max_schema_attempts}): {exc}")
+                    pass
                     await asyncio.sleep(2.0)
                 else:
-                    print(f"⚠️ No se pudo asegurar SysLLMProviderConfiguration: {exc}")
-        print(f"AGENT_STARTUP_STAGE stage=schema elapsed={perf_counter() - schema_started:.3f}s", flush=True)
+                    pass
+        pass
         connectivity_started = perf_counter()
         app.state.startup_connectivity = await asyncio.to_thread(_run_startup_connectivity_checks)
-        print(f"AGENT_STARTUP_STAGE stage=connectivity elapsed={perf_counter() - connectivity_started:.3f}s", flush=True)
+        pass
         _log_startup_connectivity(app.state.startup_connectivity)
         if app.state.startup_connectivity.get("all_ok"):
-            print("✅ Comprobador de conectividad inicial: OK")
+            pass
         else:
-            print("⚠️ Comprobador de conectividad inicial: hay servicios no alcanzables")
+            pass
         app.state.last_db_study_at = None
         app.state.last_db_study_result = None
         app.state.last_db_study_error = None
@@ -524,22 +496,20 @@ async def startup_db_learning() -> None:
                     "logged_in": False,
                     "error": str(exc),
                 }
-                print(f"⚠️ Warmup SOLIDSET listener falló: {exc}")
-            print(f"AGENT_STARTUP_STAGE stage=notification_warmup elapsed={perf_counter() - warmup_started:.3f}s", flush=True)
+                pass
+            pass
         app.state.db_study_task = None
         if settings.DB_STUDY_INTERVAL_SECONDS > 0:
             app.state.db_study_task = asyncio.create_task(_ciclo_aprendizaje_bd())
         else:
-            print("ℹ️ Ciclo de aprendizaje BD desactivado (DB_STUDY_INTERVAL_SECONDS=0)", flush=True)
+            pass
         if settings.NOTIF_API_BACKGROUND_ENABLED:
             app.state.notification_task = asyncio.create_task(
                 _ciclo_notificaciones_api()
             )
         else:
-            print(
-                "ℹ️ Listener Notification API en background desactivado por rendimiento (NOTIF_API_BACKGROUND_ENABLED=false)"
-            )
-        print(f"AGENT_STARTUP_TOTAL elapsed={perf_counter() - startup_started:.3f}s", flush=True)
+            pass
+        pass
 
 
 @app.on_event("shutdown")
@@ -588,7 +558,7 @@ async def shutdown_db_learning() -> None:
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Maneja errores de validación de peticiones."""
-    print("❌ Error de validación en la petición recibida:", exc.errors())
+    pass
     translated_errors = []
     validation_messages = {
         "missing": "Campo obrigatório.",
@@ -625,4 +595,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+    uvicorn.run(
+        "main:app", host="0.0.0.0", port=8000, reload=True,
+        access_log=False, log_level="critical",
+    )

@@ -36,7 +36,7 @@ def ingest_sql_knowledge():
         total_points = 0
         
         # 1. INGESTAR CLIENTES / CUENTAS
-        print("📊 Ingestando clientes...")
+        pass
         cursor.execute("""
             SELECT TOP 100 
                 IDAccount, Name, City, Country, 
@@ -73,10 +73,10 @@ def ingest_sql_knowledge():
             client.upsert(collection_name=settings.VECTOR_COLLECTION_NAME, points=[point])
             total_points += 1
         
-        print(f"  ✅ {total_points} clientes indexados")
+        pass
         
         # 2. INGESTAR MÁQUINAS / ACTIVOS
-        print("🔧 Ingestando máquinas...")
+        pass
         cursor.execute("""
             SELECT TOP 100 
                 IDAsset, Name, Model, SerialNumber,
@@ -114,10 +114,10 @@ def ingest_sql_knowledge():
             client.upsert(collection_name=settings.VECTOR_COLLECTION_NAME, points=[point])
             machine_count += 1
         
-        print(f"  ✅ {machine_count} máquinas indexadas")
+        pass
         
         conn.close()
-        print(f"\n✅ Total indexado: {total_points + machine_count} entidades")
+        pass
         
     except Exception as e:
-        print(f"❌ Error ingiriendo datos SQL: {e}")
+        pass

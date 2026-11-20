@@ -70,4 +70,4 @@ for line in lines:
             flush()
 flush()
 open(TARGET, "w", encoding="utf-8", newline="").write("".join(out))
-print(TARGET)
+pass

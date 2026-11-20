@@ -14,14 +14,11 @@ async def run_worker() -> None:
     try:
         recovered = await asyncio.to_thread(queue.recover_processing)
         if recovered:
-            print(f"♻️ Recuperadas {recovered} entregas SolidSET interrumpidas", flush=True)
+            pass
     except redis.RedisError as exc:
-        print(f"⚠️ No se pudo recuperar la cola SolidSET: {exc}", flush=True)
+        pass
 
-    print(
-        f"📮 Worker de reintentos SolidSET activo interval={settings.SOLIDSET_RETRY_INTERVAL_SECONDS}s",
-        flush=True,
-    )
+    pass
     while True:
         try:
             items = await asyncio.to_thread(queue.claim_due)
@@ -31,25 +28,19 @@ async def run_worker() -> None:
                 result = str(await asyncio.to_thread(solidset_send_chat_message.invoke, arguments))
                 if result.startswith("✅"):
                     await asyncio.to_thread(queue.acknowledge, str(item["id"]))
-                    print(f"✅ Entrega SolidSET recuperada id={item['id']}", flush=True)
+                    pass
                 elif result.startswith("Error de conexión enviando"):
                     await asyncio.to_thread(queue.retry, item, result)
-                    print(
-                        f"⚠️ Entrega SolidSET seguirá pendiente id={item['id']} "
-                        f"attempt={int(item.get('attempts') or 0) + 1}", flush=True,
-                    )
+                    pass
                 else:
                     # Un rechazo HTTP/funcional no mejora reintentándolo y
                     # podría repetir indefinidamente una acción inválida.
                     await asyncio.to_thread(queue.acknowledge, str(item["id"]))
-                    print(
-                        f"❌ Entrega SolidSET descartada por error no transitorio "
-                        f"id={item['id']} detail={result[:300]}", flush=True,
-                    )
+                    pass
         except redis.RedisError as exc:
-            print(f"⚠️ Cola de reintentos SolidSET no disponible: {exc}", flush=True)
+            pass
         except Exception as exc:
-            print(f"⚠️ Error procesando cola SolidSET: {exc}", flush=True)
+            pass
         await asyncio.sleep(settings.SOLIDSET_RETRY_INTERVAL_SECONDS)
 
 

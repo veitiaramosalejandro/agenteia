@@ -28,11 +28,7 @@ def _reject_redirect(response: httpx.Response, operation: str) -> None:
     raw_location = str(response.headers.get("location") or "")
     parsed = urlsplit(raw_location)
     safe_location = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
-    print(
-        f"SOLIDSET_DATA_API_REDIRECT operation={operation} "
-        f"status={response.status_code} destination={safe_location or 'unknown'}",
-        flush=True,
-    )
+    pass
     raise SolidSETDataAPIError(
         "A SolidSET Data API devolveu uma redireção inesperada. "
         "Verifique a URL e a autenticação não interativa do gateway."
@@ -116,11 +112,7 @@ class DataAPICursor:
                 last_transport_error = None
             except httpx.HTTPError as exc:
                 last_transport_error = exc
-                print(
-                    f"SOLIDSET_QUERY_REQUEST_FAILED attempt={attempt} "
-                    f"type={type(exc).__name__} destination={self.connection.base_origin}",
-                    flush=True,
-                )
+                pass
                 if attempt < 3:
                     time_module.sleep(0.5 * attempt)
                     continue
@@ -128,11 +120,7 @@ class DataAPICursor:
                     "SolidSET Data API indisponível ao executar a consulta."
                 ) from exc
             if response.status_code in {408, 429, 502, 503, 504} and attempt < 3:
-                print(
-                    f"SOLIDSET_QUERY_RETRY attempt={attempt} status={response.status_code} "
-                    f"destination={self.connection.base_origin}",
-                    flush=True,
-                )
+                pass
                 time_module.sleep(0.5 * attempt)
                 continue
             break
@@ -321,12 +309,7 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                     last_transport_error = None
                 except httpx.HTTPError as exc:
                     last_transport_error = exc
-                    print(
-                        f"SOLIDSET_DATASET_REQUEST_FAILED dataset={dataset} "
-                        f"offset={offset} limit={page_size} attempt={attempt} "
-                        f"type={type(exc).__name__} destination={connection.base_origin}",
-                        flush=True,
-                    )
+                    pass
                     if attempt < 3:
                         time_module.sleep(0.5 * attempt)
                         continue
@@ -334,11 +317,7 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                         f"SolidSET Data API indisponível ao ler {dataset}."
                     ) from exc
                 if response.status_code in {408, 429, 502, 503, 504} and attempt < 3:
-                    print(
-                        f"SOLIDSET_DATASET_RETRY dataset={dataset} offset={offset} "
-                        f"limit={page_size} attempt={attempt} status={response.status_code}",
-                        flush=True,
-                    )
+                    pass
                     time_module.sleep(0.5 * attempt)
                     continue
                 break
@@ -355,11 +334,7 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                 if missing_dataset:
                     return _read_legacy_agent_scopes(connection)
             if response.status_code >= 400:
-                print(
-                    f"SOLIDSET_DATASET_HTTP_ERROR dataset={dataset} offset={offset} "
-                    f"limit={page_size} status={response.status_code}",
-                    flush=True,
-                )
+                pass
                 raise SolidSETDataAPIError(
                     f"Falha ao obter dataset {dataset} (HTTP {response.status_code})."
                 )
@@ -367,12 +342,7 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
                 payload = response.json()
             except (ValueError, TypeError) as exc:
                 content_type = str(response.headers.get("content-type") or "unknown")[:120]
-                print(
-                    f"SOLIDSET_DATASET_INVALID_RESPONSE dataset={dataset} "
-                    f"status={response.status_code} content_type={content_type} "
-                    f"body_bytes={len(response.content)}",
-                    flush=True,
-                )
+                pass
                 raise SolidSETDataAPIError(
                     f"Resposta inválida da SolidSET Data API para o dataset {dataset}."
                 ) from exc
@@ -396,11 +366,7 @@ def read_dataset(configuration: dict[str, Any], dataset: str) -> list[dict[str, 
             rows.extend(page)
             pages += 1
             if not has_more:
-                print(
-                    f"SOLIDSET_DATASET_READ dataset={dataset} rows={len(rows)} "
-                    f"pages={pages} page_size={page_size}",
-                    flush=True,
-                )
+                pass
                 return rows
             next_offset = payload.get("nextOffset")
             next_cursor = payload.get("nextCursor")

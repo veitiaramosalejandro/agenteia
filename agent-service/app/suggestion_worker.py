@@ -31,26 +31,24 @@ async def _renew_delivery(
         await asyncio.sleep(interval)
         try:
             if not await asyncio.to_thread(queue.renew, message_id, consumer):
-                print("SUGGESTION_LEASE_LOST", flush=True)
+                pass
                 return
             if not await asyncio.to_thread(queue.renew_request, request_id, request_lock):
-                print(f"SUGGESTION_REQUEST_LOCK_LOST request_id={request_id}", flush=True)
+                pass
                 return
         except redis.RedisError:
-            print("SUGGESTION_LEASE_RENEW_FAILED", flush=True)
+            pass
 
 
 async def run_worker() -> None:
     queue = SuggestionQueue()
     consumer = os.getenv("SUGGESTION_CONSUMER_NAME") or queue.default_consumer_name()
-    print(f"🛠️ Suggestion worker activo consumer={consumer}", flush=True)
+    pass
     while True:
         try:
             messages = await asyncio.to_thread(queue.read, consumer)
         except redis.RedisError as exc:
-            print(
-                f"⚠️ Redis de sugerencias temporalmente no disponible: {exc}", flush=True
-            )
+            pass
             await asyncio.sleep(2)
             queue = SuggestionQueue()
             continue
@@ -61,10 +59,7 @@ async def run_worker() -> None:
             instance: dict = {}
             request_lock = await asyncio.to_thread(queue.acquire_request, request_id)
             if request_lock is None:
-                print(
-                    f"SUGGESTION_DUPLICATE_SKIPPED request_id={request_id} message_id={message_id}",
-                    flush=True,
-                )
+                pass
                 await asyncio.to_thread(queue.acknowledge, message_id)
                 continue
             heartbeat = asyncio.create_task(
@@ -85,12 +80,7 @@ async def run_worker() -> None:
             except (HTTPException, Exception) as exc:
                 detail = getattr(exc, "detail", None) or str(exc)
                 terminal_output_error = isinstance(exc, HTTPException) and exc.status_code in {400, 404, 422, 502}
-                print(
-                    f"SUGGESTION_WORKER_ERROR request_id={request_id} attempt={attempt} "
-                    f"type={type(exc).__name__} retryable={not terminal_output_error} "
-                    f"status={getattr(exc, 'status_code', '-')} detail={detail[:500]!r}",
-                    flush=True,
-                )
+                pass
                 if not terminal_output_error and attempt < settings.SUGGESTION_MAX_RETRIES:
                     _prepare_response_retry(
                         request_id, f"Reintento {attempt + 1}: {detail}"

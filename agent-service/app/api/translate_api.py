@@ -58,11 +58,7 @@ def translate_response(text: str, *, target_language: str,
             )
             if fallback_text and content_preserved and numbers_preserved and language_preserved:
                 return fallback_text
-            print(
-                "⚠️ Local translation fallback rejected: "
-                f"content={content_preserved} numbers={numbers_preserved} "
-                f"language={language_preserved}"
-            )
+            pass
         except Exception as exc:
-            print(f"⚠️ Local translation fallback failed: {exc}")
+            pass
     return candidate or original

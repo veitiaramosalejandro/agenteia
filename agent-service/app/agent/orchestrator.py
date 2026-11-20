@@ -193,10 +193,7 @@ class SolidSETOrchestrator:
 
         metadata["model_capability"] = capability
         metadata["orchestrator_route"] = route
-        print(
-            f"🧭 LangGraph route={route} capability={capability} "
-            f"session={state.get('session_id', '')}"
-        )
+        pass
         return {
             "route": route,
             "message_metadata": metadata,
@@ -221,7 +218,7 @@ class SolidSETOrchestrator:
         # generador general, evita que una ruta de contexto interno sustituya
         # la investigación pública.
         try:
-            print("AGENT_TOOL_ATTEMPT tool=google_web_search source=orchestrator", flush=True)
+            pass
             result = self.agent.web.search(
                 state.get("user_text", ""),
                 agent_resource_id=state.get("message_metadata", {}).get("agent_resource_id"),
@@ -229,14 +226,10 @@ class SolidSETOrchestrator:
                 tool_permissions=permissions,
             )
             metadata["external_web_prefetched_result"] = result
-            print(
-                "AGENT_TOOL_STAGE tool=google_web_search source=orchestrator "
-                f"result_type={type(result).__name__} result_chars={len(str(result or ''))}",
-                flush=True,
-            )
+            pass
         except Exception as exc:
             metadata["external_web_prefetch_error"] = type(exc).__name__
-            print(f"AGENT_TOOL_ERROR tool=google_web_search error={exc}", flush=True)
+            pass
         response = self.agent.analyze_event_with_dialogue(
             session_id=state.get("session_id", ""),
             user_text=state.get("user_text", ""),
@@ -341,14 +334,7 @@ class SolidSETOrchestrator:
     def _validate(self, state: AgentGraphState) -> AgentGraphState:
         response = str(state.get("response") or "").strip()
         metadata = state.get("message_metadata") or {}
-        print(
-            "AGENT_ORCHESTRATOR_VALIDATE "
-            f"route={state.get('route') or 'unknown'} "
-            f"capability={metadata.get('model_capability') or 'unknown'} "
-            f"repair={bool(metadata.get('response_repair_mode'))} "
-            f"chars={len(response)} preview={response[:240]!r}",
-            flush=True,
-        )
+        pass
         if not response:
             if metadata.get("response_suggestion_mode"):
                 # The suggestion service owns its bounded repair pass. Preserve
@@ -356,24 +342,13 @@ class SolidSETOrchestrator:
                 # transport fallback is never accepted as the user's draft.
                 started_at = state.get("started_at") or perf_counter()
                 elapsed = perf_counter() - started_at
-                print(
-                    f"SUGGESTION_REPAIR_REQUIRED request_id={metadata.get('chat_id')} "
-                    f"elapsed={elapsed:.2f}s",
-                    flush=True,
-                )
+                pass
                 return {"response": "", "elapsed_seconds": elapsed}
             response = "No pude generar una respuesta en este momento. Inténtalo nuevamente."
-            print(
-                "AGENT_RESPONSE_FALLBACK stage=orchestrator reason=empty_response",
-                flush=True,
-            )
+            pass
         elif self.agent._looks_like_raw_tool_response(response):
             metadata["response_repair_required"] = "raw_tool_response"
-            print(
-                "AGENT_RESPONSE_VALIDATION_REJECTED reason=raw_tool_response "
-                f"preview={response[:160]!r}",
-                flush=True,
-            )
+            pass
             response = (
                 "No pude presentar de forma segura los datos obtenidos. "
                 "Inténtalo nuevamente en unos instantes."
@@ -389,7 +364,7 @@ class SolidSETOrchestrator:
         )
         started_at = state.get("started_at") or perf_counter()
         elapsed = perf_counter() - started_at
-        print(f"✅ LangGraph completed route={state.get('route')} elapsed={elapsed:.2f}s")
+        pass
         return {"response": response, "elapsed_seconds": elapsed}
 
     @staticmethod
@@ -458,7 +433,7 @@ class SolidSETOrchestrator:
                 fallback_llm=selected_llm,
             )
         except Exception as exc:
-            print(f"⚠️ LangGraph language normalization failed: {exc}")
+            pass
             return response
 
     def invoke(
@@ -496,11 +471,7 @@ class SolidSETOrchestrator:
                         behavior.get("default_language") or ""
                     ).strip()
             except Exception as exc:
-                print(
-                    "⚠️ No se pudo resolver el idioma publicado del agente: "
-                    f"{type(exc).__name__}",
-                    flush=True,
-                )
+                pass
         decision = self.agent.language_resolver.resolve(
             user_text,
             session_id=session_id,
@@ -516,11 +487,7 @@ class SolidSETOrchestrator:
             "language_confidence": decision.confidence,
             "language_source": decision.source,
         })
-        print(
-            "🌐 Idioma resuelto "
-            f"language={decision.language} confidence={decision.confidence:.3f} "
-            f"source={decision.source} session={session_id}"
-        )
+        pass
         result = self.graph.invoke({
             "session_id": session_id,
             "user_text": user_text,
@@ -547,5 +514,5 @@ class SolidSETOrchestrator:
                 )
         except Exception as exc:
             # La identidad enriquece el diálogo, pero nunca debe impedir responder.
-            print(f"⚠️ No se pudo actualizar la memoria de identidad: {exc}")
+            pass
         return response

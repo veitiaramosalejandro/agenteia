@@ -37,7 +37,7 @@ class DatabaseIngestor:
         try:
             ensure_vector_collection(self.qdrant, self.collection, self.embeddings)
         except Exception as e:
-            print(f"⚠️ Error verificando colección: {e}")
+            pass
     
     def _create_point(self, text: str, metadata: Dict[str, Any]) -> Optional[PointStruct]:
         """Crea un punto para Qdrant a partir de texto y metadatos."""
@@ -62,7 +62,7 @@ class DatabaseIngestor:
                 payload=payload
             )
         except Exception as e:
-            print(f"   ⚠️ Error creando punto: {e}")
+            pass
             return None
 
     def _embed_and_create_points(self, texts: List[str], metadatas: List[Dict[str, Any]]) -> List[PointStruct]:
@@ -97,7 +97,7 @@ class DatabaseIngestor:
                     payload=payload
                 ))
         except Exception as e:
-            print(f"   ⚠️ Error creating points in batch: {e}")
+            pass
 
         return points
 
@@ -233,11 +233,8 @@ class DatabaseIngestor:
         Ingiere metadata + filas de todas las tablas de SQL Server.
         """
         try:
-            print("\n🗃️ Ingestando TODAS las tablas de SQL Server...")
-            print(
-                f"   📌 DB={settings.SQL_SERVER_DB} schema={schema_name or '*'} "
-                f"rows_per_table={'all' if rows_per_table <= 0 else rows_per_table} max_tables={max_tables or 'all'}"
-            )
+            pass
+            pass
             conn = self._sql_server_connection()
             cursor = conn.cursor(as_dict=True)
 
@@ -253,7 +250,7 @@ class DatabaseIngestor:
 
             if not table_specs:
                 conn.close()
-                print("   ⚠️ No se encontraron tablas para ingestar")
+                pass
                 return {
                     "tables": 0,
                     "schema_points": 0,
@@ -262,7 +259,7 @@ class DatabaseIngestor:
                     "tables_with_error": [],
                 }
 
-            print(f"   📋 Tablas a procesar: {len(table_specs)}")
+            pass
 
             schema_points = 0
             row_points = 0
@@ -273,7 +270,7 @@ class DatabaseIngestor:
                 tbl_schema = spec["schema"]
                 tbl_name = spec["table"]
                 fqn_text = f"{tbl_schema}.{tbl_name}"
-                print(f"\n   [{idx}/{len(table_specs)}] Tabla: {fqn_text}")
+                pass
 
                 try:
                     columns = self._get_table_columns(cursor, schema_name=tbl_schema, table_name=tbl_name)
@@ -301,7 +298,7 @@ class DatabaseIngestor:
                     rows = cursor.fetchall() or []
 
                     if not rows:
-                        print("      ℹ️ Tabla sin filas (o sin resultados en TOP)")
+                        pass
                         continue
 
                     texts_batch: List[str] = []
@@ -343,11 +340,11 @@ class DatabaseIngestor:
                             table_indexed += inserted
                             row_points += inserted
 
-                    print(f"      ✅ Filas indexadas: {table_indexed}")
+                    pass
                 except Exception as table_exc:
                     errors += 1
                     table_errors.append(fqn_text)
-                    print(f"      ❌ Error en {fqn_text}: {table_exc}")
+                    pass
 
             conn.close()
 
@@ -359,15 +356,15 @@ class DatabaseIngestor:
                 "errors": errors,
                 "tables_with_error": table_errors,
             }
-            print("\n✅ Ingesta SQL completa terminada")
-            print(f"   - Tablas procesadas: {summary['tables']}")
-            print(f"   - Puntos de schema: {summary['schema_points']}")
-            print(f"   - Puntos de filas: {summary['row_points']}")
-            print(f"   - Total indexado: {summary['points_indexed_total']}")
-            print(f"   - Errores de tabla: {summary['errors']}")
+            pass
+            pass
+            pass
+            pass
+            pass
+            pass
             return summary
         except ImportError:
-            print("   ❌ pymssql no está instalado. Instala: pip install pymssql")
+            pass
             return {
                 "tables": 0,
                 "schema_points": 0,
@@ -377,7 +374,7 @@ class DatabaseIngestor:
                 "tables_with_error": ["import_pymssql"],
             }
         except Exception as exc:
-            print(f"   ❌ Error general en ingesta SQL total: {exc}")
+            pass
             return {
                 "tables": 0,
                 "schema_points": 0,
@@ -397,10 +394,10 @@ class DatabaseIngestor:
                 collection_name=self.collection,
                 points=points
             )
-            print(f"   ✅ Indexados {len(points)} registros desde {source}")
+            pass
             return len(points)
         except Exception as e:
-            print(f"   ❌ Error insertando: {e}")
+            pass
             return 0
     
     # ============================================================
@@ -413,7 +410,7 @@ class DatabaseIngestor:
         Tabla: dbo.Account
         """
         try:
-            print("\n📊 Ingestando clientes desde SQL Server...")
+            pass
             from app.connectors.solidset_sql import open_current_connection
             conn = open_current_connection(as_dict=True)
             cursor = conn.cursor(as_dict=True)
@@ -441,10 +438,10 @@ class DatabaseIngestor:
             conn.close()
             
             if not rows:
-                print("   ⚠️ No se encontraron registros")
+                pass
                 return 0
             
-            print(f"   📋 Encontrados {len(rows)} registros")
+            pass
             
             points = []
             for row in rows:
@@ -479,7 +476,7 @@ class DatabaseIngestor:
             return self._ingest_points(points, "SQL Server Accounts")
             
         except Exception as e:
-            print(f"   ❌ Error ingiriendo desde SQL Server: {e}")
+            pass
             return 0
     
     def ingest_sql_server_assets(self, limit: int = 100) -> int:
@@ -488,7 +485,7 @@ class DatabaseIngestor:
         Tabla: dbo.Asset
         """
         try:
-            print("\n🔧 Ingestando máquinas desde SQL Server...")
+            pass
             from app.connectors.solidset_sql import open_current_connection
             conn = open_current_connection(as_dict=True)
             cursor = conn.cursor(as_dict=True)
@@ -515,10 +512,10 @@ class DatabaseIngestor:
             conn.close()
             
             if not rows:
-                print("   ⚠️ No se encontraron registros")
+                pass
                 return 0
             
-            print(f"   📋 Encontrados {len(rows)} registros")
+            pass
             
             points = []
             for row in rows:
@@ -554,7 +551,7 @@ class DatabaseIngestor:
             return self._ingest_points(points, "SQL Server Assets")
             
         except Exception as e:
-            print(f"   ❌ Error ingiriendo desde SQL Server: {e}")
+            pass
             return 0
     
     def ingest_sql_server_activities(self, limit: int = 100) -> int:
@@ -563,7 +560,7 @@ class DatabaseIngestor:
         Tabla: dbo.Activity
         """
         try:
-            print("\n📝 Ingestando actividades desde SQL Server...")
+            pass
             from app.connectors.solidset_sql import open_current_connection
             conn = open_current_connection(as_dict=True)
             cursor = conn.cursor(as_dict=True)
@@ -590,10 +587,10 @@ class DatabaseIngestor:
             conn.close()
             
             if not rows:
-                print("   ⚠️ No se encontraron registros")
+                pass
                 return 0
             
-            print(f"   📋 Encontrados {len(rows)} registros")
+            pass
             
             points = []
             for row in rows:
@@ -627,10 +624,10 @@ class DatabaseIngestor:
             return self._ingest_points(points, "SQL Server Activities")
             
         except ImportError:
-            print("   ❌ pymssql no está instalado. Instala: pip install pymssql")
+            pass
             return 0
         except Exception as e:
-            print(f"   ❌ Error ingiriendo desde SQL Server: {e}")
+            pass
             return 0
 
 
@@ -642,9 +639,9 @@ def ingest_from_database():
     """
     Ingiere datos desde todas las bases de datos configuradas.
     """
-    print("\n" + "="*60)
-    print("🗄️ INGESTA DE DATOS DESDE BASE DE DATOS")
-    print("="*60 + "\n")
+    pass
+    pass
+    pass
     
     ingestor = DatabaseIngestor()
     
@@ -673,9 +670,9 @@ def ingest_from_database():
     if include_postgres:
         total += ingestor.ingest_postgresql_sensors(limit=50)
     
-    print("\n" + "="*60)
-    print(f"📊 TOTAL INGESTADO: {total} registros")
-    print("="*60)
+    pass
+    pass
+    pass
     
     return total
 

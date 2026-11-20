@@ -280,7 +280,7 @@ def _verified_sys_tasks_context(
             })
         rows = json.loads(str(raw))
     except (json.JSONDecodeError, TypeError, ValueError, RuntimeError) as exc:
-        print(f"⚠️ Não foi possível ampliar as tarefas relacionadas: {exc}")
+        pass
         return "\n\n".join(
             _format_related_records_context([record])
             + "\nSQL_VERIFICATION: task query failed; client reference only."
@@ -350,7 +350,7 @@ def _verified_related_records_context(
                 )
                 rows = json.loads(raw)
             except (json.JSONDecodeError, TypeError, ValueError, RuntimeError) as exc:
-                print(f"⚠️ Não foi possível ampliar RelatedRecordsData: {exc}")
+                pass
                 blocks.append(base + "\nSQL_VERIFICATION: query failed; client reference only.")
                 continue
             row = rows[0] if isinstance(rows, list) and rows else {}
@@ -592,7 +592,7 @@ def _chat_question_turn_count(session_id: str) -> int:
         history = RedisChatMessageHistory(session_id, url=settings.REDIS_URL)
         return sum(1 for item in history.messages if item.type == "ai")
     except Exception as exc:
-        print(f"⚠️ Não foi possível consultar a memória de sugestões: {exc}")
+        pass
         return 0
 
 
@@ -601,7 +601,7 @@ def _reset_chat_question_memory(session_id: str) -> None:
     try:
         RedisChatMessageHistory(session_id, url=settings.REDIS_URL).clear()
     except Exception as exc:
-        print(f"⚠️ Não foi possível reiniciar a memória de sugestões: {exc}")
+        pass
 
 
 def _suggestion_count(*, initial: bool, completed_turns: int) -> int:
@@ -1161,7 +1161,7 @@ def _record_answer_is_grounded(answer: str, evidence: str, metadata: dict[str, A
         return False
     finally:
         metadata["record_validation_reason"] = reason
-        print(f"SUGGESTION_EVIDENCE_CHECK request_id={metadata.get('chat_id')} reason={reason} elapsed={perf_counter() - started:.3f}s", flush=True)
+        pass
 
 
 def _filter_suggestion_output(
@@ -1202,11 +1202,7 @@ def _filter_suggestion_output(
             rejected[reason] = rejected.get(reason, 0) + 1
         else:
             accepted.append(item)
-    print(
-        f"SUGGESTION_VALIDATION request_id={request_id} parsed={len(candidates)} "
-        f"accepted={len(accepted)} rejected={json.dumps(rejected, sort_keys=True)}",
-        flush=True,
-    )
+    pass
     return accepted
 
 
@@ -1324,12 +1320,9 @@ def _persist_suggestion_fact(
     def _index() -> None:
         try:
             indexed = agent.sistema_aprendizaje.aprender_conocimiento_agente(saved)
-            print(
-                "🧠 Facto do painel indexado "
-                f"knowledge_id={saved.get('ID')} indexed={indexed}"
-            )
+            pass
         except Exception as exc:
-            print(f"⚠️ Não foi possível indexar o facto do painel: {exc}")
+            pass
 
     indexed_scheduled = not bool(saved.get("WasExisting"))
     if indexed_scheduled:
@@ -1582,10 +1575,7 @@ def _repair_chat_question_suggestions(
             "model_capability": "general",
         }
     )
-    print(
-        f"🩹 Reparando formato de sugestões provider={provider.provider} "
-        f"model={provider.model} count={count} language={language}"
-    )
+    pass
     request_llm = _json_model(request_llm, provider, _suggestion_schema(count))
     initial_summary = bool(
         metadata.get("advice_mode") and not metadata.get("advice_refine")
@@ -1718,17 +1708,9 @@ def _reason_about_related_record(
     finish = response_metadata.get("finish_reason") or response_metadata.get("done_reason")
     if finish in {"length", "max_tokens", "max_output_tokens"}:
         raise SuggestionOutputError("Related record answer exceeded output budget")
-    print(
-        f"SUGGESTION_RECORD_GENERATION provider={provider.provider} model={provider.model} "
-        f"finish={finish} requested_count={count}",
-        flush=True,
-    )
+    pass
     raw = llm_response_text(result).strip()
-    print(
-        f"SUGGESTION_OUTPUT request_id={metadata.get('chat_id')} chars={len(raw)} "
-        f"parsed_count={len(_parse_chat_question_suggestions(raw, limit=count))}",
-        flush=True,
-    )
+    pass
     return raw
 
 
@@ -1782,12 +1764,9 @@ async def _process_chat_question_response_suggestion(
     request_started = perf_counter()
 
     def log_stage(stage: str, started: float) -> None:
-        print(
-            f"SUGGESTION_STAGE request_id={request_id or 'pending'} "
-            f"stage={stage} elapsed={perf_counter() - started:.3f}s"
-        )
+        pass
 
-    print(message.model_dump_json(indent=2))
+    pass
     payload = message.model_dump(mode="json")
     context = _chat_question_suggestion_context(payload)
     chat_payload = _get_payload_value(payload, "Chat", "chat")
@@ -1884,13 +1863,7 @@ async def _process_chat_question_response_suggestion(
             effective_request_text = replace_file_references_with_labels(
                 effective_request_text, attachments
             )
-            print(
-                "SUGGESTION_ATTACHMENT_CONTEXT "
-                f"request_id={request_id} image_refs={len(attachment_refs)} "
-                f"audio_refs={len(audio_refs)} "
-                f"resolved={sum(1 for item in attachments if item.get('status') == 'resolved')}",
-                flush=True,
-            )
+            pass
         identity_started = perf_counter()
         identity = await asyncio.to_thread(
             get_active_agent_identity_for_resource,
@@ -1920,13 +1893,7 @@ async def _process_chat_question_response_suggestion(
                 "IDAgentResource": cached_agent_id,
                 "cached": True,
             }
-            print(
-                "⚠️ Validação interativa de SysResource2Agent indisponível; "
-                "usando relação local ativa previamente sincronizada "
-                f"IDHumanResource={context['requester_resource']} "
-                f"IDAgentResource={cached_agent_id}: {exc}",
-                flush=True,
-            )
+            pass
         if not verification.get("verified"):
             raise LookupError(
                 "O recurso solicitante não possui um agente IA ativo em SysResource2Agent."
@@ -1953,10 +1920,7 @@ async def _process_chat_question_response_suggestion(
                 (workroom or {}).get("Name") or (workroom or {}).get("Code") or ""
             ).strip()
         except psycopg.Error as exc:
-            print(
-                f"SUGGESTION_WORKROOM_CONTEXT_UNAVAILABLE request_id={request_id} "
-                f"type={type(exc).__name__}", flush=True,
-            )
+            pass
         _update_response_status(
             request_id,
             "searching",
@@ -1978,16 +1942,11 @@ async def _process_chat_question_response_suggestion(
                     fact=learned_fact,
                     solidset_instance_id=str(solidset_instance["ID"]),
                 )
-                print(
-                "🧠 Facto aprendido a partir do chat-question "
-                    f"resource={context['requester_resource']} "
-                    f"workroom={context['workroom_id']} "
-                    f"knowledge_id={persisted['saved'].get('ID')}"
-                )
+                pass
             except (ValueError, psycopg.Error, RuntimeError) as exc:
                 # Suggestion generation remains available if durable learning
                 # is temporarily unavailable; the error is observable in logs.
-                print(f"⚠️ Não foi possível persistir o facto do painel: {exc}")
+                pass
         context_started = perf_counter()
         private_knowledge = await asyncio.to_thread(
             get_agent_knowledge,
@@ -2040,7 +1999,7 @@ async def _process_chat_question_response_suggestion(
                     "solidset_instance_id": str(solidset_instance["ID"]),
                 },
             )
-        print(f"SUGGESTION_INTENT intent={request_intent} related={use_related_record}", flush=True)
+        pass
         answer_meta_question = _is_answer_meta_question(effective_request_text)
         if answer_meta_question:
             # A follow-up about the previous answer needs conversation memory.
@@ -2077,7 +2036,7 @@ async def _process_chat_question_response_suggestion(
                 if record_codes and not any(code in str(vector_record_context).casefold() for code in record_codes):
                     vector_record_context = ""
             except Exception as exc:
-                print(f"SUGGESTION_VECTOR_UNAVAILABLE request_id={request_id} type={type(exc).__name__}", flush=True)
+                pass
             log_stage("related_record_vector", vector_started)
             related_started = perf_counter()
             related_task_evidence = await asyncio.to_thread(
@@ -2169,12 +2128,7 @@ async def _process_chat_question_response_suggestion(
             effective_request_text,
             context["related_records"],
         )
-        print(
-            f"SUGGESTION_RELATED_MODE request_id={request_id} "
-            f"intent={request_intent} guidance_requested={related_record_guidance} "
-            f"guidance_mode={related_guidance_mode}",
-            flush=True,
-        )
+        pass
         if related_guidance_mode:
             suggestion_count = 1
         elif concrete_answer_mode:
@@ -2367,17 +2321,10 @@ async def _process_chat_question_response_suggestion(
                 )
             except Exception as exc:
                 audio_available = False
-                print(
-                    f"SUGGESTION_AUDIO_CAPABILITY_LOOKUP_FAILED type={type(exc).__name__}",
-                    flush=True,
-                )
+                pass
             metadata["model_capability"] = "audio"
             metadata["audio_model_unavailable"] = not audio_available
-            print(
-                "SUGGESTION_AUDIO_MODEL_ROUTE "
-                f"request_id={request_id} available={audio_available}",
-                flush=True,
-            )
+            pass
         elif attachment_refs:
             try:
                 visual_available = any(
@@ -2388,17 +2335,10 @@ async def _process_chat_question_response_suggestion(
                 )
             except Exception as exc:
                 visual_available = False
-                print(
-                    f"SUGGESTION_VISION_CAPABILITY_LOOKUP_FAILED type={type(exc).__name__}",
-                    flush=True,
-                )
+                pass
             metadata["model_capability"] = "vision"
             metadata["vision_model_unavailable"] = not visual_available
-            print(
-                "SUGGESTION_VISION_MODEL_ROUTE "
-                f"request_id={request_id} available={visual_available}",
-                flush=True,
-            )
+            pass
         if learned_fact:
             # This response only acknowledges user-authored content that has
             # already passed the learning gate. Avoid a cold model-backed scope
@@ -2416,7 +2356,7 @@ async def _process_chat_question_response_suggestion(
             # zones must not abort generation or create a false local time.
             reference_zone = timezone.utc
             metadata["time_zone"] = "UTC"
-            print(f"SUGGESTION_TIMEZONE_FALLBACK request_id={request_id}", flush=True)
+            pass
         metadata["current_reference_time"] = reference_utc.astimezone(reference_zone).isoformat()
         metadata["system_utc_time"] = reference_utc.isoformat()
 
@@ -2430,7 +2370,7 @@ async def _process_chat_question_response_suggestion(
             selected_codes = {str(record.get("recordCode") or "").casefold()
                               for record in context["related_records"]}
             if any(code.casefold() not in selected_codes for code in wrapper_codes):
-                print(f"SUGGESTION_RECORD_REFERENCE_CONFLICT request_id={request_id}", flush=True)
+                pass
         metadata["external_information_mode"] = request_intent == "external"
         suggestion_tool_allowlist = {
             "internal": {"query_sql_server", "get_db_schema"},
@@ -2510,11 +2450,7 @@ async def _process_chat_question_response_suggestion(
                 scoped_session,
             )
         if learned_fact:
-            print(
-                f"SUGGESTION_LEARNED_ASSERTION request_id={request_id} "
-                f"chars={len(learned_fact)}",
-                flush=True,
-            )
+            pass
         if direct_answer is not None:
             suggestion_count = int(metadata.get("response_suggestion_count") or suggestion_count)
             raw_suggestions = direct_answer
@@ -2567,10 +2503,7 @@ async def _process_chat_question_response_suggestion(
                     metadata=metadata,
                 )
             except Exception as exc:
-                print(
-                    f"SUGGESTION_RECORD_GENERATION_FAILED request_id={request_id} "
-                    f"type={type(exc).__name__}", flush=True,
-                )
+                pass
                 raw_suggestions = ""
             log_stage("related_record_generation", generation_started)
             suggestions = _parse_chat_question_suggestions(
@@ -2609,11 +2542,7 @@ async def _process_chat_question_response_suggestion(
             research_context = json.dumps(
                 metadata.get("suggestion_tool_evidence") or [], ensure_ascii=False,
             )
-            print(
-                f"SUGGESTION_EVIDENCE_TRANSFER request_id={request_id} "
-                f"tool_results={len(metadata.get('suggestion_tool_evidence') or [])}",
-                flush=True,
-            )
+            pass
             suggestions = _parse_chat_question_suggestions(
                 raw_suggestions,
                 limit=suggestion_count,
@@ -2634,11 +2563,7 @@ async def _process_chat_question_response_suggestion(
                 # A second full model call adds tens of seconds and can repeat
                 # the same truncation. Use the grounded fallback when a
                 # recommendation response violates the output contract.
-                print(
-                    f"SUGGESTION_REPAIR_SKIPPED request_id={request_id} "
-                    "reason=related_record_fallback",
-                    flush=True,
-                )
+                pass
                 repaired_raw = ""
 
             else:
@@ -2680,11 +2605,9 @@ async def _process_chat_question_response_suggestion(
                         related_records_context, metadata["response_language"], guidance=False,
                     )
                 ]
-                print(f"SUGGESTION_PARTIAL_EVIDENCE request_id={request_id} reason=invalid_synthesis", flush=True)
+                pass
             elif concrete_answer_mode:
-                print(
-                    "⚠️ Não foi possível verificar uma resposta concreta para a sugestão."
-                )
+                pass
                 suggestions = [
                     {
                         "pt": "Não consegui verificar o dado solicitado neste momento; prefiro não indicar um valor sem confirmação.",
@@ -2696,9 +2619,7 @@ async def _process_chat_question_response_suggestion(
                     )
                 ]
             else:
-                print(
-                    "⚠️ O modelo não respeitou o contrato após reparação; usando sugestões seguras."
-                )
+                pass
                 suggestions = _safe_chat_question_fallback(
                     metadata["response_language"], suggestion_count, scope_context
                 )
@@ -2739,10 +2660,7 @@ async def _process_chat_question_response_suggestion(
                 history.add_user_message(effective_request_text)
                 history.add_ai_message("\n".join(suggestions))
             except Exception as exc:
-                print(
-                    f"SUGGESTION_HISTORY_UNAVAILABLE request_id={request_id} "
-                    f"type={type(exc).__name__}", flush=True,
-                )
+                pass
         _update_response_status(
             request_id,
             "completed",
@@ -2751,10 +2669,7 @@ async def _process_chat_question_response_suggestion(
             response_count=len(suggestions),
             result=result,
         )
-        print(
-            f"SUGGESTION_TOTAL request_id={request_id} "
-            f"elapsed={perf_counter() - request_started:.3f}s"
-        )
+        pass
         return ChatQuestionSuggestionResponse(
             requestId=request_id,
             questionChatId=context["quoted_chat_id"] or request_id,
@@ -2768,7 +2683,7 @@ async def _process_chat_question_response_suggestion(
             statusUrl=f"/api/v1/agent/responses/{request_id}/status",
         )
     except SuggestionOutputError as exc:
-        print(f"SUGGESTION_FAILED request_id={request_id} reason={exc}", flush=True)
+        pass
         detail = "O modelo não conseguiu produzir uma resposta válida para este pedido."
         _update_response_status(
             request_id, "failed", agent_resource_id=status_agent_id,

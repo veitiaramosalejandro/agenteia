@@ -135,9 +135,7 @@ def generate_active_prompt_drafts(
             )
         except (ValueError, LookupError, psycopg.Error) as exc:
             failed += 1
-            print(
-                f"❌ No se pudo generar prompt para recurso {resource_id}: {type(exc).__name__}"
-            )
+            pass
             items.append(
                 AgentPromptBulkItem(
                     IDResource=resource_id,

@@ -12,34 +12,34 @@ from app.config import settings
 
 
 def test_ingest():
-    print("\n" + "="*60)
-    print("🧪 PROBANDO INGESTA SIMPLIFICADA")
-    print("="*60 + "\n")
+    pass
+    pass
+    pass
     
     # 1. Conectar a Qdrant
-    print("📡 Conectando a Qdrant...")
+    pass
     client = QdrantClient(url=settings.VECTOR_DB_URL)
     
     # 2. Verificar colección
     collection = settings.VECTOR_COLLECTION_NAME
-    print(f"📊 Colección: {collection}")
+    pass
     
     try:
         info = client.get_collection(collection)
-        print(f"   Puntos actuales: {info.points_count}")
+        pass
     except Exception as e:
-        print(f"   ❌ Error: {e}")
+        pass
         return
     
     # 3. Conectar a Ollama
-    print("\n🔧 Conectando a Ollama...")
+    pass
     embeddings = OllamaEmbeddings(
         base_url=settings.EMBEDDING_BASE_URL,
         model=settings.EMBEDDING_MODEL_NAME
     )
     
     # 4. Crear un documento de prueba
-    print("\n📝 Creando documento de prueba...")
+    pass
     test_text = """
     DOCUMENTO DE PRUEBA
     
@@ -57,17 +57,17 @@ def test_ingest():
     """
     
     # 5. Generar embedding
-    print("🔄 Generando embedding...")
+    pass
     try:
         vector = embeddings.embed_query(test_text)
-        print(f"   ✅ Embedding generado (tamaño: {len(vector)})")
+        pass
     except Exception as e:
-        print(f"   ❌ Error generando embedding: {e}")
+        pass
         return
     
     # 6. Crear punto
     point_id = str(uuid.uuid4())
-    print(f"📌 Creando punto con ID: {point_id}")
+    pass
     
     point = PointStruct(
         id=point_id,
@@ -80,24 +80,24 @@ def test_ingest():
     )
     
     # 7. Insertar en Qdrant
-    print("💾 Insertando en Qdrant...")
+    pass
     try:
         client.upsert(
             collection_name=collection,
             points=[point]
         )
-        print("   ✅ Insertado exitosamente")
+        pass
     except Exception as e:
-        print(f"   ❌ Error insertando: {e}")
+        pass
         return
     
     # 8. Verificar resultado
-    print("\n🔍 Verificando resultado...")
+    pass
     info = client.get_collection(collection)
-    print(f"   ✅ Puntos totales: {info.points_count}")
+    pass
     
     # 9. Probar búsqueda
-    print("\n🔎 Probando búsqueda...")
+    pass
     try:
         # Buscar por el texto de prueba
         results = client.search(
@@ -106,15 +106,15 @@ def test_ingest():
             limit=1
         )
         if results:
-            print(f"   ✅ Encontrado: {results[0].payload.get('page_content', '')[:100]}...")
+            pass
         else:
-            print("   ⚠️ No se encontraron resultados")
+            pass
     except Exception as e:
-        print(f"   ❌ Error en búsqueda: {e}")
+        pass
     
-    print("\n" + "="*60)
-    print("✅ PRUEBA COMPLETADA")
-    print("="*60)
+    pass
+    pass
+    pass
 
 
 if __name__ == "__main__":

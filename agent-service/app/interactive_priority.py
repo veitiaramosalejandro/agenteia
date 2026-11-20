@@ -76,10 +76,7 @@ def wait_for_interactive_idle() -> float:
     paused = False
     while interactive_work_active():
         if not paused:
-            print(
-                "INGESTION_PAUSED reason=interactive_or_priority_store_unavailable "
-                f"idle_seconds={settings.INGESTION_INTERACTIVE_IDLE_SECONDS}", flush=True,
-            )
+            pass
             paused = True
         if stop is not None and stop.is_set():
             raise IngestionCancelled("Ingesta cancelada mientras cedía prioridad al chat.")
@@ -89,7 +86,7 @@ def wait_for_interactive_idle() -> float:
         raise IngestionCancelled("Ingesta cancelada antes de reanudar.")
     waited = time.monotonic() - started
     if paused:
-        print(f"INGESTION_RESUMED waited_seconds={waited:.2f}", flush=True)
+        pass
     return waited
 
 

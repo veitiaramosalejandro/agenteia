@@ -145,7 +145,7 @@ class NotificationApiListener:
         try:
             return self.sistema._resolve_user_identity(username)
         except Exception as exc:
-            print(f"⚠️ No se pudo resolver identidad SOLIDSET para '{username}': {exc}")
+            pass
             return {"username": username, "login_id": None, "resource_id": None}
 
     def _apply_login_response(self, payload: Dict[str, Any]) -> None:
@@ -839,7 +839,7 @@ class NotificationApiListener:
 
     def _audit_log(self, message: str) -> None:
         if self.audit_log_enabled:
-            print(message)
+            pass
 
     def _trace_captured_message(self, entry: Dict[str, Any], status: str) -> None:
         if not settings.NOTIF_MESSAGE_TRACE_ENABLED:
@@ -892,10 +892,7 @@ class NotificationApiListener:
             if len(self.recent_captured_messages) > self.max_recent_captured_messages:
                 self.recent_captured_messages = self.recent_captured_messages[-self.max_recent_captured_messages :]
 
-        print(
-            f"📨 NOTIF_CAPTURE [{status}] scope={scope} channel='{channel_name}' "
-            f"channel_id={channel_id} chat_id={chat_id} sender='{sender_name}' msg='{compact}'"
-        )
+        pass
 
     def get_recent_captured_messages(self, limit: int = 30) -> List[Dict[str, Any]]:
         with self.metrics_lock:
@@ -1375,7 +1372,7 @@ class NotificationApiListener:
                 )
             except Exception as exc:
                 authorized_agents = []
-                print(f"⚠️ No se pudo resolver autorización de aprendizaje: {exc}")
+                pass
             learned_global = bool(authorized_agents)
             for authorized_agent_id in authorized_agents:
                 authorized_metadata = dict(actividad.metadatos or {})
@@ -1408,7 +1405,7 @@ class NotificationApiListener:
                 )
             except Exception as exc:
                 owner_agent = None
-                print(f"⚠️ No se pudo resolver aprendizaje privado del agente: {exc}")
+                pass
             if owner_agent and agent_learning_enabled(owner_agent["IDResource"], "owner"):
                 private_metadata = dict(actividad.metadatos or {})
                 private_metadata.update({
@@ -1447,7 +1444,6 @@ class NotificationApiListener:
         endpoint: str = "/frameworkHub/SendMessage",
     ) -> Dict[str, Any]:
 
-        #print(f"📡 Capturando payload en tiempo real desde {payload}...")
 
         """Indexa inmediatamente un mensaje recibido por el proxy del hub."""
         entries = self._normalize_entries(
@@ -1479,7 +1475,7 @@ class NotificationApiListener:
                     self._trace_captured_message(entry, status="learn_error_realtime")
             except Exception as exc:
                 errors += 1
-                print(f"⚠️ Error indexando mensaje en tiempo real: {exc}")
+                pass
             finally:
                 self._remember_fingerprint(fingerprint)
 
@@ -1612,7 +1608,7 @@ class NotificationApiListener:
 
         errors += 1
         if last_exc:
-            print(f"⚠️ Error consultando {source} {endpoint}: {last_exc}")
+            pass
 
         return {
             "learned": learned,

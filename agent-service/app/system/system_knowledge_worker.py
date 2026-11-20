@@ -24,7 +24,7 @@ def _heartbeat_loop(run_id: str, worker_id: str, stop: threading.Event) -> None:
         try:
             heartbeat_run(run_id, worker_id)
         except Exception as exc:
-            print(f"⚠️ Heartbeat de ingesta no disponible run={run_id}: {exc}", flush=True)
+            pass
 
 
 def _requested_tables(run: dict[str, Any]) -> list[str] | None:
@@ -53,12 +53,12 @@ def run_worker() -> None:
     from app.services.openai_direct import run_learning_worker
     threading.Thread(target=run_learning_worker, daemon=True, name="openai-local-learning").start()
     worker_id = f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
-    print(f"🧠 System knowledge worker activo worker={worker_id}", flush=True)
+    pass
     while True:
         try:
             run = claim_next_run(worker_id, settings.SYSTEM_KNOWLEDGE_STALE_SECONDS)
         except Exception as exc:
-            print(f"⚠️ No se pudo adquirir una ingesta: {exc}", flush=True)
+            pass
             time.sleep(settings.SYSTEM_KNOWLEDGE_POLL_SECONDS)
             continue
         if not run:
@@ -76,25 +76,19 @@ def run_worker() -> None:
             instance = get_solidset_instance(code=instance_code, source_ip=None)
             if not instance:
                 raise RuntimeError(f"Instancia SolidSET no disponible: {instance_code}")
-            print(
-                f"▶️ Ejecutando ingesta run={run_id} instance={instance_code} "
-                f"attempt={run.get('AttemptCount')}", flush=True,
-            )
+            pass
             result = run_system_knowledge_ingestion(
                 run_id, instance, _requested_tables(run),
             )
-            print(
-                f"✅ Ingesta completada run={run_id} rows={result.get('RowsRead', 0)}",
-                flush=True,
-            )
+            pass
         except Exception as exc:
             attempts = max(1, int(run.get("AttemptCount") or 1))
             delay = _retry_delay(exc, attempts)
             try:
                 retry_run(run_id, str(exc), delay)
             except Exception as retry_exc:
-                print(f"❌ No se pudo programar reintento run={run_id}: {retry_exc}", flush=True)
-            print(f"🔁 Ingesta run={run_id} reintentará en {delay}s: {exc}", flush=True)
+                pass
+            pass
         finally:
             stop.set()
             heartbeat.join(timeout=2)

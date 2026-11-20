@@ -26,7 +26,7 @@ def train_channels(sa: SistemaAprendizaje, cursor: pymssql.Cursor):
     """
     Obtiene los canales de trabajo (WorkRooms) y entrena al sistema con ellos.
     """
-    print("--- Iniciando entrenamiento de Canales ---")
+    pass
     try:
         cursor.execute("""
             SELECT 
@@ -42,7 +42,7 @@ def train_channels(sa: SistemaAprendizaje, cursor: pymssql.Cursor):
         """)
         
         canales_rows = cursor.fetchall() or []
-        print(f"Se encontraron {len(canales_rows)} canales para entrenar.")
+        pass
         
         count = 0
         for row in canales_rows:
@@ -62,18 +62,18 @@ def train_channels(sa: SistemaAprendizaje, cursor: pymssql.Cursor):
             
             if sa.aprender_canal(canal):
                 count += 1
-                print(f"  -> Aprendiendo de canal: {canal.nombre}")
+                pass
 
-        print(f"✅ Entrenamiento de canales finalizado. Se aprendió de {count} canales.")
+        pass
     except Exception as e:
-        print(f"❌ Error durante el entrenamiento de canales: {e}")
+        pass
 
 
 def train_chat_activity(sa: SistemaAprendizaje, cursor: pymssql.Cursor, limit: int = 500):
     """
     Obtiene la actividad de chat reciente y la usa para entrenar al sistema.
     """
-    print(f"--- Iniciando entrenamiento de Actividad de Chat (últimos {limit} mensajes) ---")
+    pass
     try:
         cursor.execute(f"""
             SELECT TOP {limit}
@@ -92,7 +92,7 @@ def train_chat_activity(sa: SistemaAprendizaje, cursor: pymssql.Cursor, limit: i
         """)
         
         actividades_rows = cursor.fetchall() or []
-        print(f"Se encontraron {len(actividades_rows)} actividades de chat para entrenar.")
+        pass
         
         count = 0
         for row in actividades_rows:
@@ -117,32 +117,32 @@ def train_chat_activity(sa: SistemaAprendizaje, cursor: pymssql.Cursor, limit: i
 
             if sa.aprender_actividad(actividad):
                 count += 1
-                print(f"  -> Aprendiendo de chat en canal {actividad.canal_id}: '{mensaje[:50]}...'")
+                pass
 
-        print(f"✅ Entrenamiento de actividad finalizado. Se aprendió de {count} actividades.")
+        pass
     except Exception as e:
-        print(f"❌ Error durante el entrenamiento de actividad de chat: {e}")
+        pass
 
 
 def main():
     """
     Función principal que orquesta el proceso de entrenamiento.
     """
-    print("======================================================")
-    print("🚀  INICIANDO SCRIPT DE ENTRENAMIENTO MANUAL DE CONTEXTO 🚀")
-    print("======================================================")
+    pass
+    pass
+    pass
     
     sa = None
     conn = None
     
     try:
         # 1. Inicializar el Sistema de Aprendizaje
-        print("1. Inicializando Sistema de Aprendizaje...")
+        pass
         sa = SistemaAprendizaje()
-        print("   ✅ Sistema de Aprendizaje listo.")
+        pass
         
         # 2. Conectar a la base de datos
-        print("2. Conectando a la base de datos SQL Server...")
+        pass
         conn = pymssql.connect(
             **settings.sql_server_connection_options(),
             user=settings.SQL_SERVER_USER,
@@ -151,22 +151,22 @@ def main():
             timeout=15
         )
         cursor = conn.cursor(as_dict=True)
-        print("   ✅ Conexión a la base de datos establecida.")
+        pass
         
         # 3. Ejecutar los módulos de entrenamiento
         train_channels(sa, cursor)
         train_chat_activity(sa, cursor, limit=1000) # Se puede ajustar el límite de mensajes
         
     except Exception as e:
-        print(f"❌ Ha ocurrido un error fatal en el script: {e}")
+        pass
     finally:
         if conn:
             conn.close()
-            print("⏹️  Conexión a la base de datos cerrada.")
+            pass
     
-    print("======================================================")
-    print("🏁  ENTRENAMIENTO MANUAL FINALIZADO  🏁")
-    print("======================================================")
+    pass
+    pass
+    pass
 
 if __name__ == "__main__":
     main()

@@ -8,9 +8,9 @@ from app.rag.dd_ingest import ingest_data_dictionary, check_db_knowledge
 
 
 if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("📚 INGESTA DE DATA DICTIONARY")
-    print("="*60)
+    pass
+    pass
+    pass
     
     # Ejecutar ingesta
     total = ingest_data_dictionary()
@@ -18,4 +18,4 @@ if __name__ == "__main__":
     # Verificar
     check_db_knowledge()
     
-    print(f"\n✅ Ingesta completada. Total: {total} puntos indexados")
+    pass

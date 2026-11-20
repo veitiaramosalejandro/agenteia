@@ -46,11 +46,7 @@ def validate_llm_provider(code: str, request: ModelValidationRequest) -> ModelVa
         summary = " ".join(
             f"{item['capability']}={item['status']}" for item in result["capabilities"]
         )
-        print(
-            f"MODEL_VALIDATION code={record.get('Code')} provider={result['provider']} "
-            f"model={result['model']} passed={result['passed']} {summary}",
-            flush=True,
-        )
+        pass
         return ModelValidationResponse(**result)
     except HTTPException:
         raise

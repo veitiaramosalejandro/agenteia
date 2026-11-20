@@ -46,7 +46,7 @@ def connection(*, as_dict: bool = True) -> Iterator[pymssql.Connection]:
         options["port"] = settings.SQL_SERVER_PORT
     started_at = perf_counter()
     target = _connection_target()
-    print(f"🔌 SQL_CONNECT start {target}", flush=True)
+    pass
     try:
         conn = pymssql.connect(
             **options,
@@ -59,14 +59,10 @@ def connection(*, as_dict: bool = True) -> Iterator[pymssql.Connection]:
         )
     except Exception as exc:
         elapsed_ms = (perf_counter() - started_at) * 1000
-        print(
-            f"❌ SQL_CONNECT failed {target} duration_ms={elapsed_ms:.1f} "
-            f"error_type={type(exc).__name__} error={_safe_error(exc)}",
-            flush=True,
-        )
+        pass
         raise
     elapsed_ms = (perf_counter() - started_at) * 1000
-    print(f"✅ SQL_CONNECT connected {target} duration_ms={elapsed_ms:.1f}", flush=True)
+    pass
     try:
         yield conn
     finally:
@@ -92,11 +88,7 @@ def execute_read(
 ) -> tuple[list[str], list[Any]]:
     started_at = perf_counter()
     query_id = hashlib.sha256(query.encode("utf-8", errors="replace")).hexdigest()[:12]
-    print(
-        f"🗄️ SQL_READ start operation={operation} query_id={query_id} "
-        f"parameter_count={len(parameters)} max_rows={max_rows}",
-        flush=True,
-    )
+    pass
     try:
         with connection(as_dict=True) as conn, conn.cursor(as_dict=True) as cursor:
             cursor.execute(query, tuple(parameters))
@@ -110,17 +102,8 @@ def execute_read(
             ]
     except Exception as exc:
         elapsed_ms = (perf_counter() - started_at) * 1000
-        print(
-            f"❌ SQL_READ failed operation={operation} query_id={query_id} "
-            f"duration_ms={elapsed_ms:.1f} error_type={type(exc).__name__} "
-            f"error={_safe_error(exc)}",
-            flush=True,
-        )
+        pass
         raise
     elapsed_ms = (perf_counter() - started_at) * 1000
-    print(
-        f"✅ SQL_READ completed operation={operation} query_id={query_id} "
-        f"rows={len(normalized)} columns={len(columns)} duration_ms={elapsed_ms:.1f}",
-        flush=True,
-    )
+    pass
     return columns, normalized

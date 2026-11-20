@@ -2,7 +2,7 @@
 
 > Ambiente de desenvolvimento Docker: a API corre com o Python 3.11 e o código do serviço mantém compatibilidade sintáctica com esta versão.
 
-O diagnóstico de arranque e o campo `runtime.startup_connectivity` do `GET /api/v1/agent/health` obtêm instalações ativas diretamente do PostgreSQL `SysSolidSETInstance`. Para cada linha verificam `BaseUrl` e `NotificationUrl` e reportam `Code` , `SourceIP` , URL configurado e URL efectivo. Dentro do Docker, é testado um URL configurado com `localhost` utilizando `host.docker.internal` , sem modificar o valor persistido. As variáveis ​​​​históricas `SOLIDSET_RESTAPI_BASE_URL` e `NOTIF_API_BASE_URL` não determinam este diagnóstico multi-instância.
+O `GET /api/v1/agent/health` devolve apenas um estado mínimo do serviço (`status=ok`). Não expõe fornecedores, URLs, bases de dados, filas, métricas ou resultados de conectividade.
 
 Os endpoints de notificação resolvem a instância utilizando o cabeçalho
  `X-SolidSET-Instance`. O seu valor é o host de destino configurado em
@@ -216,9 +216,8 @@ A listagem retorna `HasAPIKey` , mas nunca `APIKey` .  `DELETE` faz um levantame
 lógica (`active=false`).
 
 Ollama continua a ser necessário para as incorporações Qdrant embora o
-o modelo de conversação é remoto.  `GET /api/v1/agent/health` expõe fornecedor,
-modelo, URL e `source=postgresql|environment_fallback` separadamente do
- `ollama_embeddings`.
+modelo de conversação seja remoto. O health-check não expõe a configuração
+destes serviços.
 
 ### Modelo atribuído a cada agente: SysAgentIAModel
 
@@ -1435,39 +1434,14 @@ Retorna um ficheiro de áudio criado anteriormente pelo agente.
 
 Valida que o ficheiro existe e que o caminho solicitado é seguro.
 
-# Monitorização e diagnóstico
-
-## 17. Situação geral do agente
+## Health-check mínimo
 
 ```http
 GET /api/v1/agent/health
 ```
-Verifique o estado do serviço e dependências como:
 
--Olhama.
--Qdrant.
-- Redis.
-- PostgreSQL.
--Servidor SQL.
--SólidoSET.
-- API de notificação.
-
-É o principal endpoint para monitorização.
-
----
-
-## 18. Resumo da avaliação
-
-```http
-GET /api/v1/agent/evaluation/summary
-```
-Retorna métricas operacionais relacionadas com:
-
-- Diálogos processados.
-- Duração.
-- Cache.
-- Erros.
-- Capturar notificações.
+Retorna apenas `{"status":"ok"}`. Não retorna dados de conectividade nem
+configuração interna.
 - Respostas automáticas.
 - Estado das integrações.
 
@@ -1533,42 +1507,6 @@ POST /api/v1/agent/sql-retry-stats/reset
 Repõe as métricas de repetição SQL para zero.
 
 Não modifica tabelas ou dados SolidSET; apenas reinicia os contadores internos.
-
-# Conectividade
-
-## 23. Experimente o SolidSET
-
-```http
-GET /api/v1/connectivity/solidset
-```
-Testa a conectividade com o SolidSET, normalmente através do seu endpoint de pulsação.
-
-É utilizado para diagnosticar:
-
-- URL incorreto.
-- Serviço não disponível.
-- Tempo esgotado.
-- Problemas de TLS.
-- Resposta HTTP inesperada.
-
----
-
-## 24. Teste todas as integrações
-
-```http
-GET /api/v1/connectivity/all
-```
-Executa uma verificação conjunta dos serviços configurados.
-
-Permite localizar rapidamente se o problema está em:
-
--SólidoSET.
-- API de notificação.
-- PostgreSQL.
--Servidor SQL.
-- Redis.
--Qdrant.
--Olhama.
 
 ## Tabelas e responsabilidades
 

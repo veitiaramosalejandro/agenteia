@@ -29,4 +29,4 @@ def guardar_conversacion_como_conocimiento(session_id: str, tema: str, resumen_d
         collection_name=settings.VECTOR_COLLECTION_NAME,
         points=[point]
     )
-    print(f"✅ Conversación indexada en el RAG para aprendizaje futuro.")
+    pass

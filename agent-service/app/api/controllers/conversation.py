@@ -234,7 +234,7 @@ def handle_dialogue(
     message: FrameworkMessageDTO,
 ):
 
-    print(message.model_dump_json(indent=2))
+    pass
 
     """
     Procesa un FrameworkMessage como diálogo con el agente.
@@ -351,9 +351,7 @@ def handle_dialogue(
         if cached_response_text:
             elapsed = perf_counter() - request_started_at
             _record_dialogue_metrics(elapsed, cache_hit=True)
-            print(
-                f"⚡ Cache HIT en diálogo (sesión: {req.session_id}) -> {elapsed:.2f}s"
-            )
+            pass
             _update_response_status(dialogue_request_id, "completed", response_count=1)
             result = ChatConversationResponse(
                 session_id=req.session_id,
@@ -366,7 +364,7 @@ def handle_dialogue(
                     audio_path = text_to_speech(cached_response_text)
                     result.audio_url = f"/api/v1/agent/audio-response?file={os.path.basename(audio_path)}"
                 except Exception as audio_error:
-                    print(f"⚠️ Error generando audio desde cache: {audio_error}")
+                    pass
 
             return result
 
@@ -389,10 +387,8 @@ def handle_dialogue(
             )
 
         # Registrar inicio del procesamiento
-        print(
-            f"📨 Procesando consulta de usuario {req.user_id} (sesión: {req.session_id})"
-        )
-        print(f"   Mensaje: {req.message[:100]}...")
+        pass
+        pass
         _update_response_status(dialogue_request_id, "processing")
 
         _start_dialogue()
@@ -405,10 +401,7 @@ def handle_dialogue(
             # Si ambos quedan en 0 por configuración, usa un valor operativo seguro.
             processing_timeout = hard_timeout if hard_timeout > 0 else 300
             processing_timeout = max(5, processing_timeout)
-            print(
-                f"ℹ️ Modo bloqueante con timeout duro de seguridad: {processing_timeout}s "
-                f"(sesión: {req.session_id})"
-            )
+            pass
         else:
             processing_timeout = max(5, configured_timeout)
 
@@ -438,10 +431,7 @@ def handle_dialogue(
         worker.join(timeout=processing_timeout)
 
         if worker.is_alive():
-            print(
-                f"⚠️ Timeout de conversación en sesión {req.session_id} tras {processing_timeout}s. "
-                "Se devuelve respuesta controlada y se libera al terminar en segundo plano."
-            )
+            pass
             _update_response_status(
                 dialogue_request_id,
                 "failed",
@@ -487,24 +477,21 @@ def handle_dialogue(
                     f"/api/v1/agent/audio-response?file={os.path.basename(audio_path)}"
                 )
             except Exception as audio_error:
-                print(f"⚠️ Error generando audio: {audio_error}")
+                pass
                 # No falla la respuesta completa si el audio falla
 
-        print(f"✅ Respuesta generada para usuario {req.user_id}")
+        pass
         elapsed = perf_counter() - request_started_at
         _record_dialogue_metrics(elapsed)
         if elapsed >= max(0.1, settings.DIALOGUE_SLOW_LOG_SECONDS):
-            print(
-                f"🐢 Diálogo lento detectado (sesión: {req.session_id}) -> {elapsed:.2f}s, "
-                f"mensaje='{req.message[:80]}'"
-            )
+            pass
         else:
-            print(f"⏱️ Diálogo completado en {elapsed:.2f}s (sesión: {req.session_id})")
+            pass
         _update_response_status(dialogue_request_id, "completed", response_count=1)
         return result
 
     except Exception as e:
-        print(f"❌ Error crítico en /dialogue: {str(e)}")
+        pass
         try:
             rid = str((message.Info or {}).get("request_id") or "").strip()
             if rid:

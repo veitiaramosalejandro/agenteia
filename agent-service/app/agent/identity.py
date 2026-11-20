@@ -76,7 +76,7 @@ class AgentIdentityService:
         try:
             raw = self.redis.get(key)
         except redis.RedisError as exc:
-            print(f"⚠️ Identidad: Redis no disponible al leer {key}: {exc}")
+            pass
             raw = self._fallback.get(key)
         if not raw:
             return deepcopy(default)
@@ -95,7 +95,7 @@ class AgentIdentityService:
                 else:
                     self.redis.set(key, raw)
             except redis.RedisError as exc:
-                print(f"⚠️ Identidad: Redis no disponible al escribir {key}: {exc}")
+                pass
 
     def get_identity(self) -> dict[str, Any]:
         identity = self._get_json(self._identity_key, DEFAULT_IDENTITY)

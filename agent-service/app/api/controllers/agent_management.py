@@ -104,14 +104,14 @@ def _dialogue_public_research(
                 ),
             )
         except Exception as exc:
-            print(f"DIALOGUE_PUBLIC_LEARNING_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
-        print(f"DIALOGUE_PUBLIC_RESEARCH agent={resource_id} sources={len(results)}", flush=True)
+            pass
+        pass
         return {
             "status": "completed", "checked_at_utc": datetime.now(timezone.utc).isoformat(),
             "sources": [{"title": row.title, "url": row.url, "summary": row.snippet} for row in results],
         }
     except Exception as exc:
-        print(f"DIALOGUE_PUBLIC_RESEARCH_FAILED agent={resource_id} type={type(exc).__name__}", flush=True)
+        pass
         return {"status": "failed", "detail": "The current public search could not be verified."}
 
 
@@ -141,7 +141,7 @@ def create_manual_agent(
     try:
         saved = save_sys_resource_ia(payload)
     except psycopg.Error as exc:
-        print(f"❌ No se pudo crear el agente manual: {exc}")
+        pass
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Não foi possível criar o agente no PostgreSQL.",
@@ -256,7 +256,7 @@ def remove_agent_knowledge(
             wait=True,
         )
     except Exception as exc:
-        print(f"AGENT_KNOWLEDGE_VECTOR_DELETE_FAILED id={knowledge_id} type={type(exc).__name__}", flush=True)
+        pass
         raise HTTPException(
             status_code=503,
             detail="Não foi possível retirar o conhecimento do índice vetorial.",

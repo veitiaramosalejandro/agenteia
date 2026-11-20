@@ -54,18 +54,18 @@ class DocumentIngestor:
         try:
             ensure_vector_collection(self.qdrant, self.collection, self.embeddings)
         except Exception as e:
-            print(f"⚠️ Error verificando colección: {e}")
+            pass
     
     def ingest_file(self, file_path: str, metadata: Dict[str, Any] = None) -> int:
         """
         Ingiere un archivo completo en la base vectorial.
         """
         if not os.path.exists(file_path):
-            print(f"❌ Archivo no encontrado: {file_path}")
+            pass
             return 0
         
         ext = Path(file_path).suffix.lower()
-        print(f"📄 Procesando: {os.path.basename(file_path)} ({ext})")
+        pass
         
         if ext == '.txt':
             content = self._read_txt(file_path)
@@ -80,15 +80,15 @@ class DocumentIngestor:
         elif ext == '.csv':
             content = self._read_csv(file_path)
         else:
-            print(f"⚠️ Extensión no soportada: {ext}")
+            pass
             return 0
         
         if not content or len(content.strip()) < 50:
-            print(f"⚠️ El archivo está vacío o es muy corto: {file_path}")
+            pass
             return 0
         
         chunks = self.text_splitter.split_text(content)
-        print(f"   📝 Dividido en {len(chunks)} fragmentos")
+        pass
         
         base_metadata = {
             "source": os.path.basename(file_path),
@@ -108,7 +108,7 @@ class DocumentIngestor:
             try:
                 vector = self.embeddings.embed_query(chunk)
             except Exception as e:
-                print(f"   ⚠️ Error generando embedding: {e}")
+                pass
                 continue
             
             # ✅ CORREGIDO: Usar UUID válido
@@ -131,10 +131,10 @@ class DocumentIngestor:
                     collection_name=self.collection,
                     points=points
                 )
-                print(f"   ✅ Indexados {len(points)} fragmentos")
+                pass
                 return len(points)
             except Exception as e:
-                print(f"   ❌ Error indexando: {e}")
+                pass
                 return 0
         
         return 0
@@ -142,21 +142,21 @@ class DocumentIngestor:
     def ingest_directory(self, directory: str, pattern: str = "*", metadata: Dict[str, Any] = None) -> int:
         """Ingiere todos los archivos de un directorio."""
         if not os.path.exists(directory):
-            print(f"❌ Directorio no encontrado: {directory}")
+            pass
             return 0
         
         files = glob.glob(os.path.join(directory, pattern))
         if not files:
-            print(f"⚠️ No se encontraron archivos en {directory} con patrón {pattern}")
+            pass
             return 0
         
-        print(f"📂 Encontrados {len(files)} archivos en {directory}")
+        pass
         
         total = 0
         for file_path in files:
             total += self.ingest_file(file_path, metadata)
         
-        print(f"   Total indexado: {total} fragmentos")
+        pass
         return total
     
     # ============================================================
@@ -171,7 +171,7 @@ class DocumentIngestor:
             with open(file_path, 'r', encoding='latin-1') as f:
                 return f.read()
         except Exception as e:
-            print(f"   ⚠️ Error leyendo TXT: {e}")
+            pass
             return ""
     
     def _read_pdf(self, file_path: str) -> str:
@@ -186,10 +186,10 @@ class DocumentIngestor:
                         content.append(text)
             return "\n\n".join(content)
         except ImportError:
-            print("   ⚠️ PyPDF2 no está instalado. Instala: pip install PyPDF2")
+            pass
             return ""
         except Exception as e:
-            print(f"   ⚠️ Error leyendo PDF: {e}")
+            pass
             return ""
     
     def _read_docx(self, file_path: str) -> str:
@@ -210,10 +210,10 @@ class DocumentIngestor:
                         content.append(" | ".join(row_text))
             return "\n\n".join(content)
         except ImportError:
-            print("   ⚠️ python-docx no está instalado. Instala: pip install python-docx")
+            pass
             return ""
         except Exception as e:
-            print(f"   ⚠️ Error leyendo DOCX: {e}")
+            pass
             return ""
     
     def _read_markdown(self, file_path: str) -> str:
@@ -235,7 +235,7 @@ class DocumentIngestor:
             else:
                 return str(data)
         except Exception as e:
-            print(f"   ⚠️ Error leyendo JSON: {e}")
+            pass
             return ""
     
     def _read_csv(self, file_path: str) -> str:
@@ -248,10 +248,10 @@ class DocumentIngestor:
             text += df.to_string(max_rows=20, max_cols=10)
             return text
         except ImportError:
-            print("   ⚠️ pandas no está instalado. Instala: pip install pandas")
+            pass
             return ""
         except Exception as e:
-            print(f"   ⚠️ Error leyendo CSV: {e}")
+            pass
             return ""
 
 
@@ -262,20 +262,20 @@ class DocumentIngestor:
 def ingest_knowledge_base(documents_dir: str = "./knowledge_base"):
     """Ingiere toda la base de conocimiento desde un directorio."""
     if not os.path.exists(documents_dir):
-        print(f"❌ Directorio no encontrado: {documents_dir}")
-        print("   Crea la estructura: knowledge_base/ con tus documentos")
+        pass
+        pass
         return
     
     ingestor = DocumentIngestor()
     
-    print(f"\n📂 Indexando documentos desde: {documents_dir}")
+    pass
     total = ingestor.ingest_directory(
         documents_dir,
         pattern="*.*",
         metadata={"source": "knowledge_base", "language": "es"}
     )
     
-    print(f"\n✅ Ingesta completada. Total: {total} fragmentos indexados")
+    pass
     return total
 
 
@@ -284,9 +284,9 @@ def ingest_knowledge_base(documents_dir: str = "./knowledge_base"):
 # ============================================================
 
 if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("📚 INGESTOR DE DOCUMENTOS PARA BASE DE CONOCIMIENTO")
-    print("="*60 + "\n")
+    pass
+    pass
+    pass
     
     # Cambiar al directorio del proyecto
     os.chdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))

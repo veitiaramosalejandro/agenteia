@@ -5,7 +5,6 @@ import contextlib
 import hashlib
 import hmac
 import json
-import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,7 +17,6 @@ from app.config import settings
 from app.api.schemas.task_junta import TaskJuntaData
 from app.services.task_similarity import TaskMatch, analyze_task_similarity
 
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -70,7 +68,7 @@ def _event_body(operation: JuntaOperation, event_type: str, payload: dict[str, A
 async def _publish(operation: JuntaOperation, event_type: str, payload: dict[str, Any]) -> None:
     url = str(operation.notification_url or "").strip()
     if not url:
-        logger.warning("JUNTA_EVENT_NOT_PUBLISHED reason=notification_url_missing operation_id=%s", operation.operation_id)
+        pass
         return
 
     body = _event_body(operation, event_type, payload)
@@ -154,7 +152,7 @@ async def _run(operation: JuntaOperation) -> None:
     except Exception as exc:
         operation.status = "failed"
         operation.error = type(exc).__name__
-        logger.exception("TASK_JUNTA_OPERATION_FAILED operation_id=%s", operation.operation_id)
+        pass
         with contextlib.suppress(Exception):
             await _publish(operation, "failed", {"error": "analysis_failed"})
 

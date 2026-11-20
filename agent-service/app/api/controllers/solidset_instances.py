@@ -55,7 +55,7 @@ def save_solidset_chat_configuration(
     try:
         saved = save_sys_resource_ia(payload)
     except psycopg.Error as exc:
-        print(f"❌ No se pudo guardar la configuración SysResourceIA: {exc}")
+        pass
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Não foi possível guardar a configuração no PostgreSQL.",
@@ -293,17 +293,11 @@ def test_solidset_instance_database(code: str) -> SolidSETDataAPIConnectionTestR
             status_code=409,
             detail="A instância não tem um fornecedor de dados configurado.",
         )
-    print(
-        "🔍 Testando SolidSET Data API "
-        f"instance={instance.get('Code')} base={data_api.get('BaseUrl')}"
-    )
+    pass
     try:
         result = test_solidset_sql_connection(instance)
     except Exception as exc:
-        print(
-            "❌ Teste SolidSET Data API falhou "
-            f"instance={instance.get('Code')} error={type(exc).__name__}: {str(exc)[:500]}"
-        )
+        pass
         raise HTTPException(
             status_code=503,
             detail="Não foi possível estabelecer ligação ao fornecedor de dados desta instância.",

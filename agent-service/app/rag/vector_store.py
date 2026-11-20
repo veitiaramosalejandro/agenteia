@@ -30,7 +30,7 @@ def ensure_vector_collection(
                     collection_name=collection_name,
                     vectors_config=VectorParams(size=expected_size, distance=Distance.COSINE),
                 )
-                print(f"✅ Colección vectorial creada: {collection_name} (dim={expected_size})")
+                pass
                 return expected_size
 
             info = client.get_collection(collection_name)

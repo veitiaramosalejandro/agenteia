@@ -321,7 +321,7 @@ def resolve_sys_tasks_evidence(
             raw = query_sql_server.invoke({"query": query, "parameters_json": json.dumps(ids)})
         rows = json.loads(str(raw))
     except (json.JSONDecodeError, TypeError, ValueError, RuntimeError) as exc:
-        print(f"⚠️ No se pudieron ampliar tareas relacionadas: {exc}", flush=True)
+        pass
         return [{"record": record, "row": {}, "verification": "query_failed"} for record in task_records]
     by_id = {str(row.get("IDTask") or "").strip().casefold(): row for row in rows if isinstance(row, dict)} if isinstance(rows, list) else {}
     evidence: list[dict[str, Any]] = []
@@ -609,7 +609,7 @@ def verified_related_records_context(instance: dict[str, Any], records: list[dic
                 raw = query_sql_server.invoke({"query": plan.query, "parameters_json": json.dumps(plan.parameters)})
                 rows = json.loads(str(raw))
             except (json.JSONDecodeError, TypeError, ValueError, RuntimeError) as exc:
-                print(f"⚠️ No se pudo ampliar RelatedRecordsData: {exc}", flush=True)
+                pass
                 blocks.append(base + "\nSQL_VERIFICATION: query failed; client reference only.")
                 continue
             row = rows[0] if isinstance(rows, list) and rows else {}
